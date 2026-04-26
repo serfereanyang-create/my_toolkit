@@ -1,0 +1,12 @@
+Command: ninja all
+CMake Error at C:/esp/v6.0/esp-idf/tools/cmake/build.cmake:378 (message):
+  Failed to resolve component 'esp_lcd_st7735' required by component 'main':
+  unknown name.
+Call Stack (most recent call first):
+  C:/esp/v6.0/esp-idf/tools/cmake/build.cmake:421 (__build_resolve_and_add_req)
+  C:/esp/v6.0/esp-idf/tools/cmake/build.cmake:751 (__build_expand_requirements)
+  C:/esp/v6.0/esp-idf/tools/cmake/project.cmake:742 (idf_build_process)
+  CMakeLists.txt:8 (project)
+
+
+ninja: error: rebuilding 'build.ninja': subcommand failed

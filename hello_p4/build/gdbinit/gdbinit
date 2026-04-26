@@ -1,0 +1,2 @@
+source D:/esp32/hello_p4/build/gdbinit/symbols
+source D:/esp32/hello_p4/build/gdbinit/connect
