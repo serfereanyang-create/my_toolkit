@@ -1,1 +1,2 @@
 mq135传感器AO接gpio4
+RGB_TFT屏幕gpio12345 20排下来
