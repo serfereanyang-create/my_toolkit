@@ -9,7 +9,7 @@ if errorlevel 1 goto :fail
 
 echo [2/5] 设置远程仓库...
 git remote remove origin >nul 2>nul
-git remote add origin https://github.com/serferean/my_toolkit.git
+git remote add origin https://github.com/serfereanyang-create/my_toolkit.git
 if errorlevel 1 goto :fail
 
 echo [3/5] 添加文件...
