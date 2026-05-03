@@ -3,9 +3,19 @@ setlocal EnableExtensions
 
 cd /d "%~dp0" || goto fail
 
-set http_proxy=http://127.0.0.1:7890
-set https_proxy=http://127.0.0.1:7890
-set all_proxy=socks5://127.0.0.1:7890
+set "USE_PROXY=0"
+powershell -NoProfile -Command "$c = New-Object Net.Sockets.TcpClient; try { $c.Connect('127.0.0.1',7890); exit 0 } catch { exit 1 } finally { $c.Close() }" >nul 2>nul
+if not errorlevel 1 set "USE_PROXY=1"
+
+if "%USE_PROXY%"=="1" (
+    set http_proxy=http://127.0.0.1:7890
+    set https_proxy=http://127.0.0.1:7890
+    set all_proxy=socks5://127.0.0.1:7890
+) else (
+    set http_proxy=
+    set https_proxy=
+    set all_proxy=
+)
 
 echo [1/6] Configure git identity
 git config --local user.name "serferean"
