@@ -1,16 +1,19 @@
 # SGP30 Test
 
-This folder contains a simple `ESP32-P4 + SGP30` test sketch and sample output data.
+This folder contains `ESP32-P4 + SGP30` test sketches and sample output data.
 
 ## Files
 
 - `sgp30_test.ino`: Arduino sketch for reading SGP30 values over I2C
+- `sgp30_lcd_realtime/sgp30_lcd_realtime.ino`: Arduino sketch for realtime serial + LCD display
 - `sgp30.csv`: Example output data captured from serial logs
 - `sgp30_plot.png`: Plot generated from the captured CSV data
 
-## What The Sketch Does
+## What The Sketches Do
 
-The sketch:
+### `sgp30_test.ino`
+
+This sketch:
 
 - initializes I2C on the ESP32-P4
 - initializes the SGP30 sensor
@@ -27,6 +30,32 @@ index,co2_ppm,tvoc_ppb
 ```
 
 This matches the format used in `sgp30.csv`.
+
+### `sgp30_lcd_realtime.ino`
+
+This sketch adds an ST7735S LCD and does both:
+
+- prints `TVOC` to Serial
+- displays `TVOC` in realtime on the LCD
+- runs a quick LCD color self-test at startup
+
+LCD wiring used in this sketch:
+
+```cpp
+TFT_CS   -> GPIO5
+TFT_DC   -> GPIO4
+TFT_RST  -> GPIO3
+TFT_MOSI -> GPIO2
+TFT_SCLK -> GPIO1
+TFT_BLK  -> GPIO20
+```
+
+SGP30 wiring used in this sketch:
+
+```cpp
+SDA -> GPIO47
+SCL -> GPIO46
+```
 
 ## Board And Core
 
@@ -53,15 +82,15 @@ The sketch uses:
 The sketch currently uses:
 
 ```cpp
-static const int I2C_SDA_PIN = 8;
-static const int I2C_SCL_PIN = 9;
+static const int I2C_SDA_PIN = 47;
+static const int I2C_SCL_PIN = 46;
 ```
 
-If your ESP32-P4 board or wiring uses different I2C pins, update these two constants in `sgp30_test.ino`.
+If your ESP32-P4 board or wiring uses different I2C pins, update these two constants in the sketch you are using.
 
 ## How To Run
 
-1. Open `sgp30_test.ino` in Arduino IDE.
+1. Open either `sgp30_test.ino` or `sgp30_lcd_realtime/sgp30_lcd_realtime.ino` in Arduino IDE.
 2. Select `Tools -> Board -> ESP32-P4 Dev Board`.
 3. Select the correct serial port under `Tools -> Port`.
 4. Verify the `Adafruit SGP30 Sensor` library is installed.
@@ -69,6 +98,8 @@ If your ESP32-P4 board or wiring uses different I2C pins, update these two const
 6. Open Serial Monitor at `115200` baud.
 
 ## Expected Behavior
+
+### `sgp30_test.ino`
 
 On startup, the sketch will print:
 
@@ -82,6 +113,29 @@ If the sensor is not detected, the sketch prints:
 ```text
 # ERROR: SGP30 not found. Check wiring and I2C pins.
 ```
+
+### `sgp30_lcd_realtime.ino`
+
+On startup, the LCD sketch will:
+
+1. turn on the backlight
+2. run a quick red -> green -> white -> black LCD test
+3. show `LCD OK`
+4. start realtime SGP30 display
+
+Serial Monitor baud rate:
+
+```text
+115200
+```
+
+The LCD then shows:
+
+- current sample number
+- `TVOC ppb`
+- simple VOC label: `GOOD / MID / HIGH`
+
+If the sensor is not detected, the LCD shows an error screen.
 
 ## Notes
 
