@@ -1,151 +1,178 @@
-# SC16_CO 说明
+# SC16_CO 复现说明
 
-这个目录放的是 `SC16-CO` 一氧化碳传感器相关的两个版本：
+这个目录里放的是 `SC16-CO` 一氧化碳传感器相关示例，目标是让后面的人拿到目录后，能快速知道：
 
-- `main.c`
-  - 偏 ESP-IDF/C 工程用法
-  - 只负责读取 `SC16-CO` 的串口数据并打印 `CO ppm`
-- `sc16_co_fan_control_example/sc16_co_fan_control_example.ino`
-  - 偏 Arduino 复现用法
-  - 在读取 `SC16-CO` 浓度的基础上，联动 2 线风扇 PWM 调速
+- 哪个文件适合 Arduino IDE
+- 哪个文件是原始 IDF 版
+- 怎么接线
+- 烧录后看到什么现象算正常
 
-## 目录结构
+## 目录说明
 
-- `main.c`
-- `sc16_co_fan_control_example/sc16_co_fan_control_example.ino`
-- `CMakelists.txt`
+### 1. `main.c`
 
-## 接线
+路径：
 
-### SC16-CO
+`D:\codex\my_toolkit\hello_p4\测试器件文件夹\SC16_CO\main.c`
 
-当前代码默认接线：
+用途：
 
-- `Vin -> 5V`
-- `GND -> GND`
-- `TXD -> GPIO32`（ESP32-P4 接收）
-- `RXD -> GPIO33`（ESP32-P4 发送）
+- 原始 ESP-IDF 风格版本
+- 入口是 `app_main()`
+- 只负责读取 `SC16-CO` 串口数据并打印 `CO ppm`
 
-代码里的默认宏：
+适合：
 
-```c
-#define CO_RX_PIN_NUM 32
-#define CO_TX_PIN_NUM 33
-```
+- 你在 ESP-IDF 工程里验证传感器是否能正常读数
 
-### 2 线风扇
+### 2. `sc16_co_p4_arduino\sc16_co_p4_arduino.ino`
 
-Arduino 示例里默认风扇控制脚：
+路径：
 
-```c
-#define FAN_PWM_PIN_NUM 4
-```
+`D:\codex\my_toolkit\hello_p4\测试器件文件夹\SC16_CO\sc16_co_p4_arduino\sc16_co_p4_arduino.ino`
 
-注意：
+用途：
 
-- 这是控制信号脚，不代表可以直接让 ESP32 引脚给风扇供电
-- 2 线风扇通常需要外部供电，并通过 MOSFET/驱动模块做 PWM 控制
-- 如果是你当前硬件环境下 `pwm.ino` 这套接法已经验证可用，就保持和那边一致
+- 给 `ESP32-P4` 在 `Arduino IDE` 里直接编译
+- 参考了 `main.c` 的 SC16-CO 解析逻辑
+- 参考了 `lcd\rgb_test.ino` 的 LCD 初始化和显示方式
 
-## `main.c` 在做什么
+功能：
 
-`main.c` 是最基础的读数版本，逻辑很简单：
+- 串口实时打印 CO 数值
+- ST7735S LCD 实时显示 CO 数值和状态
+- 开机先做 LCD 自检，方便判断白屏问题是不是屏幕初始化导致
 
-1. 初始化 `UART1`
-2. 等待 `SC16-CO` 发回 9 字节数据帧
-3. 校验帧头和 checksum
-4. 取出 `ppm`
-5. 根据数值打印：
-   - `normal`
-   - `warning`
-   - `danger`
+适合：
 
-这个版本适合先确认：
+- ESP32-P4
+- Arduino IDE
+- 需要边看串口边看屏幕实时数值
 
-- 传感器接线对不对
-- 串口有没有数据
-- `ppm` 能不能稳定读到
+### 3. `sc16_co_fan_control_example\sc16_co_fan_control_example.ino`
 
-## Arduino 联动示例在做什么
+路径：
 
-`sc16_co_fan_control_example.ino` 是在 `SC16-CO` 读数基础上，加入风扇联动逻辑的版本。
+`D:\codex\my_toolkit\hello_p4\测试器件文件夹\SC16_CO\sc16_co_fan_control_example\sc16_co_fan_control_example.ino`
 
-它参考了 `pwm调频风扇/pwm.ino` 的 PWM 调用方式：
+用途：
 
-```cpp
-ledcAttachChannel(...)
-ledcWriteChannel(...)
-```
+- SC16-CO 浓度联动 2 线风扇
 
-也就是说，风扇控制这部分是按已经验证能跑的那套风格写的，不再用另一套 IDF 配置结构。
+特点：
 
-## 当前浓度 -> 风速策略
-
-Arduino 示例里当前分档如下：
-
-- `0~30 ppm -> 30%`
-- `31~50 ppm -> 35%`
-- `51~100 ppm -> 50%`
-- `101~150 ppm -> 70%`
-- `151~200 ppm -> 85%`
-- `>200 ppm -> 100%`
-
-这样做的目的：
-
-- 风扇始终保持最低转速
-- `CO` 升高时再逐步加速
-
-另外还保留了一个启动保护逻辑：
-
-- 如果风扇当前近似停转
-- 且目标风速不是满速
-- 会先 `100%` 冲一下，再降到目标速度
-
-这样更适合 2 线风扇低速起转不稳的情况。
+- 风扇始终保留最低转速
+- CO 升高时再逐步加速
 
 ## 复现建议
 
-建议按这个顺序复现：
+如果只是要先确认：
 
-1. 先跑 `main.c`
-2. 确认串口能稳定读到 `CO ppm`
-3. 单独确认风扇 PWM 方案能转
-4. 再跑 `sc16_co_fan_control_example.ino`
+- 屏幕有没有正常显示
+- SC16-CO 能不能读到数
 
-这样排错最清楚：
+优先烧录这个文件：
 
-- 如果 `main.c` 不出数据，是传感器/UART 问题
-- 如果 `pwm.ino` 不转，是风扇/PWM/接线问题
-- 两边都单独没问题，再测联动逻辑
+`D:\codex\my_toolkit\hello_p4\测试器件文件夹\SC16_CO\sc16_co_p4_arduino\sc16_co_p4_arduino.ino`
 
-## 常改的地方
+因为这份最适合现在这个组合：
 
-最常需要调的就是这几个参数：
+- ESP32-P4
+- Arduino IDE
+- ST7735S LCD
+- SC16-CO
 
-### 1. SC16-CO 串口引脚
+## 接线
 
-```c
-CO_RX_PIN_NUM
-CO_TX_PIN_NUM
+### SC16-CO -> ESP32-P4
+
+- `Vin -> 5V`
+- `GND -> GND`
+- `TXD -> GPIO32`
+- `RXD -> GPIO33`
+
+### ST7735S LCD -> ESP32-P4
+
+- `CS -> GPIO5`
+- `DC -> GPIO4`
+- `RST -> GPIO3`
+- `SDA(MOSI) -> GPIO2`
+- `SCL(SCK) -> GPIO1`
+- `BLK -> GPIO20`
+
+## Arduino 版运行现象
+
+### 正常启动时
+
+烧录 `sc16_co_p4_arduino.ino` 后，屏幕会先执行 LCD 自检：
+
+1. 全屏红色
+2. 全屏绿色
+3. 全屏白色
+4. 全屏黑色
+5. 显示 `LCD OK`
+6. 然后进入 CO 数据显示页面
+
+如果看到这一步，基本说明：
+
+- 屏幕接线是通的
+- LCD 初始化参数当前可用
+
+### 串口输出
+
+串口监视器波特率用：
+
+`115200`
+
+启动时会看到类似输出：
+
+```text
+Step 1: backlight on
+Step 2: LCD self-test
+LCD init start
+LCD init done
+Step 3: SC16-CO UART begin
+Step 4: waiting SC16-CO data
 ```
 
-### 2. 风扇 PWM 引脚
+读到有效数据后会继续打印：
 
-```c
-FAN_PWM_PIN_NUM
+```text
+CO = 12 ppm    status = normal
 ```
 
-### 3. PWM 频率
+### 屏幕显示规则
 
-```c
-FAN_PWM_FREQ_HZ
-```
+- `<= 50 ppm`：绿色
+- `51 ~ 200 ppm`：黄色
+- `> 200 ppm`：红色
 
-### 4. 浓度分档
+屏幕会显示：
 
-在 `CO_FAN_RULES` 里改。
+- 当前 `CO ppm` 数值
+- 当前状态 `normal / warning / danger`
 
-## 给后来人的一句话
+如果连续读不到有效帧，屏幕会显示错误提示。
 
-如果你只是想确认 `SC16-CO` 能不能读，先看 `main.c`。  
-如果你是想做“CO 浓度升高 -> 风扇加速”，直接看 `sc16_co_fan_control_example.ino`。
+## 白屏时怎么排
+
+如果出现“背光亮，但白屏无内容”，优先看这几个点：
+
+1. 先确认烧录的是不是 `sc16_co_p4_arduino.ino`
+2. 串口监视器波特率是不是 `115200`
+3. LCD 接线是不是和上面一致
+4. 屏幕型号是不是这套 `ST7735S`
+5. 先看 LCD 自检颜色页能不能出来
+
+如果自检颜色页能出来，而后面没有 CO 数值，那问题通常不在 LCD，而在 `SC16-CO` 串口数据。
+
+## 为什么这里给的是 `.ino` 不是纯 `.c`
+
+虽然需求一开始提的是“适合 P4 在 Arduino IDE 编译的 C 语言文件”，但 Arduino IDE 实际上走的是 Arduino 草图 / C++ 方式。
+
+所以为了后面的人最容易复现，这里保留了两条线：
+
+- `main.c`：给 IDF 工程参考
+- `sc16_co_p4_arduino.ino`：给 Arduino IDE 直接编译
+
+这样最省事，也最贴近实际使用。
