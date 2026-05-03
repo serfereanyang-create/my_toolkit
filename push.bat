@@ -1,48 +1,57 @@
 @echo off
-setlocal
-cd /d D:\codex\my_toolkit
+setlocal EnableExtensions
+
+cd /d D:\codex\my_toolkit || goto fail
 
 set http_proxy=http://127.0.0.1:7890
 set https_proxy=http://127.0.0.1:7890
 set all_proxy=socks5://127.0.0.1:7890
-set GIT_SSL_NO_VERIFY=
 
-echo [1/6] 设置当前仓库 Git 身份...
+echo [1/6] Configure git identity
 git config --local user.name "serferean"
+if errorlevel 1 goto fail
 git config --local user.email "serferean@users.noreply.github.com"
-if errorlevel 1 goto :fail
+if errorlevel 1 goto fail
 
-echo [2/6] 设置远程仓库...
-git remote remove origin >nul 2>nul
-git remote add origin https://github.com/serfereanyang-create/my_toolkit.git
-if errorlevel 1 goto :fail
-
-echo [3/6] 设置本次推送使用代理与 OpenSSL...
-git config --local http.sslBackend openssl
-if errorlevel 1 goto :fail
-
-echo [4/6] 添加文件...
-git add .
-if errorlevel 1 goto :fail
-
-echo [5/6] 提交更改...
-git commit -m "update %date% %time%"
+echo [2/6] Configure remote
+git remote get-url origin >nul 2>nul
 if errorlevel 1 (
-    echo 可能没有可提交的内容，继续尝试推送...
+    git remote add origin https://github.com/serfereanyang-create/my_toolkit.git
+) else (
+    git remote set-url origin https://github.com/serfereanyang-create/my_toolkit.git
 )
+if errorlevel 1 goto fail
 
-echo [6/6] 推送到 origin/main...
+echo [3/6] Configure ssl backend
+git config --local http.sslBackend openssl
+if errorlevel 1 goto fail
+
+echo [4/6] Stage files
+git add -A
+if errorlevel 1 goto fail
+
+git diff --cached --quiet
+if errorlevel 1 goto commit
+goto done
+
+:commit
+echo [5/6] Commit changes
+git commit -m "update %date% %time%"
+if errorlevel 1 goto fail
+
+echo [6/6] Push to origin/main
 git branch -M main
-git -c http.sslBackend=openssl push -u origin main
-if errorlevel 1 goto :fail
+git -c http.sslBackend=openssl push -u origin HEAD:main
+if errorlevel 1 goto fail
 
+:done
 echo.
-echo 推送完成。
+echo Push completed.
 pause
 exit /b 0
 
 :fail
 echo.
-echo 执行失败，请检查上面的 Git 输出。
+echo Push failed.
 pause
 exit /b 1
