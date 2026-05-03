@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 
-cd /d D:\codex\my_toolkit || goto fail
+cd /d "%~dp0" || goto fail
 
 set http_proxy=http://127.0.0.1:7890
 set https_proxy=http://127.0.0.1:7890
