@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/CMakeFiles/bootloader
+D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/CMakeFiles/bootloader.rule
+D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/CMakeFiles/bootloader-complete.rule
+D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule

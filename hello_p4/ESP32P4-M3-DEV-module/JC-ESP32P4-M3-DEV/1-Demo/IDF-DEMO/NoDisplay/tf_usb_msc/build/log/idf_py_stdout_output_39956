@@ -1,0 +1,21 @@
+[1/11] Linking C static library esp-idf\bsp_extra\libbsp_extra.a
+[2/11] Performing build step for 'bootloader'
+[1/1] C:\Windows\system32\cmd.exe /C "cd /D D:\codex\my_toolkit\hello_p4\ESP32P4-M3-DEV-module\JC-ESP32P4-M3-DEV\1-Demo\IDF-DEMO\NoDisplay\tf_usb_msc\build\bootloader\esp-idf\esptool_py && D:\codex\.espressif\python_env\idf5.4_py3.13_env\Scripts\python.exe C:/esp/esp-idf-v5.4/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x2000 D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/bootloader/bootloader.bin"
+Bootloader binary size 0x5c90 bytes. 0x370 bytes (4%) free.
+[3/11] No install step for 'bootloader'
+[4/11] Completed 'bootloader'
+[5/11] Building C object esp-idf/main/CMakeFiles/__idf_main.dir/tf_usb_msc.c.obj
+[6/11] Linking C static library esp-idf\main\libmain.a
+[7/11] Generating ld/sections.ld
+info: INFO: Symbol BSP_I2S_NUM defined in multiple locations (see below). Please check if this is a correct behavior or a random name match:
+    D:\codex\my_toolkit\hello_p4\ESP32P4-M3-DEV-module\JC-ESP32P4-M3-DEV\1-Demo\IDF-DEMO\NoDisplay\common_components\espressif__esp32_p4_function_ev_board\Kconfig:30
+    D:\codex\my_toolkit\hello_p4\ESP32P4-M3-DEV-module\JC-ESP32P4-M3-DEV\1-Demo\IDF-DEMO\NoDisplay\common_components\bsp_extra\Kconfig:2
+[8/11] Building C object CMakeFiles/tf_usb_msc.elf.dir/project_elf_src_esp32p4.c.obj
+[9/11] Linking CXX executable tf_usb_msc.elf
+FAILED: tf_usb_msc.elf 
+C:\Windows\system32\cmd.exe /C "cd . && C:\Espressif\tools\tools\riscv32-esp-elf\esp-14.2.0_20260121\riscv32-esp-elf\bin\riscv32-esp-elf-g++.exe -march=rv32imafc_zicsr_zifencei_xesploop_xespv -mabi=ilp32f -nostartfiles -march=rv32imafc_zicsr_zifencei_xesploop_xespv -mabi=ilp32f  --specs=nosys.specs -Wl,--cref -Wl,--defsym=IDF_TARGET_ESP32P4=0 -Wl,--Map=D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/build/tf_usb_msc.map -Wl,--no-warn-rwx-segments -Wl,--orphan-handling=warn -fno-rtti -fno-lto -Wl,--gc-sections -Wl,--warn-common -T rom.api.ld -T esp32p4.peripherals.ld -T esp32p4.rom.ld -T esp32p4.rom.api.ld -T esp32p4.rom.rvfp.ld -T esp32p4.rom.wdt.ld -T esp32p4.rom.systimer.ld -T esp32p4.rom.version.ld -T esp32p4.rom.newlib.ld -T memory.ld -T sections.ld -Wl,--enable-non-contiguous-regions @CMakeFiles\tf_usb_msc.elf.rsp -o tf_usb_msc.elf && cd ."
+C:/Espressif/tools/tools/riscv32-esp-elf/esp-14.2.0_20260121/riscv32-esp-elf/bin/../lib/gcc/riscv32-esp-elf/14.2.0/../../../../riscv32-esp-elf/bin/ld.exe: esp-idf/main/libmain.a(tf_usb_msc.c.obj): in function `app_main':
+D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/main/tf_usb_msc.c:161:(.text.app_main+0x8e): undefined reference to `tinyusb_msc_new_storage_sdmmc'
+C:/Espressif/tools/tools/riscv32-esp-elf/esp-14.2.0_20260121/riscv32-esp-elf/bin/../lib/gcc/riscv32-esp-elf/14.2.0/../../../../riscv32-esp-elf/bin/ld.exe: D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo/IDF-DEMO/NoDisplay/tf_usb_msc/main/tf_usb_msc.c:162:(.text.app_main+0xa2): undefined reference to `tinyusb_msc_set_storage_callback'
+collect2.exe: error: ld returned 1 exit status
+ninja: build stopped: subcommand failed.
