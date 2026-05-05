@@ -1,0 +1,64 @@
+CMake Warning at C:/esp/esp-idf-v5.4/tools/cmake/git_submodules.cmake:52 (message):
+  Git submodule components/openthread/lib is out of date.  Run the following
+  command to fix: git submodule update --init --recursive
+Call Stack (most recent call first):
+  C:/esp/esp-idf-v5.4/tools/cmake/build.cmake:109 (git_submodule_check)
+  C:/esp/esp-idf-v5.4/tools/cmake/build.cmake:284 (__build_get_idf_git_revision)
+  C:/esp/esp-idf-v5.4/tools/cmake/idf.cmake:55 (__build_init)
+  C:/esp/esp-idf-v5.4/tools/cmake/project.cmake:29 (include)
+  CMakeLists.txt:5 (include)
+
+
+CMake Warning at C:/esp/esp-idf-v5.4/tools/cmake/git_submodules.cmake:52 (message):
+  Git submodule components/openthread/openthread is out of date.  Run the
+  following command to fix: git submodule update --init --recursive
+Call Stack (most recent call first):
+  C:/esp/esp-idf-v5.4/tools/cmake/build.cmake:109 (git_submodule_check)
+  C:/esp/esp-idf-v5.4/tools/cmake/build.cmake:284 (__build_get_idf_git_revision)
+  C:/esp/esp-idf-v5.4/tools/cmake/idf.cmake:55 (__build_init)
+  C:/esp/esp-idf-v5.4/tools/cmake/project.cmake:29 (include)
+  CMakeLists.txt:5 (include)
+
+
+Traceback (most recent call last):
+  File "C:\esp\esp-idf-v5.4\tools\kconfig_new\prepare_kconfig_files.py", line 102, in <module>
+    main()
+    ~~~~^^
+  File "C:\esp\esp-idf-v5.4\tools\kconfig_new\prepare_kconfig_files.py", line 98, in main
+    _prepare_source_files(env, list_separator)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "C:\esp\esp-idf-v5.4\tools\kconfig_new\prepare_kconfig_files.py", line 64, in _prepare_source_files
+    _write_source_file(env_dict['COMPONENT_KCONFIGS'], env_dict['COMPONENT_KCONFIGS_SOURCE_FILE'])
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\esp\esp-idf-v5.4\tools\kconfig_new\prepare_kconfig_files.py", line 60, in _write_source_file
+    with open(config_file, 'w', encoding='utf-8') as f:
+         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo锛堝畼鏂圭ず渚嬶級/IDF-DEMO/鏃犺Е鎽稿睆绀轰緥/wifi_scan/build/kconfigs.in'
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "D:\codex\.espressif\python_env\idf5.4_py3.13_env\Lib\site-packages\kconfgen\__main__.py", line 18, in <module>
+    main()
+    ~~~~^^
+  File "D:\codex\.espressif\python_env\idf5.4_py3.13_env\Lib\site-packages\kconfgen\core.py", line 646, in main
+    config = kconfiglib.Kconfig(args.kconfig, parser_version=parser_version)
+  File "D:\codex\.espressif\python_env\idf5.4_py3.13_env\Lib\site-packages\kconfiglib\core.py", line 921, in __init__
+    self()
+    ~~~~^^
+  File "D:\codex\.espressif\python_env\idf5.4_py3.13_env\Lib\site-packages\kconfiglib\core.py", line 935, in __call__
+    prev = self._parse_block(None, self.top_node, self.top_node)
+  File "D:\codex\.espressif\python_env\idf5.4_py3.13_env\Lib\site-packages\kconfiglib\core.py", line 2746, in _parse_block
+    raise KconfigError(
+    ...<10 lines>...
+    )
+kconfiglib.core.KconfigError: C:/esp/esp-idf-v5.4/Kconfig:316: 'D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo锛堝畼鏂圭ず渚嬶級/IDF-DEMO/鏃犺Е鎽稿睆绀轰緥/wifi_scan/build/kconfigs_projbuild.in' not found (in 'source "$COMPONENT_KCONFIGS_PROJBUILD_SOURCE_FILE"'). Check that environment variables are set correctly (e.g. $srctree, which is unset or blank). Also note that unset environment variables expand to the empty string.
+CMake Error at C:/esp/esp-idf-v5.4/tools/cmake/kconfig.cmake:222 (message):
+  Failed to run kconfgen
+  (D:/codex/.espressif/python_env/idf5.4_py3.13_env/Scripts/python.exe;-m;kconfgen;--list-separator=semicolon;--kconfig;C:/esp/esp-idf-v5.4/Kconfig;--sdkconfig-rename;C:/esp/esp-idf-v5.4/sdkconfig.rename;--config;D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo（官方示例）/IDF-DEMO/无触摸屏示例/wifi_scan/sdkconfig;--defaults;D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo（官方示例）/IDF-DEMO/无触摸屏示例/wifi_scan/sdkconfig.defaults;--env-file;D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo（官方示例）/IDF-DEMO/无触摸屏示例/wifi_scan/build/config.env).
+  Error 1
+Call Stack (most recent call first):
+  C:/esp/esp-idf-v5.4/tools/cmake/build.cmake:705 (__kconfig_generate_config)
+  C:/esp/esp-idf-v5.4/tools/cmake/project.cmake:722 (idf_build_process)
+  CMakeLists.txt:6 (project)
+
+

@@ -1,1 +1,0 @@
-{"net":{"http_server_properties":{"servers":[{"alternative_service":[{"advertised_alpns":["h3"],"expiration":"13422369634211082","port":443,"protocol_str":"quic"}],"anonymization":["GAAAABMAAABodHRwczovL2VuZG5vdGUuY29tAA==",false,0],"server":"https://click.endnote.com","supports_spdy":true}],"version":5},"network_qualities":{"CAASABiAgICA+P////8B":"4G"}}}
