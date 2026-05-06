@@ -37,7 +37,7 @@ git config --local http.sslBackend openssl
 if errorlevel 1 goto fail
 
 echo [4/6] Stage files
-git add -A -- . ":(exclude)hello_p4/idf_test"
+git add -A
 if errorlevel 1 goto fail
 
 git diff --cached --quiet

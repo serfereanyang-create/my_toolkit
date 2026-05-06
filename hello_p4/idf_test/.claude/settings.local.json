@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(& 'D:\\\\OpenCode\\\\opencode-cli.exe' --help)"
+    ]
+  }
+}
