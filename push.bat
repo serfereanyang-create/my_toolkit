@@ -42,19 +42,19 @@ if errorlevel 1 goto fail
 
 git diff --cached --quiet
 if errorlevel 1 goto commit
-goto done
+goto push
 
 :commit
 echo [5/6] Commit changes
 git commit -m "update %date% %time%"
 if errorlevel 1 goto fail
 
+:push
 echo [6/6] Push to origin/main
 git branch -M main
 git -c http.sslBackend=openssl push -u origin HEAD:main
 if errorlevel 1 goto fail
 
-:done
 echo.
 echo Push completed.
 pause
