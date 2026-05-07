@@ -1,0 +1,9 @@
+
+
+# Load bootloader symbols
+set confirm off
+    # Bootloader elf was not found
+set confirm on
+
+# Load application symbols
+file D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/bootloader/bootloader.elf

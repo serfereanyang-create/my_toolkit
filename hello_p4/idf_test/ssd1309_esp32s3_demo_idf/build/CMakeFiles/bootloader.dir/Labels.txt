@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/CMakeFiles/bootloader
+D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/CMakeFiles/bootloader.rule
+D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/CMakeFiles/bootloader-complete.rule
+D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule
