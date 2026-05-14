@@ -1,0 +1,2886 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="实验室智能通风及危险操作识别安全节点管理员监控静态网站" />
+    <title>实验室安全节点管理员监控</title>
+    
+    <style>
+:root {
+  --page: #fafafa;
+  --panel: #ffffff;
+  --text: #111827;
+  --muted: #737373;
+  --line: #dbdbdb;
+  --soft-line: #efefef;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.08);
+  --pink: #e1306c;
+  --purple: #833ab4;
+  --orange: #f77737;
+  --blue: #2563eb;
+  --green: #16a34a;
+  --amber: #d97706;
+  --red: #dc2626;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 8% 10%, rgba(225, 48, 108, 0.14), transparent 24rem),
+    radial-gradient(circle at 92% 12%, rgba(131, 58, 180, 0.13), transparent 24rem),
+    var(--page);
+  font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+}
+button, input { font: inherit; }
+body.locked { overflow: hidden; }
+.app-shell { display: grid; grid-template-columns: 270px minmax(0, 1fr); min-height: 100vh; }
+.sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  height: 100vh;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  padding: 26px 18px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(18px);
+}
+.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 34px; }
+.brand-logo, .story-ring {
+  display: grid;
+  place-items: center;
+  color: white;
+  background: linear-gradient(135deg, var(--purple), var(--pink), var(--orange));
+  font-weight: 900;
+}
+.brand-logo { width: 44px; height: 44px; border-radius: 15px; }
+.brand strong { display: block; font-size: 22px; letter-spacing: -0.04em; }
+.brand span, .sidebar-card p, .side-note p, .eyebrow, .section-head span, .hero-card p, .mini-card p, .muted { color: var(--muted); }
+.side-nav { display: grid; gap: 8px; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  border-radius: 16px;
+  padding: 13px 14px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  gap: 12px;
+  text-align: left;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+.nav-item:hover, .nav-item.active { background: #f2f2f2; transform: translateX(2px); }
+.nav-icon { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--line); border-radius: 10px; background: white; }
+.nav-item small { margin-left: auto; border-radius: 999px; padding: 2px 8px; color: white; background: var(--pink); font-size: 12px; }
+.account-card {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border: 1px solid var(--soft-line);
+  border-radius: 18px;
+  padding: 12px;
+  color: var(--text);
+  background: #fff;
+  cursor: pointer;
+  gap: 12px;
+  text-align: left;
+}
+.account-copy p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.account-avatar { flex: 0 0 auto; }
+.sidebar-card { display: flex; align-items: center; gap: 12px; margin-top: auto; border-top: 1px solid var(--soft-line); padding-top: 18px; }
+.story-ring { width: 54px; height: 54px; border: 3px solid white; border-radius: 50%; box-shadow: 0 0 0 2px rgba(225, 48, 108, 0.35); }
+.sidebar-card p { margin: 4px 0 0; font-size: 13px; }
+.side-note { margin-top: 18px; border: 1px solid var(--soft-line); border-radius: 18px; padding: 14px; background: #fafafa; }
+.side-note p { margin: 8px 0 0; line-height: 1.6; }
+.sidebar-export {
+  margin-top: 18px;
+  border: 1px solid var(--soft-line);
+  border-radius: 18px;
+  padding: 14px;
+  background: #fff;
+}
+.sidebar-export h3 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+.export-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.export-field > span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+.export-select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 900;
+}
+.export-button {
+  width: 100%;
+  border: 0;
+  border-radius: 14px;
+  padding: 11px 14px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--purple), var(--pink), var(--orange));
+  cursor: pointer;
+  font-weight: 900;
+}
+.export-help {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.main-content { min-width: 0; padding: 28px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; max-width: 1180px; margin: 0 auto 18px; }
+.eyebrow { margin: 0 0 6px; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 0; font-size: clamp(28px, 4vw, 40px); letter-spacing: -0.04em; }
+h2 { margin-bottom: 0; letter-spacing: -0.03em; }
+.topbar-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.account-button {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 10px 6px 6px;
+  color: var(--text);
+  background: #fff;
+  cursor: pointer;
+  gap: 8px;
+}
+.account-button span:first-child {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: linear-gradient(135deg, var(--purple), var(--pink), var(--orange));
+  font-weight: 900;
+}
+.risk-pill, .status-chip { display: inline-flex; align-items: center; width: fit-content; border-radius: 999px; padding: 7px 12px; font-weight: 800; }
+.status-chip { color: #262626; background: #efefef; }
+.risk-normal { color: #166534; background: #dcfce7; }
+.risk-warning { color: #92400e; background: #fef3c7; }
+.risk-danger { color: #991b1b; background: #fee2e2; }
+.page-section { display: none; max-width: 1180px; margin: 0 auto; }
+.page-section.active { display: block; }
+.card { border: 1px solid var(--line); border-radius: 24px; background: rgba(255, 255, 255, 0.94); box-shadow: var(--shadow); }
+.hero-grid, .split-grid, .data-grid, .settings-grid { display: grid; gap: 18px; }
+.hero-grid { grid-template-columns: minmax(0, 1fr) 280px; }
+.hero-card { display: flex; justify-content: space-between; overflow: hidden; padding: 28px; background: linear-gradient(135deg, rgba(131, 58, 180, 0.08), rgba(225, 48, 108, 0.08), rgba(247, 119, 55, 0.08)), white; gap: 22px; }
+.hero-card h2 { max-width: 720px; font-size: clamp(28px, 4vw, 44px); line-height: 1.1; }
+.hero-card p:last-child { margin: 16px 0 0; max-width: 760px; line-height: 1.8; }
+.hero-metric, .mini-card { display: grid; align-content: center; min-width: 180px; border: 1px solid var(--soft-line); border-radius: 22px; padding: 18px; background: rgba(255, 255, 255, 0.78); }
+.hero-metric span, .mini-card span, .sensor-card .label, .trend-grid span { color: var(--muted); }
+.hero-metric strong, .mini-card strong { display: block; margin: 10px 0; font-size: 34px; }
+.mini-card { padding: 24px; }
+.section-card { margin-top: 18px; padding: 22px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.section-head.compact { margin-bottom: 14px; }
+.sensor-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.sensor-card { position: relative; overflow: hidden; min-height: 150px; border: 1px solid var(--soft-line); border-radius: 22px; padding: 18px; background: #fff; }
+.sensor-card::after { position: absolute; right: -36px; bottom: -52px; width: 128px; height: 128px; border-radius: 50%; background: linear-gradient(135deg, rgba(131, 58, 180, 0.13), rgba(225, 48, 108, 0.1)); content: ""; }
+.sensor-card .value { display: block; margin-top: 12px; font-size: 38px; font-weight: 900; letter-spacing: -0.04em; }
+.sensor-card .unit { color: var(--muted); }
+.sensor-card .state { margin-top: 14px; }
+.real-device-grid { display: grid; gap: 14px; }
+.real-device-top { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.real-device-stat { border: 1px solid var(--soft-line); border-radius: 20px; padding: 18px; background: #fff; }
+.real-device-stat span { color: var(--muted); }
+.real-device-stat strong { display: block; margin: 10px 0 8px; font-size: 28px; }
+.real-device-stat p { margin: 0; color: var(--muted); line-height: 1.7; }
+.serial-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.serial-secondary { border: 1px solid var(--line); border-radius: 999px; padding: 10px 18px; color: var(--text); background: #fff; cursor: pointer; font-weight: 900; }
+.serial-candidate-list { display: grid; gap: 10px; }
+.serial-candidate-item { border: 1px solid var(--soft-line); border-radius: 18px; padding: 14px; background: #fafafa; }
+.serial-candidate-item strong { display: block; margin-bottom: 6px; }
+.serial-candidate-item span { color: var(--muted); font-size: 13px; }
+.split-grid { grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr); }
+.vision-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 18px; }
+.phone-preview { border: 1px solid var(--line); border-radius: 30px; padding: 12px; background: #111; }
+.phone-notch { width: 76px; height: 8px; margin: 0 auto 10px; border-radius: 999px; background: #2f2f2f; }
+.camera-feed { display: grid; min-height: 185px; place-items: center; border-radius: 22px; color: #dbeafe; background: linear-gradient(135deg, rgba(17, 24, 39, 0.92), rgba(37, 99, 235, 0.72)), repeating-linear-gradient(90deg, transparent 0 18px, rgba(255, 255, 255, 0.08) 18px 19px); }
+.camera-feed strong { color: white; font-size: 22px; }
+.vision-copy { display: grid; align-content: center; gap: 10px; line-height: 1.8; }
+.status-list { display: grid; gap: 12px; }
+.status-item { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--soft-line); padding-bottom: 12px; }
+.status-item:last-child { border-bottom: 0; padding-bottom: 0; }
+.event-stream { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.event-item { border: 1px solid var(--soft-line); border-radius: 18px; padding: 14px; background: #fff; }
+.event-item strong, .event-item small { display: block; }
+.event-item small, .event-item span { color: var(--muted); }
+.data-grid { grid-template-columns: minmax(0, 1fr) 340px; }
+.trend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.trend-grid > div { border: 1px solid var(--soft-line); border-radius: 20px; padding: 14px; background: #fff; }
+canvas { width: 100%; height: 260px; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border-bottom: 1px solid var(--soft-line); padding: 12px 10px; text-align: left; vertical-align: top; }
+th { color: var(--muted); font-size: 13px; }
+.json-box { overflow: auto; max-height: 340px; border: 1px solid var(--soft-line); border-radius: 18px; padding: 16px; color: #1f2937; background: #fafafa; line-height: 1.6; }
+.settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.deploy-card { grid-column: 1 / -1; }
+.settings-list, .threshold-grid, .deploy-steps { display: grid; gap: 12px; margin-top: 16px; }
+.settings-list label, .threshold-grid article, .deploy-steps div { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--soft-line); border-radius: 18px; padding: 14px; background: #fff; gap: 14px; }
+.settings-list input { width: 42px; height: 22px; accent-color: var(--pink); }
+.threshold-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.threshold-grid article { align-items: flex-start; flex-direction: column; }
+.threshold-grid strong { font-size: 20px; }
+.threshold-grid p { margin-bottom: 0; color: var(--muted); }
+.deploy-steps div { justify-content: flex-start; }
+.deploy-steps b { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 50%; color: white; background: linear-gradient(135deg, var(--purple), var(--pink)); }
+.login-overlay {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(225, 48, 108, 0.22), transparent 26rem),
+    radial-gradient(circle at 80% 10%, rgba(131, 58, 180, 0.20), transparent 26rem),
+    rgba(250, 250, 250, 0.88);
+  backdrop-filter: blur(18px);
+}
+.login-overlay.hidden { display: none; }
+.login-card, .account-panel {
+  width: min(440px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  padding: 26px;
+  background: #fff;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.16);
+}
+.login-brand, .account-panel-head { display: flex; align-items: center; gap: 14px; }
+.login-desc { margin: 18px 0; color: var(--muted); line-height: 1.7; }
+.login-form { display: grid; gap: 14px; }
+.login-form label { display: grid; gap: 8px; color: var(--muted); font-weight: 700; }
+.login-form input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 13px 14px;
+  outline: none;
+  background: #fafafa;
+}
+.login-form input:focus { border-color: var(--pink); box-shadow: 0 0 0 4px rgba(225, 48, 108, 0.12); }
+.login-form button, .logout-button {
+  border: 0;
+  border-radius: 16px;
+  padding: 13px 14px;
+  color: white;
+  background: linear-gradient(135deg, var(--purple), var(--pink), var(--orange));
+  cursor: pointer;
+  font-weight: 900;
+}
+.login-message { min-height: 20px; margin: 0; color: var(--red); font-weight: 700; }
+.demo-account {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  border: 1px solid var(--soft-line);
+  border-radius: 16px;
+  padding: 12px;
+  background: #fafafa;
+  color: var(--muted);
+  font-size: 13px;
+}
+.demo-account code { border-radius: 999px; padding: 4px 8px; color: #262626; background: #fff; }
+.account-modal {
+  position: fixed;
+  z-index: 45;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(17, 24, 39, 0.36);
+  backdrop-filter: blur(8px);
+}
+.account-modal[hidden] { display: none; }
+.account-panel { position: relative; }
+.modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--soft-line);
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  font-size: 22px;
+}
+.account-permissions { margin: 20px 0; border: 1px solid var(--soft-line); border-radius: 18px; padding: 16px; background: #fafafa; }
+.account-permissions ul { margin: 10px 0 0; padding-left: 18px; color: var(--muted); line-height: 1.8; }
+.logout-button { width: 100%; background: #111827; }
+@media (max-width: 1120px) {
+  .app-shell { grid-template-columns: 92px minmax(0, 1fr); }
+  .brand-text, .nav-label, .sidebar-card div:last-child, .account-copy, .side-note { display: none; }
+  .nav-item { justify-content: center; position: relative; }
+  .nav-item small { position: absolute; right: 8px; top: 8px; margin-left: 0; }
+}
+@media (max-width: 860px) {
+  .app-shell { display: block; padding-bottom: 76px; }
+  .sidebar { position: fixed; z-index: 20; top: auto; right: 0; bottom: 0; left: 0; display: block; height: auto; border-top: 1px solid var(--line); border-right: 0; padding: 10px 12px; }
+  .brand, .sidebar-card, .account-card, .side-note, .sidebar-export { display: none; }
+  .side-nav { grid-template-columns: repeat(3, 1fr); }
+  .nav-item { justify-content: center; padding: 10px; }
+  .main-content { padding: 18px; }
+  .topbar, .section-head, .hero-card { align-items: flex-start; flex-direction: column; }
+  .topbar-actions { justify-content: flex-start; }
+  .hero-grid, .split-grid, .data-grid, .settings-grid, .sensor-grid, .trend-grid, .event-stream, .threshold-grid, .vision-layout, .real-device-top { grid-template-columns: 1fr; }
+  .demo-account { grid-template-columns: 1fr; }
+}
+
+
+.chart-mode-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chart-mode {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 18px;
+  color: var(--text);
+  background: #fff;
+  cursor: pointer;
+  font-weight: 900;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.chart-mode:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
+}
+
+.chart-mode.active {
+  border-color: transparent;
+  color: #fff;
+  background: linear-gradient(135deg, var(--purple), var(--pink), var(--orange));
+}
+
+.trend-grid.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.trend-grid > div[hidden] {
+  display: none;
+}
+
+.account-admin-card {
+  grid-column: 1 / -1;
+}
+
+.account-admin-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+  margin: 18px 0;
+}
+
+.account-admin-form label,
+.account-inline-control {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.account-admin-form input,
+.account-admin-form select,
+.account-inline-control input,
+.account-inline-control select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  outline: 0;
+  background: #fff;
+  color: var(--text);
+  font-weight: 900;
+}
+
+.account-table-wrap td {
+  min-width: 120px;
+}
+
+.account-actions {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr);
+  gap: 8px;
+}
+
+.account-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.account-small-button,
+.account-danger-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 12px;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.account-small-button { background: #111827; }
+.account-danger-button { background: var(--red); }
+.account-hash-note { color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+
+.trend-card .trend-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.trend-card .trend-grid.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.chart-config {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+
+.config-label {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.chart-check-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chart-check-list label {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: #fff;
+  cursor: pointer;
+  gap: 8px;
+  font-weight: 900;
+}
+
+.chart-check-list input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--pink);
+}
+
+
+.device-status-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 860px) {
+  .chart-config,
+  .device-status-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.chart-axis-note {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+
+.trend-grid > div {
+  min-height: 330px;
+  padding: 24px;
+}
+
+.trend-grid > div > span {
+  display: block;
+  margin-bottom: 14px;
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.trend-grid.single canvas {
+  height: 360px;
+}
+
+.trend-grid.single > div {
+  min-height: 440px;
+}
+
+
+/* Trend charts: one card per row for better horizontal space */
+.trend-grid,
+.trend-card .trend-grid {
+  grid-template-columns: 1fr !important;
+}
+
+.trend-grid > div {
+  width: 100%;
+  min-height: 430px;
+}
+
+.trend-grid canvas,
+.trend-grid.single canvas {
+  height: 340px;
+}
+
+.trend-grid.single > div {
+  min-height: 430px;
+}
+
+
+.trend-grid canvas {
+  cursor: grab;
+  touch-action: none;
+}
+
+.trend-grid canvas.dragging {
+  cursor: grabbing;
+}
+
+
+/* Clear chart boundaries and spacing */
+.trend-grid {
+  gap: 34px !important;
+}
+
+.trend-grid > div {
+  border: 2px solid #e5e7eb !important;
+  border-radius: 28px !important;
+  box-shadow: 0 18px 45px rgba(17, 24, 39, 0.08) !important;
+  margin-bottom: 8px;
+}
+
+.trend-grid > div + div {
+  margin-top: 18px;
+}
+
+
+/* High resolution interactive trend chart layout */
+.trend-grid,
+.trend-card .trend-grid {
+  grid-template-columns: 1fr !important;
+  gap: 42px !important;
+}
+
+.trend-grid > div {
+  width: 100%;
+  min-height: 560px !important;
+  padding: 30px !important;
+  border: 2px solid #e5e7eb !important;
+  border-radius: 30px !important;
+  box-shadow: 0 22px 60px rgba(17, 24, 39, 0.10) !important;
+}
+
+.trend-grid > div + div {
+  margin-top: 22px;
+}
+
+.trend-grid canvas,
+.trend-grid.single canvas {
+  height: 430px !important;
+  image-rendering: auto;
+}
+
+.chart-config {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 260px !important;
+  gap: 18px !important;
+  align-items: end;
+}
+
+.time-window-control {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 8px 12px;
+  background: #fff;
+  gap: 10px;
+}
+
+.time-window-control input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-weight: 900;
+  font-size: 18px;
+}
+
+.time-window-control span {
+  color: var(--muted);
+  font-weight: 900;
+}
+
+@media (max-width: 860px) {
+  .chart-config {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+
+/* Query controls */
+.chart-config {
+  grid-template-columns: 1fr !important;
+}
+
+.chart-query-setting {
+  width: min(980px, 100%);
+  margin: 0 auto;
+}
+
+.chart-query-setting .config-label {
+  display: block;
+  text-align: center;
+}
+
+.query-control-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.query-field {
+  display: grid;
+  gap: 8px;
+  font-weight: 900;
+}
+
+.query-field > span {
+  color: var(--muted);
+}
+
+.query-select,
+.query-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  outline: 0;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 900;
+}
+
+.query-input-wrap {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0 10px 0 0;
+  background: #fff;
+  gap: 8px;
+}
+
+.query-input-wrap .query-input {
+  border: 0;
+}
+
+.query-input-wrap span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 860px) {
+  .query-control-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Wheel zoom containment for chart cards */
+.trend-grid > div {
+  overscroll-behavior: contain;
+}
+
+.trend-grid canvas {
+  user-select: none;
+}
+
+
+/* Chart title and zoom tools */
+.chart-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.chart-title-row > span {
+  display: block;
+  color: var(--muted);
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.chart-tools {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--soft-line);
+  border-radius: 999px;
+  padding: 4px;
+  background: #fafafa;
+  gap: 4px;
+}
+
+.chart-tools button {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 12px;
+  color: var(--text);
+  background: #fff;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.chart-tools button:hover {
+  color: #fff;
+  background: linear-gradient(135deg, var(--purple), var(--pink), var(--orange));
+}
+
+.trend-grid > div::after {
+  display: block;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  content: attr(data-zoom);
+}
+
+
+.window-save-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 18px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--purple), var(--pink), var(--orange));
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.window-save-status {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+
+
+.esp32p4-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.esp32p4-stat {
+  border: 1px solid var(--soft-line);
+  border-radius: 20px;
+  padding: 18px;
+  background: #fff;
+}
+
+.esp32p4-stat span {
+  color: var(--muted);
+}
+
+.esp32p4-stat strong {
+  display: block;
+  margin: 10px 0 8px;
+  font-size: 28px;
+}
+
+.esp32p4-stat p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+@media (max-width: 860px) {
+  .esp32p4-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+</style>
+  <style>
+.portal-select{display:grid;gap:12px;margin-top:18px}.portal-card{display:grid;gap:8px;text-align:left;border:1px solid #e5e7eb;background:#f8fafc;border-radius:8px;padding:18px;cursor:pointer}.portal-card strong{font-size:22px}.portal-card span{color:#64748b;font-weight:700}.portal-card:hover{border-color:#7c3aed;background:#fff}.auth-panel-head{display:flex;align-items:center;gap:12px;margin:18px 0 10px}.auth-panel-head button{width:40px;height:40px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;cursor:pointer}.auth-panel-head div{display:grid}.auth-panel-head span{color:#64748b;font-size:14px}.auth-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 14px;padding:6px;border:1px solid #e5e7eb;border-radius:18px;background:#f8fafc}.auth-tab{border:0;border-radius:14px;background:transparent;color:#64748b;font-weight:800;padding:12px 16px;cursor:pointer}.auth-tab.active{background:#111827;color:#fff}.auth-pane[hidden],#auth-panel[hidden],#portal-select[hidden]{display:none!important}.auth-pane .login-form{margin-top:0}
+#admin-people-card,#admin-log-card{display:none}.admin-mode #admin-people-card,.admin-mode #admin-log-card{display:block}.admin-mode .account-admin-card{display:block}.admin-mode #page-settings>.settings-grid>.section-card:not(#admin-people-card):not(#admin-log-card):not(.account-admin-card){display:none!important}.admin-mode .app-shell{grid-template-columns:260px minmax(0,1fr)!important}.admin-mode .sidebar-export,.admin-mode .sidebar-card{display:none!important}.admin-mode .main-content{min-height:100vh}.admin-mode #page-settings>.settings-grid,.admin-mode #page-accounts>.settings-grid{grid-template-columns:1fr!important}.admin-mode #page-settings,.admin-mode #page-accounts{padding-bottom:0!important}
+</style></head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-logo">LS</div>
+          <div class="brand-text">
+            <strong>LabSafe</strong>
+            <span>智能实验台</span>
+          </div>
+        </div>
+
+        <nav class="side-nav" aria-label="主导航">
+          <button class="nav-item active" type="button" data-page="home">
+            <span class="nav-icon">⌂</span>
+            <span class="nav-label">主页</span>
+          </button>
+          <button class="nav-item" type="button" data-page="data">
+            <span class="nav-icon">▦</span>
+            <span class="nav-label">数据窗口</span>
+            <small id="nav-alert-count">0</small>
+          </button>
+          <button class="nav-item" type="button" data-page="settings">
+            <span class="nav-icon">⚙</span>
+            <span class="nav-label">设置</span>
+          </button>
+        </nav>
+
+        <button id="account-entry-side" class="account-card" type="button">
+          <div id="side-account-avatar" class="story-ring account-avatar">未</div>
+          <div class="account-copy">
+            <strong id="side-account-name">未登录</strong>
+            <p id="side-account-role">点击进行账户准入</p>
+          </div>
+        </button>
+
+        <div class="sidebar-card">
+          <div class="story-ring">ESP</div>
+          <div>
+            <strong id="side-device-id">lab-node-001</strong>
+            <p id="side-device-status">节点在线 · 3 秒刷新</p>
+          </div>
+        </div>
+
+        <section class="sidebar-export">
+          <p class="eyebrow">Export</p>
+          <h3>导出数据</h3>
+          <label class="export-field">
+            <span>格式</span>
+            <select id="export-format" class="export-select">
+              <option value="csv">CSV</option>
+              <option value="json">JSON</option>
+            </select>
+          </label>
+          <label class="export-field">
+            <span>导出数据</span>
+            <select id="export-preset" class="export-select">
+              <option value="sensor_co">CO 数据窗口</option>
+              <option value="sensor_alcohol">酒精气体数据窗口</option>
+              <option value="sensor_voc">VOC 数据窗口</option>
+            </select>
+          </label>
+          <label class="export-field">
+            <span>起始时间（秒）</span>
+            <input id="export-start-seconds" class="export-select" type="number" min="0" step="1" value="0" placeholder="0" />
+          </label>
+          <label class="export-field">
+            <span>终止时间（秒）</span>
+            <input id="export-end-seconds" class="export-select" type="number" min="0" step="1" placeholder="留空为当前最大时刻" />
+          </label>
+          <button id="export-data-button" class="export-button" type="button">导出数据</button>
+          <p id="export-status" class="export-help">请选择 CO、酒精气体或 VOC 数据窗口，按起始/终止秒数单独导出。</p>
+        </section>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Lab Safety Node</p>
+            <h1 id="page-title">主页</h1>
+          </div>
+          <div class="topbar-actions">
+            <button id="account-entry" class="account-button" type="button">
+              <span id="account-avatar">未</span>
+              <span id="account-name">未登录</span>
+            </button>
+            <span id="system-risk" class="risk-pill risk-normal">正常</span>
+            <span id="global-status" class="status-chip">系统运行中</span>
+            <small id="last-updated">等待刷新</small>
+          </div>
+        </header>
+
+        <section id="page-home" class="page-section active">
+          <div class="hero-grid">
+            <article class="card hero-card">
+              <div>
+                <p class="eyebrow">Overview</p>
+                <h2>实验室智能通风及危险操作识别安全节点</h2>
+              </div>
+              <div class="hero-metric">
+                <span>当前风险</span>
+                <strong id="home-risk">正常</strong>
+                <small id="home-action">保持监测</small>
+              </div>
+            </article>
+
+            <article class="card mini-card">
+              <span>未处理报警</span>
+              <strong id="pending-count">0</strong>
+              <p>管理员确认与处理闭环预留。</p>
+            </article>
+          </div>
+
+          <section class="card section-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Real Device</p>
+                <h2>真实设备接入</h2>
+              </div>
+              <span id="serial-support-chip" class="status-chip">串口检测待初始化</span>
+            </div>
+            <div class="real-device-grid">
+              <div class="real-device-top">
+                <article class="real-device-stat">
+                  <span>连接状态</span>
+                  <strong id="serial-connect-state">未连接</strong>
+                  <p id="serial-current-port">当前端口：未选择</p>
+                </article>
+                <article class="real-device-stat">
+                  <span>ESP32 候选串口</span>
+                  <strong id="serial-candidate-count">0</strong>
+                  <p id="serial-message">等待串口检测</p>
+                </article>
+              </div>
+              <div class="serial-actions">
+                <button id="serial-connect-button" class="window-save-button" type="button">连接串口</button>
+                <button id="serial-refresh-button" class="serial-secondary" type="button">刷新候选</button>
+              </div>
+              <div id="serial-candidate-list" class="serial-candidate-list"></div><div id="wifi-upload-panel" class="serial-candidate-list" style="margin-top:12px"><article class="serial-candidate-item"><strong>WiFi HTTP 上传</strong><span id="wifi-upload-endpoint">等待后台地址</span></article><article class="serial-candidate-item"><strong>最近上传</strong><span id="wifi-upload-status">暂无 WiFi 设备上传</span></article></div>
+            </div>
+          </section>
+
+          <section class="card section-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Sensors</p>
+                <h2>实时传感器</h2>
+              </div>
+              <span>SC16-CO · 酒精气体 · SGP40 VOC</span>
+            </div>
+            <div id="sensor-grid" class="sensor-grid"></div>
+          </section>
+
+          <div class="split-grid">
+            <section class="card section-card">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">AI Vision</p>
+                  <h2>K230D AI-CAM</h2>
+                </div>
+                <span id="vision-chip" class="status-chip">视觉正常</span>
+              </div>
+              <div class="vision-layout">
+                <div class="phone-preview">
+                  <div class="phone-notch"></div>
+                  <div class="camera-feed">
+                    <span>AI-CAM</span>
+                    <strong id="vision-main">normal</strong>
+                  </div>
+                </div>
+                <div class="vision-copy">
+                  <p><b>当前识别：</b><span id="vision-label">未发现异常</span></p>
+                  <p><b>置信度：</b><span id="vision-confidence">--</span></p>
+                  <p id="vision-desc">用于展示酒精灯、容器未盖合、器材摆放异常等识别结果。</p>
+                </div>
+              </div>
+            </section>
+
+            <section class="card section-card">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">Actuators</p>
+                  <h2>执行器状态</h2>
+                </div>
+              </div>
+              <div id="actuator-list" class="status-list"></div>
+            </section>
+          </div>
+
+          <section class="card section-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Feed</p>
+                <h2>实时事件流</h2>
+              </div>
+            </div>
+            <div id="event-stream" class="event-stream"></div>
+          </section>
+        </section>
+        <section id="page-data" class="page-section">
+          <section class="card section-card trend-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Trends</p>
+                <h2>最近数据趋势</h2>
+              </div>
+            </div>
+            <div class="trend-grid">
+              <div data-trend-key="co"><div class="chart-title-row"><span>CO</span><div class="chart-tools"><button type="button" data-chart-zoom="in" data-chart-target="trend-co">＋</button><button type="button" data-chart-zoom="out" data-chart-target="trend-co">－</button><button type="button" data-chart-zoom="reset" data-chart-target="trend-co">复位</button></div></div><canvas id="trend-co" width="1800" height="720"></canvas></div>
+              <div data-trend-key="alcohol"><div class="chart-title-row"><span>酒精气体</span><div class="chart-tools"><button type="button" data-chart-zoom="in" data-chart-target="trend-alcohol">＋</button><button type="button" data-chart-zoom="out" data-chart-target="trend-alcohol">－</button><button type="button" data-chart-zoom="reset" data-chart-target="trend-alcohol">复位</button></div></div><canvas id="trend-alcohol" width="1800" height="720"></canvas></div>
+              <div data-trend-key="voc"><div class="chart-title-row"><span>VOC</span><div class="chart-tools"><button type="button" data-chart-zoom="in" data-chart-target="trend-voc">＋</button><button type="button" data-chart-zoom="out" data-chart-target="trend-voc">－</button><button type="button" data-chart-zoom="reset" data-chart-target="trend-voc">复位</button></div></div><canvas id="trend-voc" width="1800" height="720"></canvas></div>
+            </div>
+          </section>
+
+          <section class="card section-card chart-mode-card">
+            <div class="section-head compact">
+              <div>
+                <p class="eyebrow">Chart Mode</p>
+                <h2>曲线显示模式</h2>
+              </div>
+              <span id="chart-mode-desc">当前显示：CO / 酒精 / VOC</span>
+            </div>
+            <div class="chart-config">
+              <div>
+                <span class="config-label">曲线类型</span>
+                <div class="chart-check-list" aria-label="实时曲线类型选择">
+                  <label><input class="chart-type-check" type="checkbox" value="co" checked /> CO</label>
+                  <label><input class="chart-type-check" type="checkbox" value="alcohol" checked /> 酒精</label>
+                  <label><input class="chart-type-check" type="checkbox" value="voc" checked /> VOC</label>
+                </div>
+              </div>
+              <div class="query-setting chart-query-setting">
+                <span class="config-label">数据查询</span>
+                <div class="query-control-row">
+                  <label class="query-field">
+                    <span>查询类型</span>
+                    <select id="query-sensor-type" class="query-select">
+                      <option value="co">CO</option>
+                      <option value="alcohol">酒精气体</option>
+                      <option value="voc">VOC</option>
+                    </select>
+                  </label>
+                  <label class="query-field">
+                    <span>起始时间</span>
+                    <div class="query-input-wrap">
+                      <input id="query-start-seconds" class="query-input" type="number" min="0" step="1" value="0" />
+                      <span>秒</span>
+                    </div>
+                  </label>
+                  <label class="query-field">
+                    <span>结束时间</span>
+                    <div class="query-input-wrap">
+                      <input id="query-end-seconds" class="query-input" type="number" min="2" step="1" value="2" />
+                      <span>秒</span>
+                    </div>
+                  </label>
+                  <button id="query-sensor-range" class="window-save-button" type="button">统计区间</button>
+                </div>
+                <div id="query-result" class="window-save-status">输入类型、起始时间和结束时间后可统计该区间的最高、最低和平均值</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card section-card device-card-below">
+            <div class="section-head compact">
+              <div>
+                <p class="eyebrow">Device</p>
+                <h2>设备运行状态</h2>
+              </div>
+            </div>
+            <div id="device-list" class="status-list device-status-grid"></div>
+          </section>
+
+          <section class="card section-card esp32p4-status-card">
+            <div class="section-head compact">
+              <div>
+                <p class="eyebrow">Board Detect</p>
+                <h2>通用开发板识别状态</h2>
+              </div>
+              <span id="board-detect-chip" class="status-chip">待扫描</span>
+            </div>
+            <div class="esp32p4-grid">
+              <article class="esp32p4-stat">
+                <span>板型</span>
+                <strong id="board-detect-type">未检测</strong>
+                <p id="board-detect-detail">等待本地设备扫描</p>
+              </article>
+              <article class="esp32p4-stat">
+                <span>推荐 COM 口</span>
+                <strong id="board-detect-port">未提供</strong>
+                <p id="board-detect-source">尚未加载扫描结果</p>
+              </article>
+              <article class="esp32p4-stat">
+                <span>是否为 P4</span>
+                <strong id="board-detect-p4">未知</strong>
+                <p>根据本地 USB 识别规则判断</p>
+              </article>
+              <article class="esp32p4-stat">
+                <span>候选数量</span>
+                <strong id="board-detect-count">0</strong>
+                <p>候选开发板与桥接设备总数</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="card section-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Raw Data</p>
+                <h2>数据窗口</h2>
+              </div>
+              
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>数据项</th><th>当前值</th><th>单位</th><th>状态</th></tr>
+                </thead>
+                <tbody id="data-sensor-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="card section-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Alarms</p>
+                <h2>报警事件</h2>
+              </div>
+              <span>未确认 · 已确认 · 已处理 后续接管理员操作</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>时间</th><th>来源</th><th>等级</th><th>原因</th><th>状态</th></tr>
+                </thead>
+                <tbody id="alarm-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section id="page-settings" class="page-section">
+          <div class="settings-grid">
+            <section class="card section-card">
+              <p class="eyebrow">Modules</p>
+              <h2>实时渲染模块开关占位</h2>
+              <div class="settings-list">
+                <label><span>系统总览</span><input type="checkbox" checked /></label>
+                <label><span>气体传感器卡片</span><input type="checkbox" checked /></label>
+                <label><span>AI 视觉状态</span><input type="checkbox" checked /></label>
+                <label><span>报警事件</span><input type="checkbox" checked /></label>
+                <label><span>趋势曲线</span><input type="checkbox" checked /></label>
+              </div>
+            </section>
+
+            <section class="card section-card">
+              <p class="eyebrow">Threshold</p>
+              <h2>阈值策略占位</h2>
+              <div class="threshold-grid">
+                <article><span>SC16-CO</span><strong>35 / 80 ppm</strong><p>预警 / 危险</p></article>
+                <article><span>酒精气体</span><strong>400 / 700</strong><p>原始值，后续标定</p></article>
+                <article><span>SGP40 VOC</span><strong>400 / 700</strong><p>空气质量指标</p></article>
+                <article><span>AI 视觉</span><strong>类别 + 置信度</strong><p>后续由模型输出决定</p></article>
+              </div>
+            </section>
+
+            
+            <section class="card section-card" id="admin-people-card"><div class="section-head compact"><div><p class="eyebrow">Personnel</p><h2>&#x76d1;&#x63a7;&#x4eba;&#x5458;&#x7ba1;&#x7406;</h2></div><span class="status-chip">Admin</span></div><form id="account-create-form" class="account-admin-form">
+                <label><span>用户名</span><input id="account-new-username" required placeholder="如 operator" /></label>
+                <label><span>姓名</span><input id="account-new-name" required placeholder="如 值班员" /></label>
+                <label><span>角色</span><select id="account-new-role"><option value="管理员">管理员</option><option value="观察员">观察员</option><option value="操作员">操作员</option></select></label>
+                <label><span>初始密码</span><input id="account-new-password" type="password" required placeholder="至少 6 位" /></label>
+                <button class="window-save-button" type="submit">新增账户</button>
+              </form>
+              <div class="table-wrap account-table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>用户名</th><th>姓名</th><th>角色</th><th>权限</th><th>创建时间</th><th>操作</th></tr>
+                  </thead>
+                  <tbody id="account-user-table-body"></tbody>
+                </table>
+              </div>
+              <p id="account-admin-status" class="window-save-status"></p>
+            </section>
+          </div>
+        </section>
+        <section id="page-accounts" class="page-section"><div class="settings-grid"><section class="card section-card account-admin-card" id="account-admin-card-mount"></section></div></section>
+      </main>
+    </div>
+
+    <div id="login-overlay" class="login-overlay" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <section class="login-card">
+        <div class="login-brand">
+          <div class="brand-logo">LS</div>
+          <div>
+              <p class="eyebrow">Secure Access</p>
+            <h2 id="login-title">账户准入</h2>
+          </div>
+        </div>
+        <p class="login-desc"></p>
+        
+        <div id="portal-select" class="portal-select">
+          <button id="portal-monitor" class="portal-card" type="button" onclick="window.__labsafeOpenPortal && window.__labsafeOpenPortal('monitor')"><strong>&#x76d1;&#x63a7;&#x5927;&#x5c4f;</strong><span></span></button>
+          <button id="portal-admin" class="portal-card" type="button" onclick="window.__labsafeOpenPortal && window.__labsafeOpenPortal('admin')"><strong>&#x540e;&#x53f0;&#x7ba1;&#x7406;</strong><span></span></button>
+        </div>
+        <div id="auth-panel" hidden>
+          <div class="auth-panel-head"><button id="portal-back" type="button" onclick="window.__labsafeBackPortal && window.__labsafeBackPortal()">&#x2190;</button><div><strong id="portal-title">&#x767b;&#x5f55;</strong><span id="portal-subtitle"></span></div></div>
+          <div class="auth-tabs" role="tablist" aria-label="account access">
+            <button id="auth-login-tab" class="auth-tab active" type="button">&#x767b;&#x5f55;</button>
+            <button id="auth-register-tab" class="auth-tab" type="button">&#x6ce8;&#x518c;</button>
+          </div>
+          <div id="login-pane" class="auth-pane active">
+<form id="login-form" class="login-form">
+          <label>
+          <span>初始管理员账户</span>
+            <input id="login-username" autocomplete="username" placeholder="请输入用户名" required />
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="login-password" type="password" autocomplete="current-password" placeholder="请输入密码" required />
+          </label>
+          <button type="submit">进入监控系统</button>
+          <p id="login-message" class="login-message"></p>
+        </form>
+          </div>
+          <div id="register-pane" class="auth-pane" hidden>
+            <form id="register-form" class="login-form">
+              <label><span>&#x7528;&#x6237;&#x540d;</span><input id="register-username" autocomplete="username" placeholder="3-32 letters or numbers" /></label>
+              <label><span>&#x59d3;&#x540d;</span><input id="register-name" autocomplete="name" placeholder="name" /></label>
+              <label><span>&#x5bc6;&#x7801;</span><input id="register-password" type="password" autocomplete="new-password" placeholder="at least 6 chars" /></label>
+              <button type="submit">&#x521b;&#x5efa;&#x89c2;&#x5bdf;&#x5458;&#x8d26;&#x53f7;</button>
+              <p id="register-message" class="login-message"></p>
+            </form>
+          </div>
+        </div>
+        <div class="demo-account">
+          <span>初始管理员账户</span>
+          <code>labadmin</code>
+          <code>默认密码 admin123</code>
+        </div>
+      </section>
+    </div>
+
+    <div id="account-modal" class="account-modal" hidden>
+      <section class="account-panel">
+        <button id="account-modal-close" class="modal-close" type="button">×</button>
+        <div class="account-panel-head">
+          <div id="modal-account-avatar" class="story-ring account-avatar">管</div>
+          <div>
+            <p class="eyebrow">Account</p>
+            <h2 id="modal-account-name">实验室管理员</h2>
+            <span id="modal-account-role" class="status-chip">管理员</span>
+          </div>
+        </div>
+        <div class="account-permissions">
+          <strong>账号后台权限</strong>
+          <ul id="modal-permission-list"></ul>
+        </div>
+        <button id="logout-button" class="logout-button" type="button">退出登录</button>
+      </section>
+    </div>
+
+    <script src="data/device-scan.js"></script>
+    <script>
+
+
+async function refreshWifiUploadStatus() {
+  try {
+    const response = await fetch(window.location.origin + '/health?t=' + Date.now(), { cache: 'no-store' });
+    const data = await response.json();
+    const upload = data.upload || {};
+    setText('wifi-upload-endpoint', window.location.origin + '/api/device/upload');
+    const last = upload.lastUploadAt ? (upload.lastSource + ' | ' + (upload.lastDeviceId || 'unknown-device') + ' | ' + String(upload.lastUploadAt).replace('T', ' ').slice(0, 19)) : '--';
+    setText('wifi-upload-status', last);
+  } catch (error) {
+    setText('wifi-upload-endpoint', window.location.origin + '/api/device/upload');
+    setText('wifi-upload-status', '--');
+  }
+}
+
+
+function isNoDeviceData() {
+  return state.dataSource !== 'external' || !state.current || ['--', '-', ''].includes(String(state.current.sensors?.co ?? ''));
+}
+
+function applyRoleLayout() {
+  const isAdmin = state.account && state.account.role === '管理员';
+  const adminPortal = state.portalMode === 'admin';
+  document.body.classList.toggle('admin-mode', !!(isAdmin && adminPortal));
+  document.querySelectorAll('.nav-item').forEach(function (item) { const page = item.dataset.page; item.style.display = isAdmin && adminPortal && !['settings','accounts'].includes(page) ? 'none' : ''; });
+  ['system-risk','global-status','last-updated'].forEach(function (id) { const el = document.getElementById(id); if (el) el.style.display = isAdmin && adminPortal ? 'none' : ''; });
+  document.querySelectorAll('.sidebar-card,.sidebar-export').forEach(function (el) { el.style.display = isAdmin && adminPortal ? 'none' : ''; });
+  if (isAdmin && adminPortal) { document.querySelectorAll('.nav-item').forEach(function (item) { item.classList.toggle('active', item.dataset.page === 'settings'); }); document.querySelectorAll('.page-section').forEach(function (section) { section.classList.toggle('active', section.id === 'page-settings'); }); setText('page-title', '管理后台'); const mount = document.getElementById('account-admin-card-mount'); const card = document.querySelector('.account-admin-card'); if (mount && card && card !== mount) mount.replaceWith(card); }
+}
+function updateAdminPeopleSummary(users) { const counts = { '管理员':0, '操作员':0, '观察员':0 }; (users||[]).forEach(function(user){ if(counts[user.role]!==undefined) counts[user.role]+=1; }); setText('admin-count-admin', String(counts['管理员'])); setText('admin-count-operator', String(counts['操作员'])); setText('admin-count-viewer', String(counts['观察员'])); setText('admin-count-total', String((users||[]).length)); }
+function renderAdminLogs() { const body=document.getElementById('admin-log-table-body'); if(!body) return; body.innerHTML=''; const rows=[]; (state.alarms||[]).forEach(function(alarm){ rows.push({time:alarm.time,type:alarm.source||'报警事件',level:alarm.level||alarm.levelKey||'--',content:alarm.reason||'--',status:alarm.status||'--'}); }); (state.events||[]).slice(0,20).forEach(function(event){ rows.push({time:event.time,type:event.title||'系统事件',level:event.level||'--',content:event.desc||'--',status:'已记录'}); }); if(state.current&&state.current.reason) rows.unshift({time:state.current.timestamp||formatTime(new Date()),type:'当前状态',level:levelText(state.current.riskLevel||'normal'),content:state.current.reason,status:state.current.action||'--'}); if(!rows.length) rows.push({time:formatTime(new Date()),type:'系统日志',level:'正常',content:'暂无报警事件，系统等待数据。',status:'已记录'}); rows.slice(0,40).forEach(function(row){ const tr=document.createElement('tr'); tr.innerHTML='<td>'+row.time+'</td><td>'+row.type+'</td><td>'+row.level+'</td><td>'+row.content+'</td><td>'+row.status+'</td>'; body.appendChild(tr); }); setText('admin-log-status','已加载 '+Math.min(rows.length,40)+' 条日志。'); }
+
+﻿const LABSAFE_AUTH_URL = window.location.origin;
+const LABSAFE_BRIDGE_URL = window.location.origin + '/snapshot';
+const LABSAFE_TELEMETRY_PREFIX = 'LABSAFE_JSON:';
+const FAN_FULL_LOAD_RPM = 8000;
+const state = { history: { co: [], alcohol: [], voc: [] }, alarms: [], events: [], current: null, account: null, authToken: localStorage.getItem('labsafe-auth-token') || '', chartTypes: ['co', 'alcohol', 'voc'], query: { sensorType: 'co', startSeconds: 0, endSeconds: 2 }, sensorSampling: { co: 1, alcohol: 1, voc: 1 }, sensorLastSampleAt: { co: -Infinity, alcohol: -Infinity, voc: -Infinity }, sampleSequence: { co: 0, alcohol: 0, voc: 0 }, mockElapsedSeconds: 0, dataSource: 'mock', bridge: { enabled: true, url: LABSAFE_BRIDGE_URL, connected: false, lastUpdatedAt: null, failureCount: 0, message: '等待本地真实数据桥接服务' }, serial: { supported: typeof navigator !== 'undefined' && 'serial' in navigator, connected: false, connecting: false, port: null, authorizedPorts: [], portLabel: '未选择', message: '等待串口检测', lastRawLine: '', lastError: '', grantedPorts: [], candidates: [] } };
+const pageTitles = { home: '主页', data: '数据窗口', settings: '设置' };
+const chartTypeLabels = { co: 'CO', alcohol: '酒精', voc: 'VOC' };
+const chartViews = {};
+const sensorMeta = [
+  { key: 'co', label: 'SC16-CO', unit: 'ppm', warning: 35, danger: 80 },
+  { key: 'alcohol', label: '酒精气体', unit: 'ppm', warning: 400, danger: 700 },
+  { key: 'voc', label: 'SGP40 VOC', unit: 'ppm', warning: 400, danger: 700 },
+  { key: 'air', label: '综合空气状态', unit: '', warning: 1, danger: 2 }
+];
+const visionLabels = {
+  normal: '未发现异常',
+  alcohol_lamp_on: '酒精灯处于开启状态',
+  container_open: '疑似容器未盖合',
+  object_misplaced: '实验器材摆放异常',
+  operation_risk: '疑似人员危险操作'
+};
+function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
+function randomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+function formatTime(date) { return date.toLocaleString('zh-CN', { hour12: false }); }
+function levelText(level) { return { normal: '正常', warning: '预警', danger: '危险' }[level] || level; }
+function getLevel(value, warning, danger) { if (value >= danger) return 'danger'; if (value >= warning) return 'warning'; return 'normal'; }
+function setText(id, value) { const el = document.getElementById(id); if (el) el.textContent = value; }
+function setRiskClass(el, level) { if (!el) return; el.classList.remove('risk-normal', 'risk-warning', 'risk-danger'); el.classList.add('risk-' + level); }
+function buildSnapshot() {
+  const abnormal = Math.random() > 0.72;
+  const visionStatus = abnormal ? pick(['normal', 'alcohol_lamp_on', 'container_open', 'object_misplaced', 'operation_risk']) : 'normal';
+  const co = abnormal ? randomInt(20, 95) : randomInt(3, 26);
+  const alcohol = abnormal ? randomInt(250, 820) : randomInt(80, 260);
+  const voc = abnormal ? randomInt(260, 780) : randomInt(60, 280);
+  const levels = [getLevel(co, 35, 80), getLevel(alcohol, 400, 700), getLevel(voc, 400, 700)];
+  const riskLevel = levels.includes('danger') || visionStatus !== 'normal' ? 'danger' : levels.includes('warning') ? 'warning' : 'normal';
+  const reasons = [];
+  if (co >= 80) reasons.push('CO 浓度达到危险阈值'); else if (co >= 35) reasons.push('CO 浓度接近风险阈值');
+  if (alcohol >= 700) reasons.push('酒精气体达到危险阈值'); else if (alcohol >= 400) reasons.push('酒精气体接近风险阈值');
+  if (voc >= 700) reasons.push('VOC 指标达到危险阈值'); else if (voc >= 400) reasons.push('VOC 指标接近风险阈值');
+  if (visionStatus !== 'normal') reasons.push('视觉识别发现异常状态');
+  return {
+    timestamp: formatTime(new Date()),
+    riskLevel,
+    reason: reasons.length ? reasons.join('；') : '环境状态正常，持续监测中。',
+    action: riskLevel === 'danger' ? '报警并开启高档通风' : riskLevel === 'warning' ? '提示检查并准备通风' : '保持监测',
+    sensors: { co, alcohol, voc, air: riskLevel === 'danger' ? 2 : riskLevel === 'warning' ? 1 : 0 },
+    vision: { status: visionStatus, label: visionLabels[visionStatus], confidence: visionStatus === 'normal' ? randomInt(92, 99) : randomInt(76, 94) },
+    actuators: { fan: riskLevel === 'danger' ? '高速' : riskLevel === 'warning' ? '低速' : '关闭', alarm: riskLevel === 'danger' ? '已触发' : '未触发', buzzer: riskLevel === 'danger' ? '鸣响' : '静音', relay: riskLevel === 'normal' ? '断开' : '闭合' },
+    device: { id: 'lab-node-001', online: '在线', location: '实验操作台 1', power: randomInt(74, 100) + '%', wifi: '-' + randomInt(45, 68) + ' dBm', uploadInterval: '3s' }
+  };
+}
+function buildWaitingSnapshot() {
+  return {
+    timestamp: formatTime(new Date()),
+    riskLevel: 'normal',
+    reason: '',
+    action: '-',
+    sensors: { co: '--', alcohol: '--', voc: '--', air: 0 },
+    vision: { status: 'waiting', label: '-', confidence: 0 },
+    actuators: { fan: '-', alarm: '-', buzzer: '-', relay: '-' },
+    device: { id: 'esp32-p4', online: '-', location: '-', power: '--', wifi: '--', uploadInterval: '-'  }
+  };
+}
+function authHeaders(extra = {}) {
+  return Object.assign({ 'Content-Type': 'application/json' }, state.authToken ? { Authorization: 'Bearer ' + state.authToken } : {}, extra);
+}
+async function authRequest(path, options = {}) {
+  const response = await fetch(LABSAFE_AUTH_URL + path, Object.assign({}, options, {
+    headers: authHeaders(options.headers || {})
+  }));
+  const data = await response.json().catch(function () { return { ok: false, message: '后台返回异常' }; });
+  if (!response.ok || !data.ok) throw new Error(data.message || '请求失败');
+  return data;
+}
+function isAdminAccount() {
+  return state.account && state.account.role === '管理员';
+}
+async function setupAuth() {
+  showLogin();
+  if (state.authToken) {
+    try {
+      const data = await authRequest('/api/me', { method: 'GET' });
+      state.account = data.account;
+      hideLogin();
+      renderAccount();
+      applyRoleLayout();
+      renderAdminLogs();
+      setupAccountAdmin();
+    } catch (error) {
+      state.authToken = '';
+      localStorage.removeItem('labsafe-auth-token');
+      setText('login-message', '请登录本地账号后台。');
+    }
+  }
+
+  const form = document.getElementById('login-form');
+  const accountEntry = document.getElementById('account-entry');
+  const accountEntrySide = document.getElementById('account-entry-side');
+  const close = document.getElementById('account-modal-close');
+  const logout = document.getElementById('logout-button');
+
+
+  state.portalMode = localStorage.getItem('labsafe-portal-mode') || '';
+  const portalSelect = document.getElementById('portal-select');
+  const authPanel = document.getElementById('auth-panel');
+  const portalTitle = document.getElementById('portal-title');
+  const portalSubtitle = document.getElementById('portal-subtitle');
+  const registerTab = document.getElementById('auth-register-tab');
+  const loginTab = document.getElementById('auth-login-tab');
+  const loginPane = document.getElementById('login-pane');
+  const registerPane = document.getElementById('register-pane');
+  function openPortal(mode) { state.portalMode = mode; localStorage.setItem('labsafe-portal-mode', mode); if(portalSelect) portalSelect.hidden=true; if(authPanel) authPanel.hidden=false; if(portalTitle) portalTitle.textContent = mode === 'admin' ? '后台管理登录' : '监控大屏登录'; if(portalSubtitle) portalSubtitle.textContent = mode === 'admin' ? '仅管理员可进入' : '操作员和观察员可进入'; if(registerTab) registerTab.style.display = mode === 'admin' ? 'none' : ''; setAuthMode('login'); }
+  function showPortalSelect() { state.portalMode=''; localStorage.removeItem('labsafe-portal-mode'); if(portalSelect) portalSelect.hidden=false; if(authPanel) authPanel.hidden=true; }
+  function setAuthMode(mode) { const registering = mode === 'register'; if(loginPane) loginPane.hidden=registering; if(registerPane) registerPane.hidden=!registering; if(loginTab) loginTab.classList.toggle('active', !registering); if(registerTab) registerTab.classList.toggle('active', registering); setText('login-message',''); setText('register-message',''); }
+  document.getElementById('portal-monitor')?.addEventListener('click', function(){ openPortal('monitor'); });
+  document.getElementById('portal-admin')?.addEventListener('click', function(){ openPortal('admin'); });
+  document.getElementById('portal-back')?.addEventListener('click', showPortalSelect);
+  if(loginTab) loginTab.addEventListener('click', function(){ setAuthMode('login'); });
+  if(registerTab) registerTab.addEventListener('click', function(){ setAuthMode('register'); });
+  if(state.portalMode) openPortal(state.portalMode); else showPortalSelect();
+  const registerForm = document.getElementById('register-form');
+  if(registerForm) registerForm.addEventListener('submit', async function(event){ event.preventDefault(); try { const data=await authRequest('/api/register',{method:'POST',body:JSON.stringify({username:document.getElementById('register-username').value.trim(),name:document.getElementById('register-name').value.trim(),password:document.getElementById('register-password').value})}); state.authToken=data.token; state.account=data.account; localStorage.setItem('labsafe-auth-token',data.token); hideLogin(); renderAccount(); applyRoleLayout(); renderAdminLogs(); setupAccountAdmin(); } catch(error){ setText('register-message', error.message); } });
+
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value;
+    try {
+      setText('login-message', '正在连接本地账号后台...');
+      const data = await authRequest('/api/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password })
+      });
+      state.authToken = data.token;
+      state.account = data.account;
+      localStorage.setItem('labsafe-auth-token', data.token);
+      if (state.portalMode === 'admin' && state.account.role !== '管理员') throw new Error('只有管理员可进入后台管理');
+      setText('login-message', '');
+      hideLogin();
+      renderAccount();
+      applyRoleLayout();
+      renderAdminLogs();
+      setupAccountAdmin();
+      loadAccountUsers();
+    } catch (error) {
+      setText('login-message', error.message + '。请确认已运行：node tools/labsafe_serial_bridge.mjs');
+    }
+  });
+
+  accountEntry.addEventListener('click', openAccountModal);
+  accountEntrySide.addEventListener('click', openAccountModal);
+  close.addEventListener('click', closeAccountModal);
+  document.getElementById('account-modal').addEventListener('click', function (event) {
+    if (event.target.id === 'account-modal') closeAccountModal();
+  });
+  logout.addEventListener('click', async function () {
+    try { await authRequest('/api/logout', { method: 'POST' }); } catch (error) {}
+    state.account = null;
+    state.authToken = '';
+    localStorage.removeItem('labsafe-auth-token');
+    closeAccountModal();
+    showLogin();
+    renderAccount();
+    applyRoleLayout();
+    renderAccountAdminLocked();
+  });
+}
+function showLogin() {
+  document.getElementById('login-overlay').classList.remove('hidden');
+  document.body.classList.add('locked');
+}
+function hideLogin() {
+  document.getElementById('login-overlay').classList.add('hidden');
+  document.body.classList.remove('locked');
+}
+function openAccountModal() {
+  if (!state.account) {
+    showLogin();
+    return;
+  }
+  renderAccount();
+  document.getElementById('account-modal').hidden = false;
+}
+function closeAccountModal() {
+  document.getElementById('account-modal').hidden = true;
+}
+function renderAccount() {
+  const account = state.account;
+  const name = account ? account.name : '未登录';
+  const role = account ? account.role : '点击进行账户准入';
+  const avatar = account ? account.avatar : '未';
+  setText('account-name', name);
+  setText('account-avatar', avatar);
+  setText('side-account-name', name);
+  setText('side-account-role', role);
+  setText('side-account-avatar', avatar);
+  setText('modal-account-name', name);
+  setText('modal-account-role', role);
+  setText('modal-account-avatar', avatar);
+
+  const list = document.getElementById('modal-permission-list');
+  list.innerHTML = '';
+  (account ? account.permissions : ['未登录']).forEach(function (permission) {
+    const item = document.createElement('li');
+    item.textContent = permission;
+    list.appendChild(item);
+  });
+}
+function renderAccountAdminLocked() {
+  const body = document.getElementById('account-user-table-body');
+  if (body) body.innerHTML = '<tr><td colspan="6" class="muted">请使用管理员账户登录后管理用户。</td></tr>';
+  setText('account-admin-status', '仅管理员可管理账户。');
+}
+let accountAdminBound = false;
+function setupAccountAdmin() {
+  const form = document.getElementById('account-create-form');
+  const refresh = document.getElementById('account-refresh-button');
+  if (!form || accountAdminBound) {
+    if (isAdminAccount()) loadAccountUsers(); else renderAccountAdminLocked();
+    return;
+  }
+  accountAdminBound = true;
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    if (!isAdminAccount()) return renderAccountAdminLocked();
+    try {
+      const payload = {
+        username: document.getElementById('account-new-username').value.trim(),
+        name: document.getElementById('account-new-name').value.trim(),
+        role: document.getElementById('account-new-role').value,
+        password: document.getElementById('account-new-password').value
+      };
+      await authRequest('/api/users', { method: 'POST', body: JSON.stringify(payload) });
+      form.reset();
+      setText('account-admin-status', '账户已新增。');
+      loadAccountUsers();
+    } catch (error) {
+      setText('account-admin-status', error.message);
+    }
+  });
+  if (refresh) refresh.addEventListener('click', loadAccountUsers);
+  const adminLogRefresh = document.getElementById('admin-log-refresh');
+  if (adminLogRefresh) adminLogRefresh.addEventListener('click', renderAdminLogs);
+  if (isAdminAccount()) loadAccountUsers(); else renderAccountAdminLocked();
+}
+async function loadAccountUsers() {
+  const body = document.getElementById('account-user-table-body');
+  if (!body) return;
+  if (!isAdminAccount()) return renderAccountAdminLocked();
+  try {
+    const data = await authRequest('/api/users', { method: 'GET' });
+    renderAccountUserTable(data.users || []);
+    setText('account-admin-status', '');
+    updateAdminPeopleSummary(data.users || []);
+  } catch (error) {
+    body.innerHTML = '<tr><td colspan="6" class="muted">' + error.message + '</td></tr>';
+    setText('account-admin-status', error.message);
+  }
+}
+function renderAccountUserTable(users) {
+  const body = document.getElementById('account-user-table-body');
+  if (!body) return;
+  body.innerHTML = '';
+  users.forEach(function (user) {
+    const row = document.createElement('tr');
+    const createdAt = user.createdAt ? String(user.createdAt).replace('T', ' ').slice(0, 19) : '--';
+    row.innerHTML = '<td><strong>' + user.username + '</strong></td>' +
+      '<td><input class="account-name-input" value="' + user.name + '" /></td>' +
+      '<td><select class="account-role-input"><option value="管理员">管理员</option><option value="操作员">操作员</option><option value="观察员">观察员</option></select></td>' +
+      '<td>' + (user.permissions || []).join('<br>') + '</td>' +
+      '<td>' + createdAt + '</td>' +
+      '<td><div class="account-actions"><input class="account-password-input" type="password" placeholder="新密码，不改可留空" /><div class="account-action-row"><button class="account-small-button" type="button" data-action="save">保存</button><button class="account-danger-button" type="button" data-action="delete">删除</button></div></div></td>';
+    const roleInput = row.querySelector('.account-role-input');
+    roleInput.value = user.role;
+    row.querySelector('[data-action="save"]').addEventListener('click', async function () {
+      try {
+        const payload = {
+          name: row.querySelector('.account-name-input').value.trim(),
+          role: roleInput.value,
+          password: row.querySelector('.account-password-input').value
+        };
+        await authRequest('/api/users/' + encodeURIComponent(user.username), { method: 'PUT', body: JSON.stringify(payload) });
+        setText('account-admin-status', '账户 ' + user.username + ' 已更新。');
+        loadAccountUsers();
+      } catch (error) {
+        setText('account-admin-status', error.message);
+      }
+    });
+    row.querySelector('[data-action="delete"]').addEventListener('click', async function () {
+      if (!confirm('确定删除账户 ' + user.username + ' 吗？')) return;
+      try {
+        await authRequest('/api/users/' + encodeURIComponent(user.username), { method: 'DELETE' });
+        setText('account-admin-status', '账户 ' + user.username + ' 已删除。');
+        loadAccountUsers();
+      } catch (error) {
+        setText('account-admin-status', error.message);
+      }
+    });
+    body.appendChild(row);
+  });
+}
+function setupNavigation() {
+  document.querySelectorAll('.nav-item').forEach(function (button) {
+    button.addEventListener('click', function () {
+      const page = button.dataset.page;
+      document.querySelectorAll('.nav-item').forEach(function (item) { item.classList.toggle('active', item === button); });
+      document.querySelectorAll('.page-section').forEach(function (section) { section.classList.toggle('active', section.id === 'page-' + page); });
+      setText('page-title', pageTitles[page] || '主页');
+      if (page === 'data') { renderTrends(); applyChartMode(); }
+    });
+  });
+}
+function setupChartModeSelector() {
+  document.querySelectorAll('.chart-type-check').forEach(function (checkbox) {
+    checkbox.addEventListener('change', function () {
+      const checked = Array.from(document.querySelectorAll('.chart-type-check:checked')).map(function (item) {
+        return item.value;
+      });
+      if (checked.length === 0) {
+        checkbox.checked = true;
+        state.chartTypes = [checkbox.value];
+      } else {
+        state.chartTypes = checked.slice(0, 3);
+      }
+      applyChartMode();
+      renderTrends();
+    });
+  });
+
+  const queryType = document.getElementById('query-sensor-type');
+  const queryStart = document.getElementById('query-start-seconds');
+  const queryEnd = document.getElementById('query-end-seconds');
+  const queryButton = document.getElementById('query-sensor-range');
+  if (queryType) {
+    queryType.value = state.query.sensorType;
+    queryType.addEventListener('change', function () {
+      state.query.sensorType = queryType.value;
+      syncQueryRangeInput();
+    });
+  }
+  if (queryStart) {
+    queryStart.addEventListener('input', function () {
+      state.query.startSeconds = Math.max(0, Number(queryStart.value || 0));
+    });
+    queryStart.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') querySensorRangeStats();
+    });
+  }
+  if (queryEnd) {
+    queryEnd.addEventListener('input', function () {
+      const maxEnd = Math.max(2, getAvailableQueryRange(state.query.sensorType));
+      state.query.endSeconds = clamp(Number(queryEnd.value || 2), 2, maxEnd);
+    });
+    queryEnd.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') querySensorRangeStats();
+    });
+  }
+  if (queryButton) queryButton.addEventListener('click', querySensorRangeStats);
+  syncQueryRangeInput();
+
+  const exportButton = document.getElementById('export-data-button');
+  if (exportButton) exportButton.addEventListener('click', exportData);
+  const exportStart = document.getElementById('export-start-seconds');
+  const exportEnd = document.getElementById('export-end-seconds');
+  [exportStart, exportEnd].forEach(function (input) {
+    if (!input) return;
+    input.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') exportData();
+    });
+  });
+
+  applyChartMode();
+}
+function syncQueryRangeInput() {
+  const startInput = document.getElementById('query-start-seconds');
+  const endInput = document.getElementById('query-end-seconds');
+  const maxRange = Math.max(2, getAvailableQueryRange(state.query.sensorType));
+  state.query.startSeconds = clamp(Number(state.query.startSeconds || 0), 0, maxRange);
+  state.query.endSeconds = clamp(Number(state.query.endSeconds || 2), 2, maxRange);
+  if (state.query.endSeconds < state.query.startSeconds) state.query.endSeconds = state.query.startSeconds;
+  if (startInput) { startInput.min = '0'; startInput.max = String(maxRange); startInput.value = String(state.query.startSeconds); }
+  if (endInput) { endInput.min = '2'; endInput.max = String(maxRange); endInput.value = String(state.query.endSeconds); }
+}
+function querySensorRangeStats() {
+  const sensorKey = state.query.sensorType;
+  const history = state.history[sensorKey] || [];
+  if (!history.length) {
+    setText('query-result', '当前没有可查询的数据');
+    return;
+  }
+  const availableRange = getAvailableQueryRange(sensorKey);
+  const maxRange = Math.max(2, availableRange);
+  const startSeconds = clamp(Number(state.query.startSeconds || 0), 0, maxRange);
+  const endSeconds = clamp(Number(state.query.endSeconds || 2), Math.max(2, startSeconds), maxRange);
+  state.query.startSeconds = startSeconds;
+  state.query.endSeconds = endSeconds;
+  syncQueryRangeInput();
+
+  const originElapsedSeconds = history[0].elapsedSeconds;
+  const samples = history.filter(function (sample) {
+    const t = sample.elapsedSeconds - originElapsedSeconds;
+    return t >= startSeconds && t <= endSeconds;
+  });
+  if (!samples.length) {
+    setText('query-result', '当前区间内没有可统计的数据');
+    return;
+  }
+  const values = samples.map(function (sample) { return Number(sample.value); });
+  const minValue = Math.min.apply(null, values);
+  const maxValue = Math.max.apply(null, values);
+  const avgValue = (values.reduce(function (sum, value) { return sum + value; }, 0) / values.length).toFixed(2);
+  const labelMap = { co: 'CO', alcohol: '酒精气体', voc: 'VOC' };
+  setText('query-result', labelMap[sensorKey] + ' 在 ' + startSeconds + 's 到 ' + endSeconds + 's 区间内：最低 ' + minValue + ' ppm，最高 ' + maxValue + ' ppm，平均 ' + avgValue + ' ppm（' + values.length + ' 点）');
+}
+function applyChartMode() {
+  const selected = state.chartTypes.slice(0, 3);
+  document.querySelectorAll('.trend-grid > [data-trend-key]').forEach(function (item) {
+    item.hidden = !selected.includes(item.dataset.trendKey);
+  });
+  const grid = document.querySelector('.trend-grid');
+  if (grid) grid.classList.toggle('single', selected.length === 1);
+  const label = selected.map(function (key) { return chartTypeLabels[key] || key; }).join(' / ');
+  setText('chart-mode-desc', '当前显示：' + label + '（按各自窗口刷新）');
+}
+
+function renderSummary(snapshot) {
+  const risk = document.getElementById('system-risk');
+  setRiskClass(risk, snapshot.riskLevel);
+  setText('system-risk', levelText(snapshot.riskLevel));
+  setText('home-risk', levelText(snapshot.riskLevel));
+  setText('home-action', snapshot.action);
+  setText('last-updated', '更新时间：' + snapshot.timestamp);
+  setText('global-status', snapshot.riskLevel === 'normal' ? '系统运行中' : '需要关注');
+  setText('side-device-id', snapshot.device.id);
+  setText('side-device-status', '节点' + snapshot.device.online + ' · ' + snapshot.device.uploadInterval + ' 刷新');
+}
+function renderSensors(snapshot) {
+  const grid = document.getElementById('sensor-grid');
+  const table = document.getElementById('data-sensor-table-body');
+  grid.innerHTML = '';
+  table.innerHTML = '';
+  sensorMeta.forEach(function (sensor) {
+    const raw = snapshot.sensors[sensor.key];
+    const display = sensor.key === 'air' ? levelText(snapshot.riskLevel) : raw;
+    const level = sensor.key === 'air' ? snapshot.riskLevel : getLevel(raw, sensor.warning, sensor.danger);
+    const card = document.createElement('article');
+    card.className = 'sensor-card';
+    card.innerHTML = '<span class="label">' + sensor.label + '</span><strong class="value">' + display + '</strong><span class="unit">' + sensor.unit + '</span><div class="state"><span class="risk-pill risk-' + level + '">' + levelText(level) + '</span></div>';
+    grid.appendChild(card);
+    const row = document.createElement('tr');
+    row.innerHTML = '<td>' + sensor.label + '</td><td>' + display + '</td><td>' + sensor.unit + '</td><td><span class="risk-pill risk-' + level + '">' + levelText(level) + '</span></td>';
+    table.appendChild(row);
+  });
+}
+function renderVision(snapshot) {
+  setText('vision-main', snapshot.vision.status);
+  setText('vision-label', snapshot.vision.label);
+  setText('vision-confidence', snapshot.vision.confidence + '%');
+  setText('vision-chip', snapshot.vision.status === 'normal' ? '视觉正常' : '发现异常');
+}
+function renderStatusList(id, rows) {
+  const list = document.getElementById(id);
+  list.innerHTML = '';
+  rows.forEach(function (row) {
+    const item = document.createElement('div');
+    item.className = 'status-item';
+    item.innerHTML = '<span>' + row.label + '</span><strong>' + row.value + '</strong>';
+    list.appendChild(item);
+  });
+}
+function fanCommandLabel(snapshot) {
+  const actuators = snapshot.actuators || {};
+  const rawFan = String(actuators.fan || '').toLowerCase();
+  const pwm = getFanPwmEstimate(snapshot).pwm;
+  const commanded = Boolean(actuators.fanCommanded ?? snapshot.fanCommanded ?? (pwm > 0 || ['low', 'high', 'on', '低速', '高速', '开启'].includes(rawFan)));
+  if (!commanded || pwm <= 0 || rawFan === 'off' || rawFan === '关闭') return '程序命令：关闭';
+  if (pwm >= 80 || rawFan === 'high' || rawFan === '高速') return '程序命令：高速 ' + pwm + '%';
+  return '程序命令：低速 ' + pwm + '%';
+}
+function getFanPwmEstimate(snapshot) {
+  const actuators = snapshot.actuators || {};
+  const rawFan = String(actuators.fan || '').toLowerCase();
+  let pwm = Number(actuators.fanPwmPercent ?? actuators.fanPercent ?? snapshot.fanPwmPercent ?? snapshot.fanPercent);
+  if (!Number.isFinite(pwm)) {
+    if (rawFan === 'high' || rawFan === '高速') pwm = 85;
+    else if (['low', 'on', '低速', '开启'].includes(rawFan)) pwm = 40;
+    else pwm = 0;
+  }
+  pwm = clamp(pwm, 0, 100);
+  return { pwm, rpm: Math.round(FAN_FULL_LOAD_RPM * pwm / 100) };
+}
+function fanWorkStateLabel(snapshot) {
+  const actuators = snapshot.actuators || {};
+  const estimate = getFanPwmEstimate(snapshot);
+  const hasFeedback = actuators.fanTachRpm != null || snapshot.fanTachRpm != null;
+  const rpm = Number(actuators.fanTachRpm ?? snapshot.fanTachRpm ?? 0);
+  if (hasFeedback) return rpm > 0 ? ('测速转速：' + rpm + ' RPM；等效估算：' + estimate.rpm + ' RPM') : '异常：有 PWM 命令但测速为 0 RPM';
+  if (estimate.pwm > 0) return '等效转速：约 ' + estimate.rpm + ' RPM（按 12V 满载 ' + FAN_FULL_LOAD_RPM + ' RPM × ' + estimate.pwm + '% PWM 估算）';
+  return '等效转速：0 RPM';
+}
+function renderActuators(snapshot) {
+  renderStatusList('actuator-list', [
+    { label: '排气风机', value: fanCommandLabel(snapshot) },
+    { label: '风扇等效转速', value: fanWorkStateLabel(snapshot) },
+    { label: 'PWM 输出参数', value: 'GPIO' + (snapshot.actuators.fanPwmPin ?? '4') + ' · ' + (snapshot.actuators.fanPwmFreqHz ?? '20000') + 'Hz' },
+    { label: '报警状态', value: snapshot.actuators.alarm },
+    { label: '蜂鸣器', value: snapshot.actuators.buzzer },
+    { label: '继电器输出', value: snapshot.actuators.relay }
+  ]);
+}
+function renderDevice(snapshot) {
+  renderStatusList('device-list', [
+    { label: '设备编号', value: snapshot.device.id },
+    { label: '部署位置', value: snapshot.device.location },
+    { label: '在线状态', value: snapshot.device.online },
+    { label: '电量', value: snapshot.device.power },
+    { label: 'Wi-Fi', value: snapshot.device.wifi },
+    { label: '上传间隔', value: snapshot.device.uploadInterval }
+  ]);
+}
+function getBoardDetectScan() {
+  const scan = window.__LABSAFE_DEVICE_SCAN__;
+  if (!scan || typeof scan !== 'object') return null;
+  return scan;
+}
+function getBoardDetectCandidates(scan) {
+  return (scan && Array.isArray(scan.devices) ? scan.devices : []).filter(function (device) {
+    return device && (device.isEspressif || device.isUsbBridge || device.isEsp32P4 || device.boardType || device.com);
+  });
+}
+function syncSerialCandidatesFromScan(scan) {
+  const seenPorts = new Set();
+  state.serial.candidates = getBoardDetectCandidates(scan).filter(function (device) {
+    return !!(device && device.com);
+  }).map(function (device) {
+    const port = String(device.com).toUpperCase();
+    if (seenPorts.has(port)) return null;
+    seenPorts.add(port);
+    return {
+      port,
+      usb: device.usbId || 'USB ID 未提供',
+      note: device.boardType || '开发板候选'
+    };
+  }).filter(Boolean);
+}
+function renderBoardDetectionStatus() {
+  const scan = getBoardDetectScan();
+  if (!scan) {
+    state.serial.candidates = [];
+    setText('board-detect-chip', '无扫描结果');
+    setText('board-detect-type', '未检测');
+    setText('board-detect-port', '未提供');
+    setText('board-detect-p4', '未知');
+    setText('board-detect-count', '0');
+    setText('board-detect-source', '尚未加载本地扫描结果');
+    setText('board-detect-detail', '未发现开发板候选');
+    renderRealDeviceCard();
+    return;
+  }
+  const candidates = getBoardDetectCandidates(scan);
+  syncSerialCandidatesFromScan(scan);
+  const recommendedDevice = candidates.find(function (device) {
+    return device.com === scan.recommendedPort;
+  }) || candidates.find(function (device) {
+    return device.boardType === scan.recommendedBoard;
+  }) || candidates[0] || null;
+  const boardType = scan.recommendedBoard || (recommendedDevice && recommendedDevice.boardType) || '未知开发板';
+  const recommendedPort = scan.recommendedPort || (recommendedDevice && recommendedDevice.com) || '未提供';
+  const isP4 = typeof scan.recommendedIsP4 === 'boolean' ? scan.recommendedIsP4 : !!(recommendedDevice && recommendedDevice.isEsp32P4);
+  const candidateCount = Number(scan.candidateCount ?? scan.total ?? candidates.length) || candidates.length;
+  const preferredBoards = (scan.preferredBoards || []).filter(Boolean);
+  const scanTime = scan.scannedAt ? String(scan.scannedAt).replace('T', ' ') : '未知时间';
+  setText('board-detect-chip', candidateCount > 0 ? '已加载扫描' : '未发现候选');
+  setText('board-detect-type', boardType);
+  setText('board-detect-port', recommendedPort);
+  setText('board-detect-p4', isP4 ? '是' : '否');
+  setText('board-detect-count', String(candidateCount));
+  setText('board-detect-source', '扫描时间：' + scanTime);
+  setText('board-detect-detail', preferredBoards.length ? ('候选板型：' + preferredBoards.join(' / ')) : '未发现开发板候选');
+  renderRealDeviceCard();
+}
+function renderRealDeviceCard() {
+  const bridgeOnline = state.bridge.connected;
+  const hasAuthorizedPort = state.serial.grantedPorts.length > 0;
+  const serialStatus = state.serial.connected ? '已连接' : (state.serial.connecting ? '正在打开' : (hasAuthorizedPort ? '已授权，待打开' : '未连接'));
+  const displayPort = state.serial.connected
+    ? state.serial.portLabel
+    : (hasAuthorizedPort ? state.serial.grantedPorts[0].label : (state.serial.portLabel || '未选择'));
+  setText('serial-support-chip', bridgeOnline ? '真实数据已接入' : (state.serial.supported ? '浏览器支持串口' : '等待本地桥接'));
+  setText('serial-connect-state', bridgeOnline ? '已连接' : serialStatus);
+  setText('serial-current-port', bridgeOnline ? '本地桥接：' + state.bridge.url : ('当前端口：' + displayPort));
+  const totalCandidates = state.serial.candidates.length + state.serial.grantedPorts.length;
+  setText('serial-candidate-count', String(totalCandidates));
+  const serialDetail = state.serial.lastError
+    ? state.serial.message + '；错误：' + state.serial.lastError
+    : state.serial.message;
+  setText('serial-message', bridgeOnline ? state.bridge.message : serialDetail);
+  const list = document.getElementById('serial-candidate-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const rows = [];
+  if (bridgeOnline || state.bridge.failureCount > 0) {
+    rows.push({ title: bridgeOnline ? 'ESP32-P4 HTTP 桥接在线' : 'ESP32-P4 HTTP 桥接未连接', detail: state.bridge.message + ' · ' + state.bridge.url });
+  }
+  state.serial.candidates.forEach(function (item) {
+    rows.push({ title: item.port, detail: item.usb + ' · ' + item.note });
+  });
+  state.serial.grantedPorts.forEach(function (item) {
+    rows.push({ title: item.label, detail: item.note });
+  });
+  rows.forEach(function (row) {
+    const card = document.createElement('article');
+    card.className = 'serial-candidate-item';
+    card.innerHTML = '<strong>' + row.title + '</strong><span>' + row.detail + '</span>';
+    list.appendChild(card);
+  });
+}
+function normalizeIncomingSnapshot(payload) {
+  const co = Number(payload.coPpm ?? payload.co ?? payload.sensors?.co ?? 0);
+  const alcohol = Number(payload.alcoholPpm ?? payload.alcohol ?? payload.sensors?.alcohol ?? 0);
+  const voc = Number(payload.vocPpm ?? payload.voc ?? payload.sensors?.voc ?? 0);
+  const visionStatus = payload.vision?.status || payload.visionStatus || 'normal';
+  const riskLevel = payload.riskLevel || ((visionStatus !== 'normal' || co >= 80 || alcohol >= 700 || voc >= 700) ? 'danger' : (co >= 35 || alcohol >= 400 || voc >= 400) ? 'warning' : 'normal');
+  return {
+    timestamp: typeof payload.timestamp === 'string' ? payload.timestamp : formatTime(new Date(payload.timestamp || Date.now())),
+    riskLevel,
+    reason: payload.reason || payload.riskReason || '来自串口实时数据',
+    action: payload.action || payload.suggestedAction || '按实时数据联动处理',
+    sensors: { co, alcohol, voc, air: riskLevel === 'danger' ? 2 : riskLevel === 'warning' ? 1 : 0 },
+    vision: { status: visionStatus, label: payload.vision?.label || payload.visionLabel || '未提供', confidence: Math.round((payload.vision?.confidence ?? payload.visionConfidence ?? 0) * 100) || 0 },
+    actuators: { fan: payload.actuators?.fan || payload.fanStatus || 'off', fanPwmPercent: Number(payload.actuators?.fanPwmPercent ?? payload.fanPwmPercent ?? 0), fanDuty: Number(payload.actuators?.fanDuty ?? payload.fanDuty ?? 0), fanCommanded: Boolean(payload.actuators?.fanCommanded ?? payload.fanCommanded ?? false), fanPwmPin: payload.actuators?.fanPwmPin ?? payload.fanPwmPin ?? 4, fanPwmFreqHz: payload.actuators?.fanPwmFreqHz ?? payload.fanPwmFreqHz ?? 20000, fanTachRpm: payload.actuators?.fanTachRpm ?? payload.fanTachRpm, alarm: payload.actuators?.alarm || payload.alarmStatus || 'off', buzzer: payload.actuators?.buzzer || '未知', relay: payload.actuators?.relay || '未知' },
+    device: { id: payload.deviceId || 'esp32-device', online: '在线', location: payload.location || '串口实时接入', power: payload.power || '--', wifi: payload.wifi || '--', uploadInterval: payload.uploadInterval || '实时' }
+  };
+}
+function parseTelemetryLine(text) {
+  const prefixIndex = text.indexOf(LABSAFE_TELEMETRY_PREFIX);
+  const jsonText = prefixIndex >= 0 ? text.slice(prefixIndex + LABSAFE_TELEMETRY_PREFIX.length).trim() : text.trim();
+  return JSON.parse(jsonText);
+}
+async function pollLocalBridge() {
+  if (!state.bridge.enabled) return;
+  try {
+    const response = await fetch(state.bridge.url + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const bridgePayload = await response.json();
+    if (!bridgePayload.ok || !bridgePayload.snapshot) throw new Error(bridgePayload.message || '暂无 ESP32-P4 数据');
+    state.dataSource = 'external';
+    state.bridge.connected = true;
+    state.bridge.failureCount = 0;
+    state.bridge.lastUpdatedAt = bridgePayload.updatedAt || bridgePayload.snapshot.receivedAt || null;
+    state.bridge.message = '已接收 ESP32-P4 真实数据：' + (state.bridge.lastUpdatedAt || '刚刚');
+    render(normalizeIncomingSnapshot(bridgePayload.snapshot));
+    renderRealDeviceCard();
+  } catch (error) {
+    state.bridge.connected = false;
+    state.bridge.failureCount += 1;
+    state.bridge.message = state.bridge.failureCount <= 3
+      ? '等待本地桥接服务：' + error.message
+      : '未连接本地桥接，等待真实数据';
+    if (state.dataSource !== 'external') state.dataSource = 'waiting';
+    renderRealDeviceCard();
+  }
+}
+async function refreshSerialCandidates() {
+  if (!state.serial.supported) {
+    state.serial.message = '当前浏览器环境不支持 Web Serial';
+    renderRealDeviceCard();
+    return;
+  }
+  try {
+    const ports = await navigator.serial.getPorts();
+    state.serial.authorizedPorts = ports;
+    state.serial.grantedPorts = ports.map(function (port, index) {
+      const info = port.getInfo();
+      return {
+        label: '已授权串口 ' + (index + 1),
+        note: 'VID_' + ((info.usbVendorId || 0).toString(16).toUpperCase()) + ' / PID_' + ((info.usbProductId || 0).toString(16).toUpperCase())
+      };
+    });
+    if (!state.serial.connected && ports.length > 0) state.serial.portLabel = state.serial.grantedPorts[0].label + '（正在打开串口）';
+    state.serial.message = ports.length ? '已检测到浏览器已授权串口 ' + ports.length + ' 个，正在自动打开读取' : '浏览器尚未授权任何串口';
+    renderRealDeviceCard();
+    if (!state.serial.connected && ports.length > 0) {
+      connectSerialDevice();
+      return;
+    }
+  } catch (error) {
+    state.serial.message = '刷新串口候选失败：' + error.message;
+  }
+  renderRealDeviceCard();
+}
+async function readSerialStream(port) {
+  const reader = port.readable.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    while (state.serial.connected) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || '';
+      lines.forEach(function (line) {
+        const text = line.trim();
+        if (!text) return;
+        state.serial.lastRawLine = text.slice(0, 180);
+        try {
+          const payload = parseTelemetryLine(text);
+          state.dataSource = 'external';
+          state.serial.message = '已收到 ESP32 实时数据：' + formatTime(new Date());
+          state.serial.lastError = '';
+          render(normalizeIncomingSnapshot(payload));
+          renderRealDeviceCard();
+        } catch (error) {
+          state.serial.message = '串口已连接，但暂未收到 LABSAFE_JSON 数据。最近一行：' + state.serial.lastRawLine;
+          renderRealDeviceCard();
+        }
+      });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+async function connectSerialDevice() {
+  if (!state.serial.supported) {
+    state.serial.message = '当前浏览器环境不支持 Web Serial';
+    renderRealDeviceCard();
+    return;
+  }
+  if (state.serial.connecting || state.serial.connected) {
+    renderRealDeviceCard();
+    return;
+  }
+  try {
+    state.serial.connecting = true;
+    state.serial.lastError = '';
+    state.serial.message = '正在打开串口，请稍候。如果一直停在这里，可能端口被串口监视器或本地桥接占用。';
+    renderRealDeviceCard();
+    const authorizedPorts = await navigator.serial.getPorts();
+    state.serial.authorizedPorts = authorizedPorts;
+    const port = authorizedPorts[0] || await navigator.serial.requestPort();
+    const info = port.getInfo();
+    await port.open({ baudRate: 115200 });
+    state.serial.port = port;
+    state.serial.connected = true;
+    state.serial.connecting = false;
+    state.serial.portLabel = 'VID_' + ((info.usbVendorId || 0).toString(16).toUpperCase()) + ' / PID_' + ((info.usbProductId || 0).toString(16).toUpperCase());
+    state.serial.message = '串口已连接，等待 ESP32 输出';
+    renderRealDeviceCard();
+    readSerialStream(port).catch(function (error) {
+      state.serial.connected = false;
+      state.serial.connecting = false;
+      state.serial.lastError = error.message;
+      state.serial.message = '串口读取中断：' + error.message;
+      renderRealDeviceCard();
+    });
+  } catch (error) {
+    state.serial.connecting = false;
+    state.serial.connected = false;
+    state.serial.lastError = error.message;
+    state.serial.message = '连接串口失败：' + error.message;
+    renderRealDeviceCard();
+  }
+}
+function setupRealDeviceCard() {
+  const connectButton = document.getElementById('serial-connect-button');
+  const refreshButton = document.getElementById('serial-refresh-button');
+  if (connectButton) connectButton.addEventListener('click', connectSerialDevice);
+  if (refreshButton) refreshButton.addEventListener('click', refreshSerialCandidates);
+  renderRealDeviceCard();
+}
+function getAvailableQueryRange(sensorKey) {
+  const history = state.history[sensorKey] || [];
+  if (history.length < 2) return 0;
+  return Math.max(0, Math.round(history[history.length - 1].elapsedSeconds - history[0].elapsedSeconds));
+}
+function getSensorSampleInterval(sensorKey) {
+  return Math.max(0.1, Number(state.sensorSampling[sensorKey] || 1));
+}
+function getHistoryLimit(sensorKey) {
+  return 240;
+}
+function trimHistory(sensorKey) {
+  const limit = getHistoryLimit(sensorKey);
+  while (state.history[sensorKey].length > limit) state.history[sensorKey].shift();
+}
+function trimHistories() {
+  ['co', 'alcohol', 'voc'].forEach(trimHistory);
+}
+function pushSensorHistory(sensorKey, value) {
+  let elapsedSeconds;
+  if (state.dataSource === 'mock') {
+    const interval = getSensorSampleInterval(sensorKey);
+    if (state.history[sensorKey].length > 0 && state.mockElapsedSeconds - state.sensorLastSampleAt[sensorKey] < interval) return;
+    state.sensorLastSampleAt[sensorKey] = state.mockElapsedSeconds;
+    elapsedSeconds = state.mockElapsedSeconds;
+  } else {
+    const last = state.history[sensorKey].at(-1);
+    elapsedSeconds = last ? last.elapsedSeconds + getSensorSampleInterval(sensorKey) : 0;
+  }
+  state.history[sensorKey].push({
+    id: sensorKey + '-' + state.sampleSequence[sensorKey]++,
+    value: Number(value || 0),
+    elapsedSeconds
+  });
+  trimHistory(sensorKey);
+}
+function pushHistory(snapshot) {
+  if (state.dataSource !== 'external') return;
+  pushSensorHistory('co', snapshot.sensors.co);
+  pushSensorHistory('alcohol', snapshot.sensors.alcohol);
+  pushSensorHistory('voc', snapshot.sensors.voc);
+}
+function getTrendMeta(canvasId) {
+  const metaMap = {
+    'trend-co': { key: 'co', name: 'CO', unit: 'ppm' },
+    'trend-alcohol': { key: 'alcohol', name: '酒精', unit: 'ppm' },
+    'trend-voc': { key: 'voc', name: 'VOC', unit: 'ppm' }
+  };
+  return metaMap[canvasId] || { key: '', name: '', unit: '' };
+}
+function getChartView(canvasId) {
+  if (!chartViews[canvasId]) {
+    chartViews[canvasId] = {
+      scaleX: 1,
+      scaleY: 1,
+      offsetX: 0,
+      offsetY: 0,
+      points: [],
+      activePoint: null,
+      activePointId: null,
+      dragging: false,
+      dragged: false,
+      startX: 0,
+      startY: 0,
+      startOffsetX: 0,
+      startOffsetY: 0
+    };
+  }
+  return chartViews[canvasId];
+}
+function syncCanvasResolution(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(3, Math.max(window.devicePixelRatio || 1, 2.5));
+  const width = Math.max(320, rect.width || 1200);
+  const height = Math.max(260, rect.height || 430);
+  const targetWidth = Math.round(width * dpr);
+  const targetHeight = Math.round(height * dpr);
+  if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, width, height };
+}
+function getPlotArea(width, height) {
+  const padding = { left: 98, right: 66, top: 56, bottom: 92 };
+  return {
+    left: padding.left,
+    right: width - padding.right,
+    top: padding.top,
+    bottom: height - padding.bottom,
+    width: width - padding.left - padding.right,
+    height: height - padding.top - padding.bottom
+  };
+}
+function getCanvasPointer(event, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top
+  };
+}
+function isInsidePlot(point, area) {
+  return point.x >= area.left && point.x <= area.right && point.y >= area.top && point.y <= area.bottom;
+}
+function findNearestPoint(view, point) {
+  let nearest = null;
+  let nearestDistance = Infinity;
+  view.points.forEach(function (item) {
+    const distance = Math.hypot(item.x - point.x, item.y - point.y);
+    if (distance < nearestDistance) {
+      nearest = item;
+      nearestDistance = distance;
+    }
+  });
+  return nearestDistance <= 42 ? nearest : null;
+}
+function applyWheelZoom(event, canvas, view, options = {}) {
+  if (!options.force && !(event.ctrlKey || event.metaKey)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const point = getCanvasPointer(event, canvas);
+  const factor = event.deltaY < 0 ? 1.22 : 0.82;
+  view.scaleX = clamp(view.scaleX * factor, 0.12, 24);
+  view.scaleY = clamp(view.scaleY * factor, 0.12, 24);
+  view.offsetX += (point.x - canvas.getBoundingClientRect().width / 2) * (1 - factor) * 0.15;
+  view.offsetY += (point.y - canvas.getBoundingClientRect().height / 2) * (1 - factor) * 0.15;
+  renderTrends();
+}
+function resetChartView(canvasId) {
+  const view = getChartView(canvasId);
+  view.scaleX = 1;
+  view.scaleY = 1;
+  view.offsetX = 0;
+  view.offsetY = 0;
+  view.activePoint = null;
+  view.activePointId = null;
+  renderTrends();
+}
+function zoomChartByButton(canvasId, direction) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const view = getChartView(canvasId);
+  const rect = canvas.getBoundingClientRect();
+  const size = syncCanvasResolution(canvas);
+  const area = getPlotArea(size.width, size.height);
+  applyWheelZoom({
+    ctrlKey: true,
+    metaKey: false,
+    deltaY: direction === 'in' ? -120 : 120,
+    clientX: rect.left + area.left + area.width / 2,
+    clientY: rect.top + area.top + area.height / 2,
+    preventDefault: function () {},
+    stopPropagation: function () {}
+  }, canvas, view, { force: true });
+}
+function setupChartToolbar() {
+  document.querySelectorAll('[data-chart-zoom]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      const target = button.dataset.chartTarget;
+      const action = button.dataset.chartZoom;
+      if (action === 'reset') resetChartView(target);
+      else zoomChartByButton(target, action);
+    });
+  });
+}
+function setupChartInteractions() {
+  ['trend-co', 'trend-alcohol', 'trend-voc'].forEach(function (canvasId) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const view = getChartView(canvasId);
+
+    canvas.addEventListener('pointerdown', function (event) {
+      const point = getCanvasPointer(event, canvas);
+      const size = syncCanvasResolution(canvas);
+      const area = getPlotArea(size.width, size.height);
+      if (!isInsidePlot(point, area)) return;
+      view.dragging = true;
+      view.dragged = false;
+      view.startX = point.x;
+      view.startY = point.y;
+      view.startOffsetX = view.offsetX;
+      view.startOffsetY = view.offsetY;
+      canvas.classList.add('dragging');
+      canvas.setPointerCapture(event.pointerId);
+    });
+
+    canvas.addEventListener('pointermove', function (event) {
+      if (!view.dragging) return;
+      const point = getCanvasPointer(event, canvas);
+      const dx = point.x - view.startX;
+      const dy = point.y - view.startY;
+      if (Math.abs(dx) + Math.abs(dy) > 3) view.dragged = true;
+      view.offsetX = view.startOffsetX + dx;
+      view.offsetY = view.startOffsetY + dy;
+      renderTrends();
+    });
+
+    canvas.addEventListener('pointerup', function (event) {
+      const point = getCanvasPointer(event, canvas);
+      if (!view.dragged) {
+        const nearest = findNearestPoint(view, point);
+        view.activePoint = nearest;
+        view.activePointId = nearest ? nearest.id : null;
+        renderTrends();
+      }
+      view.dragging = false;
+      canvas.classList.remove('dragging');
+      try { canvas.releasePointerCapture(event.pointerId); } catch (error) {}
+    });
+
+    canvas.addEventListener('pointerleave', function () {
+      if (!view.dragging) return;
+      view.dragging = false;
+      canvas.classList.remove('dragging');
+    });
+    const wheelZoom = function (event) {
+      applyWheelZoom(event, canvas, view);
+    };
+    canvas.addEventListener('wheel', wheelZoom, { passive: false });
+    if (canvas.parentElement) {
+      canvas.parentElement.addEventListener('wheel', wheelZoom, { passive: false });
+    }
+
+    canvas.addEventListener('dblclick', function () {
+      view.scaleX = 1;
+      view.scaleY = 1;
+      view.offsetX = 0;
+      view.offsetY = 0;
+      view.activePoint = null;
+      renderTrends();
+    });
+  });
+}
+function drawTooltip(ctx, point, area, meta) {
+  const valueText = 'y=' + point.value + (meta.unit ? ' ' + meta.unit : '');
+  const indexText = 'x=' + point.elapsedSeconds + 's · 点位 #' + (point.index + 1);
+  ctx.save();
+  ctx.font = '16px Microsoft YaHei, sans-serif';
+  const width = Math.max(ctx.measureText(valueText).width, ctx.measureText(indexText).width) + 24;
+  const height = 58;
+  let x = point.x + 14;
+  let y = point.y - height - 14;
+  if (x + width > area.right) x = point.x - width - 14;
+  if (y < area.top) y = point.y + 14;
+  ctx.fillStyle = 'rgba(17, 24, 39, 0.92)';
+  ctx.beginPath();
+  ctx.roundRect(x, y, width, height, 14);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(valueText, x + 12, y + 24);
+  ctx.fillStyle = '#d1d5db';
+  ctx.fillText(indexText, x + 12, y + 46);
+  ctx.restore();
+}
+function drawTrend(canvasId, values, color) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const size = syncCanvasResolution(canvas);
+  const ctx = size.ctx;
+  const width = size.width;
+  const height = size.height;
+  const area = getPlotArea(width, height);
+  const numericValues = values.map(function (item) { return item.value; });
+  const maxRaw = Math.max.apply(null, numericValues.concat([1]));
+  const minRaw = Math.min.apply(null, numericValues.concat([0]));
+  const max = Math.ceil(maxRaw / 10) * 10 || 10;
+  const min = Math.max(0, Math.floor(minRaw / 10) * 10);
+  const range = Math.max(max - min, 1);
+  const meta = getTrendMeta(canvasId);
+  const view = getChartView(canvasId);
+  const sampleInterval = getSensorSampleInterval(meta.key);
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.font = '16px Microsoft YaHei, sans-serif';
+  ctx.lineWidth = 1;
+
+  ctx.strokeStyle = '#e5e7eb';
+  ctx.fillStyle = '#737373';
+  for (let i = 0; i <= 4; i += 1) {
+    const y = area.top + (area.height / 4) * i;
+    const value = Math.round(max - (range / 4) * i);
+    ctx.beginPath();
+    ctx.moveTo(area.left, y);
+    ctx.lineTo(area.right, y);
+    ctx.stroke();
+    ctx.fillText(String(value) + (meta.unit ? ' ' + meta.unit : ''), 12, y + 5);
+  }
+
+  ctx.strokeStyle = '#9ca3af';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(area.left, area.top);
+  ctx.lineTo(area.left, area.bottom);
+  ctx.lineTo(area.right, area.bottom);
+  ctx.stroke();
+
+  view.points = [];
+  if (values.length < 2) return;
+
+  const originElapsedSeconds = values[0].elapsedSeconds;
+  const latestElapsedSeconds = Math.max(0, values[values.length - 1].elapsedSeconds - originElapsedSeconds);
+
+  ctx.fillStyle = '#737373';
+  ctx.fillText(meta.unit, 8, 24);
+  ctx.fillText('时间 / 秒', width - 92, height - 12);
+  for (let i = 0; i <= 4; i += 1) {
+    const x = area.left + (area.width / 4) * i;
+    const elapsedSeconds = Math.round((latestElapsedSeconds / 4) * i);
+    const label = elapsedSeconds + 's';
+    ctx.fillText(label, i === 0 ? x : x - 14, height - 46);
+  }
+  ctx.fillText('起始', area.left, height - 16);
+  ctx.fillText('当前', area.right - 108, height - 16);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(area.left, area.top, area.width, area.height);
+  ctx.clip();
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 4.5;
+  ctx.beginPath();
+  values.forEach(function (sample, index) {
+    const elapsedSeconds = Math.max(0, sample.elapsedSeconds - originElapsedSeconds);
+    const normalizedX = latestElapsedSeconds === 0 ? 0 : (elapsedSeconds / latestElapsedSeconds);
+    const baseX = area.left + normalizedX * area.width;
+    const baseY = area.top + area.height - ((sample.value - min) / range) * area.height;
+    const x = area.left + (baseX - area.left) * view.scaleX + view.offsetX;
+    const y = area.top + (baseY - area.top) * view.scaleY + view.offsetY;
+    view.points.push({ id: sample.id, x, y, value: sample.value, index, elapsedSeconds });
+    if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  view.points.forEach(function (point) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  if (view.activePointId) {
+    const updatedPoint = view.points.find(function (point) { return point.id === view.activePointId; });
+    view.activePoint = updatedPoint || null;
+    if (!updatedPoint) view.activePointId = null;
+  }
+  const activePoint = view.activePoint;
+  if (activePoint) {
+    ctx.strokeStyle = 'rgba(17, 24, 39, 0.28)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(activePoint.x, area.top);
+    ctx.lineTo(activePoint.x, area.bottom);
+    ctx.stroke();
+    ctx.fillStyle = '#111827';
+    ctx.beginPath();
+    ctx.arc(activePoint.x, activePoint.y, 8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+  if (activePoint) drawTooltip(ctx, activePoint, area, meta);
+}
+function renderTrends() {
+  drawTrend('trend-co', state.history.co, '#2563eb');
+  drawTrend('trend-alcohol', state.history.alcohol, '#e1306c');
+  drawTrend('trend-voc', state.history.voc, '#16a34a');
+  applyChartMode();
+  renderChartDebugInfo();
+}
+function renderChartDebugInfo() {
+  ['trend-co', 'trend-alcohol', 'trend-voc'].forEach(function (canvasId) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas || !canvas.parentElement) return;
+    const view = getChartView(canvasId);
+    canvas.parentElement.dataset.zoom = '缩放 ' + view.scaleX.toFixed(2) + 'x';
+  });
+}
+function maybeCreateAlarm(snapshot) {
+  if (snapshot.riskLevel === 'normal') return;
+  state.alarms.unshift({ time: snapshot.timestamp, source: snapshot.reason.includes('视觉') ? '视觉识别 / 传感器' : '气体传感器', level: levelText(snapshot.riskLevel), levelKey: snapshot.riskLevel, reason: snapshot.reason, status: '未确认' });
+  if (state.alarms.length > 8) state.alarms.pop();
+}
+function renderAlarms() {
+  const body = document.getElementById('alarm-table-body');
+  body.innerHTML = '';
+  if (state.alarms.length === 0) {
+    const row = document.createElement('tr');
+    row.innerHTML = '<td colspan="5" class="muted">暂无报警事件。</td>';
+    body.appendChild(row);
+  } else {
+    state.alarms.forEach(function (alarm) {
+      const row = document.createElement('tr');
+      row.innerHTML = '<td>' + alarm.time + '</td><td>' + alarm.source + '</td><td><span class="risk-pill risk-' + alarm.levelKey + '">' + alarm.level + '</span></td><td>' + alarm.reason + '</td><td>' + alarm.status + '</td>';
+      body.appendChild(row);
+    });
+  }
+  const pending = state.alarms.filter(function (alarm) { return alarm.status === '未确认'; }).length;
+  setText('pending-count', String(pending));
+  setText('nav-alert-count', String(pending));
+}
+function pushEvent(snapshot) {
+  state.events.unshift({ time: snapshot.timestamp, title: snapshot.riskLevel === 'normal' ? '数据刷新' : '风险事件触发', desc: snapshot.reason, level: snapshot.riskLevel });
+  if (state.events.length > 10) state.events.pop();
+}
+function renderEvents() {
+  const stream = document.getElementById('event-stream');
+  stream.innerHTML = '';
+  state.events.forEach(function (event) {
+    const item = document.createElement('article');
+    item.className = 'event-item';
+    item.innerHTML = '<strong>' + event.title + '</strong><span>' + event.desc + '</span><small>' + event.time + '</small>';
+    stream.appendChild(item);
+  });
+}
+function normalizeHistory(sensorKey) {
+  return (state.history[sensorKey] || []).map(function (sample, index) {
+    if (sample && typeof sample === 'object' && 'value' in sample) return sample;
+    return {
+      id: sensorKey + '-legacy-' + index,
+      value: Number(sample || 0),
+      elapsedSeconds: index * getSensorSampleInterval(sensorKey)
+    };
+  });
+}
+function buildMergedRows() {
+  const histories = {
+    co: normalizeHistory('co'),
+    alcohol: normalizeHistory('alcohol'),
+    voc: normalizeHistory('voc')
+  };
+  const rowCount = Math.max(histories.co.length, histories.alcohol.length, histories.voc.length, 0);
+  const rows = [];
+  for (let index = 0; index < rowCount; index += 1) {
+    const co = histories.co[index] || null;
+    const alcohol = histories.alcohol[index] || null;
+    const voc = histories.voc[index] || null;
+    rows.push({
+      sample_id: 'sample-' + index,
+      elapsed_seconds: co?.elapsedSeconds ?? alcohol?.elapsedSeconds ?? voc?.elapsedSeconds ?? index,
+      co_ppm: co?.value ?? null,
+      alcohol_ppm: alcohol?.value ?? null,
+      voc_ppm: voc?.value ?? null,
+      risk_level: state.current?.riskLevel || 'normal'
+    });
+  }
+  return rows;
+}
+function buildResearchWideRows() {
+  return buildMergedRows();
+}
+function buildResearchLongRows() {
+  const rows = [];
+  ['co', 'alcohol', 'voc'].forEach(function (sensorKey) {
+    normalizeHistory(sensorKey).forEach(function (sample, index) {
+      rows.push({
+        sample_id: sensorKey + '-' + index,
+        sensor_type: sensorKey,
+        elapsed_seconds: sample.elapsedSeconds,
+        value_ppm: sample.value,
+        unit: 'ppm'
+      });
+    });
+  });
+  return rows;
+}
+function buildTrainingSnapshotRows() {
+  return buildMergedRows().map(function (row) {
+    return {
+      sample_id: row.sample_id,
+      elapsed_seconds: row.elapsed_seconds,
+      co_ppm: row.co_ppm,
+      alcohol_ppm: row.alcohol_ppm,
+      voc_ppm: row.voc_ppm,
+      label_risk: row.risk_level,
+      label_alarm: row.risk_level === 'normal' ? 0 : 1
+    };
+  });
+}
+function buildSensorWindowRows(sensorKey) {
+  const labelMap = { co: 'CO', alcohol: '酒精气体', voc: 'VOC' };
+  return normalizeHistory(sensorKey).map(function (sample, index) {
+    return {
+      sample_id: sensorKey + '-' + index,
+      sensor_type: sensorKey,
+      sensor_name: labelMap[sensorKey] || sensorKey,
+      elapsed_seconds: sample.elapsedSeconds,
+      value_ppm: sample.value,
+      unit: 'ppm'
+    };
+  });
+}
+function buildAlarmEventRows() {
+  return state.alarms.map(function (alarm, index) {
+    return {
+      event_id: 'alarm-' + index,
+      event_time: alarm.time,
+      source: alarm.source,
+      level: alarm.level,
+      reason: alarm.reason,
+      status: alarm.status
+    };
+  });
+}
+function getExportTimeRange() {
+  const startInput = document.getElementById('export-start-seconds');
+  const endInput = document.getElementById('export-end-seconds');
+  const rawStart = startInput ? startInput.value.trim() : '';
+  const rawEnd = endInput ? endInput.value.trim() : '';
+  const startSeconds = rawStart === '' ? 0 : Number(rawStart);
+  const endSeconds = rawEnd === '' ? Infinity : Number(rawEnd);
+  if (!Number.isFinite(startSeconds) || startSeconds < 0) {
+    return { valid: false, message: '导出起始时间必须是不小于 0 的数字' };
+  }
+  if (rawEnd !== '' && (!Number.isFinite(endSeconds) || endSeconds < 0)) {
+    return { valid: false, message: '导出终止时间必须是不小于 0 的数字' };
+  }
+  if (endSeconds < startSeconds) {
+    return { valid: false, message: '导出终止时间不能小于起始时间' };
+  }
+  return { valid: true, startSeconds, endSeconds, hasEnd: rawEnd !== '' };
+}
+function filterRowsByExportRange(rows, range) {
+  const hasElapsedRows = rows.some(function (row) {
+    return row && typeof row.elapsed_seconds !== 'undefined' && row.elapsed_seconds !== null;
+  });
+  if (!hasElapsedRows) return { rows, applied: false };
+  return {
+    rows: rows.filter(function (row) {
+      const elapsedSeconds = Number(row.elapsed_seconds);
+      if (!Number.isFinite(elapsedSeconds)) return false;
+      return elapsedSeconds >= range.startSeconds && elapsedSeconds <= range.endSeconds;
+    }),
+    applied: true
+  };
+}
+function serializeCsv(rows) {
+  if (!rows.length) return 'no_data\n';
+  const headers = Object.keys(rows[0]);
+  const escapeCell = function (value) {
+    if (value === null || typeof value === 'undefined') return '';
+    const text = String(value).replace(/"/g, '""');
+    return /[",\n]/.test(text) ? '"' + text + '"' : text;
+  };
+  return [headers.join(',')].concat(rows.map(function (row) {
+    return headers.map(function (header) { return escapeCell(row[header]); }).join(',');
+  })).join('\n');
+}
+function downloadExportFile(filename, content, mimeType) {
+  const blob = new Blob(['\uFEFF' + content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+}
+function exportData() {
+  const format = document.getElementById('export-format')?.value || 'csv';
+  const preset = document.getElementById('export-preset')?.value || 'sensor_co';
+  const presetBuilders = {
+    sensor_co: { name: 'co-window', label: 'CO 数据窗口', rows: function () { return buildSensorWindowRows('co'); } },
+    sensor_alcohol: { name: 'alcohol-window', label: '酒精气体数据窗口', rows: function () { return buildSensorWindowRows('alcohol'); } },
+    sensor_voc: { name: 'voc-window', label: 'VOC 数据窗口', rows: function () { return buildSensorWindowRows('voc'); } }
+  };
+  const selected = presetBuilders[preset] || presetBuilders.sensor_co;
+  const range = getExportTimeRange();
+  if (!range.valid) {
+    setText('export-status', range.message);
+    return;
+  }
+  const originalRows = selected.rows();
+  const filtered = filterRowsByExportRange(originalRows, range);
+  const rows = filtered.rows;
+  if (!rows.length) {
+    setText('export-status', filtered.applied ? '当前时间范围内暂无可导出的数据' : '暂无可导出的数据');
+    return;
+  }
+  const rangeLabel = filtered.applied ? ('，范围 ' + range.startSeconds + 's 到 ' + (range.hasEnd ? range.endSeconds + 's' : '当前最大时刻')) : '';
+  const filename = 'labsafe-' + selected.name + '-' + Date.now() + '.' + format;
+  if (format === 'json') {
+    downloadExportFile(filename, JSON.stringify({ preset, exported_at: new Date().toISOString(), export_range_seconds: filtered.applied ? { start: range.startSeconds, end: range.hasEnd ? range.endSeconds : null } : null, rows }, null, 2), 'application/json;charset=utf-8;');
+  } else {
+    downloadExportFile(filename, serializeCsv(rows), 'text/csv;charset=utf-8;');
+  }
+  setText('export-status', '已导出 ' + rows.length + ' 条' + selected.label + '数据（' + format.toUpperCase() + rangeLabel + '）');
+}
+function renderSnapshot(snapshot) { window.__LABSAFE_CURRENT_SNAPSHOT__ = snapshot; }
+function render(snapshot) {
+  state.current = snapshot;
+  renderSummary(snapshot);
+  renderSensors(snapshot);
+  renderVision(snapshot);
+  renderActuators(snapshot);
+  renderDevice(snapshot);
+  pushHistory(snapshot);
+  renderTrends();
+  maybeCreateAlarm(snapshot);
+  renderAlarms();
+  pushEvent(snapshot);
+  renderEvents();
+  renderSnapshot(snapshot);
+}
+function tick() {
+  if (state.dataSource !== 'external') return;
+  state.mockElapsedSeconds += 1;
+}
+
+window.LabSafeDataBridge = {
+  setDataSource: function (source) {
+    state.dataSource = source || 'mock';
+  },
+  setTimeWindow: function (seconds) {
+    state.query.elapsedSeconds = Math.max(0, Number(seconds || 0));
+    const input = document.getElementById('query-time-seconds');
+    if (input) input.value = String(state.query.elapsedSeconds);
+  },
+  setSensorWindow: function (sensorKey, seconds) {
+    state.query.sensorType = sensorKey;
+    state.query.elapsedSeconds = Math.max(0, Number(seconds || 0));
+    const typeInput = document.getElementById('query-sensor-type');
+    const timeInput = document.getElementById('query-time-seconds');
+    if (typeInput) typeInput.value = sensorKey;
+    if (timeInput) timeInput.value = String(state.query.elapsedSeconds);
+  },
+  setSensorSampling: function (sensorKey, seconds) {
+    if (!state.sensorSampling[sensorKey]) return;
+    state.sensorSampling[sensorKey] = Math.max(0.1, Number(seconds || 1));
+    trimHistory(sensorKey);
+    renderTrends();
+  },
+  pushSensorSample: function (sensorKey, value) {
+    if (!state.history[sensorKey]) return;
+    state.dataSource = 'external';
+    pushSensorHistory(sensorKey, value);
+    renderTrends();
+  },
+  ingestSnapshot: function (snapshot) {
+    state.dataSource = 'external';
+    render(snapshot);
+  },
+  getState: function () {
+    return state;
+  }
+};
+
+
+const originalRenderSensors = renderSensors;
+renderSensors = function (snapshot) {
+  const grid = document.getElementById('sensor-grid');
+  const table = document.getElementById('data-sensor-table-body');
+  grid.innerHTML = '';
+  table.innerHTML = '';
+  const noDeviceData = isNoDeviceData();
+  sensorMeta.forEach(function (sensor) {
+    const raw = snapshot.sensors[sensor.key];
+    const display = noDeviceData ? '-' : (sensor.key === 'air' ? levelText(snapshot.riskLevel) : raw);
+    const level = noDeviceData ? 'normal' : (sensor.key === 'air' ? snapshot.riskLevel : getLevel(raw, sensor.warning, sensor.danger));
+    const statusText = noDeviceData ? '-' : levelText(level);
+    const card = document.createElement('article');
+    card.className = 'sensor-card';
+    card.innerHTML = '<span class="label">' + sensor.label + '</span><strong class="value">' + display + '</strong><span class="unit">' + (noDeviceData ? '' : sensor.unit) + '</span><div class="state"><span class="risk-pill risk-' + level + '">' + statusText + '</span></div>';
+    grid.appendChild(card);
+    const row = document.createElement('tr');
+    row.innerHTML = '<td>' + sensor.label + '</td><td>' + display + '</td><td>' + (noDeviceData ? '-' : sensor.unit) + '</td><td><span class="risk-pill risk-' + level + '">' + statusText + '</span></td>';
+    table.appendChild(row);
+  });
+};
+
+const originalPushEvent = pushEvent;
+pushEvent = function (snapshot) {
+  state.events.unshift({ time: snapshot.timestamp, title: snapshot.riskLevel === 'normal' ? '\u6570\u636e\u5237\u65b0' : '\u98ce\u9669\u4e8b\u4ef6\u89e6\u53d1', desc: '', level: snapshot.riskLevel });
+  if (state.events.length > 10) state.events.pop();
+};
+const originalRenderEvents = renderEvents;
+renderEvents = function () {
+  const stream = document.getElementById('event-stream');
+  stream.innerHTML = '';
+  state.events.forEach(function (event) {
+    const item = document.createElement('article');
+    item.className = 'event-item';
+    item.innerHTML = '<strong>' + event.title + '</strong><small>' + event.time + '</small>';
+    stream.appendChild(item);
+  });
+};
+setupAuth();
+setTimeout(applyRoleLayout,0);
+setTimeout(renderAdminLogs,0);
+setTimeout(refreshWifiUploadStatus,0);
+setInterval(refreshWifiUploadStatus,3000);
+setupNavigation();
+setupAccountAdmin();
+setupChartModeSelector();
+setupRealDeviceCard();
+renderBoardDetectionStatus();
+setupChartToolbar();
+setupChartInteractions();
+window.addEventListener('load', function () {
+  renderChartDebugInfo();
+  renderBoardDetectionStatus();
+  refreshSerialCandidates();
+});
+render(buildWaitingSnapshot());
+setInterval(tick, 1000);
+pollLocalBridge();
+setInterval(pollLocalBridge, 1000);
+
+
+
+
+
+
+</script>
+  
+<script>
+(function () {
+  function setText(id, value) { var el = document.getElementById(id); if (el) el.textContent = value; }
+  function setAuthMode(mode) {
+    var loginPane = document.getElementById('login-pane');
+    var registerPane = document.getElementById('register-pane');
+    var loginTab = document.getElementById('auth-login-tab');
+    var registerTab = document.getElementById('auth-register-tab');
+    var registering = mode === 'register';
+    if (loginPane) loginPane.hidden = registering;
+    if (registerPane) registerPane.hidden = !registering;
+    if (loginTab) loginTab.classList.toggle('active', !registering);
+    if (registerTab) registerTab.classList.toggle('active', registering);
+  }
+  window.__labsafeOpenPortal = function (mode) {
+    try { localStorage.setItem('labsafe-portal-mode', mode); } catch (error) {}
+    var portalSelect = document.getElementById('portal-select');
+    var authPanel = document.getElementById('auth-panel');
+    var registerTab = document.getElementById('auth-register-tab');
+    if (portalSelect) portalSelect.hidden = true;
+    if (authPanel) authPanel.hidden = false;
+    setText('portal-title', mode === 'admin' ? '后台管理登录' : '监控大屏登录');
+    setText('portal-subtitle', mode === 'admin' ? '仅管理员可进入' : '操作员和观察员可进入');
+    if (registerTab) registerTab.style.display = mode === 'admin' ? 'none' : '';
+    setAuthMode('login');
+  };
+  window.__labsafeBackPortal = function () {
+    try { localStorage.removeItem('labsafe-portal-mode'); } catch (error) {}
+    var portalSelect = document.getElementById('portal-select');
+    var authPanel = document.getElementById('auth-panel');
+    if (portalSelect) portalSelect.hidden = false;
+    if (authPanel) authPanel.hidden = true;
+  };
+  document.addEventListener('DOMContentLoaded', function () {
+    var monitor = document.getElementById('portal-monitor');
+    var admin = document.getElementById('portal-admin');
+    var back = document.getElementById('portal-back');
+    var loginTab = document.getElementById('auth-login-tab');
+    var registerTab = document.getElementById('auth-register-tab');
+    if (monitor) monitor.addEventListener('click', function () { window.__labsafeOpenPortal('monitor'); });
+    if (admin) admin.addEventListener('click', function () { window.__labsafeOpenPortal('admin'); });
+    if (back) back.addEventListener('click', window.__labsafeBackPortal);
+    if (loginTab) loginTab.addEventListener('click', function () { setAuthMode('login'); });
+    if (registerTab) registerTab.addEventListener('click', function () { setAuthMode('register'); });
+  });
+}());
+</script>
+</body>
+</html>
+
+
+
+
+
+

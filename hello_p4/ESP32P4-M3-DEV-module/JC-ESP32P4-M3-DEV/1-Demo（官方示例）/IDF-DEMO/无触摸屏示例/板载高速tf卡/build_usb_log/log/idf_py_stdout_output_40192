@@ -1,0 +1,44 @@
+-- IDF_TARGET is not set, guessed 'esp32p4' from sdkconfig 'D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo（官方示例）/IDF-DEMO/无触摸屏示例/板载高速tf卡/sdkconfig'
+-- Found Git: D:/Git/cmd/git.exe (found version "2.53.0.windows.2")
+-- The C compiler identification is GNU 14.2.0
+-- The CXX compiler identification is GNU 14.2.0
+-- The ASM compiler identification is GNU
+-- Found assembler: C:/Espressif/tools/tools/riscv32-esp-elf/esp-14.2.0_20260121/riscv32-esp-elf/bin/riscv32-esp-elf-gcc.exe
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/Espressif/tools/tools/riscv32-esp-elf/esp-14.2.0_20260121/riscv32-esp-elf/bin/riscv32-esp-elf-gcc.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: C:/Espressif/tools/tools/riscv32-esp-elf/esp-14.2.0_20260121/riscv32-esp-elf/bin/riscv32-esp-elf-g++.exe - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Building ESP-IDF components for target esp32p4
+NOTICE: Using component placed at D:\codex\my_toolkit\hello_p4\ESP32P4-M3-DEV-module\JC-ESP32P4-M3-DEV\1-Demo（官方示例）\IDF-DEMO\无触摸屏示例\common_components\espressif__esp32_p4_function_ev_board for dependency "espressif/esp32_p4_function_ev_board"(introduced by component "bsp_extra")
+NOTICE: Using component placed at D:\codex\my_toolkit\hello_p4\ESP32P4-M3-DEV-module\JC-ESP32P4-M3-DEV\1-Demo（官方示例）\IDF-DEMO\无触摸屏示例\common_components\espressif__esp32_p4_function_ev_board for dependency "espressif/esp32_p4_function_ev_board", specified in D:\codex\my_toolkit\hello_p4\ESP32P4-M3-DEV-module\JC-ESP32P4-M3-DEV\1-Demo（官方示例）\IDF-DEMO\无触摸屏示例\common_components\bsp_extra\idf_component.yml
+NOTICE: 
+Following dependencies have new versions available:
+Dependency "espressif/esp_tinyusb": "2.1.1" -> "2.2.0"
+Consider running "idf.py update-dependencies" to update your lock file.
+NOTICE: Processing 17 dependencies:
+NOTICE: [1/17] chmorgan/esp-audio-player (1.0.7)
+NOTICE: [2/17] chmorgan/esp-file-iterator (1.0.0)
+NOTICE: [3/17] chmorgan/esp-libhelix-mp3 (1.0.3)
+NOTICE: [4/17] espressif/cmake_utilities (0.5.3)
+NOTICE: [5/17] espressif/esp32_p4_function_ev_board (4.1.1) (D:\codex\my_toolkit\hello_p4\ESP32P4-M3-DEV-module\JC-ESP32P4-M3-DEV\1-Demo（官方示例）\IDF-DEMO\无触摸屏示例\common_components\espressif__esp32_p4_function_ev_board)
+NOTICE: [6/17] espressif/esp_codec_dev (1.2.0)
+NOTICE: [7/17] espressif/esp_lcd_ek79007 (1.0.4)
+NOTICE: [8/17] espressif/esp_lcd_ili9881c (1.1.0)
+NOTICE: [9/17] espressif/esp_lcd_touch (1.2.1)
+NOTICE: [10/17] espressif/esp_lcd_touch_gt911 (1.2.0~2)
+NOTICE: [11/17] espressif/esp_lvgl_port (2.7.2)
+NOTICE: [12/17] espressif/esp_tinyusb (2.1.1)
+NOTICE: [13/17] espressif/i2c_bus (1.5.1)
+NOTICE: [14/17] espressif/tinyusb (0.19.0~3)
+NOTICE: [15/17] lvgl/lvgl (9.5.0)
+NOTICE: [16/17] waveshare/esp_lcd_jd9365_10_1 (1.0.4)
+NOTICE: [17/17] idf (5.4.4)
+-- Using esp_driver_i2c (SRC_FILE=i2c_bus_v2.c, REQ=esp_driver_i2c driver)
+-- Project sdkconfig file D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo（官方示例）/IDF-DEMO/无触摸屏示例/板载高速tf卡/sdkconfig
+-- Configuring incomplete, errors occurred!

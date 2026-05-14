@@ -46,7 +46,7 @@ dependencies:
   espressif/esp32_p4_function_ev_board:
     dependencies: []
     source:
-      path: D:\codex\my_toolkit\hello_p4\ESP32P4-M3-DEV-module\JC-ESP32P4-M3-DEV\1-Demo\IDF-DEMO\NoDisplay\common_components\espressif__esp32_p4_function_ev_board
+      path: D:\codex\my_toolkit\hello_p4\ESP32P4-M3-DEV-module\JC-ESP32P4-M3-DEV\1-Demo（官方示例）\IDF-DEMO\无触摸屏示例\common_components\espressif__esp32_p4_function_ev_board
       type: local
     version: 4.1.1
   espressif/esp_codec_dev:

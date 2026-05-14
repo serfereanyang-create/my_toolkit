@@ -1,0 +1,2 @@
+[labsafe] HTTP bridge: http://127.0.0.1:8765/snapshot
+[labsafe] opening serial port directly: COM9 @ 115200

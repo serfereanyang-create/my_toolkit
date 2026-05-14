@@ -16,9 +16,9 @@ if("${CONFIG}" STREQUAL "" OR "${CONFIG}" STREQUAL "")
   "flasher_args.json"
   "ldgen_libraries"
   "ldgen_libraries.in"
-  "project_elf_src_esp32s3.c"
-  "ssd1309_esp32s3_demo_idf.bin"
-  "ssd1309_esp32s3_demo_idf.map"
+  "project_elf_src_esp32p4.c"
+  "ssd1309_esp32p4_demo_idf.bin"
+  "ssd1309_esp32p4_demo_idf.map"
   "x509_crt_bundle.S"
   )
 endif()

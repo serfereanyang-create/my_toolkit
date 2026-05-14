@@ -1,6 +1,6 @@
 /*
 
- * SPDX-FileCopyrightText: 2021 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2022-2024 Espressif Systems (Shanghai) CO LTD
 
  *
 
@@ -9,7 +9,7 @@
  */
 /**
 
- *                    ESP32-S3 Linker Script Memory Layout
+ *                    ESP32-P4 Linker Script Memory Layout
 
  * This file describes the memory layout (memory blocks) by virtual memory addresses.
 
@@ -54,25 +54,9 @@
 /* CPU instruction prefetch padding size for memory protection scenario */
 /* Memory alignment size for PMS */
     /* rtc timer data (s_rtc_timer_retain_mem, see esp_clk.c files). For rtc_timer_data_in_rtc_mem section. */
-/*
+/* If the cache size is less than 512KB, then there is a region of RAM
 
- * 40370000 <- IRAM/Icache -> 40378000 <- D/IRAM (I) -> 403E0000
-
- *                            3FC88000 <- D/IRAM (D) -> 3FCF0000 <- DRAM/DCache -> 3FD00000
-
- *
-
- * Startup code uses the IRAM from 0x403B9000 to 0x403E0000, which is not available for static
-
- * memory, but can only be used after app starts.
-
- *
-
- * D cache use the memory from high address, so when it's configured to 16K/32K, the region
-
- * 0x3FCF000 ~ (3FD00000 - DATA_CACHE_SIZE) should be available. This region is not used as
-
- * static memory, leaving to the heap.
+ * above the ROM-reserved region and below the start of the cache.
 
  */
 MEMORY
@@ -86,10 +70,10 @@ MEMORY
    *  are connected to the data port of the CPU and eg allow byte-wise access.
 
    */
-  /* IRAM for PRO CPU. */
-  iram0_0_seg (RX) : org = (0x40370000 + 0x4000), len = (((0x403CB700 - (0x40378000 - 0x3FC88000)) - 0x3FC88000) + 0x8000 - 0x4000)
+  /* TCM */
+  tcm_idram_seg (RX) : org = 0x30100000, len = 0x2000
   /* Flash mapped instruction data */
-  iram0_2_seg (RX) : org = 0x42000020, len = 0x800000-0x20
+  irom_seg (RX) : org = 0x40000020, len = (0x10000 << 10) - 0x20
   /**
 
    * (0x20 offset above is a convenience for the app binary image generation.
@@ -110,19 +94,22 @@ MEMORY
    * Enabling Bluetooth & Trace Memory features in menuconfig will decrease the amount of RAM available.
 
    */
-  dram0_0_seg (RW) : org = (0x3FC88000), len = ((0x403CB700 - (0x40378000 - 0x3FC88000)) - 0x3FC88000)
+  sram_low (RWX) : org = 0x4FF00000, len = 0x4FF2CBD0 - 0x4FF00000
+  sram_high (RW) : org = 0x4FF40000, len = 0x80000 - 0x20000
   /* Flash mapped constant data */
-  drom0_0_seg (R) : org = 0x3C000020, len = 0x2000000-0x20
-  /* (See iram0_2_seg for meaning of 0x20 offset in the above.) */
+  drom_seg (R) : org = 0x40000020, len = (0x10000 << 10) - 0x20
+  /* (See irom_seg for meaning of 0x20 offset in the above.) */
+  /* Used to store the deep sleep workaround code of P4 rev3.0. The reset vector will be set here before the chip enters sleep. */
+  rev3_mspi_workaround_seg(RWX) : org = 0x50108000, len = 0x0
   /**
 
-   * RTC fast memory (executable). Persists over deep sleep.
+   * lp ram memory (RWX). Persists over deep sleep. // TODO: IDF-5667
 
    */
-  rtc_iram_seg(RWX) : org = 0x600fe000, len = 0x2000 - (0 + (24))
-  /* We reduced the size of rtc_iram_seg by RESERVE_RTC_MEM value.
+  lp_ram_seg(RW) : org = 0x50108000 + 0x0 + (0 + (24)), len = 0x8000 - (0 + (24)) - 0x0
+  /* We reduced the size of lp_ram_seg by RESERVE_RTC_MEM value.
 
-     It reserves the amount of RTC fast memory that we use for this memory segment.
+     It reserves the amount of LP memory that we use for this memory segment.
 
      This segment is intended for keeping:
 
@@ -132,41 +119,39 @@ MEMORY
 
      The aim of this is to keep data that will not be moved around and have a fixed address.
 
+     This segment is placed at the beginning of LP RAM, as the end of LP RAM is occupied by LP ROM stack/data
+
   */
-  rtc_reserved_seg(RW) : org = 0x600fe000 + 0x2000 - (0 + (24)), len = (0 + (24))
-  /**
-
-   * RTC slow memory (data accessible). Persists over deep sleep.
-
-   * Start of RTC slow memory is reserved for ULP co-processor code + data, if enabled.
-
-   */
-  rtc_slow_seg(RW) : org = 0x50000000 , len = 0x2000
-  /**
-
-   * `extern_ram_seg` and `drom0_0_seg` share the same bus and the address region.
-
-   * A dummy section is used to avoid overlap. See `.ext_ram.dummy` in `sections.ld.in`
-
-   */
-  extern_ram_seg(RWX) : org = 0x3c000020 , len = 0x2000000-0x20
+  lp_reserved_seg(RW) : org = 0x50108000 + 0x0, len = (0 + (24))
+  /* PSRAM seg */
+  extern_ram_seg(RWX) : org = 0x48000000, len = (0x10000 << 10)
 }
-_diram_i_start = 0x40378000;
-_heap_start = _heap_low_start;
 /* Heap ends at top of dram0_0_seg */
-_heap_end = 0x40000000;
+_heap_end = 0x50000000;
 _data_seg_org = ORIGIN(rtc_data_seg);
-/* RTC fast memory shares the same range for both data and instructions */
-REGION_ALIAS("rtc_data_seg", rtc_iram_seg );
-REGION_ALIAS("rtc_data_location", rtc_slow_seg );
-REGION_ALIAS("default_code_seg", iram0_2_seg);
-REGION_ALIAS("default_rodata_seg", drom0_0_seg);
 /**
 
- *  If rodata default segment is placed in `drom0_0_seg`, then flash's first rodata section must
+ *  The lines below define location alias for .rtc.data section
+
+ *  P4 has no distinguished LP(RTC) fast and slow memory sections, instead, there is a unified LP_RAM section
+
+ *  Thus, the following region segments are not configurable like on other targets
+
+ */
+REGION_ALIAS("rtc_iram_seg", lp_ram_seg );
+REGION_ALIAS("rtc_data_seg", rtc_iram_seg );
+REGION_ALIAS("rtc_slow_seg", rtc_iram_seg );
+REGION_ALIAS("rtc_data_location", rtc_iram_seg );
+REGION_ALIAS("rtc_reserved_seg", lp_reserved_seg );
+  REGION_ALIAS("text_seg_low", irom_seg);
+  REGION_ALIAS("rodata_seg_low", drom_seg);
+  REGION_ALIAS("ext_ram_seg", extern_ram_seg);
+/**
+
+ *  If rodata default segment is placed in `drom_seg`, then flash's first rodata section must
 
  *  also be first in the segment.
 
  */
-  ASSERT(_flash_rodata_dummy_start == ORIGIN(default_rodata_seg),
+  ASSERT(_flash_rodata_dummy_start == ORIGIN(rodata_seg_low),
          ".flash_rodata_dummy section must be placed at the beginning of the rodata segment.")

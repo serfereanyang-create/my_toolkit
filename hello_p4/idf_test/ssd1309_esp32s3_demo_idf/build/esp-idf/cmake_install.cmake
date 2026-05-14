@@ -2,7 +2,7 @@
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
-  set(CMAKE_INSTALL_PREFIX "C:/Program Files (x86)/ssd1309_esp32s3_demo_idf")
+  set(CMAKE_INSTALL_PREFIX "C:/Program Files (x86)/ssd1309_esp32p4_demo_idf")
 endif()
 string(REGEX REPLACE "/$" "" CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 
@@ -34,12 +34,12 @@ endif()
 
 # Set path to fallback-tool for dependency-resolution.
 if(NOT DEFINED CMAKE_OBJDUMP)
-  set(CMAKE_OBJDUMP "D:/download/Espressif/tools/xtensa-esp-elf/esp-14.2.0_20260121/xtensa-esp-elf/bin/xtensa-esp32s3-elf-objdump.exe")
+  set(CMAKE_OBJDUMP "D:/download/Espressif/tools/riscv32-esp-elf/esp-14.2.0_20260121/riscv32-esp-elf/bin/riscv32-esp-elf-objdump.exe")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/xtensa/cmake_install.cmake")
+  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/riscv/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
@@ -209,7 +209,37 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/nvs_flash/cmake_install.cmake")
+  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/esp_phy/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/esp_driver_usb_serial_jtag/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/esp_vfs_console/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/vfs/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/lwip/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/esp_netif_stack/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/esp_netif/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
@@ -294,42 +324,12 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/esp_driver_usb_serial_jtag/cmake_install.cmake")
-endif()
-
-if(NOT CMAKE_INSTALL_LOCAL_ONLY)
-  # Include the install script for the subdirectory.
   include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/driver/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/esp_phy/cmake_install.cmake")
-endif()
-
-if(NOT CMAKE_INSTALL_LOCAL_ONLY)
-  # Include the install script for the subdirectory.
-  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/esp_vfs_console/cmake_install.cmake")
-endif()
-
-if(NOT CMAKE_INSTALL_LOCAL_ONLY)
-  # Include the install script for the subdirectory.
-  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/vfs/cmake_install.cmake")
-endif()
-
-if(NOT CMAKE_INSTALL_LOCAL_ONLY)
-  # Include the install script for the subdirectory.
-  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/lwip/cmake_install.cmake")
-endif()
-
-if(NOT CMAKE_INSTALL_LOCAL_ONLY)
-  # Include the install script for the subdirectory.
-  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/esp_netif_stack/cmake_install.cmake")
-endif()
-
-if(NOT CMAKE_INSTALL_LOCAL_ONLY)
-  # Include the install script for the subdirectory.
-  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/esp_netif/cmake_install.cmake")
+  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/nvs_flash/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
@@ -524,22 +524,12 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/perfmon/cmake_install.cmake")
-endif()
-
-if(NOT CMAKE_INSTALL_LOCAL_ONLY)
-  # Include the install script for the subdirectory.
   include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/rt/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
   include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/spiffs/cmake_install.cmake")
-endif()
-
-if(NOT CMAKE_INSTALL_LOCAL_ONLY)
-  # Include the install script for the subdirectory.
-  include("D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/esp-idf/touch_element/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)

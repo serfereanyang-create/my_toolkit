@@ -1,0 +1,465 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="实验室智能通风及危险操作识别安全节点管理员监控静态网站" />
+    <title>实验室安全节点管理员监控</title>
+    <link rel="icon" href="assets/favicon.svg" />
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-logo">LS</div>
+          <div class="brand-text">
+            <strong>LabSafe</strong>
+            <span>智能实验台</span>
+          </div>
+        </div>
+
+        <nav class="side-nav" aria-label="主导航">
+          <button class="nav-item active" type="button" data-page="home">
+            <span class="nav-icon">⌂</span>
+            <span class="nav-label">主页</span>
+          </button>
+          <button class="nav-item" type="button" data-page="data">
+            <span class="nav-icon">▦</span>
+            <span class="nav-label">数据窗口</span>
+            <small id="nav-alert-count">0</small>
+          </button>
+          <button class="nav-item" type="button" data-page="settings">
+            <span class="nav-icon">⚙</span>
+            <span class="nav-label">设置</span>
+          </button>
+        </nav>
+
+        <button id="account-entry-side" class="account-card" type="button">
+          <div id="side-account-avatar" class="story-ring account-avatar">未</div>
+          <div class="account-copy">
+            <strong id="side-account-name">未登录</strong>
+            <p id="side-account-role">点击进行账户准入</p>
+          </div>
+        </button>
+
+        <div class="sidebar-card">
+          <div class="story-ring">ESP</div>
+          <div>
+            <strong id="side-device-id">lab-node-001</strong>
+            <p id="side-device-status">节点在线 · 3 秒刷新</p>
+          </div>
+        </div>
+
+        <section class="sidebar-export">
+          <p class="eyebrow">Export</p>
+          <h3>导出数据</h3>
+          <label class="export-field">
+            <span>格式</span>
+            <select id="export-format" class="export-select">
+              <option value="csv">CSV</option>
+              <option value="json">JSON</option>
+            </select>
+          </label>
+          <label class="export-field">
+            <span>导出数据</span>
+            <select id="export-preset" class="export-select">
+              <option value="sensor_co">CO 数据窗口</option>
+              <option value="sensor_alcohol">酒精气体数据窗口</option>
+              <option value="sensor_voc">VOC 数据窗口</option>
+            </select>
+          </label>
+          <label class="export-field">
+            <span>起始时间（秒）</span>
+            <input id="export-start-seconds" class="export-select" type="number" min="0" step="1" value="0" placeholder="0" />
+          </label>
+          <label class="export-field">
+            <span>终止时间（秒）</span>
+            <input id="export-end-seconds" class="export-select" type="number" min="0" step="1" placeholder="留空为当前最大时刻" />
+          </label>
+          <button id="export-data-button" class="export-button" type="button">导出数据</button>
+          <p id="export-status" class="export-help">请选择 CO、酒精气体或 VOC 数据窗口，按起始/终止秒数单独导出。</p>
+        </section>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Lab Safety Node</p>
+            <h1 id="page-title">主页</h1>
+          </div>
+          <div class="topbar-actions">
+            <button id="account-entry" class="account-button" type="button">
+              <span id="account-avatar">未</span>
+              <span id="account-name">未登录</span>
+            </button>
+            <span id="system-risk" class="risk-pill risk-normal">正常</span>
+            <span id="global-status" class="status-chip">系统运行中</span>
+            <small id="last-updated">等待刷新</small>
+          </div>
+        </header>
+
+        <section id="page-home" class="page-section active">
+          <div class="hero-grid">
+            <article class="card hero-card">
+              <div>
+                <p class="eyebrow">Overview</p>
+                <h2>实验室智能通风及危险操作识别安全节点</h2>
+              </div>
+              <div class="hero-metric">
+                <span>当前风险</span>
+                <strong id="home-risk">正常</strong>
+                <small id="home-action">保持监测</small>
+              </div>
+            </article>
+
+            <article class="card mini-card">
+              <span>未处理报警</span>
+              <strong id="pending-count">0</strong>
+              <p>管理员确认与处理闭环预留。</p>
+            </article>
+          </div>
+
+          <section class="card section-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Real Device</p>
+                <h2>真实设备接入</h2>
+              </div>
+              <span id="serial-support-chip" class="status-chip">串口检测待初始化</span>
+            </div>
+            <div class="real-device-grid">
+              <div class="real-device-top">
+                <article class="real-device-stat">
+                  <span>连接状态</span>
+                  <strong id="serial-connect-state">未连接</strong>
+                  <p id="serial-current-port">当前端口：未选择</p>
+                </article>
+                <article class="real-device-stat">
+                  <span>ESP32 候选串口</span>
+                  <strong id="serial-candidate-count">0</strong>
+                  <p id="serial-message">等待串口检测</p>
+                </article>
+              </div>
+              <div class="serial-actions">
+                <button id="serial-connect-button" class="window-save-button" type="button">连接串口</button>
+                <button id="serial-refresh-button" class="serial-secondary" type="button">刷新候选</button>
+              </div>
+              <div id="serial-candidate-list" class="serial-candidate-list"></div>
+            </div>
+          </section>
+
+          <section class="card section-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Sensors</p>
+                <h2>实时传感器</h2>
+              </div>
+              <span>SC16-CO · 酒精气体 · SGP40 VOC</span>
+            </div>
+            <div id="sensor-grid" class="sensor-grid"></div>
+          </section>
+
+          <div class="split-grid">
+            <section class="card section-card">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">AI Vision</p>
+                  <h2>K230D AI-CAM</h2>
+                </div>
+                <span id="vision-chip" class="status-chip">视觉正常</span>
+              </div>
+              <div class="vision-layout">
+                <div class="phone-preview">
+                  <div class="phone-notch"></div>
+                  <div class="camera-feed">
+                    <span>AI-CAM</span>
+                    <strong id="vision-main">normal</strong>
+                  </div>
+                </div>
+                <div class="vision-copy">
+                  <p><b>当前识别：</b><span id="vision-label">未发现异常</span></p>
+                  <p><b>置信度：</b><span id="vision-confidence">--</span></p>
+                  <p id="vision-desc">用于展示酒精灯、容器未盖合、器材摆放异常等识别结果。</p>
+                </div>
+              </div>
+            </section>
+
+            <section class="card section-card">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">Actuators</p>
+                  <h2>执行器状态</h2>
+                </div>
+              </div>
+              <div id="actuator-list" class="status-list"></div>
+            </section>
+          </div>
+
+          <section class="card section-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Feed</p>
+                <h2>实时事件流</h2>
+              </div>
+            </div>
+            <div id="event-stream" class="event-stream"></div>
+          </section>
+        </section>
+        <section id="page-data" class="page-section">
+          <section class="card section-card trend-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Trends</p>
+                <h2>最近数据趋势</h2>
+              </div>
+            </div>
+            <div class="trend-grid">
+              <div data-trend-key="co"><div class="chart-title-row"><span>CO</span><div class="chart-tools"><button type="button" data-chart-zoom="in" data-chart-target="trend-co">＋</button><button type="button" data-chart-zoom="out" data-chart-target="trend-co">－</button><button type="button" data-chart-zoom="reset" data-chart-target="trend-co">复位</button></div></div><canvas id="trend-co" width="1800" height="720"></canvas></div>
+              <div data-trend-key="alcohol"><div class="chart-title-row"><span>酒精气体</span><div class="chart-tools"><button type="button" data-chart-zoom="in" data-chart-target="trend-alcohol">＋</button><button type="button" data-chart-zoom="out" data-chart-target="trend-alcohol">－</button><button type="button" data-chart-zoom="reset" data-chart-target="trend-alcohol">复位</button></div></div><canvas id="trend-alcohol" width="1800" height="720"></canvas></div>
+              <div data-trend-key="voc"><div class="chart-title-row"><span>VOC</span><div class="chart-tools"><button type="button" data-chart-zoom="in" data-chart-target="trend-voc">＋</button><button type="button" data-chart-zoom="out" data-chart-target="trend-voc">－</button><button type="button" data-chart-zoom="reset" data-chart-target="trend-voc">复位</button></div></div><canvas id="trend-voc" width="1800" height="720"></canvas></div>
+            </div>
+          </section>
+
+          <section class="card section-card chart-mode-card">
+            <div class="section-head compact">
+              <div>
+                <p class="eyebrow">Chart Mode</p>
+                <h2>曲线显示模式</h2>
+              </div>
+              <span id="chart-mode-desc">当前显示：CO / 酒精 / VOC</span>
+            </div>
+            <div class="chart-config">
+              <div>
+                <span class="config-label">曲线类型</span>
+                <div class="chart-check-list" aria-label="实时曲线类型选择">
+                  <label><input class="chart-type-check" type="checkbox" value="co" checked /> CO</label>
+                  <label><input class="chart-type-check" type="checkbox" value="alcohol" checked /> 酒精</label>
+                  <label><input class="chart-type-check" type="checkbox" value="voc" checked /> VOC</label>
+                </div>
+              </div>
+              <div class="query-setting chart-query-setting">
+                <span class="config-label">数据查询</span>
+                <div class="query-control-row">
+                  <label class="query-field">
+                    <span>查询类型</span>
+                    <select id="query-sensor-type" class="query-select">
+                      <option value="co">CO</option>
+                      <option value="alcohol">酒精气体</option>
+                      <option value="voc">VOC</option>
+                    </select>
+                  </label>
+                  <label class="query-field">
+                    <span>起始时间</span>
+                    <div class="query-input-wrap">
+                      <input id="query-start-seconds" class="query-input" type="number" min="0" step="1" value="0" />
+                      <span>秒</span>
+                    </div>
+                  </label>
+                  <label class="query-field">
+                    <span>结束时间</span>
+                    <div class="query-input-wrap">
+                      <input id="query-end-seconds" class="query-input" type="number" min="2" step="1" value="2" />
+                      <span>秒</span>
+                    </div>
+                  </label>
+                  <button id="query-sensor-range" class="window-save-button" type="button">统计区间</button>
+                </div>
+                <div id="query-result" class="window-save-status">输入类型、起始时间和结束时间后可统计该区间的最高、最低和平均值</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card section-card device-card-below">
+            <div class="section-head compact">
+              <div>
+                <p class="eyebrow">Device</p>
+                <h2>设备运行状态</h2>
+              </div>
+            </div>
+            <div id="device-list" class="status-list device-status-grid"></div>
+          </section>
+
+          <section class="card section-card esp32p4-status-card">
+            <div class="section-head compact">
+              <div>
+                <p class="eyebrow">Board Detect</p>
+                <h2>通用开发板识别状态</h2>
+              </div>
+              <span id="board-detect-chip" class="status-chip">待扫描</span>
+            </div>
+            <div class="esp32p4-grid">
+              <article class="esp32p4-stat">
+                <span>板型</span>
+                <strong id="board-detect-type">未检测</strong>
+                <p id="board-detect-detail">等待本地设备扫描</p>
+              </article>
+              <article class="esp32p4-stat">
+                <span>推荐 COM 口</span>
+                <strong id="board-detect-port">未提供</strong>
+                <p id="board-detect-source">尚未加载扫描结果</p>
+              </article>
+              <article class="esp32p4-stat">
+                <span>是否为 P4</span>
+                <strong id="board-detect-p4">未知</strong>
+                <p>根据本地 USB 识别规则判断</p>
+              </article>
+              <article class="esp32p4-stat">
+                <span>候选数量</span>
+                <strong id="board-detect-count">0</strong>
+                <p>候选开发板与桥接设备总数</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="card section-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Raw Data</p>
+                <h2>数据窗口</h2>
+              </div>
+              
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>数据项</th><th>当前值</th><th>单位</th><th>状态</th></tr>
+                </thead>
+                <tbody id="data-sensor-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="card section-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Alarms</p>
+                <h2>报警事件</h2>
+              </div>
+              <span>未确认 · 已确认 · 已处理 后续接管理员操作</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>时间</th><th>来源</th><th>等级</th><th>原因</th><th>状态</th></tr>
+                </thead>
+                <tbody id="alarm-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section id="page-settings" class="page-section">
+          <div class="settings-grid">
+            <section class="card section-card">
+              <p class="eyebrow">Modules</p>
+              <h2>实时渲染模块开关占位</h2>
+              <div class="settings-list">
+                <label><span>系统总览</span><input type="checkbox" checked /></label>
+                <label><span>气体传感器卡片</span><input type="checkbox" checked /></label>
+                <label><span>AI 视觉状态</span><input type="checkbox" checked /></label>
+                <label><span>报警事件</span><input type="checkbox" checked /></label>
+                <label><span>趋势曲线</span><input type="checkbox" checked /></label>
+              </div>
+            </section>
+
+            <section class="card section-card">
+              <p class="eyebrow">Threshold</p>
+              <h2>阈值策略占位</h2>
+              <div class="threshold-grid">
+                <article><span>SC16-CO</span><strong>35 / 80 ppm</strong><p>预警 / 危险</p></article>
+                <article><span>酒精气体</span><strong>400 / 700</strong><p>原始值，后续标定</p></article>
+                <article><span>SGP40 VOC</span><strong>400 / 700</strong><p>空气质量指标</p></article>
+                <article><span>AI 视觉</span><strong>类别 + 置信度</strong><p>后续由模型输出决定</p></article>
+              </div>
+            </section>
+
+            <section class="card section-card account-admin-card">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">Secure Access</p>
+                  <h2>账号密码管理后台</h2>
+                </div>
+                <button id="account-refresh-button" class="serial-secondary" type="button">刷新账户</button>
+              </div>
+              <p class="muted">密码由本地 Node.js 后台加密保存。管理员可以新增账户、删除账户、修改角色和重置密码，但系统不会保存或显示明文密码。</p>
+              <form id="account-create-form" class="account-admin-form">
+                <label><span>用户名</span><input id="account-new-username" required placeholder="如 operator" /></label>
+                <label><span>姓名</span><input id="account-new-name" required placeholder="如 值班员" /></label>
+                <label><span>角色</span><select id="account-new-role"><option value="管理员">管理员</option><option value="观察员">观察员</option><option value="操作员">操作员</option></select></label>
+                <label><span>初始密码</span><input id="account-new-password" type="password" required placeholder="至少 6 位" /></label>
+                <button class="window-save-button" type="submit">新增账户</button>
+              </form>
+              <div class="table-wrap account-table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>用户名</th><th>姓名</th><th>角色</th><th>权限</th><th>创建时间</th><th>操作</th></tr>
+                  </thead>
+                  <tbody id="account-user-table-body"></tbody>
+                </table>
+              </div>
+              <p id="account-admin-status" class="window-save-status">仅管理员可管理账户。</p>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="login-overlay" class="login-overlay" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <section class="login-card">
+        <div class="login-brand">
+          <div class="brand-logo">LS</div>
+          <div>
+              <p class="eyebrow">Secure Access</p>
+            <h2 id="login-title">账户准入</h2>
+          </div>
+        </div>
+        <p class="login-desc">当前已接入本地 Node.js 账号后台，密码加密保存。请先启动后台服务后登录。</p>
+        <form id="login-form" class="login-form">
+          <label>
+          <span>初始管理员账户</span>
+            <input id="login-username" autocomplete="username" placeholder="请输入用户名" required />
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="login-password" type="password" autocomplete="current-password" placeholder="请输入密码" required />
+          </label>
+          <button type="submit">进入监控系统</button>
+          <p id="login-message" class="login-message"></p>
+        </form>
+        <div class="demo-account">
+          <span>初始管理员账户</span>
+          <code>labadmin</code>
+          <code>密码请联系管理员获取</code>
+        </div>
+      </section>
+    </div>
+
+    <div id="account-modal" class="account-modal" hidden>
+      <section class="account-panel">
+        <button id="account-modal-close" class="modal-close" type="button">×</button>
+        <div class="account-panel-head">
+          <div id="modal-account-avatar" class="story-ring account-avatar">管</div>
+          <div>
+            <p class="eyebrow">Account</p>
+            <h2 id="modal-account-name">实验室管理员</h2>
+            <span id="modal-account-role" class="status-chip">管理员</span>
+          </div>
+        </div>
+        <div class="account-permissions">
+          <strong>账号后台权限</strong>
+          <ul id="modal-permission-list"></ul>
+        </div>
+        <button id="logout-button" class="logout-button" type="button">退出登录</button>
+      </section>
+    </div>
+
+    <script src="data/device-scan.js"></script>
+    <script src="assets/app.js"></script>
+  </body>
+</html>
+
+
+
+
+

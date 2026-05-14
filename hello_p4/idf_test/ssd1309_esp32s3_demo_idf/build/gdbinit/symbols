@@ -6,4 +6,4 @@ set confirm off
 set confirm on
 
 # Load application symbols
-file D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/ssd1309_esp32s3_demo_idf.elf
+file D:/codex/my_toolkit/hello_p4/idf_test/ssd1309_esp32s3_demo_idf/build/ssd1309_esp32p4_demo_idf.elf

@@ -1,0 +1,36 @@
+{
+  "note": "静态骨架的示例数据说明。真实字段后续可以改，页面只需要保持展示模块即可。",
+  "modules": [
+    "systemOverview",
+    "sensorCards",
+    "visionStatus",
+    "actuatorStatus",
+    "deviceStatus",
+    "alarmEvents",
+    "eventStream",
+    "trendCharts",
+    "policyPreview"
+  ],
+  "accounts": [
+    {
+      "username": "labadmin",
+      "name": "实验室管理员",
+      "role": "管理员",
+      "avatar": "管",
+      "passwordHash": "fe5a00ecb34513d880f704156b39ceff14fbc47b021fb662607520a1906a4b66",
+      "passwordSalt": "88944b1a4d100252e39b318174e608b0",
+      "createdAt": "2026-05-12T09:16:17.246Z",
+      "updatedAt": "2026-05-12T09:16:17.255Z"
+    },
+    {
+      "username": "viewer",
+      "name": "安全观察员",
+      "role": "观察员",
+      "avatar": "观",
+      "passwordHash": "dfd107071df1120a7aa9daa58274bc4bda1c10dcad6692f622aabf6b15f0114e",
+      "passwordSalt": "e70115f576e4299fba06dcce484ac732",
+      "createdAt": "2026-05-12T09:16:17.255Z",
+      "updatedAt": "2026-05-12T09:16:17.255Z"
+    }
+  ]
+}

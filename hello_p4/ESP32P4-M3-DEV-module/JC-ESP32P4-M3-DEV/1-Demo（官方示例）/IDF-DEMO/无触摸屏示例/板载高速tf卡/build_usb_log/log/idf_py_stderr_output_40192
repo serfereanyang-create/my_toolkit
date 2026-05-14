@@ -1,0 +1,69 @@
+CMake Warning at C:/esp/esp-idf-v5.4/tools/cmake/git_submodules.cmake:52 (message):
+  Git submodule components/openthread/lib is out of date.  Run the following
+  command to fix: git submodule update --init --recursive
+Call Stack (most recent call first):
+  C:/esp/esp-idf-v5.4/tools/cmake/build.cmake:109 (git_submodule_check)
+  C:/esp/esp-idf-v5.4/tools/cmake/build.cmake:284 (__build_get_idf_git_revision)
+  C:/esp/esp-idf-v5.4/tools/cmake/idf.cmake:55 (__build_init)
+  C:/esp/esp-idf-v5.4/tools/cmake/project.cmake:29 (include)
+  CMakeLists.txt:9 (include)
+
+
+CMake Warning at C:/esp/esp-idf-v5.4/tools/cmake/git_submodules.cmake:52 (message):
+  Git submodule components/openthread/openthread is out of date.  Run the
+  following command to fix: git submodule update --init --recursive
+Call Stack (most recent call first):
+  C:/esp/esp-idf-v5.4/tools/cmake/build.cmake:109 (git_submodule_check)
+  C:/esp/esp-idf-v5.4/tools/cmake/build.cmake:284 (__build_get_idf_git_revision)
+  C:/esp/esp-idf-v5.4/tools/cmake/idf.cmake:55 (__build_init)
+  C:/esp/esp-idf-v5.4/tools/cmake/project.cmake:29 (include)
+  CMakeLists.txt:9 (include)
+
+
+CMake Warning in D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo（官方示例）/IDF-DEMO/无触摸屏示例/板载高速tf卡/build_usb_log/CMakeFiles/CMakeScratch/TryCompile-v5yvgo/CMakeLists.txt:
+  The object file directory
+
+    D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo（官方示例）/IDF-DEMO/无触摸屏示例/板载高速tf卡/build_usb_log/CMakeFiles/CMakeScratch/TryCompile-v5yvgo/CMakeFiles/cmTC_17cde.dir/./
+
+  has 224 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+
+    CMakeCXXCompilerABI.cpp.obj
+
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+
+
+Traceback (most recent call last):
+  File "C:\esp\esp-idf-v5.4\tools\kconfig_new\prepare_kconfig_files.py", line 102, in <module>
+    main()
+    ~~~~^^
+  File "C:\esp\esp-idf-v5.4\tools\kconfig_new\prepare_kconfig_files.py", line 94, in main
+    env.update(json.load(args.env_file))
+               ~~~~~~~~~^^^^^^^^^^^^^^^
+  File "D:\anaconda\Lib\json\__init__.py", line 293, in load
+    return loads(fp.read(),
+                 ~~~~~~~^^
+UnicodeDecodeError: 'gbk' codec can't decode byte 0x80 in position 4333: illegal multibyte sequence
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "D:\codex\.espressif\python_env\idf5.4_py3.13_env\Lib\site-packages\kconfgen\__main__.py", line 18, in <module>
+    main()
+    ~~~~^^
+  File "D:\codex\.espressif\python_env\idf5.4_py3.13_env\Lib\site-packages\kconfgen\core.py", line 643, in main
+    env = json.load(args.env_file)
+  File "D:\anaconda\Lib\json\__init__.py", line 293, in load
+    return loads(fp.read(),
+                 ~~~~~~~^^
+UnicodeDecodeError: 'gbk' codec can't decode byte 0x80 in position 4333: illegal multibyte sequence
+CMake Error at C:/esp/esp-idf-v5.4/tools/cmake/kconfig.cmake:222 (message):
+  Failed to run kconfgen
+  (D:/codex/.espressif/python_env/idf5.4_py3.13_env/Scripts/python.exe;-m;kconfgen;--list-separator=semicolon;--kconfig;C:/esp/esp-idf-v5.4/Kconfig;--sdkconfig-rename;C:/esp/esp-idf-v5.4/sdkconfig.rename;--config;D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo（官方示例）/IDF-DEMO/无触摸屏示例/板载高速tf卡/sdkconfig;--defaults;D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo（官方示例）/IDF-DEMO/无触摸屏示例/板载高速tf卡/sdkconfig.defaults;--env-file;D:/codex/my_toolkit/hello_p4/ESP32P4-M3-DEV-module/JC-ESP32P4-M3-DEV/1-Demo（官方示例）/IDF-DEMO/无触摸屏示例/板载高速tf卡/build_usb_log/config.env).
+  Error 1
+Call Stack (most recent call first):
+  C:/esp/esp-idf-v5.4/tools/cmake/build.cmake:705 (__kconfig_generate_config)
+  C:/esp/esp-idf-v5.4/tools/cmake/project.cmake:722 (idf_build_process)
+  CMakeLists.txt:10 (project)
+
+
