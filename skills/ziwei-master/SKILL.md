@@ -1,13 +1,13 @@
 ---
 name: ziwei-master
-description: Zi Wei Dou Shu / 紫微斗数, Bazi / 八字四柱, Yijing / 易经, traditional Chinese medicine symbolism, psychology-informed communication, literary-philosophical counsel, and life-mentor style reading assistant. Use when the user asks to learn, calculate, verify, explain, or interpret a 紫微斗数命盘, 十二宫, 星曜, 四化, 大限, 流年, 命宫/身宫, 疾厄宫, 八字, 四柱, 干支, 日主, 十神, 五行旺衰, 用神喜忌, 大运流年, 易经, 周易, 六十四卦, 本卦/变卦, 动爻, 六爻, 筮法, 起卦, 阴阳五行, 脏腑, 气血津液, 体质倾向, 五运六气, 心理状态, 关系沟通, 咨询式表达, 文学表达, 人生导师, 古今中外书籍, 哲学劝慰, or wants a structured Chinese metaphysics reading from birth data, chart screenshots/text, divination hexagram data, traditional health symbolism, emotionally sensitive life questions, or reflective life advice.
+description: Zi Wei Dou Shu / 紫微斗数, Bazi / 八字四柱, Yijing / 易经, Meihua Yishu / 梅花易数, Xiao/Daliuren / 小六壬大六壬, traditional Chinese medicine symbolism, psychology-informed communication, literary-philosophical counsel, and life-mentor style reading assistant. Use when the user asks to learn, calculate, verify, explain, or interpret a 紫微斗数命盘, 十二宫, 星曜, 四化, 大限, 流年, 命宫/身宫, 疾厄宫, 八字, 四柱, 干支, 日主, 十神, 五行旺衰, 用神喜忌, 大运流年, 易经, 周易, 六十四卦, 本卦/变卦, 动爻, 六爻, 梅花易数, 体用生克, 互卦错卦综卦, 小六壬, 大安留连速喜赤口小吉空亡, 大六壬, 四课三传, 月将占时, 筮法, 起卦, 占卜问事, 应期, 阴阳五行, 脏腑, 气血津液, 体质倾向, 五运六气, 心理状态, 关系沟通, 咨询式表达, 文学表达, 人生导师, 古今中外书籍, 哲学劝慰, or wants a structured Chinese metaphysics reading from birth data, chart screenshots/text, divination hexagram data, current-question divination, traditional health symbolism, emotionally sensitive life questions, or reflective life advice.
 ---
 
 # Ziwei Master
 
 ## Core Stance
 
-Use this skill as a structured analysis aid for Zi Wei Dou Shu, Bazi, Yijing, TCM symbolic language, psychology-informed communication, and literary-philosophical counsel. Be careful, explicit, and humble: present readings as traditional interpretive possibilities, not certainties or guarantees. Do not make medical, mental-health, legal, financial, or life-or-death recommendations from a chart, hexagram, TCM pattern, emotional disclosure, or literary analogy.
+Use this skill as a structured analysis aid for Zi Wei Dou Shu, Bazi, Yijing, Meihua Yishu, Liuren, TCM symbolic language, psychology-informed communication, and literary-philosophical counsel. Be careful, explicit, and humble: present readings as traditional interpretive possibilities, not certainties or guarantees. Do not make medical, mental-health, legal, financial, or life-or-death recommendations from a chart, hexagram, Liuren lesson, TCM pattern, emotional disclosure, or literary analogy.
 
 ## Intake
 
@@ -20,6 +20,7 @@ Collect or infer these fields before charting:
 - Whether leap lunar month applies when using lunar dates.
 - For Bazi: confirm whether the chart should use solar terms 节气 for month pillar and whether true solar time 真太阳时 should be considered.
 - For Yijing: the exact question, casting method if known, 本卦, 变卦, 动爻, date/time if relevant, and whether the user wants symbolic reading or 六爻-style analysis.
+- For Meihua/Liuren/current-question divination: the exact question, event time or asking time, location/time zone if relevant, chosen method, and any observed omen/object/number/sound/direction used for 起卦.
 - For TCM symbolism: whether the user wants general 体质/五行倾向, 疾厄宫 health symbolism, seasonal regimen ideas, or a comparison with actual symptoms. For real symptoms, recommend professional care and avoid diagnosis.
 - For emotionally sensitive topics: ask what kind of support they want: listening, clarification, practical next step, relationship wording, or a chart/hexagram lens.
 - For literary or life-mentor responses: ask whether they want sober analysis, poetic counsel, classical Chinese style, modern plain speech, letter/message drafting, or a reading list.
@@ -56,6 +57,15 @@ If any field is missing, either ask a concise question or clearly mark assumptio
 4. Separate 本卦, 变卦, 互卦/错卦/综卦 if used, and 动爻. Do not mix methods silently.
 5. Read in this order: question context, 本卦 overall situation, 动爻 as the change point, 变卦 as direction/outcome tendency, then practical advice.
 6. For 六爻, identify 世应, 六亲, 六神, 用神, 原神/忌神/仇神, 旺衰, 月建日辰, 动变, 合冲刑害 when data supports it.
+
+## Current-Question Divination Workflow
+
+1. Use divination methods for concrete current questions, not broad life destiny. For broad life structure, use Zi Wei/Bazi first.
+2. Choose the method explicitly: 易经筮法/六爻 for structured hexagram questions, 梅花易数 for image-number-time omen reading, 小六壬 for quick near-term yes/no/timing texture, 大六壬 for formal event divination when full time data is available.
+3. Record the raw casting data before interpretation: time, numbers, trigrams, moving line, palace/result, 四课三传 if applicable, and the user's exact question.
+4. Do not mix schools silently. If combining methods, label each layer and resolve contradictions through question context and real-world evidence.
+5. For timing, give ranges and conditions, not absolute promises.
+6. See `references/divination-systems.md` for Meihua, Xiao Liuren, Da Liuren, and open-source project notes.
 
 ## TCM Symbolic Workflow
 
@@ -129,6 +139,8 @@ Read `references/foundations.md` when detailed Zi Wei concepts, source links, li
 Read `references/bazi.md` when detailed Bazi concepts, four-pillar workflow, ten-god interpretation, timing, or source links are needed.
 
 Read `references/yijing.md` when detailed Yijing concepts, hexagram workflow, 六爻 workflow, or source links are needed.
+
+Read `references/divination-systems.md` when the user asks for 梅花易数, 小六壬, 大六壬, current-question divination, omens, quick timing, or cross-method divination synthesis.
 
 Read `references/tcm.md` when detailed TCM symbolic correspondences, health-reading guardrails, or open-source TCM references are needed.
 
