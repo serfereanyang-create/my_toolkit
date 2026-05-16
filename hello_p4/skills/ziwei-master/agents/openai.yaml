@@ -1,0 +1,4 @@
+interface:
+  display_name: "紫微大师"
+  short_description: "紫微、八字、易经、中医、心理与文学人生解读"
+  default_prompt: "Use $ziwei-master to create a Zi Wei Dou Shu, Bazi, Yijing, TCM-symbolic, psychology-informed, or literary life-counsel reading from birth data, chart text, hexagram details, or a sensitive life question."
