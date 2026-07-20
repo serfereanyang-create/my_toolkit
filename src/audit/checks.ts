@@ -64,6 +64,12 @@ function buildChecks(root: string): Check[] {
     'src/agent/context.ts',
     'src/agent/fallback.ts',
     'src/agent/toolStrategy.ts',
+    'src/agent/commandExtract/types.ts',
+    'src/agent/commandExtract/extract.ts',
+    'src/agent/commandExtract/plan.ts',
+    'src/agent/commandExtract/format.ts',
+    'src/agent/commandExtract/execute.ts',
+    'src/agent/commandExtract/index.ts',
     'src/providers/types.ts',
     'src/providers/mock.ts',
     'src/providers/openai.ts',
@@ -143,6 +149,7 @@ function buildChecks(root: string): Check[] {
     'tests/git-safety.test.ts',
     'tests/git-rollback.test.ts',
     'tests/git-publisher.test.ts',
+    'tests/command-extract.test.ts',
     'tests/audit.test.ts',
   ];
   requiredFiles.forEach((path) => checks.push({ name: `file exists: ${path}`, run: () => exists(path) }));
@@ -320,6 +327,22 @@ function buildChecks(root: string): Check[] {
   const toolStrategyNeedles = ['planToolStrategy', 'formatToolStrategy', 'recoveryHintForToolFailure', 'code_edit', 'disk_growth'];
   toolStrategyNeedles.forEach((needle) => checks.push({ name: `tool strategy contains ${needle}`, run: () => contains('src/agent/toolStrategy.ts', needle) }));
 
+  const commandExtractNeedles: Array<[string, string]> = [
+    ['src/agent/commandExtract/extract.ts', 'extractCommand'],
+    ['src/agent/commandExtract/plan.ts', 'planCommand'],
+    ['src/agent/commandExtract/execute.ts', 'executeCommandPlan'],
+    ['src/agent/agent.ts', 'executeCommandPlan'],
+    ['src/providers/mock.ts', 'extractCommand'],
+  ];
+  commandExtractNeedles.forEach(([path, needle]) => checks.push({ name: `command extract ${path} contains ${needle}`, run: () => contains(path, needle) }));
+  const commandExtractTestNeedles = [
+    'extracts high-confidence readonly intents and slots',
+    'plans direct execution only for high-confidence readonly tools',
+    'high-confidence readonly prompt executes tools without calling provider',
+    'strategy-only edit prompt still calls provider with strategy text',
+  ];
+  commandExtractTestNeedles.forEach((needle) => checks.push({ name: `command extract test contains ${needle}`, run: () => contains('tests/command-extract.test.ts', needle) }));
+
   const cliProcessTestNeedles = ['CLI prints package version', 'CLI emits JSON events', 'CLI --no-input exits nonzero', 'CLI doctor reports local readiness', 'CLI prints bash completion script'];
   cliProcessTestNeedles.forEach((needle) => checks.push({ name: `cli process test contains ${needle}`, run: () => contains('tests/cli-process.test.ts', needle) }));
 
@@ -465,10 +488,10 @@ function buildChecks(root: string): Check[] {
     },
   });
 
-  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish'];
+  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction'];
   readmeNeedles.forEach((needle) => checks.push({ name: `README contains ${needle}`, run: () => contains('README.md', needle) }));
 
-  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log'];
+  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction'];
   matrixNeedles.forEach((needle) => checks.push({ name: `capability matrix contains ${needle}`, run: () => contains('docs/capability-matrix.md', needle) }));
 
   checks.push({ name: 'mock provider returns provider name', run: () => createMockProvider().name === 'mock' });

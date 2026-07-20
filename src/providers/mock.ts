@@ -1,3 +1,4 @@
+import { extractCommand, planCommand } from '../agent/commandExtract/index.js';
 import { planToolStrategy } from '../agent/toolStrategy.js';
 import type { AgentAction, AgentMessage, Provider, ProviderRequest, ProviderResponse } from './types.js';
 
@@ -53,10 +54,10 @@ function planNaturalLanguage(prompt: string, workspaceRoot: string): AgentAction
   const path = extractPath(prompt);
   const marker = extractMarker(prompt) ?? 'AICODE_NL_DRIVE';
   const writePath = path && isWritableSmokePath(path) ? path : '.smoke/natural-language-note.md';
-  const strategy = planToolStrategy({ prompt, recentTools: [], workspaceRoot });
   const hasExplicitWrite = hasChineseOrEnglishWord(normalized, ['写', '创建', '生成'], ['write', 'create']);
   const hasExplicitRead = hasChineseOrEnglishWord(normalized, ['读取', '读', '打开', '查看'], ['read', 'open', 'show']);
 
+  // Keep multi-tool write demos deterministic for smoke-style NL chains.
   if (hasExplicitWrite) {
     actions.push({
       type: 'tool',
@@ -69,48 +70,24 @@ function planNaturalLanguage(prompt: string, workspaceRoot: string): AgentAction
     if (hasExplicitRead) {
       actions.push({ type: 'tool', tool: 'read_file', input: { path: path ?? writePath, maxBytes: 20000 } });
     }
-  }
-
-  if (actions.length > 0) {
     appendRemainingExplicitActions(actions, prompt, normalized, marker);
     actions.push({ type: 'message', content: `Done. I translated the natural-language request into ${actions.length} tool call(s).` });
     return actions;
   }
 
-  if (hasExplicitRead && path) {
-    return [
-      { type: 'tool', tool: 'read_file', input: { path, maxBytes: 20000 } },
-      { type: 'message', content: 'Done. I translated the natural-language request into 1 tool call(s).' },
-    ];
-  }
-
-  if (strategy.intent === 'disk_growth') {
-    return [
-      { type: 'tool', tool: 'disk_growth', input: { path: '.', hours: 48, minMb: 16, maxFiles: 30 } },
-      { type: 'message', content: 'Done. I translated the natural-language request into 1 tool call(s).' },
-    ];
-  }
-
-  if (strategy.intent === 'disk_capacity') {
-    return [
-      { type: 'tool', tool: 'disk_info', input: { drive: normalized.includes('d盘') ? 'D' : 'C' } },
-      { type: 'message', content: 'Done. I translated the natural-language request into 1 tool call(s).' },
-    ];
-  }
-
-  if (strategy.intent === 'code_search' && !hasExplicitWrite) {
-    const query = extractSearchQuery(prompt);
-    const tools: AgentAction[] = query
-      ? [
-          { type: 'tool', tool: 'search_text', input: { query, path: '.', maxMatches: 20 } },
-          { type: 'tool', tool: 'project_index', input: { path: '.', maxFiles: 1000 } },
-        ]
-      : [{ type: 'tool', tool: 'project_index', input: { path: '.', maxFiles: 1000 } }];
+  const extraction = extractCommand(prompt);
+  const sharedPlan = planCommand(extraction);
+  if (sharedPlan.mode === 'execute' && sharedPlan.steps.length > 0) {
+    const tools = sharedPlan.steps.map((step) => ({ type: 'tool' as const, tool: step.tool, input: step.input }));
     return [...tools, { type: 'message', content: `Done. I translated the natural-language request into ${tools.length} tool call(s).` }];
   }
 
-  if (strategy.intent === 'code_edit' && !hasExplicitWrite) {
-    const query = extractSearchQuery(prompt) ?? 'TODO';
+  if (extraction.intent === 'code_edit') {
+    // Keep path tokens in the search query for code-edit demos (e.g. "修复 src/disk.ts 的显示问题").
+    const query = extractSearchQuery(prompt, { keepPaths: true })
+      || extraction.slots.query
+      || (hasAny(normalized, ['问题', 'bug', 'error', 'fix']) ? 'TODO' : undefined)
+      || 'TODO';
     const tools: AgentAction[] = [
       { type: 'tool', tool: 'project_index', input: { path: '.', maxFiles: 1000 } },
       { type: 'tool', tool: 'search_text', input: { query, path: '.', maxMatches: 20 } },
@@ -119,69 +96,35 @@ function planNaturalLanguage(prompt: string, workspaceRoot: string): AgentAction
     return [...tools, { type: 'message', content: `Done. I translated the natural-language request into ${tools.length} tool call(s).` }];
   }
 
-  const wantsProjectIndex = hasAny(normalized, ['索引', 'index']);
-  const wantsDiskGrowth = hasAny(normalized, ['增长', '涨了', '大文件', '清理', '最近文件', 'disk growth', 'large files']);
-
-  if (wantsDiskGrowth) {
-    actions.push({ type: 'tool', tool: 'disk_growth', input: { path: '.', hours: 48, minMb: 16, maxFiles: 30 } });
+  if (extraction.intent === 'code_search') {
+    if (!extraction.slots.query && !extraction.slots.path) {
+      return [
+        { type: 'tool', tool: 'project_index', input: { path: '.', maxFiles: 1000 } },
+        { type: 'message', content: 'Done. I translated the natural-language request into 1 tool call(s).' },
+      ];
+    }
+    const query = extractSearchQuery(prompt, { keepPaths: true })
+      || extraction.slots.query
+      || extraction.slots.path
+      || marker;
+    return [
+      { type: 'tool', tool: 'search_text', input: { query, path: '.', maxMatches: 20 } },
+      { type: 'tool', tool: 'project_index', input: { path: '.', maxFiles: 1000 } },
+      { type: 'message', content: 'Done. I translated the natural-language request into 2 tool call(s).' },
+    ];
   }
 
-  if (wantsProjectIndex) {
-    actions.push({ type: 'tool', tool: 'project_index', input: { path: '.', maxFiles: 1000 } });
-  }
-
-  if (!wantsDiskGrowth && hasAny(normalized, ['最近', '在干嘛', '活动', '会话', '历史', 'recent', 'activity', 'history', 'sessions'])) {
-    actions.push({ type: 'tool', tool: 'recent_activity', input: { maxSessions: 5, maxFiles: 10 } });
-  }
-
-  if (hasAny(normalized, ['环境', '容器', '系统信息', '运行环境', 'environment', 'container', 'runtime'])) {
-    actions.push({ type: 'tool', tool: 'environment_info', input: { includeVersions: true } });
-  }
-
-  if (!wantsProjectIndex && hasAny(normalized, ['项目', 'project', '状态', 'status', '概况'])) {
-    actions.push({ type: 'tool', tool: 'project_status', input: {} });
-  }
-
-  if (!wantsProjectIndex && !wantsDiskGrowth && hasAny(normalized, ['文件', '目录', '列出', '看看项目', '有哪些', 'list', 'files', 'tree'])) {
+  // Preserve a few mock-only demo intents that are intentionally strategy-only in the shared planner.
+  const strategy = planToolStrategy({ prompt, recentTools: [], workspaceRoot });
+  if (strategy.intent === 'project_overview' || hasAny(normalized, ['文件', '目录', '列出', '看看项目', '有哪些', 'list', 'files', 'tree'])) {
     actions.push({ type: 'tool', tool: 'list_files', input: { path: '.', maxFiles: 100 } });
   }
-
-  if (hasChineseOrEnglishWord(normalized, ['写', '创建', '生成'], ['write', 'create'])) {
-    actions.push({
-      type: 'tool',
-      tool: 'write_file',
-      input: {
-        path: writePath,
-        content: `# Natural language tool result\n\nmarker: ${marker}\n\nThis file was created from a natural-language request.\n`,
-      },
-    });
+  if (extraction.intent === 'shell_command' || hasAny(normalized, ['运行', '执行', 'run command'])) {
+    actions.push({ type: 'tool', tool: 'run_command', input: { command: extraction.slots.command ?? extractShellCommand(prompt) ?? 'node --version', timeoutMs: 30000 } });
   }
-
-  if (hasChineseOrEnglishWord(normalized, ['读取', '读', '打开', '查看'], ['read', 'open', 'show'])) {
-    actions.push({ type: 'tool', tool: 'read_file', input: { path: path ?? writePath, maxBytes: 20000 } });
-  }
-
-  if (hasAny(normalized, ['搜索', '查找', '出现在哪里', 'search', 'find', 'grep'])) {
-    actions.push({ type: 'tool', tool: 'search_text', input: { query: marker, path: '.', maxMatches: 20 } });
-  }
-
-  if (hasAny(normalized, ['磁盘', '硬盘', 'c盘', '容量', '剩余空间', '多大', 'disk', 'drive', 'free space'])) {
-    actions.push({ type: 'tool', tool: 'disk_info', input: { drive: normalized.includes('d盘') ? 'D' : 'C' } });
-  }
-
-  if (hasAny(normalized, ['内存', 'memory', '进程', 'process', '占用'])) {
-    actions.push({ type: 'tool', tool: 'process_memory', input: { limit: 10 } });
-  }
-
-  const command = extractCommand(prompt);
-  if (command || hasAny(normalized, ['运行', '执行', 'run command'])) {
-    actions.push({ type: 'tool', tool: 'run_command', input: { command: command ?? 'node --version', timeoutMs: 30000 } });
-  }
-
   if (actions.length === 0 && path) {
     actions.push({ type: 'tool', tool: 'read_file', input: { path, maxBytes: 20000 } });
   }
-
   if (actions.length > 0) {
     actions.push({ type: 'message', content: `Done. I translated the natural-language request into ${actions.length} tool call(s).` });
   }
@@ -260,13 +203,16 @@ function extractMarker(prompt: string) {
   return quoted?.[1];
 }
 
-function extractSearchQuery(prompt: string) {
-  const cleaned = prompt
+function extractSearchQuery(prompt: string, options?: { keepPaths?: boolean }) {
+  let cleaned = prompt
     .replace(/帮我|请|一下|修复|修改|实现|新增|删除|重构|优化|查找|搜索|在哪里|的问题|问题/gi, ' ')
     .replace(/\b(?:please|kindly|fix|modify|implement|add|delete|refactor|optimize|update|find|search|look\s+for|locate)\b/gi, ' ')
     .replace(/^\s*for\b/i, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  if (!options?.keepPaths) {
+    cleaned = cleaned.replace(/(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+|(?:^|\s)([A-Za-z0-9_.-]+\.[A-Za-z0-9]+)/g, ' ').replace(/\s+/g, ' ').trim();
+  }
   return cleaned || extractMarker(prompt);
 }
 
@@ -275,13 +221,13 @@ function appendRemainingExplicitActions(actions: AgentAction[], prompt: string, 
     actions.push({ type: 'tool', tool: 'search_text', input: { query: marker, path: '.', maxMatches: 20 } });
   }
 
-  const command = extractCommand(prompt);
+  const command = extractShellCommand(prompt);
   if (command || hasAny(normalized, ['运行', '执行', 'run command'])) {
     actions.push({ type: 'tool', tool: 'run_command', input: { command: command ?? 'node --version', timeoutMs: 30000 } });
   }
 }
 
-function extractCommand(prompt: string) {
+function extractShellCommand(prompt: string) {
   const match = prompt.match(/(?:运行|执行|run|execute)\s+([^，。\n]+)/i);
   return match?.[1]?.trim();
 }

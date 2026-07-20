@@ -19,6 +19,7 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Long-task planning / task board | Implemented MVP | Durable `.aicode/tasks` boards, `/plan` controls, confirm-then-auto-run, blocked resume |
 | Project memory | Implemented MVP | Durable `.aicode/memory` entries, auto-record from tasks, `/memory` controls, task-prompt injection |
 | Project understanding | Implemented MVP | `project_index`, instruction context from `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `README.md` |
+| Natural-language command extraction | Implemented MVP | Shared extract/plan layer; high-confidence readonly tools execute directly; edit/shell remain strategy + model |
 | Git workflow | Implemented MVP | read-only `git_status`/`git_diff`/`git_log`; local hidden baseline/result snapshots; selective `/rollback`; confirmed `/git publish` only; no force push or auto-publish |
 | Git safety / rollback log | Implemented MVP | `.aicode/git-safety/audit.jsonl`, `refs/aicode/checkpoints/*`, dirty-tree protection, all-or-nothing conflict checks |
 | Providers | Implemented MVP | mock, OpenAI-compatible, Anthropic adapters |

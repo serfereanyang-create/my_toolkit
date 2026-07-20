@@ -194,6 +194,17 @@ Relevant entries are injected into later task-board execution prompts.
 /memory forget Prefer npm test
 ```
 
+## Natural-language command extraction
+
+High-confidence read-only requests are converted into tool chains before the model runs:
+
+- `C盘还有多少空间` → `disk_info`
+- `搜索 apply_patch` → `search_text`
+- `读取 package.json` → `read_file`
+- recent activity / process memory / project status also direct-execute when clear
+
+Edit and shell requests stay model-driven with stronger strategy injection, and still pass through approval / safety policy. Direct chains reuse the normal tool registry, session logging, and recovery fallback.
+
 ## Git safety
 
 Ordinary turns and task-board tasks create local hidden baseline/result snapshots under `refs/aicode/checkpoints/`.

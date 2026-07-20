@@ -11,6 +11,7 @@ import type { CheckpointStore } from '../session/checkpoint.js';
 import type { SessionRecord, SessionStore } from '../session/store.js';
 import type { ToolRegistry } from '../tools/index.js';
 import type { TerminalUI } from '../ui/terminal.js';
+import { executeCommandPlan, extractCommand, formatCommandStrategy, planCommand } from './commandExtract/index.js';
 import { formatProjectContext, readProjectContext } from './context.js';
 import { planLocalFallback } from './fallback.js';
 import { formatToolStrategy, planToolStrategy, recentToolResultsFromSession, recoveryHintForToolFailure } from './toolStrategy.js';
@@ -92,11 +93,25 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string): Promise<
   const recentTools = recentToolResultsFromSession(runtime.session);
   await runtime.sessions.appendMessage(runtime.session, { role: 'user', content: prompt });
   const projectContext = formatProjectContext(await readProjectContext(runtime.config.workspaceRoot));
-  const toolStrategy = formatToolStrategy(planToolStrategy({
-    prompt,
-    recentTools,
-    workspaceRoot: runtime.config.workspaceRoot,
-  }));
+  const extraction = extractCommand(prompt);
+  const commandPlan = planCommand(extraction);
+  // Mock already plans deterministic multi-step demos one tool per provider turn.
+  // Direct execution is for real providers / non-mock paths.
+  if (commandPlan.mode === 'execute' && runtime.provider.name !== 'mock') {
+    try {
+      const direct = await executeCommandPlan(runtime, commandPlan);
+      if (direct.status === 'completed') return direct.result;
+      runtime.ui.info(`Direct command chain fallback: ${direct.reason}`);
+    } catch (error) {
+      runtime.ui.info(`Direct command chain failed open to provider: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const toolStrategy = formatCommandStrategy(commandPlan, extraction)
+    || formatToolStrategy(planToolStrategy({
+      prompt,
+      recentTools,
+      workspaceRoot: runtime.config.workspaceRoot,
+    }));
 
   let finalAnswer: string | undefined;
   for (let step = 0; step < runtime.config.maxSteps; step += 1) {
