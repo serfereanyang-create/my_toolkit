@@ -1,0 +1,28 @@
+{
+  "name": "aicode-cli-mvp",
+  "version": "0.1.0",
+  "description": "A local Claude-Code-like CLI coding agent MVP.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "aicode": "dist/src/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "smoke": "npm run build && node dist/src/index.js --provider mock --approval auto --session-dir .aicode-smoke/sessions --prompt \"smoke multi-tool task: inspect, write, read, and run command\"",
+    "audit:100": "npm run build && node dist/src/audit/checks.js",
+    "dev": "npm run build && node dist/src/index.js"
+  },
+  "keywords": [
+    "cli",
+    "agent",
+    "coding-assistant"
+  ],
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.2"
+  }
+}
