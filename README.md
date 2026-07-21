@@ -194,6 +194,24 @@ Relevant entries are injected into later task-board execution prompts.
 /memory forget Prefer npm test
 ```
 
+## Task verify loop
+
+Task-board tasks are not marked done on `TASK_DONE` alone.
+When enabled (default), aicode discovers package scripts and runs:
+
+1. `npm run typecheck` (if present)
+2. `npm test` (if present)
+3. `npm run build` (if present)
+
+If verification fails, the board attempts **one** automatic repair turn and re-verifies.
+A second failure blocks the task and pauses the board for `/plan continue`.
+
+Disable with:
+
+```bash
+AICODE_VERIFY_TASKS=0
+```
+
 ## Natural-language command extraction
 
 High-confidence read-only requests are converted into tool chains before the model runs:

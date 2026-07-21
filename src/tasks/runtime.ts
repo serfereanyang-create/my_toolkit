@@ -9,6 +9,7 @@ import type { SessionRecord, SessionStore } from '../session/store.js';
 import { detectTaskCompletion } from './completion.js';
 import type { TaskBoardStore } from './store.js';
 import type { TaskBoard, TaskItem, TaskRuntimeState } from './types.js';
+import { buildRepairPrompt, runVerifySuite, type VerifyRunner } from './verify.js';
 
 export function nextRunnableTask(board: TaskBoard): TaskItem | undefined {
   if (board.status === 'cancelled' || board.status === 'completed') return undefined;
@@ -144,6 +145,8 @@ export async function runTaskBoardLoop(options: {
   onInfo?: (message: string) => void;
   gitSafety?: GitSafetyService;
   confirm?: (message: string) => Promise<boolean>;
+  verifyRunner?: VerifyRunner;
+  verifyEnabled?: boolean;
 }) {
   const maxTasks = options.maxTasks ?? options.board.tasks.length + 2;
   let executed = 0;
@@ -218,17 +221,26 @@ export async function runTaskBoardLoop(options: {
       const doneAt = new Date().toISOString();
 
       if (completion.status === 'done') {
-        markTaskDone(options.board, task.id, completion.summary, doneAt);
-        await options.store.save(options.board);
-        await maybeRecordTaskMemory({
-          store: memoryStore,
-          boardId: options.board.id,
-          task: options.board.tasks.find((item) => item.id === task.id)!,
-          onWarn: options.onInfo,
+        if (unit && options.gitSafety) await options.gitSafety.finishUnit(unit, turn.outcome ?? 'done');
+
+        const verified = await completeWithVerification({
+          board: options.board,
+          store: options.store,
+          sessions: options.sessions,
+          session: options.session,
+          memoryStore,
+          taskId: task.id,
+          summary: completion.summary,
+          runTurn: options.runTurn,
+          onInfo: options.onInfo,
+          gitSafety: options.gitSafety,
+          confirm: options.confirm,
+          verifyRunner: options.verifyRunner,
+          verifyEnabled: options.verifyEnabled,
         });
-        await options.sessions.save(options.session);
-        outcome = turn.outcome ?? 'done';
-        if (unit && options.gitSafety) await options.gitSafety.finishUnit(unit, outcome);
+        if (!verified.ok) {
+          return { ok: false, status: 'blocked' as const, reason: verified.reason };
+        }
         executed += 1;
         continue;
       }
@@ -271,6 +283,153 @@ export async function runTaskBoardLoop(options: {
   }
 
   return { ok: false, status: options.board.status, reason: 'Task board max task iterations reached' };
+}
+
+async function completeWithVerification(options: {
+  board: TaskBoard;
+  store: TaskBoardStore;
+  sessions: SessionStore;
+  session: SessionRecord;
+  memoryStore: ProjectMemoryStore;
+  taskId: string;
+  summary: string;
+  runTurn: (prompt: string, gitSafetyUnit?: GitUnitContext) => Promise<TaskTurnResult>;
+  onInfo?: (message: string) => void;
+  gitSafety?: GitSafetyService;
+  confirm?: (message: string) => Promise<boolean>;
+  verifyRunner?: VerifyRunner;
+  verifyEnabled?: boolean;
+}) {
+  const task = requireTask(options.board, options.taskId);
+  const env = options.verifyEnabled === false
+    ? { ...process.env, AICODE_VERIFY_TASKS: '0' }
+    : process.env;
+
+  const first = await runVerifySuite({
+    workspaceRoot: options.session.workspaceRoot,
+    runner: options.verifyRunner,
+    env,
+  });
+  if (first.ok) {
+    const doneAt = new Date().toISOString();
+    markTaskDone(options.board, task.id, `${options.summary} [verified]`, doneAt);
+    await options.store.save(options.board);
+    await maybeRecordTaskMemory({
+      store: options.memoryStore,
+      boardId: options.board.id,
+      task: requireTask(options.board, task.id),
+      onWarn: options.onInfo,
+    });
+    await options.sessions.save(options.session);
+    options.onInfo?.(first.summary);
+    return { ok: true as const };
+  }
+
+  options.onInfo?.(`Verification failed for ${task.id}; attempting one repair turn. ${first.summary}`);
+  const repairUnit = options.gitSafety
+    ? await options.gitSafety.startUnit({
+      kind: 'task',
+      sessionId: options.session.id,
+      boardId: options.board.id,
+      taskId: task.id,
+    }, {
+      confirm: options.confirm,
+      onWarning: options.onInfo,
+    })
+    : undefined;
+
+  try {
+    const repairTurn = await options.runTurn(buildRepairPrompt(task, first), repairUnit);
+    const repairCompletion = detectTaskCompletion({
+      ok: repairTurn.ok,
+      finalAnswer: repairTurn.finalAnswer ?? repairTurn.reason ?? '',
+      hadTerminalFailure: Boolean(repairTurn.hadTerminalFailure) || repairTurn.ok === false,
+      error: repairTurn.reason,
+    });
+    if (repairUnit && options.gitSafety) {
+      await options.gitSafety.finishUnit(repairUnit, repairTurn.outcome ?? (repairCompletion.status === 'done' ? 'done' : 'blocked'));
+    }
+
+    if (repairCompletion.status !== 'done') {
+      const doneAt = new Date().toISOString();
+      const reason = `${first.summary}; repair did not complete: ${repairCompletion.status === 'blocked' || repairCompletion.status === 'unclear' ? repairCompletion.error : 'unknown'}`;
+      markTaskBlocked(options.board, task.id, reason, doneAt);
+      options.session.taskRuntime = {
+        boardId: options.board.id,
+        activeTaskId: task.id,
+        mode: 'paused',
+        lastSyncAt: doneAt,
+      };
+      await options.store.save(options.board);
+      await maybeRecordTaskMemory({
+        store: options.memoryStore,
+        boardId: options.board.id,
+        task: requireTask(options.board, task.id),
+        onWarn: options.onInfo,
+      });
+      await options.sessions.save(options.session);
+      options.onInfo?.(`Blocked on ${task.id}: ${reason}`);
+      return { ok: false as const, reason };
+    }
+
+    const second = await runVerifySuite({
+      workspaceRoot: options.session.workspaceRoot,
+      runner: options.verifyRunner,
+      env,
+    });
+    if (second.ok) {
+      const doneAt = new Date().toISOString();
+      markTaskDone(options.board, task.id, `${repairCompletion.summary} [verified after repair]`, doneAt);
+      await options.store.save(options.board);
+      await maybeRecordTaskMemory({
+        store: options.memoryStore,
+        boardId: options.board.id,
+        task: requireTask(options.board, task.id),
+        onWarn: options.onInfo,
+      });
+      await options.sessions.save(options.session);
+      options.onInfo?.(second.summary);
+      return { ok: true as const };
+    }
+
+    const doneAt = new Date().toISOString();
+    const reason = `${second.summary} (after one repair attempt)`;
+    markTaskBlocked(options.board, task.id, reason, doneAt);
+    options.session.taskRuntime = {
+      boardId: options.board.id,
+      activeTaskId: task.id,
+      mode: 'paused',
+      lastSyncAt: doneAt,
+    };
+    await options.store.save(options.board);
+    await maybeRecordTaskMemory({
+      store: options.memoryStore,
+      boardId: options.board.id,
+      task: requireTask(options.board, task.id),
+      onWarn: options.onInfo,
+    });
+    await options.sessions.save(options.session);
+    options.onInfo?.(`Blocked on ${task.id}: ${reason}`);
+    return { ok: false as const, reason };
+  } catch (error) {
+    if (repairUnit && options.gitSafety) {
+      await options.gitSafety.finishUnit(repairUnit, 'failed');
+    }
+    const doneAt = new Date().toISOString();
+    const message = error instanceof Error ? error.message : String(error);
+    const reason = `${first.summary}; repair turn failed: ${message}`;
+    markTaskBlocked(options.board, task.id, reason, doneAt);
+    options.session.taskRuntime = {
+      boardId: options.board.id,
+      activeTaskId: task.id,
+      mode: 'paused',
+      lastSyncAt: doneAt,
+    };
+    await options.store.save(options.board);
+    await options.sessions.save(options.session);
+    options.onInfo?.(`Blocked on ${task.id}: ${reason}`);
+    return { ok: false as const, reason };
+  }
 }
 
 function refreshBoardStatus(board: TaskBoard) {

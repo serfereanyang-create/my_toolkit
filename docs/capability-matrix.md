@@ -17,6 +17,7 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Diff/patch/undo | Implemented MVP | diff preview for write approval, apply patch, checkpoints, `/undo` |
 | Session resume/export | Implemented | session JSON store, `--resume`, `/sessions`, `/summary`, `/plan`, `/export` |
 | Long-task planning / task board | Implemented MVP | Durable `.aicode/tasks` boards, `/plan` controls, confirm-then-auto-run, blocked resume |
+| Task verify loop | Implemented MVP | After textual done, run package `typecheck`/`test`/`build` when present; one repair retry; fail blocks board |
 | Project memory | Implemented MVP | Durable `.aicode/memory` entries, auto-record from tasks, `/memory` controls, task-prompt injection |
 | Project understanding | Implemented MVP | `project_index`, instruction context from `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `README.md` |
 | Natural-language command extraction | Implemented MVP | Shared extract/plan layer; high-confidence readonly tools execute directly; edit/shell remain strategy + model |

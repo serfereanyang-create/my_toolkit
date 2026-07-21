@@ -103,6 +103,7 @@ function buildChecks(root: string): Check[] {
     'src/tasks/planner.ts',
     'src/tasks/runtime.ts',
     'src/tasks/completion.ts',
+    'src/tasks/verify.ts',
     'src/memory/types.ts',
     'src/memory/store.ts',
     'src/memory/extract.ts',
@@ -145,6 +146,7 @@ function buildChecks(root: string): Check[] {
     'tests/rename.test.ts',
     'tests/checkpoint.test.ts',
     'tests/task-board.test.ts',
+    'tests/task-verify.test.ts',
     'tests/project-memory.test.ts',
     'tests/git-safety.test.ts',
     'tests/git-rollback.test.ts',
@@ -421,6 +423,20 @@ function buildChecks(root: string): Check[] {
   ];
   taskBoardTestNeedles.forEach((needle) => checks.push({ name: `task board test contains ${needle}`, run: () => contains('tests/task-board.test.ts', needle) }));
 
+  const verifyNeedles: Array<[string, string]> = [
+    ['src/tasks/verify.ts', 'runVerifySuite'],
+    ['src/tasks/verify.ts', 'discoverVerifyCommands'],
+    ['src/tasks/verify.ts', 'buildRepairPrompt'],
+    ['src/tasks/runtime.ts', 'completeWithVerification'],
+  ];
+  verifyNeedles.forEach(([path, needle]) => checks.push({ name: `verify loop ${path} contains ${needle}`, run: () => contains(path, needle) }));
+  const verifyTestNeedles = [
+    'discoverVerifyCommands finds typecheck test build scripts',
+    'runVerifySuite fails on first nonzero command and truncates output',
+    'task board requires verification before done and repairs once',
+  ];
+  verifyTestNeedles.forEach((needle) => checks.push({ name: `verify test contains ${needle}`, run: () => contains('tests/task-verify.test.ts', needle) }));
+
   const projectMemoryFileNeedles: Array<[string, string]> = [
     ['src/memory/store.ts', 'ProjectMemoryStore'],
     ['src/memory/extract.ts', 'extractMemoryCandidates'],
@@ -488,10 +504,10 @@ function buildChecks(root: string): Check[] {
     },
   });
 
-  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction'];
+  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop'];
   readmeNeedles.forEach((needle) => checks.push({ name: `README contains ${needle}`, run: () => contains('README.md', needle) }));
 
-  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction'];
+  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop'];
   matrixNeedles.forEach((needle) => checks.push({ name: `capability matrix contains ${needle}`, run: () => contains('docs/capability-matrix.md', needle) }));
 
   checks.push({ name: 'mock provider returns provider name', run: () => createMockProvider().name === 'mock' });
