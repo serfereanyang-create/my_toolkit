@@ -16,6 +16,7 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Shell execution | Implemented MVP | approved shell command execution with timeout and max buffer |
 | Diff/patch/undo | Implemented MVP | diff preview for write approval, apply patch, checkpoints, `/undo` |
 | Session resume/export | Implemented | session JSON store, `--resume`, `/sessions`, `/summary`, `/plan`, `/export` |
+| Context budget / compaction | Implemented MVP | Outbound message packing with char budget (`AICODE_CONTEXT_BUDGET_CHARS`), tool output clipping, older-history summary; disk session keeps full history |
 | Long-task planning / task board | Implemented MVP | Durable `.aicode/tasks` boards, `/plan` controls, confirm-then-auto-run, blocked resume |
 | Task verify loop | Implemented MVP | After textual done, run package `typecheck`/`test`/`build` when present; one repair retry; fail blocks board |
 | Project memory | Implemented MVP | Durable `.aicode/memory` entries, auto-record from tasks, `/memory` controls, task-prompt injection |

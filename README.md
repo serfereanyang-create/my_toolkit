@@ -212,6 +212,16 @@ Disable with:
 AICODE_VERIFY_TASKS=0
 ```
 
+## Context budget
+
+Before each model call, aicode packs session messages into a char budget so large tool transcripts do not blow the context window.
+
+- Default budget: `80000` characters
+- Override: `AICODE_CONTEXT_BUDGET_CHARS=120000`
+- Recent turns are kept first; older history is folded into one summary
+- Oversized tool/assistant payloads are clipped for the model only
+- On-disk session JSON still stores full outputs for resume/export
+
 ## Codebase navigation
 
 aicode builds a lightweight TS/JS symbol index under `.aicode/nav/index.json` (mtime-aware cache).

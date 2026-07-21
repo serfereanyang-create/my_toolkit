@@ -13,6 +13,7 @@ import type { ToolRegistry } from '../tools/index.js';
 import type { TerminalUI } from '../ui/terminal.js';
 import { executeCommandPlan, extractCommand, formatCommandStrategy, planCommand } from './commandExtract/index.js';
 import { formatProjectContext, readProjectContext } from './context.js';
+import { compactMessagesForModel, resolveContextBudgetChars } from './contextBudget.js';
 import { planLocalFallback } from './fallback.js';
 import { formatToolStrategy, planToolStrategy, recentToolResultsFromSession, recoveryHintForToolFailure } from './toolStrategy.js';
 
@@ -114,12 +115,20 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string): Promise<
     }));
 
   let finalAnswer: string | undefined;
+  let warnedAboutCompaction = false;
   for (let step = 0; step < runtime.config.maxSteps; step += 1) {
     let response;
     try {
       runtime.ui.modelStart();
+      const packed = compactMessagesForModel(runtime.session.messages, {
+        budgetChars: resolveContextBudgetChars(),
+      });
+      if (packed.truncated && !warnedAboutCompaction) {
+        runtime.ui.info(`Context compacted for model: kept≈${packed.compactChars} chars, dropped ${packed.droppedMessages} older messages.`);
+        warnedAboutCompaction = true;
+      }
       response = await runtime.provider.complete({
-        messages: runtime.session.messages,
+        messages: packed.messages,
         tools: runtime.tools.specs(),
         workspaceRoot: runtime.config.workspaceRoot,
         projectContext,

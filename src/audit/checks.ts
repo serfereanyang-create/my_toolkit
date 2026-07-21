@@ -62,6 +62,7 @@ function buildChecks(root: string): Check[] {
     'src/ui/terminal.ts',
     'src/agent/agent.ts',
     'src/agent/context.ts',
+    'src/agent/contextBudget.ts',
     'src/agent/fallback.ts',
     'src/agent/toolStrategy.ts',
     'src/agent/commandExtract/types.ts',
@@ -137,6 +138,7 @@ function buildChecks(root: string): Check[] {
     'tests/activity.test.ts',
     'tests/config.test.ts',
     'tests/context.test.ts',
+    'tests/context-budget.test.ts',
     'tests/plugins.test.ts',
     'tests/process.test.ts',
     'tests/smoke.test.ts',
@@ -333,6 +335,9 @@ function buildChecks(root: string): Check[] {
 
   const contextNeedles = ['readProjectContext', 'formatProjectContext', 'cacheKey', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
   contextNeedles.forEach((needle) => checks.push({ name: `context contains ${needle}`, run: () => contains('src/agent/context.ts', needle) }));
+  const contextBudgetNeedles = ['compactMessagesForModel', 'resolveContextBudgetChars', 'AICODE_CONTEXT_BUDGET_CHARS'];
+  contextBudgetNeedles.forEach((needle) => checks.push({ name: `context budget contains ${needle}`, run: () => contains('src/agent/contextBudget.ts', needle) }));
+  checks.push({ name: 'agent uses compactMessagesForModel', run: () => contains('src/agent/agent.ts', 'compactMessagesForModel') });
 
   const fallbackNeedles = ['planLocalFallback', 'rename_file', 'previousUserPrompt'];
   fallbackNeedles.forEach((needle) => checks.push({ name: `fallback contains ${needle}`, run: () => contains('src/agent/fallback.ts', needle) }));
@@ -515,10 +520,10 @@ function buildChecks(root: string): Check[] {
     },
   });
 
-  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation'];
+  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget'];
   readmeNeedles.forEach((needle) => checks.push({ name: `README contains ${needle}`, run: () => contains('README.md', needle) }));
 
-  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation'];
+  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget / compaction'];
   matrixNeedles.forEach((needle) => checks.push({ name: `capability matrix contains ${needle}`, run: () => contains('docs/capability-matrix.md', needle) }));
 
   checks.push({ name: 'mock provider returns provider name', run: () => createMockProvider().name === 'mock' });
