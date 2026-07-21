@@ -6,9 +6,12 @@ import type { LazyDevGuardState, LazyDevRequirement } from '../guard/types.js';
 import { formatMemoryList } from '../memory/format.js';
 import { ProjectMemoryStore } from '../memory/store.js';
 import type { MemoryKind } from '../memory/types.js';
+import type { GitProcess } from '../git-safety/git.js';
 import type { GitRemotePublisher } from '../git-safety/publisher.js';
+import type { GitRepository } from '../git-safety/repository.js';
 import type { GitRollbackService } from '../git-safety/rollback.js';
 import { formatGitSafetyStatus } from '../git-safety/format.js';
+import { commitBoardChanges, ensureBoardBranch, previewBoardCommit } from '../git-safety/workflow.js';
 import type { Provider } from '../providers/types.js';
 import type { CheckpointStore } from '../session/checkpoint.js';
 import type { SessionRecord, SessionStore } from '../session/store.js';
@@ -33,6 +36,8 @@ export async function handleSlashCommand(options: {
   confirm?: (message: string) => Promise<boolean>;
   gitRollback?: GitRollbackService;
   gitPublisher?: GitRemotePublisher;
+  gitProcess?: GitProcess;
+  gitRepository?: GitRepository;
 }) {
   const command = options.line.trim();
   if (command === '/不准偷懒开发' || command.startsWith('/不准偷懒开发 ')) {
@@ -65,6 +70,7 @@ export async function handleSlashCommand(options: {
         '/plan       Show task board (use /plan confirm|pause|continue|skip|reopen|show)',
         '/memory     Show project memory (use /memory add|list|forget)',
         '/rollback   List/show/preview/apply Git safety unit rollbacks',
+        '/git status|commit|publish   Board-linked Git workflow (commit is confirmed)',
         '/git publish <remote> <local-ref> <remote-branch>  Confirmed non-force push',
         '/export     Show transcript file path',
         '/sessions   List recent sessions',
@@ -147,15 +153,66 @@ async function handleRollbackCommand(
 async function handleGitCommand(
   command: string,
   options: {
+    config: AppConfig;
     session: SessionRecord;
+    sessions: SessionStore;
     confirm?: (message: string) => Promise<boolean>;
     gitPublisher?: GitRemotePublisher;
+    gitProcess?: GitProcess;
+    gitRepository?: GitRepository;
   },
 ) {
   const args = command.slice('/git'.length).trim().split(/\s+/).filter(Boolean);
   const [action, remote, localRef, remoteBranch] = args;
+
+  if (!action || action === 'status') {
+    if (!options.gitProcess) return 'Git process is unavailable.';
+    try {
+      const branch = (await options.gitProcess.text(['branch', '--show-current'])).trim() || '(detached)';
+      const status = (await options.gitProcess.text(['status', '--short'])).trim() || '(clean)';
+      const board = await loadCurrentBoard(new TaskBoardStore(options.config.workspaceRoot), options.session);
+      return [
+        `branch: ${branch}`,
+        board?.gitBranch ? `boardBranch: ${board.gitBranch}` : undefined,
+        board?.gitCommitSha ? `boardCommit: ${board.gitCommitSha}` : undefined,
+        'status:',
+        status,
+      ].filter((line): line is string => typeof line === 'string').join('\n');
+    } catch (error) {
+      return `Git status failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  if (action === 'commit') {
+    if (!options.gitProcess) return 'Git process is unavailable.';
+    const store = new TaskBoardStore(options.config.workspaceRoot);
+    const board = await loadCurrentBoard(store, options.session);
+    if (!board) return 'No task board attached. Use /plan show <boardId> first.';
+    const preview = await previewBoardCommit({ git: options.gitProcess, board });
+    if (!preview.hasChanges) return `No changes to commit on ${preview.branch}.`;
+    if (!options.confirm) {
+      return [
+        `Commit requires confirmation. Preview on ${preview.branch}:`,
+        preview.status,
+        preview.diffStat,
+        'Suggested message:',
+        preview.suggestedMessage,
+        'Re-run interactively to confirm, or provide a confirm handler.',
+      ].join('\n');
+    }
+    const accepted = await options.confirm(`Commit board changes on ${preview.branch}?`);
+    if (!accepted) return 'Commit declined.';
+    const result = await commitBoardChanges({ git: options.gitProcess, board });
+    if (result.ok && result.sha) {
+      board.gitCommitSha = result.sha;
+      board.updatedAt = new Date().toISOString();
+      await store.save(board);
+    }
+    return result.message;
+  }
+
   if (action !== 'publish') {
-    return 'Unknown /git action. Try /git publish <remote> <local-ref> <remote-branch>.';
+    return 'Unknown /git action. Try /git status, /git commit, /git publish <remote> <local-ref> <remote-branch>.';
   }
   if (!options.gitPublisher) return 'Git publisher is unavailable.';
   if (!remote || !localRef || !remoteBranch || args.length !== 4) {
@@ -215,6 +272,9 @@ async function handlePlanCommand(
     config: AppConfig;
     sessions: SessionStore;
     session: SessionRecord;
+    confirm?: (message: string) => Promise<boolean>;
+    gitProcess?: GitProcess;
+    gitRepository?: GitRepository;
   },
 ) {
   const store = new TaskBoardStore(options.config.workspaceRoot);
@@ -254,6 +314,17 @@ async function handlePlanCommand(
         return `Board ${board.id} cannot be confirmed from status ${board.status}`;
       }
       confirmBoard(board, nowIso);
+      let branchNote = '';
+      if (options.gitProcess && options.gitRepository) {
+        const branchResult = await ensureBoardBranch({
+          git: options.gitProcess,
+          repository: options.gitRepository,
+          board,
+          confirm: options.confirm,
+        });
+        if (branchResult.branch) board.gitBranch = branchResult.branch;
+        branchNote = `\n${branchResult.message}`;
+      }
       await store.save(board);
       options.session.taskRuntime = {
         boardId: board.id,
@@ -262,7 +333,7 @@ async function handlePlanCommand(
         lastSyncAt: nowIso,
       };
       await options.sessions.save(options.session);
-      return `${formatBoard(board)}\nConfirmed. Auto-execution enabled.`;
+      return `${formatBoard(board)}\nConfirmed. Auto-execution enabled.${branchNote}`;
     }
     case 'pause': {
       options.session.taskRuntime = pauseRuntime(options.session.taskRuntime ?? { mode: 'idle', boardId: board.id }, nowIso);

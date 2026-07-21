@@ -23,7 +23,7 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Project understanding | Implemented MVP | `project_index`, instruction context from `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `README.md` |
 | Codebase navigation | Implemented MVP | Heuristic TS/JS symbol index (`.aicode/nav`), `find_symbol` / `find_references`, strategy prefers symbols first |
 | Natural-language command extraction | Implemented MVP | Shared extract/plan layer; high-confidence readonly tools execute directly; edit/shell remain strategy + model |
-| Git workflow | Implemented MVP | read-only `git_status`/`git_diff`/`git_log`; local hidden baseline/result snapshots; selective `/rollback`; confirmed `/git publish` only; no force push or auto-publish |
+| Git workflow | Implemented MVP | Board branch on `/plan confirm` (`aicode/board-*`); confirmed board commit after completion; read-only git tools; hidden snapshots + `/rollback`; confirmed `/git publish` only; no auto-push |
 | Git safety / rollback log | Implemented MVP | `.aicode/git-safety/audit.jsonl`, `refs/aicode/checkpoints/*`, dirty-tree protection, all-or-nothing conflict checks |
 | Providers | Implemented MVP | mock, OpenAI-compatible, Anthropic adapters |
 | Tests/audit | Implemented | typecheck, node:test suite, structural audit above 100 checks |

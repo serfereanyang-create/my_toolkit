@@ -5,6 +5,7 @@ import { handleLazyDevInput } from '../guard/lazyDevGuard.js';
 import { formatMemories } from '../memory/format.js';
 import { selectRelevantMemories } from '../memory/select.js';
 import { ProjectMemoryStore } from '../memory/store.js';
+import { commitBoardChanges, ensureBoardBranch, previewBoardCommit } from '../git-safety/workflow.js';
 import { planBoardFromGoal, shouldUseTaskBoard } from '../tasks/planner.js';
 import { confirmBoard, formatBoard, runTaskBoardLoop } from '../tasks/runtime.js';
 import { TaskBoardStore } from '../tasks/store.js';
@@ -70,6 +71,16 @@ async function handleDevelopmentPrompt(runtime: AgentRuntime, prompt: string): P
   }
 
   confirmBoard(board, new Date().toISOString());
+  if (runtime.gitProcess && runtime.gitRepository) {
+    const branchResult = await ensureBoardBranch({
+      git: runtime.gitProcess,
+      repository: runtime.gitRepository,
+      board,
+      confirm: runtime.confirm,
+    });
+    if (branchResult.branch) board.gitBranch = branchResult.branch;
+    runtime.ui.info(branchResult.message);
+  }
   await store.save(board);
   runtime.session.taskRuntime = {
     boardId: board.id,
@@ -111,7 +122,51 @@ async function continueTaskBoard(runtime: AgentRuntime): Promise<AgentTurnResult
   });
 
   runtime.ui.info(formatBoard(board));
+  if (board.status === 'completed' && runtime.gitProcess) {
+    await maybeCommitCompletedBoard(runtime, store, board);
+  }
   return { ok: loopResult.ok, session: runtime.session, reason: loopResult.reason };
+}
+
+async function maybeCommitCompletedBoard(
+  runtime: AgentRuntime,
+  store: TaskBoardStore,
+  board: Awaited<ReturnType<TaskBoardStore['load']>>,
+) {
+  if (!runtime.gitProcess) return;
+  if (board.gitCommitSha) {
+    runtime.ui.info(`Board already committed as ${board.gitCommitSha.slice(0, 12)}.`);
+    return;
+  }
+  const preview = await previewBoardCommit({ git: runtime.gitProcess, board });
+  if (!preview.hasChanges) {
+    runtime.ui.info(`Board completed on ${preview.branch} with a clean worktree.`);
+    return;
+  }
+  runtime.ui.info([
+    `Board completed on ${preview.branch}. Commit preview:`,
+    preview.status,
+    preview.diffStat,
+    'Suggested message:',
+    preview.suggestedMessage,
+  ].join('\n'));
+
+  if (!runtime.confirm) {
+    runtime.ui.info('No confirm handler available; skip auto commit. Use interactive /git commit later.');
+    return;
+  }
+  const accepted = await runtime.confirm(`Commit completed board ${board.id} on ${preview.branch}?`);
+  if (!accepted) {
+    runtime.ui.info('Board commit declined.');
+    return;
+  }
+  const result = await commitBoardChanges({ git: runtime.gitProcess, board });
+  runtime.ui.info(result.message);
+  if (result.ok && result.sha) {
+    board.gitCommitSha = result.sha;
+    board.updatedAt = new Date().toISOString();
+    await store.save(board);
+  }
 }
 
 export async function runRepl(runtime: AgentRuntime) {

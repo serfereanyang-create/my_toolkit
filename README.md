@@ -249,6 +249,25 @@ High-confidence read-only requests are converted into tool chains before the mod
 
 Edit and shell requests stay model-driven with stronger strategy injection, and still pass through approval / safety policy. Direct chains reuse the normal tool registry, session logging, and recovery fallback.
 
+## Git workflow (boards)
+
+When a task board is confirmed (`/plan confirm` or `--confirm-plan`), aicode ensures a dedicated branch:
+
+```text
+aicode/board-<boardId>
+```
+
+After the board completes (tasks done and verified), aicode previews `git status` / diff and asks to commit once.
+There is no auto-push. Manual commands:
+
+```bash
+/git status
+/git commit
+/git publish origin refs/heads/aicode/board-xxx aicode/board-xxx
+```
+
+Non-interactive sessions without a confirm handler skip commit and print the preview guidance.
+
 ## Git safety
 
 Ordinary turns and task-board tasks create local hidden baseline/result snapshots under `refs/aicode/checkpoints/`.

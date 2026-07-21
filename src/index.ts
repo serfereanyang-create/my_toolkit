@@ -83,6 +83,8 @@ async function main() {
     gitSafety,
     gitRollback,
     gitPublisher,
+    gitProcess,
+    gitRepository,
   };
   if (config.prompt !== undefined) {
     if (!config.prompt.startsWith('/')) requireProviderAuth(config);

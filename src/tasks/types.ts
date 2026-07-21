@@ -23,6 +23,8 @@ export type TaskBoard = {
   createdAt: string;
   updatedAt: string;
   confirmedAt?: string;
+  gitBranch?: string;
+  gitCommitSha?: string;
   tasks: TaskItem[];
 };
 

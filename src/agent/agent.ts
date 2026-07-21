@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { AppConfig } from '../config/types.js';
+import type { GitProcess } from '../git-safety/git.js';
 import type { GitRemotePublisher } from '../git-safety/publisher.js';
+import type { GitRepository } from '../git-safety/repository.js';
 import type { GitRollbackService } from '../git-safety/rollback.js';
 import type { GitSafetyService } from '../git-safety/service.js';
 import type { GitUnitContext, GitUnitOutcome, GitUnitResult } from '../git-safety/types.js';
@@ -30,6 +32,8 @@ export type AgentRuntime = {
   gitSafety?: GitSafetyService;
   gitRollback?: GitRollbackService;
   gitPublisher?: GitRemotePublisher;
+  gitProcess?: GitProcess;
+  gitRepository?: GitRepository;
 };
 
 export type AgentTurnOptions = {

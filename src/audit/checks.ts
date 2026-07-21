@@ -127,6 +127,7 @@ function buildChecks(root: string): Check[] {
     'src/git-safety/rollback.ts',
     'src/git-safety/publisher.ts',
     'src/git-safety/format.ts',
+    'src/git-safety/workflow.ts',
     'src/config/config.ts',
     'src/config/types.ts',
     'src/hooks/hooks.ts',
@@ -160,6 +161,7 @@ function buildChecks(root: string): Check[] {
     'tests/git-safety.test.ts',
     'tests/git-rollback.test.ts',
     'tests/git-publisher.test.ts',
+    'tests/git-workflow.test.ts',
     'tests/command-extract.test.ts',
     'tests/audit.test.ts',
   ];
@@ -520,11 +522,14 @@ function buildChecks(root: string): Check[] {
     },
   });
 
-  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget'];
+  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget', 'Git workflow'];
   readmeNeedles.forEach((needle) => checks.push({ name: `README contains ${needle}`, run: () => contains('README.md', needle) }));
 
-  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget / compaction'];
+  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget / compaction', 'aicode/board-'];
   matrixNeedles.forEach((needle) => checks.push({ name: `capability matrix contains ${needle}`, run: () => contains('docs/capability-matrix.md', needle) }));
+
+  const gitWorkflowNeedles = ['ensureBoardBranch', 'commitBoardChanges', 'previewBoardCommit', 'boardBranchName'];
+  gitWorkflowNeedles.forEach((needle) => checks.push({ name: `git workflow contains ${needle}`, run: () => contains('src/git-safety/workflow.ts', needle) }));
 
   checks.push({ name: 'mock provider returns provider name', run: () => createMockProvider().name === 'mock' });
   checks.push({ name: 'mock provider returns configured model', run: () => createMockProvider('x').model === 'x' });
