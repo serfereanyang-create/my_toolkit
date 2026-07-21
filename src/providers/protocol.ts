@@ -2,19 +2,121 @@ import type { AgentAction, AgentMessage, ProviderRequest, ProviderToolSpec } fro
 
 export function buildToolSystemPrompt(tools: ProviderToolSpec[], projectContext?: string, toolStrategy?: string) {
   return [
-    'You are a local coding CLI agent. The user writes natural language. When answering requires local project inspection, file edits, search, or command execution, request one tool call and wait for the tool result.',
-    'Return tool calls as JSON only, either raw JSON or fenced JSON. Do not explain before or after a tool call.',
-    'For multi-step tasks, return exactly one tool call at a time. After the tool result is provided, request the next tool. Only write the final answer after all required tool results are available.',
+    'You are a local coding CLI agent. The user writes natural language. When answering requires local project inspection, file edits, search, or command execution, call a tool and wait for the tool result.',
+    'Prefer native tool calling when available. If you must fall back to text, return exactly one tool call as JSON only (raw or fenced), with no extra prose.',
+    'For multi-step tasks, request exactly one tool at a time. After the tool result is provided, request the next tool. Only write the final answer after all required tool results are available.',
     'If a tool fails and the failure is recoverable, choose a better dedicated tool or a platform-correct fallback instead of asking the user to run the command manually.',
     'If the user asks to create a Word document or .docx file, use create_docx. Do not use run_command for Word document creation.',
     `Runtime platform: ${process.platform}. Prefer dedicated tools over shell commands. For disk capacity/free-space questions, use disk_info. For disk growth/recent large files questions, use disk_growth. For recent activity/session/history questions, use recent_activity. For environment/container/system identity questions, use environment_info. For memory/process ranking questions, use process_memory instead of run_command. If you must run a shell command on Windows, use Windows-compatible commands.`,
     projectContext ? `Project context and instructions:\n${projectContext}` : undefined,
     toolStrategy,
-    'Tool call shape:',
+    'Text fallback tool call shape:',
     '{"tool":"read_file","input":{"path":"package.json"}}',
     'Available tools:',
     ...tools.map((tool) => `- ${tool.name} [${tool.risk}]: ${tool.description}. Input: ${tool.inputHint}`),
   ].filter((line): line is string => typeof line === 'string').join('\n');
+}
+
+export function toOpenAITools(tools: ProviderToolSpec[]) {
+  return tools.map((tool) => ({
+    type: 'function' as const,
+    function: {
+      name: tool.name,
+      description: `${tool.description} Risk: ${tool.risk}.`,
+      parameters: schemaFromInputHint(tool.inputHint),
+    },
+  }));
+}
+
+export function toAnthropicTools(tools: ProviderToolSpec[]) {
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: `${tool.description} Risk: ${tool.risk}.`,
+    input_schema: schemaFromInputHint(tool.inputHint),
+  }));
+}
+
+export function parseOpenAIToolCalls(message: {
+  content?: string | null;
+  tool_calls?: Array<{
+    type?: string;
+    function?: { name?: string; arguments?: string };
+  }>;
+}): AgentAction[] {
+  const actions: AgentAction[] = [];
+  for (const call of message.tool_calls ?? []) {
+    const name = call.function?.name;
+    if (!name) continue;
+    actions.push({
+      type: 'tool',
+      tool: name,
+      input: parseToolArguments(call.function?.arguments),
+    });
+  }
+  if (actions.length > 0) return uniqueActions(actions);
+  return parseToolActions(message.content ?? '');
+}
+
+export function parseAnthropicContentBlocks(content: Array<Record<string, unknown>> | undefined): AgentAction[] {
+  const blocks = content ?? [];
+  const toolActions: AgentAction[] = [];
+  const textParts: string[] = [];
+  for (const block of blocks) {
+    if (block.type === 'tool_use' && typeof block.name === 'string') {
+      toolActions.push({
+        type: 'tool',
+        tool: block.name,
+        input: typeof block.input === 'object' && block.input !== null ? block.input : {},
+      });
+      continue;
+    }
+    if (block.type === 'text' && typeof block.text === 'string') textParts.push(block.text);
+  }
+  if (toolActions.length > 0) return uniqueActions(toolActions);
+  return parseToolActions(textParts.join('\n'));
+}
+
+function schemaFromInputHint(inputHint: string): Record<string, unknown> {
+  const properties: Record<string, { type: string }> = {};
+  const required: string[] = [];
+  const objectMatch = inputHint.match(/\{([\s\S]*)\}/);
+  const body = objectMatch?.[1] ?? '';
+  for (const fieldMatch of body.matchAll(/"([A-Za-z_][\w]*)"\s*:/g)) {
+    const key = fieldMatch[1]!;
+    properties[key] = { type: inferJsonTypeFromHint(body, key) };
+  }
+  // Common tool fields used across the registry even when not present in freeform hints.
+  for (const key of ['path', 'query', 'command', 'maxFiles', 'maxMatches', 'maxBytes', 'timeoutMs', 'drive', 'hours', 'minMb', 'limit', 'includeVersions', 'maxSessions', 'maxResults', 'kind', 'from', 'to', 'oldText', 'newText', 'content']) {
+    if (!properties[key] && inputHint.includes(key)) properties[key] = { type: inferJsonTypeFromHint(inputHint, key) };
+  }
+  if (Object.keys(properties).length === 0) {
+    return { type: 'object', additionalProperties: true };
+  }
+  for (const key of Object.keys(properties)) {
+    if (['path', 'query', 'command', 'content', 'oldText', 'newText', 'from', 'to'].includes(key)) required.push(key);
+  }
+  return {
+    type: 'object',
+    properties,
+    required: required.filter((key) => key in properties),
+    additionalProperties: true,
+  };
+}
+
+function inferJsonTypeFromHint(hint: string, key: string): string {
+  const snippet = hint.slice(Math.max(0, hint.indexOf(key) - 5), hint.indexOf(key) + key.length + 24);
+  if (/"?\d+"?/.test(snippet) || /number|max|limit|hours|bytes|timeout/i.test(key)) return 'number';
+  if (/true|false|boolean/i.test(snippet)) return 'boolean';
+  return 'string';
+}
+
+function parseToolArguments(value: string | undefined): unknown {
+  if (!value || !value.trim()) return {};
+  try {
+    return JSON.parse(value);
+  } catch {
+    return { raw: value };
+  }
 }
 
 export function toToolAwareMessages(messages: AgentMessage[]) {

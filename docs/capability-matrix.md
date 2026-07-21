@@ -25,12 +25,12 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Natural-language command extraction | Implemented MVP | Shared extract/plan layer; high-confidence readonly tools execute directly; edit/shell remain strategy + model |
 | Git workflow | Implemented MVP | Board branch on `/plan confirm` (`aicode/board-*`); confirmed board commit after completion; read-only git tools; hidden snapshots + `/rollback`; confirmed `/git publish` only; no auto-push |
 | Git safety / rollback log | Implemented MVP | `.aicode/git-safety/audit.jsonl`, `refs/aicode/checkpoints/*`, dirty-tree protection, all-or-nothing conflict checks |
-| Providers | Implemented MVP | mock, OpenAI-compatible, Anthropic adapters |
+| Providers | Implemented MVP | mock, OpenAI-compatible, Anthropic adapters; native tools/tool_calls and tool_use with text JSON fallback |
 | Tests/audit | Implemented | typecheck, node:test suite, structural audit above 100 checks |
 | Plugins/hooks | Implemented MVP | `.aicode/plugins.json` command tools, approval policy, `beforeTool`, `afterTool`, `onError` hooks |
 | MCP | Advanced / not complete | Plugin/hook groundwork exists; full MCP protocol is out of MVP scope |
 | OS sandbox | Advanced / not complete | Policy gating exists; no container/OS-level sandbox is claimed |
-| Native provider streaming/tool calls | Advanced / not complete | Text JSON tool protocol exists; native streaming APIs are future work |
+| Native provider streaming/tool calls | Partial | Native tool calling implemented for OpenAI/Anthropic; streaming UI still future work |
 | Signed distribution/update | Advanced / not complete | npm-style package metadata exists; signed release/update is future work |
 
 ## Final Verification Checklist

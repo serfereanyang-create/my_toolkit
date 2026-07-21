@@ -1,5 +1,10 @@
 import type { AgentMessage, Provider, ProviderRequest, ProviderResponse } from './types.js';
-import { buildToolSystemPrompt, fetchWithRetry, parseToolActions } from './protocol.js';
+import {
+  buildToolSystemPrompt,
+  fetchWithRetry,
+  parseAnthropicContentBlocks,
+  toAnthropicTools,
+} from './protocol.js';
 
 export type AnthropicProviderOptions = {
   apiKey?: string;
@@ -14,6 +19,16 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
     async complete(request: ProviderRequest): Promise<ProviderResponse> {
       if (!options.apiKey) throw new Error('ANTHROPIC_API_KEY is required for provider anthropic');
       const baseUrl = (options.baseUrl ?? 'https://api.anthropic.com/v1').replace(/\/$/, '');
+      const tools = toAnthropicTools(request.tools);
+      const body: Record<string, unknown> = {
+        model: options.model,
+        max_tokens: 2048,
+        temperature: 0.2,
+        system: buildToolSystemPrompt(request.tools, request.projectContext, request.toolStrategy),
+        messages: toAnthropicMessages(request.messages),
+      };
+      if (tools.length > 0) body.tools = tools;
+
       const response = await fetchWithRetry(`${baseUrl}/messages`, {
         method: 'POST',
         headers: {
@@ -21,18 +36,14 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
           'x-api-key': options.apiKey,
           'anthropic-version': '2023-06-01',
         },
-        body: JSON.stringify({
-          model: options.model,
-          max_tokens: 2048,
-          temperature: 0.2,
-          system: buildToolSystemPrompt(request.tools, request.projectContext, request.toolStrategy),
-          messages: toAnthropicMessages(request.messages),
-        }),
+        body: JSON.stringify(body),
       });
       if (!response.ok) throw new Error(`Anthropic request failed: ${response.status} ${await response.text()}`);
       const json = (await response.json()) as AnthropicMessagesResponse;
-      const content = json.content?.map((block) => (isTextBlock(block) ? block.text : '')).join('\n') ?? '';
-      return { actions: parseToolActions(content), raw: json };
+      return {
+        actions: parseAnthropicContentBlocks(json.content as Array<Record<string, unknown>> | undefined),
+        raw: json,
+      };
     },
   };
 }
@@ -45,10 +56,6 @@ function toAnthropicMessages(messages: AgentMessage[]) {
   return converted.length > 0 ? converted : [{ role: 'user', content: 'Start.' }];
 }
 
-function isTextBlock(block: { type: string }): block is { type: 'text'; text: string } {
-  return block.type === 'text' && 'text' in block && typeof (block as { text?: unknown }).text === 'string';
-}
-
 type AnthropicMessagesResponse = {
-  content?: Array<{ type: 'text'; text: string } | { type: string }>;
+  content?: Array<Record<string, unknown>>;
 };

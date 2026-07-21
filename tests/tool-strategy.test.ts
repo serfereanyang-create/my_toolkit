@@ -321,7 +321,7 @@ test('tool system prompt places project context before strategy and tool call sh
 
   const projectContextIndex = prompt.indexOf(projectContext);
   const toolStrategyIndex = prompt.indexOf(toolStrategy);
-  const toolCallShapeIndex = prompt.indexOf('Tool call shape:');
+  const toolCallShapeIndex = prompt.indexOf('Text fallback tool call shape:');
 
   assert.notEqual(projectContextIndex, -1);
   assert.notEqual(toolStrategyIndex, -1);

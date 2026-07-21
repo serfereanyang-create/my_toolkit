@@ -212,6 +212,15 @@ Disable with:
 AICODE_VERIFY_TASKS=0
 ```
 
+## Native tool calling
+
+Hosted providers now send native tool definitions:
+
+- OpenAI-compatible: `tools` + `tool_choice=auto`, parse `message.tool_calls`
+- Anthropic: `tools` + parse `tool_use` content blocks
+
+If the model does not return native tool calls, aicode still accepts the older text JSON tool protocol as fallback.
+
 ## Context budget
 
 Before each model call, aicode packs session messages into a char budget so large tool transcripts do not blow the context window.

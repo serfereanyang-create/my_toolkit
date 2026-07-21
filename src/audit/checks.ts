@@ -162,6 +162,7 @@ function buildChecks(root: string): Check[] {
     'tests/git-rollback.test.ts',
     'tests/git-publisher.test.ts',
     'tests/git-workflow.test.ts',
+    'tests/provider-tools.test.ts',
     'tests/command-extract.test.ts',
     'tests/audit.test.ts',
   ];
@@ -183,6 +184,10 @@ function buildChecks(root: string): Check[] {
     ['src/providers/mock.ts', 'AICODE_NL_DRIVE'],
     ['src/providers/protocol.ts', 'buildToolSystemPrompt'],
     ['src/providers/protocol.ts', 'parseToolActions'],
+    ['src/providers/protocol.ts', 'toOpenAITools'],
+    ['src/providers/protocol.ts', 'parseOpenAIToolCalls'],
+    ['src/providers/protocol.ts', 'toAnthropicTools'],
+    ['src/providers/protocol.ts', 'parseAnthropicContentBlocks'],
     ['src/providers/protocol.ts', 'fetchWithRetry'],
     ['src/providers/protocol.ts', 'create_docx'],
     ['src/providers/protocol.ts', 'Word document'],
@@ -190,11 +195,12 @@ function buildChecks(root: string): Check[] {
     ['src/providers/openai.ts', 'OPENAI_API_KEY'],
     ['src/providers/openai.ts', '/chat/completions'],
     ['src/providers/openai.ts', 'buildToolSystemPrompt'],
-    ['src/providers/openai.ts', 'parseToolActions'],
+    ['src/providers/openai.ts', 'parseOpenAIToolCalls'],
+    ['src/providers/openai.ts', 'tool_choice'],
     ['src/providers/anthropic.ts', 'ANTHROPIC_API_KEY'],
     ['src/providers/anthropic.ts', '/messages'],
     ['src/providers/anthropic.ts', 'buildToolSystemPrompt'],
-    ['src/providers/anthropic.ts', 'parseToolActions'],
+    ['src/providers/anthropic.ts', 'parseAnthropicContentBlocks'],
     ['src/providers/index.ts', 'createProvider'],
   ];
   providerNeedles.forEach(([path, needle]) => checks.push({ name: `provider ${path} contains ${needle}`, run: () => contains(path, needle) }));
@@ -522,10 +528,10 @@ function buildChecks(root: string): Check[] {
     },
   });
 
-  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget', 'Git workflow'];
+  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget', 'Git workflow', 'Native tool calling'];
   readmeNeedles.forEach((needle) => checks.push({ name: `README contains ${needle}`, run: () => contains('README.md', needle) }));
 
-  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget / compaction', 'aicode/board-'];
+  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget / compaction', 'aicode/board-', 'native tools/tool_calls'];
   matrixNeedles.forEach((needle) => checks.push({ name: `capability matrix contains ${needle}`, run: () => contains('docs/capability-matrix.md', needle) }));
 
   const gitWorkflowNeedles = ['ensureBoardBranch', 'commitBoardChanges', 'previewBoardCommit', 'boardBranchName'];
