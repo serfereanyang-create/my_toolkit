@@ -104,6 +104,12 @@ function buildChecks(root: string): Check[] {
     'src/tasks/runtime.ts',
     'src/tasks/completion.ts',
     'src/tasks/verify.ts',
+    'src/nav/types.ts',
+    'src/nav/ignore.ts',
+    'src/nav/extract.ts',
+    'src/nav/store.ts',
+    'src/nav/query.ts',
+    'src/tools/nav.ts',
     'src/memory/types.ts',
     'src/memory/store.ts',
     'src/memory/extract.ts',
@@ -147,6 +153,7 @@ function buildChecks(root: string): Check[] {
     'tests/checkpoint.test.ts',
     'tests/task-board.test.ts',
     'tests/task-verify.test.ts',
+    'tests/nav.test.ts',
     'tests/project-memory.test.ts',
     'tests/git-safety.test.ts',
     'tests/git-rollback.test.ts',
@@ -189,7 +196,7 @@ function buildChecks(root: string): Check[] {
   providerNeedles.forEach(([path, needle]) => checks.push({ name: `provider ${path} contains ${needle}`, run: () => contains(path, needle) }));
 
   const registry = createDefaultToolRegistry();
-  const expectedTools = ['project_status', 'recent_activity', 'environment_info', 'project_index', 'git_status', 'git_diff', 'git_log', 'list_files', 'read_file', 'write_file', 'search_text', 'process_memory', 'disk_info', 'disk_growth', 'run_command', 'create_docx', 'rename_file', 'apply_patch'];
+  const expectedTools = ['project_status', 'recent_activity', 'environment_info', 'project_index', 'find_symbol', 'find_references', 'git_status', 'git_diff', 'git_log', 'list_files', 'read_file', 'write_file', 'search_text', 'process_memory', 'disk_info', 'disk_growth', 'run_command', 'create_docx', 'rename_file', 'apply_patch'];
   expectedTools.forEach((tool) => checks.push({ name: `tool registered: ${tool}`, run: () => registry.get(tool) !== undefined }));
   checks.push({ name: 'tool specs match tool count', run: () => registry.specs().length === expectedTools.length });
   checks.push({ name: 'tool names are unique', run: () => new Set(registry.list().map((tool) => tool.name)).size === registry.list().length });
@@ -200,6 +207,10 @@ function buildChecks(root: string): Check[] {
   const toolNeedles: Array<[string, string]> = [
     ['src/tools/activity.ts', 'recentActivityTool'],
     ['src/tools/activity.ts', 'git: not a git repository'],
+    ['src/tools/nav.ts', 'findSymbolTool'],
+    ['src/tools/nav.ts', 'findReferencesTool'],
+    ['src/nav/store.ts', 'NavIndexStore'],
+    ['src/nav/extract.ts', 'extractSymbolsFromSource'],
     ['src/tools/files.ts', 'resolveWorkspacePath'],
     ['src/tools/files.ts', 'writeFileTool'],
     ['src/tools/files.ts', 'readFileTool'],
@@ -504,10 +515,10 @@ function buildChecks(root: string): Check[] {
     },
   });
 
-  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop'];
+  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation'];
   readmeNeedles.forEach((needle) => checks.push({ name: `README contains ${needle}`, run: () => contains('README.md', needle) }));
 
-  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop'];
+  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation'];
   matrixNeedles.forEach((needle) => checks.push({ name: `capability matrix contains ${needle}`, run: () => contains('docs/capability-matrix.md', needle) }));
 
   checks.push({ name: 'mock provider returns provider name', run: () => createMockProvider().name === 'mock' });

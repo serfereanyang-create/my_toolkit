@@ -212,6 +212,22 @@ Disable with:
 AICODE_VERIFY_TASKS=0
 ```
 
+## Codebase navigation
+
+aicode builds a lightweight TS/JS symbol index under `.aicode/nav/index.json` (mtime-aware cache).
+
+Tools:
+
+- `find_symbol` — locate function/class/interface/type/const definitions
+- `find_references` — approximate references by identifier
+
+Example natural language:
+
+- “`runTaskBoardLoop` 在哪定义”
+- “谁调用了 `markTaskDone`”
+
+Code edit/search strategies now prefer `find_symbol` before broad `search_text` / file reads.
+
 ## Natural-language command extraction
 
 High-confidence read-only requests are converted into tool chains before the model runs:

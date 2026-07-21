@@ -185,9 +185,9 @@ test('tool strategy classifies code edit prompts as inspect first', () => {
   const strategy = planToolStrategy({ prompt: '修复登录按钮点击后没有反应的问题', recentTools: [], workspaceRoot: process.cwd() });
 
   assert.equal(strategy.intent, 'code_edit');
-  assert.deepEqual(strategy.recommendedTools, ['project_index', 'search_text', 'read_file', 'apply_patch', 'write_file']);
+  assert.deepEqual(strategy.recommendedTools, ['find_symbol', 'find_references', 'project_index', 'search_text', 'read_file', 'apply_patch', 'write_file']);
   assert.ok(strategy.avoidTools.includes('run_command before inspection'));
-  assert.ok(strategy.cacheHints.some((hint) => hint.includes('project_index')));
+  assert.ok(strategy.cacheHints.some((hint) => hint.includes('find_symbol')));
 });
 
 test('tool strategy does not treat English edit substrings inside search prompts as code_edit', () => {
@@ -242,7 +242,7 @@ test('tool strategy classifies code search prompts before broad listing', () => 
   const strategy = planToolStrategy({ prompt: '查找用户认证逻辑在哪里', recentTools: [], workspaceRoot: process.cwd() });
 
   assert.equal(strategy.intent, 'code_search');
-  assert.deepEqual(strategy.recommendedTools, ['search_text', 'project_index', 'read_file']);
+  assert.deepEqual(strategy.recommendedTools, ['find_symbol', 'find_references', 'search_text', 'project_index', 'read_file']);
   assert.ok(strategy.avoidTools.includes('list_files for broad discovery'));
 });
 
@@ -309,7 +309,7 @@ test('formatToolStrategy renders compact provider guidance', () => {
 
   assert.match(formatted, /Tool strategy:/);
   assert.match(formatted, /intent=code_edit/);
-  assert.match(formatted, /recommended=project_index, search_text, read_file, apply_patch, write_file/);
+  assert.match(formatted, /recommended=find_symbol, find_references, project_index, search_text, read_file, apply_patch, write_file/);
   assert.match(formatted, /avoid=run_command before inspection/);
   assert.match(formatted, /cacheHints=/);
 });

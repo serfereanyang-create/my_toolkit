@@ -7,6 +7,7 @@ import { diskGrowthTool } from './growth.js';
 import { applyPatchTool } from './patch.js';
 import { processMemoryTool } from './process.js';
 import { projectIndexTool } from './projectIndex.js';
+import { findReferencesTool, findSymbolTool } from './nav.js';
 import { renameFileTool } from './rename.js';
 import { projectStatusTool, listFilesTool, readFileTool, writeFileTool } from './files.js';
 import { ToolRegistry } from './registry.js';
@@ -19,6 +20,8 @@ export function createDefaultToolRegistry() {
   registry.register(recentActivityTool);
   registry.register(environmentInfoTool);
   registry.register(projectIndexTool);
+  registry.register(findSymbolTool);
+  registry.register(findReferencesTool);
   registry.register(gitStatusTool);
   registry.register(gitDiffTool);
   registry.register(gitLogTool);

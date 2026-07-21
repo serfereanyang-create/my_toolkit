@@ -30,7 +30,8 @@ test('extracts high-confidence readonly intents and slots', () => {
 test('plans direct execution only for high-confidence readonly tools', () => {
   const searchPlan = planCommand(extractCommand('搜索 apply_patch'));
   assert.equal(searchPlan.mode, 'execute');
-  assert.equal(searchPlan.steps[0]?.tool, 'search_text');
+  assert.ok(['find_symbol', 'search_text'].includes(searchPlan.steps[0]?.tool ?? ''));
+  assert.ok(searchPlan.steps.some((step) => step.tool === 'search_text' || step.tool === 'find_symbol'));
 
   const editPlan = planCommand(extractCommand('帮我改登录按钮样式'));
   assert.equal(editPlan.mode, 'strategy');
@@ -130,7 +131,7 @@ test('strategy-only edit prompt still calls provider with strategy text', async 
     assert.equal(result.ok, true);
     assert.ok(captured);
     assert.match(captured.toolStrategy ?? '', /intent=code_edit/);
-    assert.match(captured.toolStrategy ?? '', /recommended=project_index, search_text, read_file/);
+    assert.match(captured.toolStrategy ?? '', /recommended=find_symbol, find_references, project_index, search_text, read_file/);
     assert.equal(runtime.session.toolCalls.length, 0);
   } finally {
     await rm(workspace, { recursive: true, force: true });

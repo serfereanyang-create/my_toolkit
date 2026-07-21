@@ -79,7 +79,7 @@ test('agent passes formatted tool strategy to provider requests', async () => {
     assert.ok(capturedRequests.every((request) => (request.toolStrategy?.length ?? 0) > 0));
     assert.ok(capturedRequests.every((request) => request.toolStrategy === capturedRequests[0].toolStrategy));
     assert.match(capturedRequests[0].toolStrategy ?? '', /intent=code_edit/);
-    assert.match(capturedRequests[0].toolStrategy ?? '', /recommended=project_index, search_text, read_file/);
+    assert.match(capturedRequests[0].toolStrategy ?? '', /recommended=find_symbol, find_references, project_index, search_text, read_file/);
     assert.equal(session.toolCalls[0]?.tool, 'project_index');
     assert.equal(session.toolCalls[0]?.ok, true);
   } finally {

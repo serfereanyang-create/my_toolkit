@@ -5,6 +5,8 @@ const READONLY_EXECUTE_TOOLS = new Set([
   'disk_growth',
   'project_status',
   'project_index',
+  'find_symbol',
+  'find_references',
   'search_text',
   'read_file',
   'environment_info',
@@ -36,7 +38,7 @@ export function planCommand(extraction: ExtractionResult): CommandPlan {
         return executeOrStrategy(
           { ...extraction, confidence: 'high' },
           [{ tool: 'project_index', input: { path: '.', maxFiles: 1000 } }],
-          ['project_index', 'search_text', 'read_file'],
+          ['find_symbol', 'project_index', 'search_text', 'read_file'],
           ['list_files for broad discovery'],
           'Search intent missing query; start with project_index.',
         );
@@ -46,6 +48,9 @@ export function planCommand(extraction: ExtractionResult): CommandPlan {
         .filter((part, index, all): part is string => Boolean(part) && all.indexOf(part) === index)
         .join(' ')
         .trim();
+      if (query && /^[A-Za-z_][\w]*$/.test(query)) {
+        steps.push({ tool: 'find_symbol', input: { query, maxResults: 20 } });
+      }
       if (query) {
         steps.push({
           tool: 'search_text',
@@ -57,7 +62,7 @@ export function planCommand(extraction: ExtractionResult): CommandPlan {
         });
       }
       steps.push({ tool: 'project_index', input: { path: '.', maxFiles: 1000 } });
-      return executeOrStrategy(extraction, steps, ['search_text', 'project_index', 'read_file'], ['list_files for broad discovery'], 'Code search request.');
+      return executeOrStrategy(extraction, steps, ['find_symbol', 'search_text', 'project_index', 'read_file'], ['list_files for broad discovery'], 'Code search request.');
     }
     case 'project_index':
       return executeOrStrategy(extraction, [{ tool: 'project_index', input: { path: extraction.slots.path ?? '.', maxFiles: 1000 } }], ['project_index'], ['run_command'], 'Project index request.');
@@ -72,9 +77,9 @@ export function planCommand(extraction: ExtractionResult): CommandPlan {
     case 'code_edit':
       return strategy(
         extraction,
-        ['project_index', 'search_text', 'read_file', 'apply_patch', 'write_file'],
+        ['find_symbol', 'find_references', 'project_index', 'search_text', 'read_file', 'apply_patch', 'write_file'],
         ['run_command before inspection', 'write_file before reading target files'],
-        'Code edit requests remain model-driven with inspect-first strategy.',
+        'Code edit requests remain model-driven with symbol-first strategy.',
       );
     case 'shell_command':
       return strategy(

@@ -73,10 +73,10 @@ export function planToolStrategy(input: { prompt: string; recentTools: RecentToo
   if (hasEditVerb && (hasCodePath || hasCodeContext || (!hasDiskGrowth && !hasDiskCapacity && !hasRuntimeInfo))) {
     return strategy(
       'code_edit',
-      ['project_index', 'search_text', 'read_file', 'apply_patch', 'write_file'],
+      ['find_symbol', 'find_references', 'project_index', 'search_text', 'read_file', 'apply_patch', 'write_file'],
       ['run_command before inspection', 'write_file before reading target files', 'list_files for broad discovery'],
-      'Code editing request; inspect relevant files before editing.',
-      [...baseCacheHints, 'Use project_index before broad file reads.', 'Prefer recently read tool results when the same file is unchanged.'],
+      'Code editing request; locate symbols before editing.',
+      [...baseCacheHints, 'Prefer find_symbol before broad file reads.', 'Prefer recently read tool results when the same file is unchanged.'],
       input.recentTools,
     );
   }
@@ -85,10 +85,10 @@ export function planToolStrategy(input: { prompt: string; recentTools: RecentToo
   if (hasSearchVerb && hasCodePath) {
     return strategy(
       'code_search',
-      ['search_text', 'project_index', 'read_file'],
+      ['find_symbol', 'find_references', 'search_text', 'project_index', 'read_file'],
       ['list_files for broad discovery', 'run_command unless dedicated tools cannot answer'],
-      'Code search request; search targeted text before broad listing.',
-      [...baseCacheHints, 'Use project_index to narrow search scope when available.'],
+      'Code search request; prefer symbol navigation before broad listing.',
+      [...baseCacheHints, 'Use find_symbol when looking for definitions.'],
       input.recentTools,
     );
   }
@@ -109,10 +109,10 @@ export function planToolStrategy(input: { prompt: string; recentTools: RecentToo
   if (hasSearchVerb) {
     return strategy(
       'code_search',
-      ['search_text', 'project_index', 'read_file'],
+      ['find_symbol', 'find_references', 'search_text', 'project_index', 'read_file'],
       ['list_files for broad discovery', 'run_command unless dedicated tools cannot answer'],
-      'Code search request; search targeted text before broad listing.',
-      [...baseCacheHints, 'Use project_index to narrow search scope when available.'],
+      'Code search request; prefer symbol navigation before broad listing.',
+      [...baseCacheHints, 'Use find_symbol when looking for definitions.'],
       input.recentTools,
     );
   }
