@@ -311,10 +311,25 @@ The guard is rule-based in the MVP. It persists in the session file, blocks befo
 npm run typecheck
 npm test
 npm run smoke
+npm run live-smoke
 npm run audit:100
 ```
 
 The smoke command uses the mock provider to drive project inspection, file listing, file writing, file reading, text search, shell command execution, and session persistence.
+
+### Live provider smoke
+
+`npm run live-smoke` exercises a real OpenAI-compatible or Anthropic provider when credentials exist:
+
+```bash
+set OPENAI_API_KEY=...
+set AICODE_OPENAI_BASE_URL=https://ai.furry.edu.gr/v1
+npm run live-smoke
+```
+
+- No key → `SKIP` (exit 0), safe for default CI
+- Force require a live run: `set AICODE_LIVE_SMOKE=1`
+- Force skip even with key: `set AICODE_LIVE_SMOKE=0`
 
 ## AI Coding Tools
 

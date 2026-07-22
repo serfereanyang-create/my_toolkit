@@ -26,7 +26,7 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Git workflow | Implemented MVP | Board branch on `/plan confirm` (`aicode/board-*`); confirmed board commit after completion; read-only git tools; hidden snapshots + `/rollback`; confirmed `/git publish` only; no auto-push |
 | Git safety / rollback log | Implemented MVP | `.aicode/git-safety/audit.jsonl`, `refs/aicode/checkpoints/*`, dirty-tree protection, all-or-nothing conflict checks |
 | Providers | Implemented MVP | mock, OpenAI-compatible, Anthropic adapters; native tools/tool_calls and tool_use with text JSON fallback; SSE text streaming |
-| Tests/audit | Implemented | typecheck, node:test suite, structural audit above 100 checks |
+| Tests/audit | Implemented | typecheck, node:test suite, structural audit above 100 checks, mock smoke + optional live provider smoke |
 | Plugins/hooks | Implemented MVP | `.aicode/plugins.json` command tools, approval policy, `beforeTool`, `afterTool`, `onError` hooks |
 | MCP | Advanced / not complete | Plugin/hook groundwork exists; full MCP protocol is out of MVP scope |
 | OS sandbox | Advanced / not complete | Policy gating exists; no container/OS-level sandbox is claimed |
@@ -41,6 +41,7 @@ Run these from the repository root:
 npm --prefix cli run typecheck
 npm --prefix cli test
 npm --prefix cli run audit:100
+npm --prefix cli run live-smoke
 node cli/dist/src/index.js --version
 node cli/dist/src/index.js --help
 MSYS2_ARG_CONV_EXCL='*' node cli/dist/src/index.js --provider mock --approval auto --json --prompt "帮我看看项目索引"

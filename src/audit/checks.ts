@@ -164,12 +164,15 @@ function buildChecks(root: string): Check[] {
     'tests/git-workflow.test.ts',
     'tests/provider-tools.test.ts',
     'tests/provider-stream.test.ts',
+    'tests/live-smoke.test.ts',
     'tests/command-extract.test.ts',
     'tests/audit.test.ts',
+    'src/cli/liveSmoke.ts',
+    'src/cli/liveSmokeMain.ts',
   ];
   requiredFiles.forEach((path) => checks.push({ name: `file exists: ${path}`, run: () => exists(path) }));
 
-  const packageScripts = ['"build"', '"typecheck"', '"test"', '"smoke"', '"audit:100"'];
+  const packageScripts = ['"build"', '"typecheck"', '"test"', '"smoke"', '"live-smoke"', '"audit:100"'];
   packageScripts.forEach((script) => checks.push({ name: `package script ${script}`, run: () => contains('package.json', script) }));
 
   const tsconfigNeedles = ['"strict": true', '"module": "NodeNext"', '"outDir": "dist"', '"types": ["node"]'];
@@ -534,11 +537,14 @@ function buildChecks(root: string): Check[] {
     },
   });
 
-  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget', 'Git workflow', 'Native tool calling', 'stream'];
+  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run live-smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget', 'Git workflow', 'Native tool calling', 'stream', 'Live provider smoke'];
   readmeNeedles.forEach((needle) => checks.push({ name: `README contains ${needle}`, run: () => contains('README.md', needle) }));
 
-  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget / compaction', 'aicode/board-', 'native tools/tool_calls', 'SSE text streaming'];
+  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget / compaction', 'aicode/board-', 'native tools/tool_calls', 'SSE text streaming', 'live provider smoke'];
   matrixNeedles.forEach((needle) => checks.push({ name: `capability matrix contains ${needle}`, run: () => contains('docs/capability-matrix.md', needle) }));
+
+  const liveSmokeNeedles = ['resolveLiveSmokePlan', 'runLiveSmoke', 'AICODE_LIVE_SMOKE', 'OPENAI_API_KEY'];
+  liveSmokeNeedles.forEach((needle) => checks.push({ name: `live smoke contains ${needle}`, run: () => contains('src/cli/liveSmoke.ts', needle) }));
 
   const gitWorkflowNeedles = ['ensureBoardBranch', 'commitBoardChanges', 'previewBoardCommit', 'boardBranchName'];
   gitWorkflowNeedles.forEach((needle) => checks.push({ name: `git workflow contains ${needle}`, run: () => contains('src/git-safety/workflow.ts', needle) }));
