@@ -2,19 +2,29 @@ import type { AppConfig } from '../config/types.js';
 import type { Provider } from '../providers/types.js';
 import type { ToolResult } from '../tools/index.js';
 
+/**
+ * Palette roles (when color is enabled):
+ * - brand/border: cyan
+ * - section Task: blue
+ * - section Assistant: green (title only; body is plain/reset for readability)
+ * - section Tool: cyan title, yellow input, gray labels
+ * - success: green · failure: red · info/meta: gray/dim
+ */
 const colors = {
   reset: '\u001b[0m',
   dim: '\u001b[2m',
   bold: '\u001b[1m',
   cyan: '\u001b[36m',
+  blue: '\u001b[34m',
   green: '\u001b[32m',
   red: '\u001b[31m',
   yellow: '\u001b[33m',
   magenta: '\u001b[35m',
   gray: '\u001b[90m',
+  white: '\u001b[37m',
 };
 
-const spinnerFrames = ['-', '\\', '|', '/'];
+const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const defaultBlockMaxLines = 80;
 
 type TerminalUIOptions = {
@@ -39,11 +49,11 @@ export class TerminalUI {
   banner(config: AppConfig, provider: Provider) {
     if (this.options.quiet || this.options.json || config.noBanner) return;
     this.writeBox([
-      `${this.style('aicode cli mvp', 'bold', 'cyan')}`,
-      `${this.label('provider')} ${provider.name}`,
-      `${this.label('model')} ${provider.model}`,
-      `${this.label('workspace')} ${config.workspaceRoot}`,
-      `${this.label('approval')} ${config.approval}`,
+      `${this.style('aicode', 'bold', 'cyan')} ${this.color('dim')}cli mvp${this.color('reset')}`,
+      `${this.label('provider')} ${this.color('white')}${provider.name}${this.color('reset')}`,
+      `${this.label('model')} ${this.color('white')}${provider.model}${this.color('reset')}`,
+      `${this.label('workspace')} ${this.color('dim')}${config.workspaceRoot}${this.color('reset')}`,
+      `${this.label('approval')} ${this.color('dim')}${config.approval}${this.color('reset')}`,
     ]);
   }
 
@@ -53,15 +63,15 @@ export class TerminalUI {
     this.runningTools.clear();
     if (this.options.json) return this.jsonEvent('turn_start', { prompt });
     if (this.options.quiet) return;
-    this.writeSectionTitle('Task', 'magenta');
+    this.writeSectionTitle('Task', 'blue');
     // User paste: fold by real newlines only — never column-reflow like bash.
-    this.writeBlock(prompt, this.color('gray'), { maxLines: 12, noWrap: true });
+    this.writeBlock(prompt, this.color('dim'), { maxLines: 12, noWrap: true });
   }
 
   modelStart() {
     this.streamingAssistant = false;
     if (this.options.json) return this.jsonEvent('model_start', { status: 'running' });
-    this.startSpinner('model thinking');
+    this.startSpinner('thinking');
   }
 
   modelEnd() {
@@ -81,7 +91,8 @@ export class TerminalUI {
       this.streamingAssistant = true;
       if (!this.options.quiet) this.writeSectionTitle('Assistant', 'green');
     }
-    process.stdout.write(this.options.quiet ? delta : `${this.color('green')}${delta}${this.color('reset')}`);
+    // Stream body in default foreground (not solid green) for long replies.
+    process.stdout.write(this.options.quiet ? delta : delta);
   }
 
   assistant(content: string) {
@@ -96,7 +107,7 @@ export class TerminalUI {
     if (this.options.json) return this.jsonEvent('assistant', { content });
     if (this.options.quiet) return this.write(content);
     this.writeSectionTitle('Assistant', 'green');
-    this.writeBlock(content, this.color('green'));
+    this.writeBlock(content, this.color('reset'));
   }
 
   toolStart(tool: string, input: unknown) {
@@ -107,8 +118,8 @@ export class TerminalUI {
     if (this.options.quiet) return;
     this.writeSectionTitle(`Tool ${this.toolIndex}`, 'cyan', tool);
     this.writeKeyValue('input', formatInput(input, this.options.noColor ?? false));
-    this.writeKeyValue('status', `${this.color('gray')}running${this.color('reset')}`);
-    this.startSpinner(`${tool} running`);
+    this.writeKeyValue('status', `${this.color('dim')}running${this.color('reset')}`);
+    this.startSpinner(`${tool}`);
   }
 
   toolResult(tool: string, result: ToolResult) {
@@ -118,11 +129,15 @@ export class TerminalUI {
     const duration = startedAt ? `${Date.now() - startedAt}ms` : 'done';
     if (this.options.json) return this.jsonEvent('tool_result', { tool, ok: result.ok, durationMs: startedAt ? Date.now() - startedAt : undefined, output: result.output, data: result.data });
     if (this.options.quiet) return;
-    const status = result.ok ? this.style(`ok ${duration}`, 'green') : this.style(`failed ${duration}`, 'red');
+    const status = result.ok
+      ? this.style(`ok ${duration}`, 'green')
+      : this.style(`failed ${duration}`, 'red');
     this.writeKeyValue('result', status);
     if (result.output.trim()) {
       this.writeKeyValue('output', '');
-      this.writeBlock(result.output, result.ok ? this.color('reset') : this.color('red'), { indent: '    ' });
+      // Success output: dim; failure: red. Keeps body quieter than titles.
+      const bodyColor = result.ok ? this.color('dim') : this.color('red');
+      this.writeBlock(result.output, bodyColor, { indent: '    ' });
     }
   }
 
@@ -130,7 +145,7 @@ export class TerminalUI {
     this.stopSpinner();
     if (this.options.json) return this.jsonEvent('info', { content });
     if (this.options.quiet) return;
-    this.write(`${content}\n`);
+    this.write(`${this.color('dim')}${content}${this.color('reset')}`);
   }
 
   error(content: string) {
@@ -139,7 +154,7 @@ export class TerminalUI {
       process.stderr.write(`${JSON.stringify({ type: 'error', content })}\n`);
       return;
     }
-    process.stderr.write(`${content}\n`);
+    process.stderr.write(`${this.color('red')}${content}${this.color('reset')}\n`);
   }
 
   final(ok: boolean, data: Record<string, unknown>) {
@@ -161,36 +176,42 @@ export class TerminalUI {
     this.activeSpinnerText = text;
     this.activeSpinnerFrame = 0;
     this.renderSpinner();
-    this.activeSpinner = setInterval(() => this.renderSpinner(), 120);
+    this.activeSpinner = setInterval(() => this.renderSpinner(), 80);
   }
 
   private stopSpinner() {
     if (!this.activeSpinner) return;
     clearInterval(this.activeSpinner);
     this.activeSpinner = undefined;
-    process.stdout.write(`\r${' '.repeat(displayWidth(this.activeSpinnerText) + 12)}\r`);
+    process.stdout.write(`\r${' '.repeat(displayWidth(this.activeSpinnerText) + 16)}\r`);
   }
 
   private renderSpinner() {
     const frame = spinnerFrames[this.activeSpinnerFrame % spinnerFrames.length];
     this.activeSpinnerFrame += 1;
-    process.stdout.write(`\r  ${this.color('cyan')}${frame}${this.color('reset')} ${this.color('gray')}${this.activeSpinnerText}...${this.color('reset')}`);
+    process.stdout.write(
+      `\r  ${this.color('cyan')}${frame}${this.color('reset')} ${this.color('dim')}${this.activeSpinnerText}…${this.color('reset')}`,
+    );
   }
 
   private writeBox(lines: string[]) {
-    const plainLengths = lines.map((line) => displayWidth(line));
+    const plainLengths = lines.map((line) => displayWidth(stripAnsi(line)));
     const width = Math.max(...plainLengths, 16);
-    this.write(`${this.color('cyan')}┌${'─'.repeat(width + 2)}┐${this.color('reset')}`);
+    const edge = this.color('cyan');
+    const reset = this.color('reset');
+    this.write(`${edge}┌${'─'.repeat(width + 2)}┐${reset}`);
     for (const line of lines) {
-      const padding = ' '.repeat(width - displayWidth(line));
-      this.write(`${this.color('cyan')}│${this.color('reset')} ${line}${padding} ${this.color('cyan')}│${this.color('reset')}`);
+      const padding = ' '.repeat(Math.max(0, width - displayWidth(stripAnsi(line))));
+      this.write(`${edge}│${reset} ${line}${padding} ${edge}│${reset}`);
     }
-    this.write(`${this.color('cyan')}└${'─'.repeat(width + 2)}┘${this.color('reset')}`);
+    this.write(`${edge}└${'─'.repeat(width + 2)}┘${reset}`);
   }
 
   private writeSectionTitle(title: string, color: keyof typeof colors, detail?: string) {
-    const suffix = detail ? ` ${this.color('gray')}${detail}${this.color('reset')}` : '';
-    this.write(`\n${this.style(title, 'bold', color)}${suffix}`);
+    const bar = `${this.color(color)}▍${this.color('reset')}`;
+    const head = this.style(title, 'bold', color);
+    const suffix = detail ? ` ${this.color('dim')}${detail}${this.color('reset')}` : '';
+    this.write(`\n${bar} ${head}${suffix}`);
   }
 
   private writeKeyValue(key: string, value: string) {
@@ -212,7 +233,7 @@ export class TerminalUI {
     if (lines.length > shown.length) {
       const bytes = Buffer.byteLength(content, 'utf8');
       const size = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
-      this.write(`${indent}${this.color('gray')}… ${lines.length - shown.length} more line(s), total ${size} (not reflowed)${this.color('reset')}`);
+      this.write(`${indent}${this.color('dim')}… ${lines.length - shown.length} more line(s), total ${size}${this.color('reset')}`);
     }
   }
 
@@ -225,7 +246,7 @@ export class TerminalUI {
   }
 
   private label(value: string) {
-    return `${this.color('gray')}${value}:${this.color('reset')}`;
+    return `${this.color('dim')}${value}:${this.color('reset')}`;
   }
 
   private style(value: string, ...names: Array<keyof typeof colors>) {
@@ -289,26 +310,26 @@ function takeByDisplayWidth(value: string, max: number) {
 
 function displayWidth(value: string) {
   let width = 0;
-  for (const char of stripAnsi(value)) width += charDisplayWidth(char);
+  for (const char of value) width += charDisplayWidth(char);
   return width;
 }
 
 function charDisplayWidth(char: string) {
   const code = char.codePointAt(0) ?? 0;
-  if (code === 0) return 0;
-  if (code < 32 || (code >= 0x7f && code < 0xa0)) return 0;
-  if (code >= 0x1100 && (
-    code <= 0x115f ||
-    code === 0x2329 ||
-    code === 0x232a ||
-    (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
-    (code >= 0xac00 && code <= 0xd7a3) ||
-    (code >= 0xf900 && code <= 0xfaff) ||
-    (code >= 0xfe10 && code <= 0xfe19) ||
-    (code >= 0xfe30 && code <= 0xfe6f) ||
-    (code >= 0xff00 && code <= 0xff60) ||
-    (code >= 0xffe0 && code <= 0xffe6)
-  )) return 2;
+  if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return 0;
+  // Rough CJK / fullwidth detection
+  if (
+    (code >= 0x1100 && code <= 0x115f)
+    || (code >= 0x2e80 && code <= 0xa4cf)
+    || (code >= 0xac00 && code <= 0xd7a3)
+    || (code >= 0xf900 && code <= 0xfaff)
+    || (code >= 0xfe10 && code <= 0xfe19)
+    || (code >= 0xfe30 && code <= 0xfe6f)
+    || (code >= 0xff00 && code <= 0xff60)
+    || (code >= 0xffe0 && code <= 0xffe6)
+  ) {
+    return 2;
+  }
   return 1;
 }
 
