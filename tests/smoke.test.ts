@@ -253,7 +253,7 @@ test('mock provider prioritizes a standalone explicit read of a disk-named file'
     await runAgentTurn({ config, provider, tools: createDefaultToolRegistry(), sessions, session, ui: new TerminalUI(true) }, config.prompt ?? '');
 
     assert.deepEqual(session.toolCalls.map(({ tool, input, ok }) => ({ tool, input, ok })), [
-      { tool: 'read_file', input: { path: 'disk.md', maxBytes: 20000 }, ok: true },
+      { tool: 'read_file', input: { path: 'disk.md', maxBytes: 50000 }, ok: true },
     ]);
     assert.equal(session.toolCalls.some(({ tool }) => tool === 'disk_info'), false);
   } finally {

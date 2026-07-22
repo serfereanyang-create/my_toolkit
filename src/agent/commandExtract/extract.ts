@@ -1,11 +1,16 @@
 import type { CommandIntent, CommandSlots, Confidence, ExtractionResult } from './types.js';
 
-const CODE_PATH_EXTENSIONS = '[cm]?[jt]sx?|java|kt|kts|py|rb|go|rs|swift|cs|cpp|cc|cxx|c|h|hpp|vue|svelte|json|ya?ml|toml|md';
+const DOC_PATH_EXTENSIONS = 'docx|doc|pdf|txt|csv|xlsx|xls|pptx|ppt|png|jpe?g|gif|webp|zip|log|xml|html?';
+const CODE_PATH_EXTENSIONS = `[cm]?[jt]sx?|java|kt|kts|py|rb|go|rs|swift|cs|cpp|cc|cxx|c|h|hpp|vue|svelte|json|ya?ml|toml|md|${DOC_PATH_EXTENSIONS}`;
 const CODE_PATH_TOKEN_CHAR = 'A-Za-z0-9_./\\\\@+~%-';
 const CODE_PATH_PATTERN = new RegExp(
   `(?<![${CODE_PATH_TOKEN_CHAR}])(?:[${CODE_PATH_TOKEN_CHAR}]+[\\\\/])*[${CODE_PATH_TOKEN_CHAR}]+\\.(?:${CODE_PATH_EXTENSIONS})(?![${CODE_PATH_TOKEN_CHAR}])`,
   'i',
 );
+// Absolute Windows path that may include non-ASCII (e.g. Desktop/测试.docx) and trailing Chinese verbs.
+const ABSOLUTE_PATH_PATTERN = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'<>|*?]+\.[A-Za-z0-9]{1,8}/;
+const DESKTOP_PATH_PATTERN = /desktop[\\/][^\s"'<>|*?]+/i;
+const TRAILING_READ_NOISE = /(?:看|查看|读取|读一下|打开|内容|的?内容|一下)+$/u;
 
 export function extractCommand(prompt: string): ExtractionResult {
   const normalized = prompt.toLowerCase();
@@ -26,11 +31,16 @@ export function extractCommand(prompt: string): ExtractionResult {
     command,
   };
 
+  // Document/path-first: "C:\...\测试.docx看" / "desktop/x.docx" → one-shot read_file, no model loop.
+  if (path && isDocumentPath(path) && !hasEditVerb(normalized) && !hasSearchVerb(normalized)) {
+    return result('file_read', slots, 'high', ['document or absolute path implies read']);
+  }
+
   if (hasEditVerb(normalized) && (path || hasCodeContext(normalized))) {
     return result('code_edit', slots, 'medium', ['edit intent with code context is strategy-only']);
   }
 
-  if (hasReadVerb(normalized) && path) {
+  if ((hasReadVerb(normalized) || isPathOnlyPrompt(prompt, path)) && path) {
     return result('file_read', slots, 'high', ['explicit read with path']);
   }
 
@@ -94,7 +104,9 @@ function result(intent: CommandIntent, slots: CommandSlots, confidence: Confiden
 }
 
 function hasReadVerb(value: string) {
-  return hasChineseOrEnglishWord(value, ['读取', '读', '打开', '查看'], ['read', 'open', 'show']);
+  // Include short Chinese "看" / "看看" which users type after a path.
+  if (/看|内容|全文|预览/.test(value)) return true;
+  return hasChineseOrEnglishWord(value, ['读取', '读', '打开', '查看', '看看'], ['read', 'open', 'show', 'view', 'preview', 'cat']);
 }
 
 function hasSearchVerb(value: string) {
@@ -114,10 +126,47 @@ function hasCodeContext(value: string) {
 }
 
 function extractPath(prompt: string) {
+  const quoted = prompt.match(/"([^"\n]+)"|'([^'\n]+)'/);
+  if (quoted) {
+    const candidate = (quoted[1] ?? quoted[2] ?? '').trim();
+    if (candidate && /\.[A-Za-z0-9]{1,8}$/.test(candidate)) return cleanExtractedPath(candidate);
+  }
+
+  const absolute = prompt.match(ABSOLUTE_PATH_PATTERN);
+  if (absolute?.[0]) return cleanExtractedPath(absolute[0]);
+
+  const desktop = prompt.match(DESKTOP_PATH_PATTERN);
+  if (desktop?.[0]) return cleanExtractedPath(desktop[0].replace(/\\/g, '/'));
+
   const match = prompt.match(CODE_PATH_PATTERN)
     ?? prompt.match(/(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+|(?:^|\s)(\.smoke\/[A-Za-z0-9_.-]+)|(?:^|\s)([A-Za-z0-9_.-]+\.[A-Za-z0-9]+)/);
   if (!match) return undefined;
-  return (match[0] ?? match[1] ?? match[2])?.trim();
+  return cleanExtractedPath((match[0] ?? match[1] ?? match[2])?.trim() ?? '');
+}
+
+function cleanExtractedPath(value: string) {
+  let path = value.trim().replace(/^["']|["']$/g, '');
+  // Strip trailing Chinese verbs glued to the extension: 测试.docx看
+  path = path.replace(TRAILING_READ_NOISE, '');
+  path = path.replace(/[，。！？；：、,.!?;:]+$/u, '');
+  return path.trim() || undefined;
+}
+
+function isDocumentPath(path: string) {
+  return /\.(docx?|pdf|txt|csv|xlsx?|pptx?|png|jpe?g|gif|webp|md|log|xml|html?)$/i.test(path)
+    || /^desktop[\\/]/i.test(path)
+    || /^[A-Za-z]:[\\/]/.test(path);
+}
+
+function isPathOnlyPrompt(prompt: string, path: string | undefined) {
+  if (!path) return false;
+  const leftover = prompt
+    .replace(path, ' ')
+    .replace(TRAILING_READ_NOISE, ' ')
+    .replace(/["']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return leftover.length === 0 || leftover.length <= 4;
 }
 
 function extractSearchQuery(prompt: string) {

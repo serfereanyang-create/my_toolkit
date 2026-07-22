@@ -33,7 +33,11 @@ export async function executeCommandPlan(runtime: AgentRuntime, plan: CommandPla
     completed.push(step.tool);
   }
 
-  const message = `Done. Executed high-confidence command chain: ${completed.join(' → ')}.`;
+  // Prefer showing the actual tool output for single-step reads instead of a meta "Done." line.
+  const lastOutput = lastSuccessfulOutput(runtime, completed[completed.length - 1]);
+  const message = completed.length === 1 && lastOutput
+    ? lastOutput
+    : `Done. Executed high-confidence command chain: ${completed.join(' → ')}.`;
   runtime.ui.assistant(message);
   await runtime.sessions.appendFinalAnswer(runtime.session, message);
   return {
@@ -45,6 +49,19 @@ export async function executeCommandPlan(runtime: AgentRuntime, plan: CommandPla
       outcome: 'done',
     },
   };
+}
+
+function lastSuccessfulOutput(runtime: AgentRuntime, toolName: string | undefined) {
+  if (!toolName) return undefined;
+  for (let index = runtime.session.toolCalls.length - 1; index >= 0; index -= 1) {
+    const call = runtime.session.toolCalls[index];
+    if (call?.tool === toolName && call.ok && call.output.trim()) {
+      // Cap huge dumps in the final assistant bubble; tool result already printed full-ish.
+      const text = call.output.trim();
+      return text.length > 4000 ? `${text.slice(0, 4000)}\n… (truncated)` : text;
+    }
+  }
+  return undefined;
 }
 
 async function executeStep(runtime: AgentRuntime, step: PlannedToolStep) {

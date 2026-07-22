@@ -32,7 +32,14 @@ export function planCommand(extraction: ExtractionResult): CommandPlan {
       if (!extraction.slots.path) {
         return strategy(extraction, ['read_file', 'project_index', 'search_text'], ['run_command'], 'Read intent missing path.');
       }
-      return executeOrStrategy(extraction, [{ tool: 'read_file', input: { path: extraction.slots.path, maxBytes: 20000 } }], ['read_file'], ['run_command'], 'Explicit file read.');
+      // Single-step only: never chain project_index/search after a concrete path.
+      return executeOrStrategy(
+        extraction,
+        [{ tool: 'read_file', input: { path: extraction.slots.path, maxBytes: 50_000 } }],
+        ['read_file'],
+        ['run_command', 'project_index', 'search_text', 'list_files'],
+        'Explicit file read (single tool).',
+      );
     case 'code_search': {
       if (!extraction.slots.query && !extraction.slots.path) {
         return executeOrStrategy(

@@ -27,6 +27,24 @@ test('extracts high-confidence readonly intents and slots', () => {
   assert.equal(read.confidence, 'high');
 });
 
+test('extracts desktop and absolute docx paths for one-shot read', () => {
+  const glued = extractCommand('C:\\Users\\34516\\Desktop\\测试.docx看');
+  assert.equal(glued.intent, 'file_read');
+  assert.equal(glued.confidence, 'high');
+  assert.ok(glued.slots.path?.toLowerCase().includes('desktop'));
+  assert.ok(glued.slots.path?.toLowerCase().endsWith('.docx'));
+  assert.ok(!glued.slots.path?.includes('看'));
+
+  const desktop = extractCommand('desktop/测试.docx');
+  assert.equal(desktop.intent, 'file_read');
+  assert.equal(desktop.slots.path?.replace(/\\/g, '/'), 'desktop/测试.docx');
+
+  const plan = planCommand(glued);
+  assert.equal(plan.mode, 'execute');
+  assert.equal(plan.steps.length, 1);
+  assert.equal(plan.steps[0]?.tool, 'read_file');
+});
+
 test('plans direct execution only for high-confidence readonly tools', () => {
   const searchPlan = planCommand(extractCommand('搜索 apply_patch'));
   assert.equal(searchPlan.mode, 'execute');
@@ -89,7 +107,8 @@ test('high-confidence readonly prompt executes tools without calling provider', 
     assert.equal(result.ok, true);
     assert.equal(providerCalls, 0);
     assert.ok(runtime.session.toolCalls.some((call) => call.tool === 'read_file' && call.ok));
-    assert.match(result.finalAnswer ?? '', /high-confidence command chain/i);
+    // Single-step reads surface tool output; multi-step chains keep the meta summary.
+    assert.match(result.finalAnswer ?? '', /high-confidence command chain|demo/i);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
