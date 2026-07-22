@@ -71,7 +71,7 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
       turnId: `turn_${randomUUID()}`,
     }, {
       confirm: resolveConfirm(runtime),
-      onWarning: (message) => runtime.ui.info(message),
+      onWarning: (message) => runtime.ui.info(summarizeGitSafetyWarning(message)),
     });
   }
 
@@ -281,6 +281,22 @@ function resolveConfirm(runtime: AgentRuntime) {
   if (runtime.config.noInput || runtime.config.prompt !== undefined || runtime.config.ci) return undefined;
   if (process.stdin.isTTY) return askForApproval;
   return undefined;
+}
+
+/** Collapse noisy Git CRLF / ignored-path dumps into a single short line for the UI. */
+function summarizeGitSafetyWarning(message: string) {
+  if (!message) return message;
+  const hasCrlf = /LF will be replaced by CRLF|CRLF will be replaced by LF/i.test(message);
+  const hasIgnored = /paths are ignored by one of your \.gitignore/i.test(message);
+  if (hasCrlf || hasIgnored) {
+    const parts = [
+      hasCrlf ? 'line-ending notices suppressed' : undefined,
+      hasIgnored ? 'ignored-path advice suppressed' : undefined,
+    ].filter((part): part is string => Boolean(part));
+    return `Git safety: snapshot notes (${parts.join(', ')}).`;
+  }
+  if (message.length > 280) return `${message.slice(0, 277)}...`;
+  return message;
 }
 
 function isTerminalToolFailure(output: string) {

@@ -616,6 +616,14 @@ function buildChecks(root: string): Check[] {
   const gitWorkflowNeedles = ['ensureBoardBranch', 'commitBoardChanges', 'previewBoardCommit', 'boardBranchName'];
   gitWorkflowNeedles.forEach((needle) => checks.push({ name: `git workflow contains ${needle}`, run: () => contains('src/git-safety/workflow.ts', needle) }));
 
+  const gitQuietNeedles = ['stripGitNoise', 'GIT_QUIET_CONFIG_ARGS', 'advice.addIgnoredFile=false', 'summarizeGitSafetyWarning'];
+  gitQuietNeedles.forEach((needle) => checks.push({
+    name: `git quiet source contains ${needle}`,
+    run: async () =>
+      (await contains('src/git-safety/git.ts', needle))
+      || (await contains('src/agent/agent.ts', needle)),
+  }));
+
   checks.push({ name: 'mock provider returns provider name', run: () => createMockProvider().name === 'mock' });
   checks.push({ name: 'mock provider returns configured model', run: () => createMockProvider('x').model === 'x' });
   checks.push({

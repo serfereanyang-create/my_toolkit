@@ -14,7 +14,9 @@ import {
   assertSafeWorkspacePathspec,
   buildGitEnvironment,
   literalPathspec,
+  sanitizeError,
   sanitizeRemote,
+  stripGitNoise,
 } from '../src/git-safety/git.js';
 import { GitRepository } from '../src/git-safety/repository.js';
 import { GitSafetyService } from '../src/git-safety/service.js';
@@ -117,6 +119,20 @@ test('checkpoint refs pathspecs and literal pathspecs enforce their distinct dom
 test('sanitizeRemote strips URL credentials query and fragment but preserves remote names', () => {
   assert.equal(sanitizeRemote('https://user:secret@example.test/repo.git?token=hidden#fragment'), 'https://example.test/repo.git');
   assert.equal(sanitizeRemote('origin'), 'origin');
+});
+
+test('stripGitNoise removes CRLF and ignored-path advice', () => {
+  const noisy = [
+    "warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it",
+    'The following paths are ignored by one of your .gitignore files:',
+    '.aicode',
+    'hint: Use -f if you really want to add them.',
+    'hint: Disable this message with "git config set advice.addIgnoredFile false"',
+    'fatal: real problem remains',
+  ].join('\n');
+  assert.equal(stripGitNoise(noisy).trim(), 'fatal: real problem remains');
+  assert.match(sanitizeError(noisy), /real problem remains/);
+  assert.doesNotMatch(sanitizeError(noisy), /LF will be replaced/);
 });
 
 test('buildGitEnvironment isolates ambient Git and secret variables without mutating input', () => {

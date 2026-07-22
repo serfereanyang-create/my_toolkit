@@ -56,6 +56,8 @@ export class GitProcess {
 
   buffer(args: readonly string[], options: GitRunOptions = {}): Promise<Buffer> {
     const env = buildGitEnvironment(process.env, options.env);
+    // Quiet Windows CRLF / ignored-path advice that otherwise floods every snapshot turn.
+    const argv = [...GIT_QUIET_CONFIG_ARGS, ...args];
     return new Promise((resolve, reject) => {
       let settled = false;
       const settle = (operation: () => void): void => {
@@ -65,7 +67,7 @@ export class GitProcess {
       };
       const child = execFile(
         'git',
-        [...args],
+        argv,
         {
           cwd: this.cwd,
           windowsHide: true,
@@ -79,7 +81,19 @@ export class GitProcess {
           const stderrText = Buffer.isBuffer(stderr) ? stderr.toString('utf8') : String(stderr ?? '');
           if (error) {
             const failure = commandFailure(error);
-            settle(() => reject(new GitCommandError(stderrText, failure)));
+            const cleaned = stripGitNoise(stderrText);
+            // Only swallow exit=1 when stderr was non-empty noise (CRLF/ignore advice).
+            // Empty-stderr failures (e.g. missing config key) must still reject.
+            if (
+              failure.kind === 'exit'
+              && failure.exitCode === 1
+              && stderrText.trim().length > 0
+              && !cleaned.trim()
+            ) {
+              settle(() => resolve(stdoutBuffer));
+              return;
+            }
+            settle(() => reject(new GitCommandError(cleaned || stderrText, failure)));
             return;
           }
           settle(() => resolve(stdoutBuffer));
@@ -193,9 +207,36 @@ export function sanitizeRemote(remote: string): string {
   }
 }
 
+/** Config flags applied to every aicode git-safety child process. */
+export const GIT_QUIET_CONFIG_ARGS = [
+  '-c', 'advice.addIgnoredFile=false',
+  '-c', 'core.safecrlf=false',
+] as const;
+
+export function stripGitNoise(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      if (/LF will be replaced by CRLF/i.test(trimmed)) return false;
+      if (/CRLF will be replaced by LF/i.test(trimmed)) return false;
+      if (/warning:\s+in the working copy of/i.test(trimmed)) return false;
+      if (/The following paths are ignored by one of your \.gitignore files/i.test(trimmed)) return false;
+      if (/^hint:\s+/i.test(trimmed)) return false;
+      if (/Use -f if you really want to add them/i.test(trimmed)) return false;
+      if (/Disable this message with \"git config/i.test(trimmed)) return false;
+      // Bare path listed under the ignore advice (e.g. ".aicode")
+      if (/^\.aicode(?:\/.*)?$/i.test(trimmed)) return false;
+      return true;
+    })
+    .join('\n');
+}
+
 export function sanitizeError(error: string): string {
   const truncated = error.length > 64 * 1024 ? `${error.slice(0, 64 * 1024)}\n[truncated]` : error;
-  const withoutAuthHeaders = truncated.replace(/\bAuthorization[ \t]*:[^\r\n]*/gi, '[REDACTED]');
+  const withoutNoise = stripGitNoise(truncated);
+  const withoutAuthHeaders = withoutNoise.replace(/\bAuthorization[ \t]*:[^\r\n]*/gi, '[REDACTED]');
   const withoutUrls = withoutAuthHeaders.replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+/g, (remote) => sanitizeRemote(remote));
   const withoutBearer = withoutUrls.replace(/\b(?:Basic|Bearer)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '[REDACTED]');
   return withoutBearer.replace(
