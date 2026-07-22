@@ -38,6 +38,85 @@ class Local {
   assert.ok(names.includes('method:start'));
 });
 
+test('extractSymbolsFromSource supports python go rust java kotlin', () => {
+  const py = extractSymbolsFromSource('svc/app.py', `
+class Worker:
+    def run(self):
+        pass
+
+async def boot():
+    pass
+`);
+  assert.ok(py.some((s) => s.kind === 'class' && s.name === 'Worker'));
+  assert.ok(py.some((s) => s.kind === 'method' && s.name === 'run' && s.container === 'Worker'));
+  assert.ok(py.some((s) => s.kind === 'function' && s.name === 'boot'));
+
+  const go = extractSymbolsFromSource('pkg/main.go', `
+package main
+func Helper() {}
+func (s *Server) Start() {}
+type Server struct {}
+type Handler interface {}
+const MaxOpen = 1
+`);
+  assert.ok(go.some((s) => s.kind === 'function' && s.name === 'Helper' && s.exported));
+  assert.ok(go.some((s) => s.kind === 'method' && s.name === 'Start'));
+  assert.ok(go.some((s) => s.kind === 'struct' && s.name === 'Server'));
+  assert.ok(go.some((s) => s.kind === 'interface' && s.name === 'Handler'));
+
+  const rs = extractSymbolsFromSource('src/lib.rs', `
+pub fn boot() {}
+pub struct Config {}
+pub enum Mode { A }
+pub trait Runner {}
+mod internal {}
+`);
+  assert.ok(rs.some((s) => s.kind === 'function' && s.name === 'boot' && s.exported));
+  assert.ok(rs.some((s) => s.kind === 'struct' && s.name === 'Config'));
+  assert.ok(rs.some((s) => s.kind === 'enum' && s.name === 'Mode'));
+  assert.ok(rs.some((s) => s.kind === 'trait' && s.name === 'Runner'));
+  assert.ok(rs.some((s) => s.kind === 'module' && s.name === 'internal'));
+
+  const java = extractSymbolsFromSource('App.java', `
+public class App {
+  public void start() {}
+}
+public interface Service {}
+`);
+  assert.ok(java.some((s) => s.kind === 'class' && s.name === 'App'));
+  assert.ok(java.some((s) => s.kind === 'method' && s.name === 'start'));
+  assert.ok(java.some((s) => s.kind === 'interface' && s.name === 'Service'));
+
+  const kt = extractSymbolsFromSource('Main.kt', `
+class Board
+object Defaults
+fun main() {}
+`);
+  assert.ok(kt.some((s) => s.kind === 'class' && s.name === 'Board'));
+  assert.ok(kt.some((s) => s.kind === 'class' && s.name === 'Defaults'));
+  assert.ok(kt.some((s) => s.kind === 'function' && s.name === 'main'));
+});
+
+test('NavIndexStore indexes multi-language source files', async () => {
+  const dir = await fixture('poly');
+  try {
+    await mkdir(join(dir.root, 'src'), { recursive: true });
+    await writeFile(join(dir.root, 'src', 'worker.py'), 'def poly_worker():\n    return 1\n', 'utf8');
+    await writeFile(join(dir.root, 'src', 'worker.go'), 'package main\nfunc PolyWorker() {}\n', 'utf8');
+    await writeFile(join(dir.root, 'src', 'worker.rs'), 'pub fn poly_worker() {}\n', 'utf8');
+    const index = await new NavIndexStore(dir.root).loadOrBuild();
+    const langs = new Set(index.files.map((file) => file.language));
+    assert.ok(langs.has('python'));
+    assert.ok(langs.has('go'));
+    assert.ok(langs.has('rust'));
+    const hits = findSymbols(index, 'poly_worker');
+    assert.ok(hits.some((hit) => hit.path.endsWith('.py')));
+    assert.ok(hits.some((hit) => hit.path.endsWith('.rs')) || hits.some((hit) => hit.name === 'PolyWorker'));
+  } finally {
+    await dir.cleanup();
+  }
+});
+
 test('NavIndexStore caches unchanged files and refreshes after edit', async () => {
   const dir = await fixture('cache');
   try {

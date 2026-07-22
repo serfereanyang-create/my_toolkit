@@ -21,7 +21,7 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Task verify loop | Implemented MVP | After textual done, run package `typecheck`/`test`/`build` when present; one repair retry; fail blocks board |
 | Project memory | Implemented MVP | Durable `.aicode/memory` entries, auto-record from tasks, `/memory` controls, task-prompt injection |
 | Project understanding | Implemented MVP | `project_index`, instruction context from `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `README.md` |
-| Codebase navigation | Implemented MVP | Heuristic TS/JS symbol index (`.aicode/nav`), `find_symbol` / `find_references`, strategy prefers symbols first |
+| Codebase navigation | Implemented MVP | Heuristic symbol index (`.aicode/nav`) for TS/JS + Python/Go/Rust/Java/Kotlin, `find_symbol` / `find_references`, strategy prefers symbols first |
 | Natural-language command extraction | Implemented MVP | Shared extract/plan layer; high-confidence readonly tools execute directly; edit/shell remain strategy + model |
 | Git workflow | Implemented MVP | Board branch on `/plan confirm` (`aicode/board-*`); confirmed board commit after completion; read-only git tools; hidden snapshots + `/rollback`; confirmed `/git publish` only; no auto-push |
 | Git safety / rollback log | Implemented MVP | `.aicode/git-safety/audit.jsonl`, `refs/aicode/checkpoints/*`, dirty-tree protection, all-or-nothing conflict checks |

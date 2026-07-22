@@ -1,4 +1,6 @@
-export type SymbolKind = 'function' | 'class' | 'interface' | 'type' | 'enum' | 'const' | 'export' | 'method';
+export type SymbolKind = 'function' | 'class' | 'interface' | 'type' | 'enum' | 'const' | 'export' | 'method' | 'struct' | 'trait' | 'module';
+
+export type NavLanguage = 'ts' | 'js' | 'python' | 'go' | 'rust' | 'java' | 'kotlin' | 'other';
 
 export type SymbolRecord = {
   name: string;
@@ -15,7 +17,7 @@ export type NavFileEntry = {
   path: string;
   mtimeMs: number;
   size: number;
-  language: 'ts' | 'js' | 'other';
+  language: NavLanguage;
   symbols: SymbolRecord[];
 };
 

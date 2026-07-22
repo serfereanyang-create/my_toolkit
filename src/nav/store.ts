@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { extractSymbolsFromSource } from './extract.js';
-import { isIgnoredDirName, isTsJsFile } from './ignore.js';
+import { detectNavLanguage, isIgnoredDirName, isIndexableSourceFile } from './ignore.js';
 import type { NavFileEntry, NavIndexFile } from './types.js';
 
 const INDEX_VERSION = 1 as const;
@@ -89,12 +89,12 @@ export class NavIndexStore {
       return;
     }
 
-    const language = isTsJsFile(rel) ? (/\.tsx?$/i.test(rel) ? 'ts' : 'js') : 'other';
+    const language = detectNavLanguage(rel);
     let symbols = cached?.symbols ?? [];
-    if (language !== 'other' && info.size <= 500_000) {
+    if (isIndexableSourceFile(rel) && info.size <= 500_000) {
       try {
         const source = await readFile(current, 'utf8');
-        symbols = extractSymbolsFromSource(rel, source);
+        symbols = extractSymbolsFromSource(rel, source, language);
       } catch {
         symbols = [];
       }

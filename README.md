@@ -236,11 +236,13 @@ Before each model call, aicode packs session messages into a char budget so larg
 
 ## Codebase navigation
 
-aicode builds a lightweight TS/JS symbol index under `.aicode/nav/index.json` (mtime-aware cache).
+aicode builds a lightweight multi-language symbol index under `.aicode/nav/index.json` (mtime-aware cache).
+
+Supported heuristics: TypeScript/JavaScript, Python, Go, Rust, Java, Kotlin.
 
 Tools:
 
-- `find_symbol` — locate function/class/interface/type/const definitions
+- `find_symbol` — locate function/class/interface/type/const/struct/trait definitions
 - `find_references` — approximate references by identifier
 
 Example natural language:
