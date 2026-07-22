@@ -233,10 +233,12 @@ If the model does not return native tool calls, aicode still accepts the older t
 
 Before each model call, aicode packs session messages into a char budget so large tool transcripts do not blow the context window.
 
-- Default budget: `80000` characters
-- Override: `AICODE_CONTEXT_BUDGET_CHARS=120000`
-- Recent turns are kept first; older history is folded into one summary
-- Oversized tool/assistant payloads are clipped for the model only
+- Default hard budget: `80000` characters (`AICODE_CONTEXT_BUDGET_CHARS`)
+- Soft threshold: start clipping at **72%** of budget (`AICODE_CONTEXT_SOFT_RATIO=0.72`)
+- Keep newest `AICODE_CONTEXT_KEEP_RECENT` (default 10) and a stable oldest prefix `AICODE_CONTEXT_KEEP_PREFIX` (default 2) for better prompt-cache hits
+- Soft/hard per-role clip sizes: `AICODE_CONTEXT_MAX_TOOL_CHARS[_SOFT]`, `..._ASSISTANT...`, `..._USER...`
+- Historical vision images are stripped from packed history (latest user images kept)
+- Project instruction context (`AGENTS.md` etc.) is memory-cached by mtime signature (`cacheKey=…` stable while files unchanged)
 - On-disk session JSON still stores full outputs for resume/export
 
 ## Codebase navigation

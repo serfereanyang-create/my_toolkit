@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { runAgentTurn } from '../src/agent/agent.js';
-import { formatProjectContext, readProjectContext } from '../src/agent/context.js';
+import { clearProjectContextCache, formatProjectContext, getProjectContextCacheStats, readProjectContext } from '../src/agent/context.js';
 import type { AppConfig } from '../src/config/types.js';
 import type { Provider, ProviderRequest } from '../src/providers/types.js';
 import { SessionStore } from '../src/session/store.js';
@@ -12,6 +12,7 @@ import { createDefaultToolRegistry } from '../src/tools/index.js';
 import { TerminalUI } from '../src/ui/terminal.js';
 
 test('project context cache keeps stable cache key until instruction files change', async () => {
+  clearProjectContextCache();
   const workspace = await mkdtemp(join(tmpdir(), 'aicode-context-cache-'));
   await writeFile(join(workspace, 'AGENTS.md'), 'Prefer direct answers.');
 
@@ -19,7 +20,11 @@ test('project context cache keeps stable cache key until instruction files chang
   const second = await readProjectContext(workspace);
 
   assert.equal(first?.cacheKey, second?.cacheKey);
+  assert.equal(first?.formatted, second?.formatted);
   assert.match(formatProjectContext(first) ?? '', /cacheKey=/);
+  const stats = getProjectContextCacheStats();
+  assert.ok(stats.hits >= 1);
+  assert.ok(stats.misses >= 1);
 
   await writeFile(join(workspace, 'AGENTS.md'), 'Prefer direct answers. Use tools for facts.');
   const third = await readProjectContext(workspace);

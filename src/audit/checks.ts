@@ -410,8 +410,22 @@ function buildChecks(root: string): Check[] {
 
   const contextNeedles = ['readProjectContext', 'formatProjectContext', 'cacheKey', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
   contextNeedles.forEach((needle) => checks.push({ name: `context contains ${needle}`, run: () => contains('src/agent/context.ts', needle) }));
-  const contextBudgetNeedles = ['compactMessagesForModel', 'resolveContextBudgetChars', 'AICODE_CONTEXT_BUDGET_CHARS'];
-  contextBudgetNeedles.forEach((needle) => checks.push({ name: `context budget contains ${needle}`, run: () => contains('src/agent/contextBudget.ts', needle) }));
+  const contextBudgetNeedles = [
+    'compactMessagesForModel',
+    'resolveContextBudgetChars',
+    'resolveContextBudgetConfig',
+    'AICODE_CONTEXT_BUDGET_CHARS',
+    'AICODE_CONTEXT_SOFT_RATIO',
+    'stripHistoricalImages',
+    'keepPrefix',
+    'getProjectContextCacheStats',
+  ];
+  contextBudgetNeedles.forEach((needle) => checks.push({
+    name: `context budget contains ${needle}`,
+    run: async () =>
+      (await contains('src/agent/contextBudget.ts', needle))
+      || (await contains('src/agent/context.ts', needle)),
+  }));
   checks.push({ name: 'agent uses compactMessagesForModel', run: () => contains('src/agent/agent.ts', 'compactMessagesForModel') });
 
   const fallbackNeedles = ['planLocalFallback', 'rename_file', 'previousUserPrompt'];

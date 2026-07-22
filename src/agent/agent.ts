@@ -141,7 +141,14 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
         budgetChars: resolveContextBudgetChars(),
       });
       if (packed.truncated && !warnedAboutCompaction) {
-        runtime.ui.info(`Context compacted for model: kept≈${packed.compactChars} chars, dropped ${packed.droppedMessages} older messages.`);
+        const detail = [
+          `mode=${packed.mode}`,
+          `kept≈${packed.compactChars}`,
+          packed.droppedMessages ? `dropped=${packed.droppedMessages}` : undefined,
+          packed.imagesStripped ? `imagesStripped=${packed.imagesStripped}` : undefined,
+          packed.softTriggered ? 'soft' : undefined,
+        ].filter(Boolean).join(' ');
+        runtime.ui.info(`Context compacted for model: ${detail}`);
         warnedAboutCompaction = true;
       }
       response = await runtime.provider.complete({
