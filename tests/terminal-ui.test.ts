@@ -28,9 +28,9 @@ test('TerminalUI lays out task assistant and tool output with clean no-color spa
     ui.toolResult('disk_growth', { ok: true, output: 'sizeMB\tpath\n120.4\tout/cache.bin' });
   });
 
-  assert.match(output, /\n● Task\n  帮我检查最近的大文件\n/);
-  assert.match(output, /\n● Assistant\n  先看磁盘增长。\n/);
-  assert.match(output, /\n● Tool 1 disk_growth\n  input: \{"path":"\.","hours":48\}\n  status: running\n  result: ok \d+ms\n  output:\n    sizeMB\tpath\n    120\.4\tout\/cache\.bin\n/);
+  assert.match(output, /\n\* Task\n  帮我检查最近的大文件\n/);
+  assert.match(output, /\n\* Assistant\n  先看磁盘增长。\n/);
+  assert.match(output, /\n\* Tool 1 disk_growth\n  input: \{"path":"\.","hours":48\}\n  status: running\n  result: ok \d+ms\n  output:\n    sizeMB\tpath\n    120\.4\tout\/cache\.bin\n/);
   assert.doesNotMatch(output, /waiting for tool result/);
 });
 
@@ -41,7 +41,7 @@ test('TerminalUI omits empty tool output blocks', () => {
     ui.toolResult('git_status', { ok: true, output: '' });
   });
 
-  assert.match(output, /\n● Tool 1 git_status\n/);
+  assert.match(output, /\n\* Tool 1 git_status\n/);
   assert.match(output, /  result: ok \d+ms\n/);
   assert.doesNotMatch(output, /\n  output:\n/);
 });

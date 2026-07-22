@@ -208,7 +208,8 @@ export class TerminalUI {
   }
 
   private writeSectionTitle(title: string, color: keyof typeof colors, detail?: string) {
-    const bar = `${this.color(color)}▍${this.color('reset')}`;
+    // ASCII marker avoids Windows code-page mojibake for ● in some consoles.
+    const bar = `${this.color(color)}*${this.color('reset')}`;
     const head = this.style(title, 'bold', color);
     const suffix = detail ? ` ${this.color('dim')}${detail}${this.color('reset')}` : '';
     this.write(`\n${bar} ${head}${suffix}`);
