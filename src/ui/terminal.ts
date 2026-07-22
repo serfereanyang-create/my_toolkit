@@ -28,6 +28,7 @@ export class TerminalUI {
   private activeSpinner?: NodeJS.Timeout;
   private activeSpinnerText = '';
   private activeSpinnerFrame = 0;
+  private streamingAssistant = false;
   private readonly runningTools = new Map<string, number>();
   private readonly options: TerminalUIOptions;
 
@@ -57,17 +58,40 @@ export class TerminalUI {
   }
 
   modelStart() {
+    this.streamingAssistant = false;
     if (this.options.json) return this.jsonEvent('model_start', { status: 'running' });
     this.startSpinner('model thinking');
   }
 
   modelEnd() {
+    if (this.streamingAssistant && !this.options.json && !this.options.quiet) {
+      process.stdout.write('\n');
+    }
+    this.streamingAssistant = false;
     if (this.options.json) return this.jsonEvent('model_end', { status: 'done' });
     this.stopSpinner();
   }
 
+  assistantDelta(delta: string) {
+    if (!delta) return;
+    if (this.options.json) return this.jsonEvent('assistant_delta', { content: delta });
+    this.stopSpinner();
+    if (!this.streamingAssistant) {
+      this.streamingAssistant = true;
+      if (!this.options.quiet) this.writeSectionTitle('Assistant', 'green');
+    }
+    process.stdout.write(this.options.quiet ? delta : `${this.color('green')}${delta}${this.color('reset')}`);
+  }
+
   assistant(content: string) {
     this.stopSpinner();
+    if (this.streamingAssistant) {
+      // Content was already streamed; avoid duplicate full reprint.
+      this.streamingAssistant = false;
+      if (this.options.json) return this.jsonEvent('assistant', { content });
+      if (!this.options.quiet) process.stdout.write('\n');
+      return;
+    }
     if (this.options.json) return this.jsonEvent('assistant', { content });
     if (this.options.quiet) return this.write(content);
     this.writeSectionTitle('Assistant', 'green');

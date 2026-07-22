@@ -212,13 +212,14 @@ Disable with:
 AICODE_VERIFY_TASKS=0
 ```
 
-## Native tool calling
+## Native tool calling and streaming
 
-Hosted providers now send native tool definitions:
+Hosted providers now send native tool definitions and stream assistant text:
 
-- OpenAI-compatible: `tools` + `tool_choice=auto`, parse `message.tool_calls`
-- Anthropic: `tools` + parse `tool_use` content blocks
+- OpenAI-compatible: `tools` + `tool_choice=auto`, SSE stream, parse streamed `tool_calls`
+- Anthropic: `tools` + SSE stream, parse streamed `tool_use` / `input_json_delta`
 
+Assistant text deltas render live in the terminal (`assistant_delta` events in `--json` mode).
 If the model does not return native tool calls, aicode still accepts the older text JSON tool protocol as fallback.
 
 ## Context budget

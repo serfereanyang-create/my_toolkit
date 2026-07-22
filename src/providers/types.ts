@@ -21,6 +21,8 @@ export type ProviderRequest = {
   workspaceRoot: string;
   projectContext?: string;
   toolStrategy?: string;
+  /** Optional streaming callback for assistant text deltas. */
+  onTextDelta?: (delta: string) => void;
 };
 
 export type ProviderToolSpec = {

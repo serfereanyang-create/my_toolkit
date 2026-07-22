@@ -74,17 +74,12 @@ test('OpenAI complete sends tools and parses tool_calls', async () => {
   let outboundBody: Record<string, unknown> | undefined;
   globalThis.fetch = async (_input, init) => {
     outboundBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    return new Response(JSON.stringify({
-      choices: [{
-        message: {
-          content: null,
-          tool_calls: [{
-            type: 'function',
-            function: { name: 'read_file', arguments: '{"path":"package.json"}' },
-          }],
-        },
-      }],
-    }), { status: 200 });
+    return new Response([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read_file","arguments":"{\\"path\\":\\"package.json\\"}"}}]}}]}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'), { status: 200, headers: { 'content-type': 'text/event-stream' } });
   };
 
   try {
@@ -97,6 +92,7 @@ test('OpenAI complete sends tools and parses tool_calls', async () => {
     });
     assert.ok(Array.isArray(outboundBody?.tools));
     assert.equal(outboundBody?.tool_choice, 'auto');
+    assert.equal(outboundBody?.stream, true);
     assert.deepEqual(result.actions, [{ type: 'tool', tool: 'read_file', input: { path: 'package.json' } }]);
   } finally {
     globalThis.fetch = originalFetch;
@@ -108,9 +104,14 @@ test('Anthropic complete sends tools and parses tool_use', async () => {
   let outboundBody: Record<string, unknown> | undefined;
   globalThis.fetch = async (_input, init) => {
     outboundBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    return new Response(JSON.stringify({
-      content: [{ type: 'tool_use', id: 'tu1', name: 'run_command', input: { command: 'node --version' } }],
-    }), { status: 200 });
+    return new Response([
+      'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu1","name":"run_command"}}',
+      '',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"command\\":\\"node --version\\"}"}}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'), { status: 200, headers: { 'content-type': 'text/event-stream' } });
   };
 
   try {
@@ -121,6 +122,7 @@ test('Anthropic complete sends tools and parses tool_use', async () => {
       workspaceRoot: process.cwd(),
     });
     assert.ok(Array.isArray(outboundBody?.tools));
+    assert.equal(outboundBody?.stream, true);
     assert.deepEqual(result.actions, [{ type: 'tool', tool: 'run_command', input: { command: 'node --version' } }]);
   } finally {
     globalThis.fetch = originalFetch;

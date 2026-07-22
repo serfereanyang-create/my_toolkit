@@ -346,7 +346,10 @@ test('OpenAI serializes tool strategy into the outbound system message', async (
 
   globalThis.fetch = async (_input, init) => {
     outboundBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    return new Response(JSON.stringify({ choices: [{ message: { content: 'done' } }] }), { status: 200 });
+    return new Response('data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n', {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    });
   };
 
   try {
@@ -376,7 +379,12 @@ test('Anthropic serializes tool strategy into the outbound system prompt', async
 
   globalThis.fetch = async (_input, init) => {
     outboundBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    return new Response(JSON.stringify({ content: [{ type: 'text', text: 'done' }] }), { status: 200 });
+    return new Response([
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'), { status: 200, headers: { 'content-type': 'text/event-stream' } });
   };
 
   try {

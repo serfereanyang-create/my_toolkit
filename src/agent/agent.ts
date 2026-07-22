@@ -137,6 +137,7 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string): Promise<
         workspaceRoot: runtime.config.workspaceRoot,
         projectContext,
         toolStrategy,
+        onTextDelta: (delta) => runtime.ui.assistantDelta(delta),
       });
       runtime.ui.modelEnd();
     } catch (error) {
