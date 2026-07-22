@@ -54,7 +54,8 @@ export class TerminalUI {
     if (this.options.json) return this.jsonEvent('turn_start', { prompt });
     if (this.options.quiet) return;
     this.writeSectionTitle('Task', 'magenta');
-    this.writeBlock(prompt, this.color('gray'), { maxLines: 6 });
+    // User paste: fold by real newlines only — never column-reflow like bash.
+    this.writeBlock(prompt, this.color('gray'), { maxLines: 12, noWrap: true });
   }
 
   modelStart() {
@@ -196,17 +197,22 @@ export class TerminalUI {
     this.write(`  ${this.label(key)} ${value}`.trimEnd());
   }
 
-  private writeBlock(content: string, color: string, options: { indent?: string; maxLines?: number } = {}) {
+  private writeBlock(content: string, color: string, options: { indent?: string; maxLines?: number; noWrap?: boolean } = {}) {
     const indent = options.indent ?? '  ';
     const maxLines = options.maxLines ?? defaultBlockMaxLines;
     const width = Math.max(24, terminalColumns() - displayWidth(indent));
-    const lines = wrapLines(content, width);
+    // noWrap: preserve original newlines only (multiline paste / user input). Do not bash-style force reflow.
+    const lines = options.noWrap
+      ? content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+      : wrapLines(content, width);
     const shown = lines.slice(0, maxLines);
     for (const line of shown) {
       this.write(`${indent}${color}${line}${this.color('reset')}`.trimEnd());
     }
     if (lines.length > shown.length) {
-      this.write(`${indent}${this.color('gray')}... ${lines.length - shown.length} more line(s)${this.color('reset')}`);
+      const bytes = Buffer.byteLength(content, 'utf8');
+      const size = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+      this.write(`${indent}${this.color('gray')}… ${lines.length - shown.length} more line(s), total ${size} (not reflowed)${this.color('reset')}`);
     }
   }
 

@@ -147,6 +147,11 @@ node cli/dist/src/index.js --resume sess_YYYYMMDDHHMMSS_xxxxxxxx
 - `/tools`
 - `/mcp` - show MCP server status
 - `/mcp reload` - reconnect MCP servers and refresh tools
+- `/attach <path>…` - stage files/images for the next message (drag path into terminal, then attach)
+- `/paste-image` / `/clip` - capture screenshot from clipboard (Windows)
+- `/attachments` - list staged attachments
+- Multiline: start a line with `"""` … end with `"""`, or `/paste` … end with `.` / `/end` (keeps original newlines; **no bash-style forced wrap**)
+- Pure text limit: **25KB** per turn (attachments/images separate, images go vision)
 - `/summary`
 - `/plan` - show current task board
 - `/plan confirm|pause|continue|skip|reopen|show` - control task board execution

@@ -25,6 +25,12 @@ import {
 import { TaskBoardStore } from '../tasks/store.js';
 import type { ToolRegistry } from '../tools/index.js';
 import { formatMcpStatus, type McpManager } from '../mcp/manager.js';
+import {
+  captureClipboardImage,
+  registerAttachment,
+  type Attachment,
+} from './attachments.js';
+import { formatByteSize, MAX_USER_TEXT_BYTES_HARD } from './limits.js';
 
 export async function handleSlashCommand(options: {
   line: string;
@@ -41,6 +47,7 @@ export async function handleSlashCommand(options: {
   gitRepository?: GitRepository;
   mcp?: McpManager;
   reloadMcp?: () => Promise<McpManager>;
+  pendingAttachments?: Attachment[];
 }) {
   const command = options.line.trim();
   if (command === '/不准偷懒开发' || command.startsWith('/不准偷懒开发 ')) {
@@ -61,6 +68,21 @@ export async function handleSlashCommand(options: {
   if (command === '/mcp' || command.startsWith('/mcp ')) {
     return handleMcpCommand(command, options);
   }
+  if (command === '/attach' || command.startsWith('/attach ')) {
+    return handleAttachCommand(command, options);
+  }
+  if (command === '/paste-image' || command === '/clip') {
+    return handlePasteImageCommand(options);
+  }
+  if (command === '/attachments') {
+    const pending = options.pendingAttachments ?? [];
+    if (pending.length === 0) return 'No staged attachments. Use /attach <path> or /paste-image.';
+    return [
+      `Staged attachments (${pending.length}):`,
+      ...pending.map((item) => `- [${item.kind}] ${item.name} ${formatByteSize(item.bytes)} → ${item.storedPath}`),
+      'Send a normal message (or empty with only attachments not supported—type a short note) to submit with the next turn.',
+    ].join('\n');
+  }
 
   switch (command) {
     case '/help':
@@ -73,6 +95,12 @@ export async function handleSlashCommand(options: {
         '/config     Show effective redacted configuration',
         '/tools      List available tools',
         '/mcp        Show MCP servers (use /mcp reload)',
+        '/attach <path>…  Stage files/images for next message (drag path into terminal then /attach)',
+        '/paste-image  Capture screenshot from clipboard (Windows)',
+        '/attachments  List staged attachments',
+        '/paste      Multiline paste mode (end with . or /end; keeps original newlines)',
+        '"""          Multiline block (end with """); not bash forced wrap',
+        `Text limit   ${MAX_USER_TEXT_BYTES_HARD} bytes (~25KB) pure text per turn`,
         '/summary    Summarize the current session',
         '/plan       Show task board (use /plan confirm|pause|continue|skip|reopen|show)',
         '/memory     Show project memory (use /memory add|list|forget)',
@@ -113,6 +141,64 @@ export async function handleSlashCommand(options: {
     default:
       return `Unknown command: ${command}. Try /help.`;
   }
+}
+
+async function handleAttachCommand(
+  command: string,
+  options: {
+    config: AppConfig;
+    session: SessionRecord;
+    pendingAttachments?: Attachment[];
+  },
+) {
+  const raw = command.slice('/attach'.length).trim();
+  if (!raw) return 'Usage: /attach <path> [path2 …]  (quote paths with spaces)';
+  const paths = tokenizePaths(raw);
+  if (paths.length === 0) return 'Usage: /attach <path> [path2 …]';
+  if (!options.pendingAttachments) return 'Attachment staging is only available in interactive mode.';
+  const added: string[] = [];
+  for (const path of paths) {
+    try {
+      const attachment = await registerAttachment({
+        workspaceRoot: options.config.workspaceRoot,
+        sessionId: options.session.id,
+        sourcePath: path,
+      });
+      options.pendingAttachments.push(attachment);
+      added.push(`${attachment.name} (${attachment.kind}, ${formatByteSize(attachment.bytes)})`);
+    } catch (error) {
+      added.push(`${path}: FAILED ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return [`Staged ${added.length} path(s):`, ...added.map((line) => `- ${line}`), 'Next chat message will include them (images → vision).'].join('\n');
+}
+
+async function handlePasteImageCommand(options: {
+  config: AppConfig;
+  session: SessionRecord;
+  pendingAttachments?: Attachment[];
+}) {
+  if (!options.pendingAttachments) return 'Clipboard image capture is only available in interactive mode.';
+  try {
+    const attachment = await captureClipboardImage({
+      workspaceRoot: options.config.workspaceRoot,
+      sessionId: options.session.id,
+    });
+    options.pendingAttachments.push(attachment);
+    return `Staged clipboard image: ${attachment.name} (${formatByteSize(attachment.bytes)}) at ${attachment.storedPath}. Send a message to submit.`;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function tokenizePaths(raw: string): string[] {
+  const paths: string[] = [];
+  const re = /"([^"]+)"|'([^']+)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(raw))) {
+    paths.push(match[1] ?? match[2] ?? match[3] ?? '');
+  }
+  return paths.filter(Boolean);
 }
 
 async function handleMcpCommand(

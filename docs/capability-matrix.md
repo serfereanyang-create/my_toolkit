@@ -4,7 +4,8 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 
 | Area | Status | Evidence |
 | --- | --- | --- |
-| Command UX/help/version | Implemented | `--help`, `--version`, prompt mode, REPL, slash commands |
+| Command UX/help/version | Implemented | `--help`, `--version`, prompt mode, REPL, slash commands, multiline paste (`"""`/`/paste`), `/attach`, `/paste-image`, 25KB text cap, no forced column reflow on user paste |
+| Attachments / vision | Implemented MVP | Images staged → multimodal parts (OpenAI image_url / Anthropic base64); other files path notes + tools; store under `.aicode/attachments/<session>` |
 | Stdout/stderr/JSON | Implemented | Human output, `--json` JSONL events, stderr errors, `--no-color`, `--quiet` |
 | Errors/exit codes/debug | Implemented | Nonzero prompt failures, `--debug`, concise default errors |
 | Config/env/profile/auth | Implemented | `.aicode/config.json`, `--config`, `--profile`, env/flag precedence, redacted `/config` |

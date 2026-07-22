@@ -120,10 +120,54 @@ function parseToolArguments(value: string | undefined): unknown {
 }
 
 export function toToolAwareMessages(messages: AgentMessage[]) {
-  return messages.map((message) => ({
-    role: message.role === 'tool' ? 'user' : message.role,
-    content: message.name ? `[tool:${message.name}] ${message.content}` : message.content,
-  }));
+  return messages.map((message) => {
+    const role = message.role === 'tool' ? 'user' : message.role;
+    if (message.role === 'user' && message.parts && message.parts.length > 0) {
+      const content = message.parts.map((part) => {
+        if (part.type === 'image') {
+          return {
+            type: 'image_url' as const,
+            image_url: {
+              url: `data:${part.mediaType};base64,${part.data}`,
+            },
+          };
+        }
+        return { type: 'text' as const, text: part.text };
+      });
+      return { role, content };
+    }
+    return {
+      role,
+      content: message.name ? `[tool:${message.name}] ${message.content}` : message.content,
+    };
+  });
+}
+
+export function toAnthropicAwareMessages(messages: AgentMessage[]) {
+  const converted = messages.map((message) => {
+    const role = message.role === 'assistant' ? 'assistant' : 'user';
+    if (message.role === 'user' && message.parts && message.parts.some((part) => part.type === 'image')) {
+      const content = message.parts.map((part) => {
+        if (part.type === 'image') {
+          return {
+            type: 'image' as const,
+            source: {
+              type: 'base64' as const,
+              media_type: part.mediaType,
+              data: part.data,
+            },
+          };
+        }
+        return { type: 'text' as const, text: part.text };
+      });
+      return { role, content };
+    }
+    return {
+      role,
+      content: message.name ? `[tool:${message.name}] ${message.content}` : message.content,
+    };
+  });
+  return converted.length > 0 ? converted : [{ role: 'user' as const, content: 'Start.' }];
 }
 
 export function parseToolActions(content: string): AgentAction[] {

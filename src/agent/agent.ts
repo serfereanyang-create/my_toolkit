@@ -37,10 +37,16 @@ export type AgentRuntime = {
   gitRepository?: GitRepository;
   mcp?: McpManager;
   reloadMcp?: () => Promise<McpManager>;
+  /** Files staged via /attach or /paste-image for the next user turn. */
+  pendingAttachments?: import('../cli/attachments.js').Attachment[];
 };
 
 export type AgentTurnOptions = {
   gitSafetyUnit?: GitUnitContext;
+  /** Optional multimodal parts (images) for the user turn. */
+  parts?: import('../providers/types.js').MessagePart[];
+  /** Display/log text; defaults to prompt. */
+  displayText?: string;
 };
 
 export type AgentTurnResult = {
@@ -54,7 +60,7 @@ export type AgentTurnResult = {
 };
 
 export async function runAgentTurn(runtime: AgentRuntime, prompt: string, options: AgentTurnOptions = {}): Promise<AgentTurnResult> {
-  runtime.ui.turnStart(prompt);
+  runtime.ui.turnStart(options.displayText ?? prompt);
 
   const ownsUnit = !options.gitSafetyUnit && Boolean(runtime.gitSafety);
   let unit = options.gitSafetyUnit;
@@ -72,7 +78,7 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
   let coreResult: AgentTurnResult = { ok: true, session: runtime.session, outcome: 'done' };
   let thrown: unknown;
   try {
-    coreResult = await runAgentTurnCore(runtime, prompt);
+    coreResult = await runAgentTurnCore(runtime, prompt, options);
   } catch (error) {
     thrown = error;
     coreResult = {
@@ -97,9 +103,13 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
   return { ...coreResult, gitSafety };
 }
 
-async function runAgentTurnCore(runtime: AgentRuntime, prompt: string): Promise<AgentTurnResult> {
+async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: AgentTurnOptions = {}): Promise<AgentTurnResult> {
   const recentTools = recentToolResultsFromSession(runtime.session);
-  await runtime.sessions.appendMessage(runtime.session, { role: 'user', content: prompt });
+  await runtime.sessions.appendMessage(runtime.session, {
+    role: 'user',
+    content: prompt,
+    parts: options.parts,
+  });
   const projectContext = formatProjectContext(await readProjectContext(runtime.config.workspaceRoot));
   const extraction = extractCommand(prompt);
   const commandPlan = planCommand(extraction);

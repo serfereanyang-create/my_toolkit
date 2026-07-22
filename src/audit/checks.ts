@@ -178,7 +178,11 @@ function buildChecks(root: string): Check[] {
     'tests/audit.test.ts',
     'src/cli/liveSmoke.ts',
     'src/cli/liveSmokeMain.ts',
+    'src/cli/input.ts',
+    'src/cli/attachments.ts',
+    'src/cli/limits.ts',
     'tests/fixtures/mcp-echo-server.mjs',
+    'tests/input-attachments.test.ts',
   ];
   requiredFiles.forEach((path) => checks.push({ name: `file exists: ${path}`, run: () => exists(path) }));
 
@@ -315,6 +319,18 @@ function buildChecks(root: string): Check[] {
       (await contains('src/safety/sandbox.ts', needle))
       || (await contains('src/tools/shell.ts', needle))
       || (await contains('src/plugins/loader.ts', needle)),
+  }));
+
+  const inputNeedles = ['MAX_USER_TEXT_BYTES_HARD', 'readUserTurn', 'foldTextByLines', 'prepareUserContent', 'captureClipboardImage', 'noWrap', 'image_url'];
+  inputNeedles.forEach((needle) => checks.push({
+    name: `input/attachments source contains ${needle}`,
+    run: async () =>
+      (await contains('src/cli/limits.ts', needle))
+      || (await contains('src/cli/input.ts', needle))
+      || (await contains('src/cli/attachments.ts', needle))
+      || (await contains('src/providers/protocol.ts', needle))
+      || (await contains('src/ui/terminal.ts', needle))
+      || (await contains('src/cli/commands.ts', needle)),
   }));
 
   const hookNeedles = ['createNoopHooks', 'beforeTool', 'afterTool', 'onError'];
@@ -588,7 +604,7 @@ function buildChecks(root: string): Check[] {
     },
   });
 
-  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run live-smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget', 'Git workflow', 'Native tool calling', 'stream', 'Live provider smoke', 'MCP', '.aicode/mcp.json', '/mcp', 'Process sandbox', 'AICODE_SANDBOX'];
+  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run live-smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget', 'Git workflow', 'Native tool calling', 'stream', 'Live provider smoke', 'MCP', '.aicode/mcp.json', '/mcp', 'Process sandbox', 'AICODE_SANDBOX', '/attach', '/paste-image', '25KB'];
   readmeNeedles.forEach((needle) => checks.push({ name: `README contains ${needle}`, run: () => contains('README.md', needle) }));
 
   const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'stdio', 'OS sandbox', 'process sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Python/Go/Rust/Java/Kotlin', 'Context budget / compaction', 'aicode/board-', 'native tools/tool_calls', 'SSE text streaming', 'live provider smoke'];

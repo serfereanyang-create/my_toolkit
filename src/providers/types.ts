@@ -4,11 +4,17 @@ export type ApprovalMode = 'ask' | 'auto' | 'deny';
 
 export type AgentRole = 'system' | 'user' | 'assistant' | 'tool';
 
+export type MessagePart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; mediaType: string; data: string; path?: string };
+
 export type AgentMessage = {
   role: AgentRole;
   content: string;
   name?: string;
   createdAt: string;
+  /** Optional multimodal parts (vision images). content remains a text summary for tools/logs. */
+  parts?: MessagePart[];
 };
 
 export type AgentAction =

@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline/promises';
+import { readFile } from 'node:fs/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { runAgentTurn, type AgentRuntime, type AgentTurnResult } from '../agent/agent.js';
 import { handleLazyDevInput } from '../guard/lazyDevGuard.js';
@@ -6,10 +7,16 @@ import { formatMemories } from '../memory/format.js';
 import { selectRelevantMemories } from '../memory/select.js';
 import { ProjectMemoryStore } from '../memory/store.js';
 import { commitBoardChanges, ensureBoardBranch, previewBoardCommit } from '../git-safety/workflow.js';
+import type { MessagePart } from '../providers/types.js';
 import { planBoardFromGoal, shouldUseTaskBoard } from '../tasks/planner.js';
 import { confirmBoard, formatBoard, runTaskBoardLoop } from '../tasks/runtime.js';
 import { TaskBoardStore } from '../tasks/store.js';
+import { prepareUserContent, type Attachment } from './attachments.js';
 import { handleSlashCommand } from './commands.js';
+import { isSlashCommandLine, readUserTurn } from './input.js';
+import { assertUserTextWithinLimit, formatByteSize } from './limits.js';
+
+type TurnExtras = { parts?: MessagePart[]; displayText?: string };
 
 export async function runPromptMode(runtime: AgentRuntime, prompt: string): Promise<AgentTurnResult> {
   if (prompt.startsWith('/')) {
@@ -20,10 +27,19 @@ export async function runPromptMode(runtime: AgentRuntime, prompt: string): Prom
     }
     return { ok: true, session: runtime.session };
   }
-  return runGuardedAgentTurn(runtime, prompt);
+  assertUserTextWithinLimit(prompt);
+  const prepared = await prepareUserContent({
+    text: prompt,
+    workspaceRoot: runtime.config.workspaceRoot,
+    sessionId: runtime.session.id,
+  });
+  return runGuardedAgentTurn(runtime, prepared.text, {
+    parts: prepared.parts,
+    displayText: prepared.displaySummary,
+  });
 }
 
-async function runGuardedAgentTurn(runtime: AgentRuntime, line: string): Promise<AgentTurnResult> {
+async function runGuardedAgentTurn(runtime: AgentRuntime, line: string, extras?: TurnExtras): Promise<AgentTurnResult> {
   const guard = runtime.session.guard?.lazyDev;
   if (guard?.enabled) {
     const guardResult = handleLazyDevInput(guard, line);
@@ -32,14 +48,17 @@ async function runGuardedAgentTurn(runtime: AgentRuntime, line: string): Promise
     if (!guardResult.allowDevelopment) {
       return { ok: true, session: runtime.session, reason: guardResult.reason };
     }
-    return handleDevelopmentPrompt(runtime, guardResult.developmentPrompt ?? line);
+    return handleDevelopmentPrompt(runtime, guardResult.developmentPrompt ?? line, extras);
   }
-  return handleDevelopmentPrompt(runtime, line);
+  return handleDevelopmentPrompt(runtime, line, extras);
 }
 
-async function handleDevelopmentPrompt(runtime: AgentRuntime, prompt: string): Promise<AgentTurnResult> {
+async function handleDevelopmentPrompt(runtime: AgentRuntime, prompt: string, extras?: TurnExtras): Promise<AgentTurnResult> {
   if (!shouldUseTaskBoard(prompt)) {
-    return runAgentTurn(runtime, prompt);
+    return runAgentTurn(runtime, prompt, {
+      parts: extras?.parts,
+      displayText: extras?.displayText,
+    });
   }
 
   const store = new TaskBoardStore(runtime.config.workspaceRoot);
@@ -171,20 +190,32 @@ async function maybeCommitCompletedBoard(
 
 export async function runRepl(runtime: AgentRuntime) {
   const rl = createInterface({ input, output });
+  if (!runtime.pendingAttachments) runtime.pendingAttachments = [];
   const interactiveRuntime: AgentRuntime = {
     ...runtime,
+    pendingAttachments: runtime.pendingAttachments,
     confirm: async (message) => {
       const answer = (await rl.question(`${message} [y/N] `)).trim().toLowerCase();
       return answer === 'y' || answer === 'yes';
     },
   };
-  runtime.ui.info('Type /help for commands. Type /exit to quit.');
+  runtime.ui.info(
+    'Type /help. Multiline: """ … """ or /paste (original newlines, no bash reflow). /attach <path>, /paste-image. Text limit 25KB.',
+  );
   try {
     while (true) {
-      const line = (await rl.question('aicode> ')).trim();
-      if (!line) continue;
-      if (line.startsWith('/')) {
-        const result = await handleSlashCommand({ line, ...interactiveRuntime });
+      let turn;
+      try {
+        turn = await readUserTurn(rl, 'aicode> ');
+      } catch (error) {
+        runtime.ui.error(error instanceof Error ? error.message : String(error));
+        continue;
+      }
+      if (!turn) break;
+      if (!turn.text.trim() && (interactiveRuntime.pendingAttachments?.length ?? 0) === 0) continue;
+
+      if (isSlashCommandLine(turn.text) && !turn.multiline) {
+        const result = await handleSlashCommand({ line: turn.text.trim(), ...interactiveRuntime });
         if (result === '__EXIT__') break;
         runtime.ui.info(result);
         if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
@@ -192,10 +223,80 @@ export async function runRepl(runtime: AgentRuntime) {
         }
         continue;
       }
-      await runGuardedAgentTurn(interactiveRuntime, line);
+
+      try {
+        await submitUserTurn(interactiveRuntime, turn.text);
+      } catch (error) {
+        runtime.ui.error(error instanceof Error ? error.message : String(error));
+      }
     }
   } finally {
     rl.close();
   }
   return runtime.session;
+}
+
+async function submitUserTurn(runtime: AgentRuntime, text: string) {
+  assertUserTextWithinLimit(text);
+  const staged = runtime.pendingAttachments ?? [];
+  runtime.pendingAttachments = [];
+
+  const prepared = await prepareUserContent({
+    text: text || (staged.length > 0 ? '(see attachments)' : ''),
+    workspaceRoot: runtime.config.workspaceRoot,
+    sessionId: runtime.session.id,
+  });
+
+  const attachments = mergeAttachments(prepared.attachments, staged);
+  const parts = await buildParts(prepared.text, attachments);
+  const displayText = attachments.length === 0
+    ? text
+    : `${text.trim() || '(attachments)'}\n(+${attachments.length} attachment(s): ${attachments.map((a) => a.name).join(', ')})`;
+
+  if (attachments.length > 0) {
+    runtime.ui.info(
+      `Attached ${attachments.length} file(s): ${attachments.map((a) => a.name).join(', ')} (${formatByteSize(attachments.reduce((n, a) => n + a.bytes, 0))})`,
+    );
+  }
+
+  await runGuardedAgentTurn(runtime, prepared.text, {
+    parts,
+    displayText,
+  });
+}
+
+function mergeAttachments(fromText: Attachment[], staged: Attachment[]) {
+  const byPath = new Map<string, Attachment>();
+  for (const item of [...fromText, ...staged]) byPath.set(item.storedPath, item);
+  return [...byPath.values()];
+}
+
+async function buildParts(text: string, attachments: Attachment[]): Promise<MessagePart[]> {
+  const notes = [text.trimEnd()];
+  if (attachments.length > 0) {
+    const missing = attachments.filter((a) => !text.includes(a.storedPath));
+    if (missing.length > 0) {
+      notes.push('');
+      notes.push('[attachments]');
+      for (const item of missing) {
+        notes.push(
+          item.kind === 'image'
+            ? `- image: ${item.name} (${item.bytes} bytes) stored at ${item.storedPath}`
+            : `- file: ${item.name} path=${item.storedPath} (use read_file/list_files as needed)`,
+        );
+      }
+    }
+  }
+  const fullText = notes.join('\n');
+  const parts: MessagePart[] = [{ type: 'text', text: fullText }];
+  for (const item of attachments.filter((a) => a.kind === 'image')) {
+    const raw = await readFile(item.storedPath);
+    parts.push({
+      type: 'image',
+      mediaType: item.mediaType ?? 'image/png',
+      data: raw.toString('base64'),
+      path: item.storedPath,
+    });
+  }
+  return parts;
 }

@@ -5,6 +5,7 @@ import {
   iterateSseDataLines,
   parseAnthropicContentBlocks,
   parseToolActions,
+  toAnthropicAwareMessages,
   toAnthropicTools,
 } from './protocol.js';
 
@@ -28,7 +29,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
         temperature: 0.2,
         stream: true,
         system: buildToolSystemPrompt(request.tools, request.projectContext, request.toolStrategy),
-        messages: toAnthropicMessages(request.messages),
+        messages: toAnthropicAwareMessages(request.messages),
       };
       if (tools.length > 0) body.tools = tools;
 
@@ -101,14 +102,6 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
       return { actions: parseAnthropicContentBlocks([]), raw: { stream: events, text } };
     },
   };
-}
-
-function toAnthropicMessages(messages: AgentMessage[]) {
-  const converted = messages.map((message) => ({
-    role: message.role === 'assistant' ? 'assistant' : 'user',
-    content: message.name ? `[tool:${message.name}] ${message.content}` : message.content,
-  }));
-  return converted.length > 0 ? converted : [{ role: 'user', content: 'Start.' }];
 }
 
 function parseJsonObject(value: string): unknown {
