@@ -183,6 +183,7 @@ function buildChecks(root: string): Check[] {
     'src/cli/limits.ts',
     'tests/fixtures/mcp-echo-server.mjs',
     'tests/input-attachments.test.ts',
+    'tests/read-paths.test.ts',
   ];
   requiredFiles.forEach((path) => checks.push({ name: `file exists: ${path}`, run: () => exists(path) }));
 
@@ -331,6 +332,14 @@ function buildChecks(root: string): Check[] {
       || (await contains('src/providers/protocol.ts', needle))
       || (await contains('src/ui/terminal.ts', needle))
       || (await contains('src/cli/commands.ts', needle)),
+  }));
+
+  const readPathNeedles = ['resolveReadablePath', 'extractDocxText', 'desktop/'];
+  readPathNeedles.forEach((needle) => checks.push({
+    name: `readable path source contains ${needle}`,
+    run: async () =>
+      (await contains('src/safety/policy.ts', needle))
+      || (await contains('src/tools/files.ts', needle)),
   }));
 
   const hookNeedles = ['createNoopHooks', 'beforeTool', 'afterTool', 'onError'];

@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { relative, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { ApprovalMode } from '../providers/types.js';
 
 export type ToolRisk = 'read' | 'write' | 'shell';
@@ -53,6 +54,44 @@ export function resolveWorkspacePath(workspaceRoot: string, targetPath: string) 
   throw new Error(`Path escapes workspace: ${targetPath}`);
 }
 
+/**
+ * Read-only path resolution. Allows:
+ * - workspace-relative paths
+ * - desktop/... and bare desktop filenames
+ * - absolute paths under home Desktop / Documents / Downloads / home / workspace
+ * Writes still use resolveWorkspacePath (except dedicated desktop tools).
+ */
+export function resolveReadablePath(workspaceRoot: string, targetPath: string) {
+  const raw = targetPath.trim().replace(/^["']|["']$/g, '');
+  if (!raw) throw new Error('path is required');
+  const normalized = raw.replace(/\\/g, '/');
+
+  if (/^desktop(\/|$)/i.test(normalized)) {
+    const rest = normalized.replace(/^desktop\/?/i, '');
+    const desktop = join(homedir(), 'Desktop');
+    const resolved = rest ? resolve(desktop, rest) : desktop;
+    assertUnderAllowedReadRoot(resolved, workspaceRoot);
+    return resolved;
+  }
+
+  if (isAbsolute(raw) || /^[A-Za-z]:[\\/]/.test(raw)) {
+    const resolved = resolve(raw);
+    assertUnderAllowedReadRoot(resolved, workspaceRoot);
+    return resolved;
+  }
+
+  try {
+    return resolveWorkspacePath(workspaceRoot, raw);
+  } catch {
+    // Fall through: maybe user meant Desktop/file without the desktop/ prefix
+    const desktopCandidate = resolve(join(homedir(), 'Desktop'), raw);
+    if (isPathInside(join(homedir(), 'Desktop'), desktopCandidate)) {
+      return desktopCandidate;
+    }
+    throw new Error(`Path escapes workspace: ${targetPath}`);
+  }
+}
+
 export function isInsideWorkspace(workspaceRoot: string, targetPath: string) {
   try {
     resolveWorkspacePath(workspaceRoot, targetPath);
@@ -60,6 +99,28 @@ export function isInsideWorkspace(workspaceRoot: string, targetPath: string) {
   } catch {
     return false;
   }
+}
+
+function allowedReadRoots(workspaceRoot: string) {
+  const home = homedir();
+  return [
+    resolve(workspaceRoot),
+    join(home, 'Desktop'),
+    join(home, 'Documents'),
+    join(home, 'Downloads'),
+    home,
+  ];
+}
+
+function assertUnderAllowedReadRoot(resolved: string, workspaceRoot: string) {
+  const roots = allowedReadRoots(workspaceRoot);
+  if (roots.some((root) => isPathInside(root, resolved))) return;
+  throw new Error(`Path not allowed for read: ${resolved}. Allowed: workspace, Desktop, Documents, Downloads, home.`);
+}
+
+function isPathInside(root: string, target: string) {
+  const rel = relative(resolve(root), resolve(target));
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
 export function isBlockedCommand(command: string) {
