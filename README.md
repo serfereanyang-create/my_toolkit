@@ -339,6 +339,17 @@ The default tool registry includes project indexing, file read/write/search, she
 
 Project context is collected from `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and `README.md` when present, then passed to hosted providers as project instructions.
 
+## Process sandbox
+
+`run_command` and plugin command tools run through a process sandbox:
+
+- Forced workspace `cwd`
+- Secret env scrubbing (API keys/tokens stripped from child env)
+- Timeout with process-tree kill (Windows `taskkill /T`, POSIX process group)
+- Max output buffer and command null-byte/length guards
+
+This is **not** a container or AppContainer. Set `AICODE_SANDBOX=0` to disable secret scrubbing only (timeout kill remains).
+
 ## Plugins And Hooks
 
 A local `.aicode/plugins.json` manifest can declare simple plugin command tools. Plugin tools are registered into the same tool registry and still pass through the existing approval policy.

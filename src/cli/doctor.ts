@@ -2,6 +2,7 @@ import { access, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AppConfig } from '../config/types.js';
 import type { McpManager } from '../mcp/manager.js';
+import { isSandboxScrubEnabled } from '../safety/sandbox.js';
 import type { Provider } from '../providers/types.js';
 import type { ToolRegistry } from '../tools/index.js';
 
@@ -25,6 +26,7 @@ export async function runDoctor(
     toolRegistryCheck(tools),
     providerCheck(provider),
     mcpCheck(mcp),
+    sandboxCheck(),
   ];
 }
 
@@ -83,4 +85,15 @@ function mcpCheck(mcp?: McpManager): DoctorCheck {
     };
   }
   return { name: 'mcp', ok: true, detail: `${connected} connected, tools=${tools}` };
+}
+
+function sandboxCheck(): DoctorCheck {
+  const scrub = isSandboxScrubEnabled();
+  return {
+    name: 'sandbox',
+    ok: true,
+    detail: scrub
+      ? 'process sandbox active (secret env scrub on; timeout tree-kill)'
+      : 'process sandbox active (secret env scrub OFF via AICODE_SANDBOX; timeout tree-kill still on)',
+  };
 }

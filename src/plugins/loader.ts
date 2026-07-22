@@ -1,9 +1,6 @@
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
-import { readPluginManifest, type PluginToolManifest } from './manifest.js';
+import { formatSandboxResult, runSandboxedCommand } from '../safety/sandbox.js';
 import type { ToolDefinition } from '../tools/types.js';
-
-const execAsync = promisify(exec);
+import { readPluginManifest, type PluginToolManifest } from './manifest.js';
 
 export async function loadPluginTools(workspaceRoot: string): Promise<ToolDefinition[]> {
   const manifest = await readPluginManifest(workspaceRoot);
@@ -23,9 +20,25 @@ function pluginToolDefinition(tool: PluginToolManifest): ToolDefinition<{ comman
       return { command: tool.command, timeoutMs: typeof record.timeoutMs === 'number' && record.timeoutMs > 0 ? Math.min(Math.floor(record.timeoutMs), 120000) : 30000 };
     },
     async execute(input, context) {
-      const result = await execAsync(input.command, { cwd: context.workspaceRoot, timeout: input.timeoutMs, maxBuffer: 1024 * 1024, windowsHide: true });
-      const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n');
-      return { ok: true, output: output || '(no output)', data: { plugin: tool.name } };
+      try {
+        const result = await runSandboxedCommand({
+          command: input.command,
+          cwd: context.workspaceRoot,
+          timeoutMs: input.timeoutMs,
+          maxBuffer: 1024 * 1024,
+        });
+        const formatted = formatSandboxResult(result, input.command);
+        return {
+          ...formatted,
+          data: { ...(typeof formatted.data === 'object' && formatted.data ? formatted.data : {}), plugin: tool.name },
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          output: `Plugin command failed: ${error instanceof Error ? error.message : String(error)}`,
+          data: { plugin: tool.name },
+        };
+      }
     },
   };
 }

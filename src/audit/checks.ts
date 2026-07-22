@@ -140,6 +140,7 @@ function buildChecks(root: string): Check[] {
     'src/mcp/bridge.ts',
     'src/mcp/manager.ts',
     'src/safety/policy.ts',
+    'src/safety/sandbox.ts',
     'src/audit/checks.ts',
     'tests/cli-process.test.ts',
     'tests/activity.test.ts',
@@ -148,6 +149,7 @@ function buildChecks(root: string): Check[] {
     'tests/context-budget.test.ts',
     'tests/plugins.test.ts',
     'tests/mcp.test.ts',
+    'tests/sandbox.test.ts',
     'tests/process.test.ts',
     'tests/smoke.test.ts',
     'tests/terminal-ui.test.ts',
@@ -304,6 +306,15 @@ function buildChecks(root: string): Check[] {
       || (await contains('src/index.ts', needle)),
   }));
 
+  const sandboxNeedles = ['runSandboxedCommand', 'buildSandboxEnv', 'killProcessTree', 'AICODE_SANDBOX', 'taskkill', 'isSecretEnvKey'];
+  sandboxNeedles.forEach((needle) => checks.push({
+    name: `sandbox source contains ${needle}`,
+    run: async () =>
+      (await contains('src/safety/sandbox.ts', needle))
+      || (await contains('src/tools/shell.ts', needle))
+      || (await contains('src/plugins/loader.ts', needle)),
+  }));
+
   const hookNeedles = ['createNoopHooks', 'beforeTool', 'afterTool', 'onError'];
   hookNeedles.forEach((needle) => checks.push({ name: `hook source contains ${needle}`, run: () => contains('src/hooks/hooks.ts', needle) }));
 
@@ -442,6 +453,15 @@ function buildChecks(root: string): Check[] {
   ];
   mcpTestNeedles.forEach((needle) => checks.push({ name: `mcp test contains ${needle}`, run: () => contains('tests/mcp.test.ts', needle) }));
 
+  const sandboxTestNeedles = [
+    'sandbox env scrub removes secrets',
+    'validateSandboxCommand rejects null bytes',
+    'runSandboxedCommand executes in workspace',
+    'times out and kills hanging process',
+    'run_command tool uses sandbox',
+  ];
+  sandboxTestNeedles.forEach((needle) => checks.push({ name: `sandbox test contains ${needle}`, run: () => contains('tests/sandbox.test.ts', needle) }));
+
   const processTestNeedles = ['process_memory tool reports', 'mock provider uses process_memory', 'tool system prompt tells models'];
   processTestNeedles.forEach((needle) => checks.push({ name: `process test contains ${needle}`, run: () => contains('tests/process.test.ts', needle) }));
 
@@ -566,10 +586,10 @@ function buildChecks(root: string): Check[] {
     },
   });
 
-  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run live-smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget', 'Git workflow', 'Native tool calling', 'stream', 'Live provider smoke', 'MCP', '.aicode/mcp.json', '/mcp'];
+  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run live-smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget', 'Git workflow', 'Native tool calling', 'stream', 'Live provider smoke', 'MCP', '.aicode/mcp.json', '/mcp', 'Process sandbox', 'AICODE_SANDBOX'];
   readmeNeedles.forEach((needle) => checks.push({ name: `README contains ${needle}`, run: () => contains('README.md', needle) }));
 
-  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'stdio', 'OS sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget / compaction', 'aicode/board-', 'native tools/tool_calls', 'SSE text streaming', 'live provider smoke'];
+  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'stdio', 'OS sandbox', 'process sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget / compaction', 'aicode/board-', 'native tools/tool_calls', 'SSE text streaming', 'live provider smoke'];
   matrixNeedles.forEach((needle) => checks.push({ name: `capability matrix contains ${needle}`, run: () => contains('docs/capability-matrix.md', needle) }));
 
   const liveSmokeNeedles = ['resolveLiveSmokePlan', 'runLiveSmoke', 'AICODE_LIVE_SMOKE', 'OPENAI_API_KEY'];

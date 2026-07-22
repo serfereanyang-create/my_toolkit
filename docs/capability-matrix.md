@@ -13,7 +13,7 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Doctor diagnostics | Implemented | `--doctor`, JSON doctor output |
 | Safety approvals/path policy | Implemented MVP | approval modes, command allow/block lists, workspace path guard, checkpoint before writes |
 | File tools | Implemented | list/read/write/search/patch/rename/docx |
-| Shell execution | Implemented MVP | approved shell command execution with timeout and max buffer |
+| Shell execution | Implemented MVP | approved shell command execution via process sandbox (timeout tree-kill, max buffer, secret env scrub) |
 | Diff/patch/undo | Implemented MVP | diff preview for write approval, apply patch, checkpoints, `/undo` |
 | Session resume/export | Implemented | session JSON store, `--resume`, `/sessions`, `/summary`, `/plan`, `/export` |
 | Context budget / compaction | Implemented MVP | Outbound message packing with char budget (`AICODE_CONTEXT_BUDGET_CHARS`), tool output clipping, older-history summary; disk session keeps full history |
@@ -29,7 +29,7 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Tests/audit | Implemented | typecheck, node:test suite, structural audit above 100 checks, mock smoke + optional live provider smoke |
 | Plugins/hooks | Implemented MVP | `.aicode/plugins.json` command tools, approval policy, `beforeTool`, `afterTool`, `onError` hooks |
 | MCP | Implemented MVP | stdio JSON-RPC client (Content-Length), `.aicode/mcp.json`, tools bridged as `mcp_<server>_<tool>`, `/mcp` + `/mcp reload`, doctor check, `AICODE_MCP=0` disable; no HTTP/SSE remote transport yet |
-| OS sandbox | Advanced / not complete | Policy gating exists; no container/OS-level sandbox is claimed |
+| OS sandbox | Implemented MVP | Process sandbox for `run_command` + plugin tools: workspace cwd, secret env scrub (`AICODE_SANDBOX=0` disables scrub), timeout process-tree kill, command null-byte/length guards; not a container/AppContainer |
 | Native provider streaming/tool calls | Implemented MVP | Native tool calling + SSE text streaming for OpenAI/Anthropic; mock remains non-streaming |
 | Signed distribution/update | Advanced / not complete | npm-style package metadata exists; signed release/update is future work |
 

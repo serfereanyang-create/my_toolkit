@@ -1,12 +1,9 @@
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
+import { formatSandboxResult, runSandboxedCommand } from '../safety/sandbox.js';
 import type { ToolDefinition } from './types.js';
-
-const execAsync = promisify(exec);
 
 export const runCommandTool: ToolDefinition<{ command: string; timeoutMs: number }> = {
   name: 'run_command',
-  description: 'Run an approved shell command in the workspace.',
+  description: 'Run an approved shell command in the workspace under the process sandbox.',
   inputHint: '{ "command": "node --version", "timeoutMs": 30000 }',
   risk: 'shell',
   validate(input) {
@@ -19,13 +16,20 @@ export const runCommandTool: ToolDefinition<{ command: string; timeoutMs: number
     };
   },
   async execute(input, context) {
-    const result = await execAsync(input.command, {
-      cwd: context.workspaceRoot,
-      timeout: input.timeoutMs,
-      maxBuffer: 1024 * 1024,
-      windowsHide: true,
-    });
-    const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n');
-    return { ok: true, output: output || '(no output)', data: { command: input.command } };
+    try {
+      const result = await runSandboxedCommand({
+        command: input.command,
+        cwd: context.workspaceRoot,
+        timeoutMs: input.timeoutMs,
+        maxBuffer: 1024 * 1024,
+      });
+      return formatSandboxResult(result, input.command);
+    } catch (error) {
+      return {
+        ok: false,
+        output: `Command failed: ${error instanceof Error ? error.message : String(error)}`,
+        data: { command: input.command },
+      };
+    }
   },
 };
