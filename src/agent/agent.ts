@@ -11,6 +11,7 @@ import type { AgentAction, Provider } from '../providers/types.js';
 import type { HookRegistry } from '../hooks/hooks.js';
 import type { CheckpointStore } from '../session/checkpoint.js';
 import type { SessionRecord, SessionStore } from '../session/store.js';
+import type { McpManager } from '../mcp/manager.js';
 import type { ToolRegistry } from '../tools/index.js';
 import type { TerminalUI } from '../ui/terminal.js';
 import { executeCommandPlan, extractCommand, formatCommandStrategy, planCommand } from './commandExtract/index.js';
@@ -34,6 +35,8 @@ export type AgentRuntime = {
   gitPublisher?: GitRemotePublisher;
   gitProcess?: GitProcess;
   gitRepository?: GitRepository;
+  mcp?: McpManager;
+  reloadMcp?: () => Promise<McpManager>;
 };
 
 export type AgentTurnOptions = {

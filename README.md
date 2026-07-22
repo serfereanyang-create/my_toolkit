@@ -145,6 +145,8 @@ node cli/dist/src/index.js --resume sess_YYYYMMDDHHMMSS_xxxxxxxx
 - `/provider`
 - `/model`
 - `/tools`
+- `/mcp` - show MCP server status
+- `/mcp reload` - reconnect MCP servers and refresh tools
 - `/summary`
 - `/plan` - show current task board
 - `/plan confirm|pause|continue|skip|reopen|show` - control task board execution
@@ -353,7 +355,31 @@ A local `.aicode/plugins.json` manifest can declare simple plugin command tools.
 }
 ```
 
-The runtime exposes no-op hook lifecycle points for `beforeTool`, `afterTool`, and `onError`. This is plugin-ready/MCP-ready groundwork, not a full MCP implementation.
+The runtime exposes no-op hook lifecycle points for `beforeTool`, `afterTool`, and `onError`.
+
+## MCP
+
+Local stdio MCP servers can be declared in `.aicode/mcp.json`. On startup aicode initializes each enabled server, lists tools, and registers them as `mcp_<server>_<tool>` into the same approval-gated tool registry.
+
+```json
+{
+  "servers": {
+    "echo": {
+      "command": "node",
+      "args": ["tests/fixtures/mcp-echo-server.mjs"],
+      "env": {},
+      "enabled": true
+    }
+  }
+}
+```
+
+Slash commands:
+
+- `/mcp` — show server connection status and tool counts
+- `/mcp reload` — reconnect servers and refresh tools
+
+Disable all MCP loading with `AICODE_MCP=0`. This MVP supports stdio + Content-Length framing only (no HTTP/SSE remote transport yet).
 
 ## Capability Matrix
 

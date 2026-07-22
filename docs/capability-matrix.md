@@ -28,7 +28,7 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Providers | Implemented MVP | mock, OpenAI-compatible, Anthropic adapters; native tools/tool_calls and tool_use with text JSON fallback; SSE text streaming |
 | Tests/audit | Implemented | typecheck, node:test suite, structural audit above 100 checks, mock smoke + optional live provider smoke |
 | Plugins/hooks | Implemented MVP | `.aicode/plugins.json` command tools, approval policy, `beforeTool`, `afterTool`, `onError` hooks |
-| MCP | Advanced / not complete | Plugin/hook groundwork exists; full MCP protocol is out of MVP scope |
+| MCP | Implemented MVP | stdio JSON-RPC client (Content-Length), `.aicode/mcp.json`, tools bridged as `mcp_<server>_<tool>`, `/mcp` + `/mcp reload`, doctor check, `AICODE_MCP=0` disable; no HTTP/SSE remote transport yet |
 | OS sandbox | Advanced / not complete | Policy gating exists; no container/OS-level sandbox is claimed |
 | Native provider streaming/tool calls | Implemented MVP | Native tool calling + SSE text streaming for OpenAI/Anthropic; mock remains non-streaming |
 | Signed distribution/update | Advanced / not complete | npm-style package metadata exists; signed release/update is future work |

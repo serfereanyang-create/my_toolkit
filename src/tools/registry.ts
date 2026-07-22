@@ -5,8 +5,8 @@ import { toolToProviderSpec, type ToolContext, type ToolDefinition, type ToolRes
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
 
-  register(tool: ToolDefinition) {
-    if (this.tools.has(tool.name)) {
+  register(tool: ToolDefinition, options?: { replace?: boolean }) {
+    if (this.tools.has(tool.name) && !options?.replace) {
       throw new Error(`Tool already registered: ${tool.name}`);
     }
     this.tools.set(tool.name, tool);

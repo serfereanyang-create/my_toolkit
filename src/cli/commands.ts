@@ -24,6 +24,7 @@ import {
 } from '../tasks/runtime.js';
 import { TaskBoardStore } from '../tasks/store.js';
 import type { ToolRegistry } from '../tools/index.js';
+import { formatMcpStatus, type McpManager } from '../mcp/manager.js';
 
 export async function handleSlashCommand(options: {
   line: string;
@@ -38,6 +39,8 @@ export async function handleSlashCommand(options: {
   gitPublisher?: GitRemotePublisher;
   gitProcess?: GitProcess;
   gitRepository?: GitRepository;
+  mcp?: McpManager;
+  reloadMcp?: () => Promise<McpManager>;
 }) {
   const command = options.line.trim();
   if (command === '/不准偷懒开发' || command.startsWith('/不准偷懒开发 ')) {
@@ -55,6 +58,9 @@ export async function handleSlashCommand(options: {
   if (command === '/git' || command.startsWith('/git ')) {
     return handleGitCommand(command, options);
   }
+  if (command === '/mcp' || command.startsWith('/mcp ')) {
+    return handleMcpCommand(command, options);
+  }
 
   switch (command) {
     case '/help':
@@ -66,6 +72,7 @@ export async function handleSlashCommand(options: {
         '/model      Show active model',
         '/config     Show effective redacted configuration',
         '/tools      List available tools',
+        '/mcp        Show MCP servers (use /mcp reload)',
         '/summary    Summarize the current session',
         '/plan       Show task board (use /plan confirm|pause|continue|skip|reopen|show)',
         '/memory     Show project memory (use /memory add|list|forget)',
@@ -106,6 +113,26 @@ export async function handleSlashCommand(options: {
     default:
       return `Unknown command: ${command}. Try /help.`;
   }
+}
+
+async function handleMcpCommand(
+  command: string,
+  options: {
+    mcp?: McpManager;
+    reloadMcp?: () => Promise<McpManager>;
+  },
+) {
+  const args = command.slice('/mcp'.length).trim();
+  const action = args.split(/\s+/).filter(Boolean)[0] ?? 'status';
+  if (action === 'reload') {
+    if (!options.reloadMcp) return 'MCP reload is unavailable in this mode.';
+    const manager = await options.reloadMcp();
+    return formatMcpStatus(manager.statuses);
+  }
+  if (action === 'status' || action === '') {
+    return formatMcpStatus(options.mcp?.statuses ?? []);
+  }
+  return 'Unknown /mcp action. Try /mcp or /mcp reload.';
 }
 
 async function handleRollbackCommand(

@@ -16,6 +16,7 @@ import { GitRollbackService } from './git-safety/rollback.js';
 import { GitSafetyService } from './git-safety/service.js';
 import { GitSnapshotStore } from './git-safety/snapshot.js';
 import { createNoopHooks } from './hooks/hooks.js';
+import { formatMcpStatus, loadMcpManager } from './mcp/manager.js';
 import { loadPluginTools } from './plugins/loader.js';
 import { createProvider } from './providers/index.js';
 import { CheckpointStore } from './session/checkpoint.js';
@@ -40,17 +41,27 @@ async function main() {
   const provider = createProvider(config);
   const tools = createDefaultToolRegistry();
   for (const tool of await loadPluginTools(config.workspaceRoot)) tools.register(tool);
+  const existingNames = new Set(tools.list().map((tool) => tool.name));
+  let mcp = await loadMcpManager({ workspaceRoot: config.workspaceRoot, existingNames });
+  for (const tool of mcp.tools) {
+    try {
+      tools.register(tool);
+    } catch {
+      // name collision after partial load — skip
+    }
+  }
   const hooks = createNoopHooks();
   const ui = new TerminalUI({ quiet: config.quiet, json: config.json, noColor: config.noColor });
 
   if (config.doctor) {
-    const checks = await runDoctor(config, provider, tools);
+    const checks = await runDoctor(config, provider, tools, mcp);
     if (config.json) {
       process.stdout.write(`${JSON.stringify({ type: 'doctor', ok: checks.every((check) => check.ok), checks })}\n`);
     } else {
       process.stdout.write(`${formatDoctor(checks)}\n`);
     }
     if (checks.some((check) => !check.ok)) process.exitCode = 1;
+    await mcp.close();
     return;
   }
 
@@ -70,6 +81,7 @@ async function main() {
 
   ui.banner(config, provider);
   if (config.resumeSessionId) ui.info(`resumed session: ${session.id}`);
+  if (mcp.statuses.some((status) => status.enabled)) ui.info(formatMcpStatus(mcp.statuses));
 
   const runtime = {
     config,
@@ -85,21 +97,40 @@ async function main() {
     gitPublisher,
     gitProcess,
     gitRepository,
+    get mcp() {
+      return mcp;
+    },
+    async reloadMcp() {
+      await mcp.close();
+      const existingNames = new Set(
+        tools.list().filter((tool) => !tool.name.startsWith('mcp_')).map((tool) => tool.name),
+      );
+      const next = await loadMcpManager({ workspaceRoot: config.workspaceRoot, existingNames });
+      for (const tool of next.tools) {
+        tools.register(tool, { replace: true });
+      }
+      mcp = next;
+      return mcp;
+    },
   };
-  if (config.prompt !== undefined) {
-    if (!config.prompt.startsWith('/')) requireProviderAuth(config);
-    const result = await runPromptMode(runtime, config.prompt);
-    ui.final(result.ok, { session: session.id, reason: result.reason });
-    if (!result.ok) process.exitCode = 1;
-    return;
-  }
+  try {
+    if (config.prompt !== undefined) {
+      if (!config.prompt.startsWith('/')) requireProviderAuth(config);
+      const result = await runPromptMode(runtime, config.prompt);
+      ui.final(result.ok, { session: session.id, reason: result.reason });
+      if (!result.ok) process.exitCode = 1;
+      return;
+    }
 
-  if (config.noInput) {
-    throw new Error('No prompt supplied and --no-input/--ci prevents interactive mode. Pass --prompt or remove --no-input.');
-  }
+    if (config.noInput) {
+      throw new Error('No prompt supplied and --no-input/--ci prevents interactive mode. Pass --prompt or remove --no-input.');
+    }
 
-  requireProviderAuth(config);
-  await runRepl(runtime);
+    requireProviderAuth(config);
+    await runRepl(runtime);
+  } finally {
+    await mcp.close();
+  }
 }
 
 async function packageVersion() {

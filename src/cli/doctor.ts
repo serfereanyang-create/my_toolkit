@@ -1,6 +1,7 @@
 import { access, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AppConfig } from '../config/types.js';
+import type { McpManager } from '../mcp/manager.js';
 import type { Provider } from '../providers/types.js';
 import type { ToolRegistry } from '../tools/index.js';
 
@@ -10,7 +11,12 @@ export type DoctorCheck = {
   detail: string;
 };
 
-export async function runDoctor(config: AppConfig, provider: Provider, tools: ToolRegistry): Promise<DoctorCheck[]> {
+export async function runDoctor(
+  config: AppConfig,
+  provider: Provider,
+  tools: ToolRegistry,
+  mcp?: McpManager,
+): Promise<DoctorCheck[]> {
   return [
     nodeVersionCheck(),
     await pathExistsCheck('workspace', config.workspaceRoot),
@@ -18,6 +24,7 @@ export async function runDoctor(config: AppConfig, provider: Provider, tools: To
     providerAuthCheck(config),
     toolRegistryCheck(tools),
     providerCheck(provider),
+    mcpCheck(mcp),
   ];
 }
 
@@ -59,4 +66,21 @@ function toolRegistryCheck(tools: ToolRegistry): DoctorCheck {
 
 function providerCheck(provider: Provider): DoctorCheck {
   return { name: 'provider', ok: Boolean(provider.name && provider.model), detail: `${provider.name}/${provider.model}` };
+}
+
+function mcpCheck(mcp?: McpManager): DoctorCheck {
+  if (!mcp || mcp.statuses.length === 0) {
+    return { name: 'mcp', ok: true, detail: 'no servers configured' };
+  }
+  const failed = mcp.statuses.filter((status) => status.enabled && !status.connected);
+  const connected = mcp.statuses.filter((status) => status.connected).length;
+  const tools = mcp.tools.length;
+  if (failed.length > 0) {
+    return {
+      name: 'mcp',
+      ok: false,
+      detail: `${connected} connected, ${failed.length} failed (${failed.map((item) => item.name).join(', ')}); tools=${tools}`,
+    };
+  }
+  return { name: 'mcp', ok: true, detail: `${connected} connected, tools=${tools}` };
 }
