@@ -372,7 +372,9 @@ function buildChecks(root: string): Check[] {
     ['src/cli/args.ts', '--json'],
     ['src/cli/args.ts', '--no-color'],
     ['src/cli/args.ts', '--quiet'],
+    ['src/cli/args.ts', '--verbose'],
     ['src/cli/args.ts', '--debug'],
+    ['src/ui/resultCard.ts', 'formatResultCard'],
     ['src/cli/args.ts', '--ci'],
     ['src/cli/args.ts', '--no-input'],
     ['src/cli/args.ts', '--doctor'],
@@ -494,7 +496,7 @@ function buildChecks(root: string): Check[] {
   const smokeNeedles = ['multi-tool smoke chain', 'natural-language tool chains', 'provider protocol parses', 'project_status', 'write_file', 'read_file', 'search_text', 'run_command', 'AICODE_SMOKE_MULTI_TOOL', 'AICODE_NL_MARKER', 'toolCalls'];
   smokeNeedles.forEach((needle) => checks.push({ name: `smoke test contains ${needle}`, run: () => contains('tests/smoke.test.ts', needle) }));
 
-  const terminalUiTestNeedles = ['TerminalUI lays out task assistant and tool output', 'omits empty tool output blocks', 'does not column-reflow long assistant lines'];
+  const terminalUiTestNeedles = ['TerminalUI lays out task assistant and tool output', 'omits empty tool output blocks', 'does not column-reflow long assistant lines', 'folds tool process into one summary line'];
   terminalUiTestNeedles.forEach((needle) => checks.push({ name: `terminal ui test contains ${needle}`, run: () => contains('tests/terminal-ui.test.ts', needle) }));
 
   const approvalNeedles = ['ask approval blocks write tools', 'after confirmation', 'cancelled by user'];

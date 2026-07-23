@@ -20,7 +20,7 @@ function captureStdout(run: () => void) {
 }
 
 test('TerminalUI lays out task assistant and tool output with clean no-color spacing', () => {
-  const ui = new TerminalUI({ noColor: true });
+  const ui = new TerminalUI({ noColor: true, verbose: true });
   const output = captureStdout(() => {
     ui.turnStart('帮我检查最近的大文件');
     ui.assistant('先看磁盘增长。');
@@ -34,8 +34,24 @@ test('TerminalUI lays out task assistant and tool output with clean no-color spa
   assert.doesNotMatch(output, /waiting for tool result/);
 });
 
-test('TerminalUI omits empty tool output blocks', () => {
+test('TerminalUI folds tool process into one summary line by default', () => {
   const ui = new TerminalUI({ noColor: true });
+  const output = captureStdout(() => {
+    ui.toolStart('disk_info', { drive: 'C' });
+    ui.toolResult('disk_info', {
+      ok: true,
+      output: 'name\tpath\tusedGB\tfreeGB\ttotalGB\nC:\tC:/\t224.77\t188.01\t412.79',
+      data: { disks: [{ name: 'C:', path: 'C:/', usedGb: 224.77, freeGb: 188.01, totalGb: 412.79 }] },
+    });
+  });
+  assert.match(output, /\* Tool 1 disk_info …/);
+  assert.match(output, /\* disk_info ok \d+ms · /);
+  assert.doesNotMatch(output, /\n  input:/);
+  assert.doesNotMatch(output, /\n  output:\n/);
+});
+
+test('TerminalUI omits empty tool output blocks', () => {
+  const ui = new TerminalUI({ noColor: true, verbose: true });
   const output = captureStdout(() => {
     ui.toolStart('git_status', {});
     ui.toolResult('git_status', { ok: true, output: '' });

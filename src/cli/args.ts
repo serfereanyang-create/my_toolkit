@@ -90,8 +90,13 @@ export function parseArgs(argv: string[]): CliArgs {
         args.quiet = true;
         args.noBanner = true;
         break;
+      case '--verbose':
+        args.verbose = true;
+        break;
       case '--debug':
         args.debug = true;
+        // Debug implies expanded process traces.
+        args.verbose = true;
         break;
       case '--ci':
         args.ci = true;

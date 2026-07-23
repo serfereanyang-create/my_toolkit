@@ -2,6 +2,7 @@ import type { AgentRuntime, AgentTurnResult } from '../agent.js';
 import { recoveryHintForToolFailure } from '../toolStrategy.js';
 import type { Locale } from '../../i18n/locale.js';
 import { isBlockedOutput, isCancelledOutput } from '../../i18n/messages.js';
+import { formatResultCard } from '../../ui/resultCard.js';
 import type { CommandPlan, PlannedToolStep } from './types.js';
 
 export type CommandExecutionResult =
@@ -39,13 +40,19 @@ export async function executeCommandPlan(
     completed.push(step.tool);
   }
 
-  // Prefer showing the actual tool output for single-step reads instead of a meta "Done." line.
-  const lastOutput = lastSuccessfulOutput(runtime, completed[completed.length - 1]);
-  const message = completed.length === 1 && lastOutput
-    ? lastOutput
-    : (locale === 'zh'
-      ? `完成。已直接执行高置信命令链：${completed.join(' → ')}。`
-      : `Done. Executed high-confidence command chain: ${completed.join(' → ')}.`);
+  // Prefer a conclusion card / real tool output over a meta "Done." line.
+  const lastTool = completed[completed.length - 1];
+  const lastCall = lastSuccessfulCall(runtime, lastTool);
+  const card = lastCall
+    ? formatResultCard({ tool: lastCall.tool, output: lastCall.output, data: lastCall.data, locale })
+    : undefined;
+  const lastOutput = lastCall?.output;
+  const message = card
+    || (completed.length === 1 && lastOutput
+      ? lastOutput
+      : (locale === 'zh'
+        ? `完成。已直接执行高置信命令链：${completed.join(' → ')}。`
+        : `Done. Executed high-confidence command chain: ${completed.join(' → ')}.`));
   runtime.ui.assistant(message);
   await runtime.sessions.appendFinalAnswer(runtime.session, message);
   return {
@@ -59,13 +66,17 @@ export async function executeCommandPlan(
   };
 }
 
-function lastSuccessfulOutput(runtime: AgentRuntime, toolName: string | undefined) {
+function lastSuccessfulCall(runtime: AgentRuntime, toolName: string | undefined) {
   if (!toolName) return undefined;
   for (let index = runtime.session.toolCalls.length - 1; index >= 0; index -= 1) {
     const call = runtime.session.toolCalls[index];
     if (call?.tool === toolName && call.ok && call.output.trim()) {
       const text = call.output.trim();
-      return text.length > 4000 ? `${text.slice(0, 4000)}\n… (truncated)` : text;
+      return {
+        tool: call.tool,
+        output: text.length > 4000 ? `${text.slice(0, 4000)}\n… (truncated)` : text,
+        data: call.data,
+      };
     }
   }
   return undefined;

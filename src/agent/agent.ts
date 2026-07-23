@@ -21,6 +21,7 @@ import { planLocalFallback } from './fallback.js';
 import { formatToolStrategy, planToolStrategy, recentToolResultsFromSession, recoveryHintForToolFailure } from './toolStrategy.js';
 import { detectLocale, resolveSessionLocale, type Locale } from '../i18n/locale.js';
 import { isBlockedOutput, isCancelledOutput } from '../i18n/messages.js';
+import { formatResultCard, isMetaTranslatedDone } from '../ui/resultCard.js';
 
 export type AgentRuntime = {
   config: AppConfig;
@@ -150,6 +151,7 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
 
   let finalAnswer: string | undefined;
   let warnedAboutCompaction = false;
+  let lastToolName: string | undefined;
   for (let step = 0; step < runtime.config.maxSteps; step += 1) {
     let response;
     try {
@@ -195,6 +197,7 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
               outcome: toolResult.outcome ?? 'failed',
             };
           }
+          lastToolName = action.tool;
         }
         const message = '已使用本地兜底工具完成操作。';
         runtime.ui.assistant(message);
@@ -217,13 +220,16 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
     let sawTool = false;
     for (const action of response.actions) {
       if (action.type === 'message') {
-        runtime.ui.assistant(action.content);
-        await runtime.sessions.appendFinalAnswer(runtime.session, action.content);
-        finalAnswer = action.content;
+        const card = maybeUpgradeMetaMessage(runtime, action.content, lastToolName, locale);
+        const content = card ?? action.content;
+        runtime.ui.assistant(content);
+        await runtime.sessions.appendFinalAnswer(runtime.session, content);
+        finalAnswer = content;
         continue;
       }
 
       sawTool = true;
+      lastToolName = action.tool;
       const toolResult = await executeToolAction(runtime, action, locale);
       if (!toolResult.ok) {
         const reason = toolResult.reason ?? 'tool failed';
@@ -235,6 +241,16 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
           hadTerminalFailure: true,
           outcome: toolResult.outcome ?? 'failed',
         };
+      }
+    }
+
+    // If tools ran but the model never sent a final message, still try a conclusion card.
+    if (sawTool && !finalAnswer && lastToolName) {
+      const card = maybeUpgradeMetaMessage(runtime, '', lastToolName, locale);
+      if (card) {
+        runtime.ui.assistant(card);
+        await runtime.sessions.appendFinalAnswer(runtime.session, card);
+        finalAnswer = card;
       }
     }
 
@@ -338,6 +354,31 @@ function summarizeGitSafetyWarning(message: string) {
   }
   if (message.length > 280) return `${message.slice(0, 277)}...`;
   return message;
+}
+
+function maybeUpgradeMetaMessage(
+  runtime: AgentRuntime,
+  content: string,
+  lastToolName: string | undefined,
+  locale: Locale,
+) {
+  // Replace mock meta "Done. I translated..." or empty finals with a real conclusion card.
+  if (content && !isMetaTranslatedDone(content)) return undefined;
+  const preferred = lastToolName
+    ?? [...runtime.session.toolCalls].reverse().find((call) => call.ok && call.output.trim())?.tool;
+  if (!preferred) return undefined;
+  for (let index = runtime.session.toolCalls.length - 1; index >= 0; index -= 1) {
+    const call = runtime.session.toolCalls[index];
+    if (call?.tool === preferred && call.ok && call.output.trim()) {
+      return formatResultCard({
+        tool: call.tool,
+        output: call.output,
+        data: call.data,
+        locale,
+      });
+    }
+  }
+  return undefined;
 }
 
 function isTerminalToolFailure(output: string) {

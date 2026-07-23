@@ -2,6 +2,7 @@ import type { AppConfig } from '../config/types.js';
 import type { Provider } from '../providers/types.js';
 import type { ToolResult } from '../tools/index.js';
 import { MarkdownStreamCleaner, stripMarkdownDecorations } from './markdown.js';
+import { summarizeToolLine } from './resultCard.js';
 
 /**
  * Palette roles (when color is enabled):
@@ -32,6 +33,8 @@ type TerminalUIOptions = {
   quiet?: boolean;
   json?: boolean;
   noColor?: boolean;
+  /** When true, show full tool input/output. Default folds process details. */
+  verbose?: boolean;
 };
 
 export class TerminalUI {
@@ -42,10 +45,15 @@ export class TerminalUI {
   private streamingAssistant = false;
   private streamCleaner = new MarkdownStreamCleaner();
   private readonly runningTools = new Map<string, number>();
+  private readonly toolInputs = new Map<string, unknown>();
   private readonly options: TerminalUIOptions;
 
   constructor(options: TerminalUIOptions | boolean = {}) {
     this.options = typeof options === 'boolean' ? { quiet: options } : options;
+  }
+
+  get verbose() {
+    return Boolean(this.options.verbose);
   }
 
   banner(config: AppConfig, provider: Provider) {
@@ -127,11 +135,17 @@ export class TerminalUI {
     this.stopSpinner();
     this.toolIndex += 1;
     this.runningTools.set(tool, Date.now());
+    this.toolInputs.set(tool, input);
     if (this.options.json) return this.jsonEvent('tool_start', { index: this.toolIndex, tool, input, status: 'running' });
     if (this.options.quiet) return;
-    this.writeSectionTitle(`Tool ${this.toolIndex}`, 'cyan', tool);
-    this.writeKeyValue('input', formatInput(input, this.options.noColor ?? false));
-    this.writeKeyValue('status', `${this.color('dim')}running${this.color('reset')}`);
+    if (this.options.verbose) {
+      this.writeSectionTitle(`Tool ${this.toolIndex}`, 'cyan', tool);
+      this.writeKeyValue('input', formatInput(input, this.options.noColor ?? false));
+      this.writeKeyValue('status', `${this.color('dim')}running${this.color('reset')}`);
+    } else {
+      // Fold process details into one dim running line; expanded on --verbose.
+      this.write(`${this.color('dim')}* Tool ${this.toolIndex} ${tool} …${this.color('reset')}`);
+    }
     this.startSpinner(`${tool}`);
   }
 
@@ -139,6 +153,7 @@ export class TerminalUI {
     this.stopSpinner();
     const startedAt = this.runningTools.get(tool);
     if (startedAt) this.runningTools.delete(tool);
+    this.toolInputs.delete(tool);
     const duration = startedAt ? `${Date.now() - startedAt}ms` : 'done';
     const plainOutput = stripMarkdownDecorations(result.output ?? '');
     if (this.options.json) {
@@ -151,15 +166,31 @@ export class TerminalUI {
       });
     }
     if (this.options.quiet) return;
+
+    if (!this.options.verbose) {
+      const line = summarizeToolLine({
+        tool,
+        ok: result.ok,
+        duration,
+        output: plainOutput,
+        data: result.data,
+      });
+      const color = result.ok ? this.color('dim') : this.color('red');
+      this.write(`${color}* ${line}${this.color('reset')}`);
+      // On failure, still show a short body so the user can recover without --verbose.
+      if (!result.ok && plainOutput.trim()) {
+        this.writeBlock(plainOutput, this.color('red'), { indent: '    ', maxLines: 12, noWrap: true });
+      }
+      return;
+    }
+
     const status = result.ok
       ? this.style(`ok ${duration}`, 'green')
       : this.style(`failed ${duration}`, 'red');
     this.writeKeyValue('result', status);
     if (plainOutput.trim()) {
       this.writeKeyValue('output', '');
-      // Success output: dim; failure: red. Keeps body quieter than titles.
       const bodyColor = result.ok ? this.color('dim') : this.color('red');
-      // Tool dumps keep original line breaks; no bash-style force wrap.
       this.writeBlock(plainOutput, bodyColor, { indent: '    ', noWrap: true });
     }
   }

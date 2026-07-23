@@ -1,6 +1,6 @@
 export type CompletionShell = 'bash' | 'zsh' | 'fish' | 'powershell';
 
-const options = ['--help', '--version', '--provider', '--model', '--base-url', '--approval', '--workspace', '--session-dir', '--config', '--profile', '--resume', '--prompt', '--max-steps', '--no-banner', '--json', '--no-color', '--quiet', '--debug', '--ci', '--no-input', '--doctor'];
+const options = ['--help', '--version', '--provider', '--model', '--base-url', '--approval', '--workspace', '--session-dir', '--config', '--profile', '--resume', '--prompt', '--max-steps', '--no-banner', '--json', '--no-color', '--quiet', '--verbose', '--debug', '--ci', '--no-input', '--doctor'];
 const commands = ['completion'];
 const shells: CompletionShell[] = ['bash', 'zsh', 'fish', 'powershell'];
 

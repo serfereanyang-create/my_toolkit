@@ -15,6 +15,7 @@ export type CliArgs = {
   json?: boolean;
   noColor?: boolean;
   quiet?: boolean;
+  verbose?: boolean;
   debug?: boolean;
   ci?: boolean;
   noInput?: boolean;
@@ -56,6 +57,7 @@ export type AppConfig = {
   json?: boolean;
   noColor?: boolean;
   quiet?: boolean;
+  verbose?: boolean;
   debug?: boolean;
   ci?: boolean;
   noInput?: boolean;
