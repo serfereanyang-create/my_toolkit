@@ -184,11 +184,13 @@ function buildChecks(root: string): Check[] {
     'src/probe/cacheProbe.ts',
     'src/i18n/locale.ts',
     'src/i18n/messages.ts',
+    'src/ui/markdown.ts',
     'tests/fixtures/mcp-echo-server.mjs',
     'tests/input-attachments.test.ts',
     'tests/read-paths.test.ts',
     'tests/cache-probe.test.ts',
     'tests/i18n.test.ts',
+    'tests/markdown.test.ts',
   ];
   requiredFiles.forEach((path) => checks.push({ name: `file exists: ${path}`, run: () => exists(path) }));
 
@@ -453,6 +455,15 @@ function buildChecks(root: string): Check[] {
       || (await contains('src/i18n/messages.ts', needle))
       || (await contains('src/tools/registry.ts', needle))
       || (await contains('src/agent/agent.ts', needle)),
+  }));
+
+  const markdownNeedles = ['stripMarkdownDecorations', 'MarkdownStreamCleaner', 'Do not use Markdown decorations'];
+  markdownNeedles.forEach((needle) => checks.push({
+    name: `markdown plain-output contains ${needle}`,
+    run: async () =>
+      (await contains('src/ui/markdown.ts', needle))
+      || (await contains('src/ui/terminal.ts', needle))
+      || (await contains('src/providers/protocol.ts', needle)),
   }));
 
   const fallbackNeedles = ['planLocalFallback', 'rename_file', 'previousUserPrompt'];

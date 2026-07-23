@@ -1,6 +1,7 @@
 import type { AppConfig } from '../config/types.js';
 import type { Provider } from '../providers/types.js';
 import type { ToolResult } from '../tools/index.js';
+import { MarkdownStreamCleaner, stripMarkdownDecorations } from './markdown.js';
 
 /**
  * Palette roles (when color is enabled):
@@ -39,6 +40,7 @@ export class TerminalUI {
   private activeSpinnerText = '';
   private activeSpinnerFrame = 0;
   private streamingAssistant = false;
+  private streamCleaner = new MarkdownStreamCleaner();
   private readonly runningTools = new Map<string, number>();
   private readonly options: TerminalUIOptions;
 
@@ -70,15 +72,19 @@ export class TerminalUI {
 
   modelStart() {
     this.streamingAssistant = false;
+    this.streamCleaner = new MarkdownStreamCleaner();
     if (this.options.json) return this.jsonEvent('model_start', { status: 'running' });
     this.startSpinner('thinking');
   }
 
   modelEnd() {
     if (this.streamingAssistant && !this.options.json && !this.options.quiet) {
+      const tail = this.streamCleaner.flush();
+      if (tail) process.stdout.write(tail);
       process.stdout.write('\n');
     }
     this.streamingAssistant = false;
+    this.streamCleaner = new MarkdownStreamCleaner();
     if (this.options.json) return this.jsonEvent('model_end', { status: 'done' });
     this.stopSpinner();
   }
@@ -91,23 +97,29 @@ export class TerminalUI {
       this.streamingAssistant = true;
       if (!this.options.quiet) this.writeSectionTitle('Assistant', 'green');
     }
+    const cleaned = this.streamCleaner.push(delta);
+    if (!cleaned) return;
     // Stream body in default foreground (not solid green) for long replies.
-    process.stdout.write(this.options.quiet ? delta : delta);
+    process.stdout.write(cleaned);
   }
 
   assistant(content: string) {
     this.stopSpinner();
+    const plain = stripMarkdownDecorations(content);
     if (this.streamingAssistant) {
       // Content was already streamed; avoid duplicate full reprint.
+      const tail = this.streamCleaner.flush();
+      if (tail && !this.options.json && !this.options.quiet) process.stdout.write(tail);
       this.streamingAssistant = false;
-      if (this.options.json) return this.jsonEvent('assistant', { content });
+      this.streamCleaner = new MarkdownStreamCleaner();
+      if (this.options.json) return this.jsonEvent('assistant', { content: plain });
       if (!this.options.quiet) process.stdout.write('\n');
       return;
     }
-    if (this.options.json) return this.jsonEvent('assistant', { content });
-    if (this.options.quiet) return this.write(content);
+    if (this.options.json) return this.jsonEvent('assistant', { content: plain });
+    if (this.options.quiet) return this.write(plain);
     this.writeSectionTitle('Assistant', 'green');
-    this.writeBlock(content, this.color('reset'));
+    this.writeBlock(plain, this.color('reset'));
   }
 
   toolStart(tool: string, input: unknown) {
@@ -143,18 +155,20 @@ export class TerminalUI {
 
   info(content: string) {
     this.stopSpinner();
-    if (this.options.json) return this.jsonEvent('info', { content });
+    const plain = stripMarkdownDecorations(content);
+    if (this.options.json) return this.jsonEvent('info', { content: plain });
     if (this.options.quiet) return;
-    this.write(`${this.color('dim')}${content}${this.color('reset')}`);
+    this.write(`${this.color('dim')}${plain}${this.color('reset')}`);
   }
 
   error(content: string) {
     this.stopSpinner();
+    const plain = stripMarkdownDecorations(content);
     if (this.options.json) {
-      process.stderr.write(`${JSON.stringify({ type: 'error', content })}\n`);
+      process.stderr.write(`${JSON.stringify({ type: 'error', content: plain })}\n`);
       return;
     }
-    process.stderr.write(`${this.color('red')}${content}${this.color('reset')}\n`);
+    process.stderr.write(`${this.color('red')}${plain}${this.color('reset')}\n`);
   }
 
   final(ok: boolean, data: Record<string, unknown>) {
