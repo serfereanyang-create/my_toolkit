@@ -36,11 +36,18 @@ export class GitRepository {
     };
   }
 
-  async ensure(confirm?: (message: string) => Promise<boolean>): Promise<GitRepositoryInfo | undefined> {
+  async ensure(
+    confirm?: (message: string) => Promise<boolean>,
+    options?: { locale?: 'zh' | 'en' },
+  ): Promise<GitRepositoryInfo | undefined> {
     const existing = await this.discover();
     if (existing) return existing;
     if (!confirm) return undefined;
-    const accepted = await confirm('Workspace is not a Git repository. Initialize a local repository for recovery snapshots?');
+    const locale = options?.locale ?? 'en';
+    const prompt = locale === 'zh'
+      ? '当前工作区还不是 Git 仓库。是否初始化本地仓库以启用恢复快照？'
+      : 'Workspace is not a Git repository. Initialize a local repository for recovery snapshots?';
+    const accepted = await confirm(prompt);
     if (!accepted) return undefined;
     await this.git.text(['init', '--', this.workspaceRoot]);
     return this.discover();

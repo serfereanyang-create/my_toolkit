@@ -58,3 +58,43 @@ test('ask approval cancels write tools when rejected', async () => {
 
   await rm(workspace, { recursive: true, force: true });
 });
+
+test('ask approval uses Chinese prompt when locale is zh', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-approval-zh-'));
+  const registry = createDefaultToolRegistry();
+  const prompts: string[] = [];
+  const result = await registry.execute(
+    'write_file',
+    { path: '.smoke/ask-zh.md', content: 'ok' },
+    {
+      workspaceRoot: workspace,
+      approval: 'ask',
+      locale: 'zh',
+      confirm: async (message) => {
+        prompts.push(message);
+        return true;
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.match(prompts[0] ?? '', /是否批准写入工具 write_file/);
+  assert.doesNotMatch(prompts[0] ?? '', /^Approve /);
+
+  await rm(workspace, { recursive: true, force: true });
+});
+
+test('ask approval cancels with Chinese outcome when locale is zh', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-approval-zh-cancel-'));
+  const registry = createDefaultToolRegistry();
+  const result = await registry.execute(
+    'write_file',
+    { path: '.smoke/ask.md', content: 'rejected' },
+    { workspaceRoot: workspace, approval: 'ask', locale: 'zh', confirm: async () => false },
+  );
+
+  assert.equal(result.ok, false);
+  assert.match(result.output, /已由用户取消/);
+
+  await rm(workspace, { recursive: true, force: true });
+});

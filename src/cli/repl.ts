@@ -15,6 +15,8 @@ import { prepareUserContent, type Attachment } from './attachments.js';
 import { handleSlashCommand } from './commands.js';
 import { isSlashCommandLine, readUserTurn } from './input.js';
 import { assertUserTextWithinLimit, formatByteSize } from './limits.js';
+import { detectLocale } from '../i18n/locale.js';
+import { formatGitConfirm } from '../i18n/messages.js';
 
 type TurnExtras = { parts?: MessagePart[]; displayText?: string };
 
@@ -174,9 +176,15 @@ async function maybeCommitCompletedBoard(
     runtime.ui.info('No confirm handler available; skip auto commit. Use interactive /git commit later.');
     return;
   }
-  const accepted = await runtime.confirm(`Commit completed board ${board.id} on ${preview.branch}?`);
+  const locale = detectLocale(board.goal ?? board.title);
+  const accepted = await runtime.confirm(formatGitConfirm({
+    locale,
+    kind: 'board_commit',
+    boardId: board.id,
+    branch: preview.branch,
+  }));
   if (!accepted) {
-    runtime.ui.info('Board commit declined.');
+    runtime.ui.info(locale === 'zh' ? '已取消任务板提交。' : 'Board commit declined.');
     return;
   }
   const result = await commitBoardChanges({ git: runtime.gitProcess, board });

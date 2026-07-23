@@ -2,6 +2,7 @@ import type { ApprovalMode, ProviderToolSpec } from '../providers/types.js';
 import type { CheckpointStore } from '../session/checkpoint.js';
 import type { HookRegistry } from '../hooks/hooks.js';
 import type { ToolRisk } from '../safety/policy.js';
+import type { Locale } from '../i18n/locale.js';
 
 export type ToolContext = {
   workspaceRoot: string;
@@ -11,6 +12,8 @@ export type ToolContext = {
   hooks?: HookRegistry;
   beforeConfirm?: () => void;
   afterConfirm?: () => void;
+  /** UI language for approval prompts and tool gate messages. */
+  locale?: Locale;
 };
 
 export type ToolResult = {

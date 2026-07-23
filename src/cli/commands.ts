@@ -32,6 +32,8 @@ import {
 } from './attachments.js';
 import { formatByteSize, MAX_USER_TEXT_BYTES_HARD } from './limits.js';
 import { formatCacheProbe } from '../probe/cacheProbe.js';
+import { detectLocale } from '../i18n/locale.js';
+import { formatGitConfirm } from '../i18n/messages.js';
 
 export async function handleSlashCommand(options: {
   line: string;
@@ -325,8 +327,14 @@ async function handleGitCommand(
         'Re-run interactively to confirm, or provide a confirm handler.',
       ].join('\n');
     }
-    const accepted = await options.confirm(`Commit board changes on ${preview.branch}?`);
-    if (!accepted) return 'Commit declined.';
+    const locale = detectLocale(board.goal ?? board.title);
+    const accepted = await options.confirm(formatGitConfirm({
+      locale,
+      kind: 'board_commit',
+      boardId: board.id,
+      branch: preview.branch,
+    }));
+    if (!accepted) return locale === 'zh' ? '已取消提交。' : 'Commit declined.';
     const result = await commitBoardChanges({ git: options.gitProcess, board });
     if (result.ok && result.sha) {
       board.gitCommitSha = result.sha;

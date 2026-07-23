@@ -1,11 +1,14 @@
 import type { GitAuditLog } from './audit.js';
 import { assertObjectId, assertSafeRef, sanitizeRemote, type GitProcess } from './git.js';
+import type { Locale } from '../i18n/locale.js';
+import { formatGitConfirm } from '../i18n/messages.js';
 
 export type GitPublishRequest = {
   remote: string;
   localRef: string;
   remoteBranch: string;
   sessionId: string;
+  locale?: Locale;
 };
 
 export interface GitRemotePublisher {
@@ -40,12 +43,17 @@ export class LocalGitPublisher implements GitRemotePublisher {
 
     const preview = await this.preview(request);
     await this.append('push_requested', request, undefined, preview);
-    const accepted = await confirm(
-      `Publish ${preview.localOid.slice(0, 12)} from ${request.localRef} to ${preview.remote} (${preview.destination})?`,
-    );
+    const locale = request.locale ?? 'en';
+    const accepted = await confirm(formatGitConfirm({
+      locale,
+      kind: 'publish',
+      remote: preview.remote,
+      localRef: `${preview.localOid.slice(0, 12)} (${request.localRef})`,
+      remoteBranch: preview.destination,
+    }));
     if (!accepted) {
       await this.append('push_declined', request, 'User declined publication.', preview);
-      return { ok: false, reason: 'User declined publication.' };
+      return { ok: false, reason: locale === 'zh' ? '用户拒绝了推送。' : 'User declined publication.' };
     }
 
     try {

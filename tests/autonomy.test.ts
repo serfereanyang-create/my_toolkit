@@ -110,13 +110,13 @@ test('agent records specific recovery hints after recoverable tool failure', asy
     };
     const config: AppConfig = { provider: 'mock', model: 'mock', approval: 'auto', workspaceRoot: workspace, sessionDir: join(workspace, 'sessions'), maxSteps: 3, noBanner: true };
 
-    const result = await runAgentTurn({ config, provider, tools: createDefaultToolRegistry(), sessions, session, ui: new TerminalUI(true) }, '读取 missing.ts');
+    const result = await runAgentTurn({ config, provider, tools: createDefaultToolRegistry(), sessions, session, ui: new TerminalUI(true) }, 'read missing.ts');
 
     assert.equal(result.ok, true);
     assert.equal(session.toolCalls[0]?.ok, false);
-    const toolMessage = session.messages.find((message) => message.role === 'tool' && message.content.includes('Recovery hint:'));
+    const toolMessage = session.messages.find((message) => message.role === 'tool' && /Recovery hint:|恢复提示:/.test(message.content));
     assert.ok(toolMessage);
-    assert.match(toolMessage.content, /locate the correct path/);
+    assert.match(toolMessage.content, /locate the correct path|正确路径/);
     assert.equal(session.toolCalls[0]?.output, toolMessage.content);
   } finally {
     await rm(workspace, { recursive: true, force: true });

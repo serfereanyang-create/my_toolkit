@@ -182,10 +182,13 @@ function buildChecks(root: string): Check[] {
     'src/cli/attachments.ts',
     'src/cli/limits.ts',
     'src/probe/cacheProbe.ts',
+    'src/i18n/locale.ts',
+    'src/i18n/messages.ts',
     'tests/fixtures/mcp-echo-server.mjs',
     'tests/input-attachments.test.ts',
     'tests/read-paths.test.ts',
     'tests/cache-probe.test.ts',
+    'tests/i18n.test.ts',
   ];
   requiredFiles.forEach((path) => checks.push({ name: `file exists: ${path}`, run: () => exists(path) }));
 
@@ -278,7 +281,9 @@ function buildChecks(root: string): Check[] {
     ['src/tools/registry.ts', 'beforeTool'],
     ['src/tools/registry.ts', 'afterTool'],
     ['src/tools/registry.ts', 'onError'],
-    ['src/tools/registry.ts', 'Invalid input'],
+    ['src/tools/registry.ts', 'formatApprovalPrompt'],
+    ['src/tools/registry.ts', 'formatApprovalOutcome'],
+    ['src/tools/registry.ts', 'locale'],
     ['src/tools/index.ts', 'createDefaultToolRegistry'],
   ];
   toolNeedles.forEach(([path, needle]) => checks.push({ name: `tool source ${path} contains ${needle}`, run: () => contains(path, needle) }));
@@ -438,6 +443,16 @@ function buildChecks(root: string): Check[] {
       || (await contains('src/nav/store.ts', needle))
       || (await contains('src/cli/commands.ts', needle))
       || (await contains('src/cli/doctor.ts', needle)),
+  }));
+
+  const i18nNeedles = ['detectLocale', 'formatApprovalPrompt', '是否批准', 'locale'];
+  i18nNeedles.forEach((needle) => checks.push({
+    name: `i18n contains ${needle}`,
+    run: async () =>
+      (await contains('src/i18n/locale.ts', needle))
+      || (await contains('src/i18n/messages.ts', needle))
+      || (await contains('src/tools/registry.ts', needle))
+      || (await contains('src/agent/agent.ts', needle)),
   }));
 
   const fallbackNeedles = ['planLocalFallback', 'rename_file', 'previousUserPrompt'];

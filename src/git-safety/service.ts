@@ -26,7 +26,11 @@ export class GitSafetyService {
 
   async startUnit(
     request: GitUnitRequest,
-    options?: { confirm?: (message: string) => Promise<boolean>; onWarning?: (message: string) => void },
+    options?: {
+      confirm?: (message: string) => Promise<boolean>;
+      onWarning?: (message: string) => void;
+      locale?: 'zh' | 'en';
+    },
   ): Promise<GitUnitContext> {
     validateRequest(request);
     const unitId = `unit_${Date.now()}_${randomUUID().slice(0, 8)}`;
@@ -42,7 +46,7 @@ export class GitSafetyService {
 
     let repositoryInfo;
     try {
-      repositoryInfo = await this.repository.ensure(options?.confirm);
+      repositoryInfo = await this.repository.ensure(options?.confirm, { locale: options?.locale });
     } catch (error) {
       const message = errorMessage(error);
       options?.onWarning?.(message);

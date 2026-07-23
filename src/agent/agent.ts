@@ -19,6 +19,9 @@ import { formatProjectContext, readProjectContext } from './context.js';
 import { compactMessagesForModel, resolveContextBudgetChars } from './contextBudget.js';
 import { planLocalFallback } from './fallback.js';
 import { formatToolStrategy, planToolStrategy, recentToolResultsFromSession, recoveryHintForToolFailure } from './toolStrategy.js';
+import { detectLocale } from '../i18n/locale.js';
+import { isBlockedOutput, isCancelledOutput } from '../i18n/messages.js';
+import type { Locale } from '../i18n/locale.js';
 
 export type AgentRuntime = {
   config: AppConfig;
@@ -72,6 +75,7 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
     }, {
       confirm: resolveConfirm(runtime),
       onWarning: (message) => runtime.ui.info(summarizeGitSafetyWarning(message)),
+      locale: detectLocale(options.displayText ?? prompt),
     });
   }
 
@@ -105,6 +109,7 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
 
 async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: AgentTurnOptions = {}): Promise<AgentTurnResult> {
   const recentTools = recentToolResultsFromSession(runtime.session);
+  const locale = detectLocale(options.displayText ?? prompt);
   await runtime.sessions.appendMessage(runtime.session, {
     role: 'user',
     content: prompt,
@@ -117,7 +122,7 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
   // Direct execution is for real providers / non-mock paths.
   if (commandPlan.mode === 'execute' && runtime.provider.name !== 'mock') {
     try {
-      const direct = await executeCommandPlan(runtime, commandPlan);
+      const direct = await executeCommandPlan(runtime, commandPlan, locale);
       if (direct.status === 'completed') return direct.result;
       runtime.ui.info(`Direct command chain fallback: ${direct.reason}`);
     } catch (error) {
@@ -166,7 +171,7 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
       if (fallbackActions.length > 0) {
         runtime.ui.assistant(`Model request failed: ${errorMessage(error)}. Falling back to local tool planning.`);
         for (const action of fallbackActions) {
-          const toolResult = await executeToolAction(runtime, action);
+          const toolResult = await executeToolAction(runtime, action, locale);
           if (!toolResult.ok) {
             const reason = toolResult.reason ?? 'tool failed';
             return {
@@ -207,7 +212,7 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
       }
 
       sawTool = true;
-      const toolResult = await executeToolAction(runtime, action);
+      const toolResult = await executeToolAction(runtime, action, locale);
       if (!toolResult.ok) {
         const reason = toolResult.reason ?? 'tool failed';
         return {
@@ -244,7 +249,11 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
   };
 }
 
-async function executeToolAction(runtime: AgentRuntime, action: Extract<AgentAction, { type: 'tool' }>) {
+async function executeToolAction(
+  runtime: AgentRuntime,
+  action: Extract<AgentAction, { type: 'tool' }>,
+  locale: Locale = 'en',
+) {
   runtime.ui.toolStart(action.tool, action.input);
   const result = await runtime.tools.execute(action.tool, action.input, {
     workspaceRoot: runtime.config.workspaceRoot,
@@ -254,10 +263,13 @@ async function executeToolAction(runtime: AgentRuntime, action: Extract<AgentAct
     hooks: runtime.hooks,
     beforeConfirm: () => runtime.ui.pauseSpinnerForPrompt(),
     afterConfirm: () => runtime.ui.resumeSpinnerAfterPrompt(),
+    locale,
   });
   runtime.ui.toolResult(action.tool, result);
   const recoveryHint = result.ok ? undefined : recoveryHintForToolFailure(action.tool, result.output);
-  const output = recoveryHint ? `${result.output}\nRecovery hint: ${recoveryHint}` : result.output;
+  const output = recoveryHint
+    ? `${result.output}\n${locale === 'zh' ? '恢复提示' : 'Recovery hint'}: ${recoveryHint}`
+    : result.output;
   await runtime.sessions.appendToolCall(runtime.session, {
     tool: action.tool,
     input: action.input,
@@ -266,7 +278,9 @@ async function executeToolAction(runtime: AgentRuntime, action: Extract<AgentAct
     data: result.data,
   });
   if (!result.ok) {
-    const reason = `Stopped after ${action.tool} failed: ${output}`;
+    const reason = locale === 'zh'
+      ? `在 ${action.tool} 失败后停止：${output}`
+      : `Stopped after ${action.tool} failed: ${output}`;
     if (isTerminalToolFailure(result.output)) {
       await runtime.sessions.appendFinalAnswer(runtime.session, reason);
       return {
@@ -275,7 +289,11 @@ async function executeToolAction(runtime: AgentRuntime, action: Extract<AgentAct
         outcome: classifyTerminalFailure(result.output),
       } as const;
     }
-    runtime.ui.info(recoveryHint ? `tool failed; recovery hint: ${recoveryHint}` : `tool failed; asking model to recover: ${action.tool}`);
+    runtime.ui.info(
+      recoveryHint
+        ? (locale === 'zh' ? `工具失败；恢复提示：${recoveryHint}` : `tool failed; recovery hint: ${recoveryHint}`)
+        : (locale === 'zh' ? `工具失败；请模型继续恢复：${action.tool}` : `tool failed; asking model to recover: ${action.tool}`),
+    );
     return { ok: true } as const;
   }
   return { ok: true } as const;
@@ -307,12 +325,12 @@ function summarizeGitSafetyWarning(message: string) {
 }
 
 function isTerminalToolFailure(output: string) {
-  return output.includes('cancelled by user') || output.includes('blocked:') || output.includes('Path escapes workspace');
+  return isCancelledOutput(output) || isBlockedOutput(output);
 }
 
 function classifyTerminalFailure(output: string): GitUnitOutcome {
-  if (output.includes('cancelled by user')) return 'cancelled';
-  if (output.includes('blocked:') || output.includes('Path escapes workspace')) return 'blocked';
+  if (isCancelledOutput(output)) return 'cancelled';
+  if (isBlockedOutput(output)) return 'blocked';
   return 'failed';
 }
 
