@@ -244,16 +244,6 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
       }
     }
 
-    // If tools ran but the model never sent a final message, still try a conclusion card.
-    if (sawTool && !finalAnswer && lastToolName) {
-      const card = maybeUpgradeMetaMessage(runtime, '', lastToolName, locale);
-      if (card) {
-        runtime.ui.assistant(card);
-        await runtime.sessions.appendFinalAnswer(runtime.session, card);
-        finalAnswer = card;
-      }
-    }
-
     if (!sawTool) {
       return {
         ok: true,
@@ -261,6 +251,16 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
         finalAnswer,
         outcome: 'done',
       };
+    }
+  }
+
+  // Tools ran across steps but no final assistant message: still try one conclusion card.
+  if (!finalAnswer && lastToolName) {
+    const card = maybeUpgradeMetaMessage(runtime, '', lastToolName, locale);
+    if (card) {
+      runtime.ui.assistant(card);
+      await runtime.sessions.appendFinalAnswer(runtime.session, card);
+      return { ok: true, session: runtime.session, finalAnswer: card, outcome: 'done' };
     }
   }
 
