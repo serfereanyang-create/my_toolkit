@@ -186,11 +186,14 @@ export function decideApproval(options: {
   return { allowed: true, needsPrompt: false, reason: 'auto approval allowlist' };
 }
 
-export async function askForApproval(message: string) {
+export async function askForApproval(message: string, options?: { locale?: 'zh' | 'en' }) {
   const rl = createInterface({ input, output });
   try {
-    const answer = (await rl.question(`${message} [y/N] `)).trim().toLowerCase();
-    return answer === 'y' || answer === 'yes';
+    const suffix = options?.locale === 'zh' ? ' [y是/N否] ' : ' [y/N] ';
+    // Avoid double suffix if caller already appended one.
+    const prompt = /\[y\/N\]|\[y是\/N否\]/i.test(message) ? `${message} ` : `${message}${suffix}`;
+    const answer = (await rl.question(prompt)).trim().toLowerCase();
+    return answer === 'y' || answer === 'yes' || answer === '是' || answer === '好' || answer === '确认';
   } finally {
     rl.close();
   }

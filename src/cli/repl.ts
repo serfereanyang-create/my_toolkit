@@ -15,7 +15,7 @@ import { prepareUserContent, type Attachment } from './attachments.js';
 import { handleSlashCommand } from './commands.js';
 import { isSlashCommandLine, readUserTurn } from './input.js';
 import { assertUserTextWithinLimit, formatByteSize } from './limits.js';
-import { detectLocale } from '../i18n/locale.js';
+import { detectLocale, resolveSessionLocale } from '../i18n/locale.js';
 import { formatGitConfirm } from '../i18n/messages.js';
 
 type TurnExtras = { parts?: MessagePart[]; displayText?: string };
@@ -199,12 +199,17 @@ async function maybeCommitCompletedBoard(
 export async function runRepl(runtime: AgentRuntime) {
   const rl = createInterface({ input, output });
   if (!runtime.pendingAttachments) runtime.pendingAttachments = [];
+  if (!runtime.locale) runtime.locale = 'zh';
   const interactiveRuntime: AgentRuntime = {
     ...runtime,
     pendingAttachments: runtime.pendingAttachments,
+    locale: runtime.locale,
     confirm: async (message) => {
-      const answer = (await rl.question(`${message} [y/N] `)).trim().toLowerCase();
-      return answer === 'y' || answer === 'yes';
+      const locale = interactiveRuntime.locale ?? runtime.locale ?? 'zh';
+      const suffix = locale === 'zh' ? ' [y是/N否] ' : ' [y/N] ';
+      const prompt = /\[y\/N\]|\[y是\/N否\]/i.test(message) ? `${message} ` : `${message}${suffix}`;
+      const answer = (await rl.question(prompt)).trim().toLowerCase();
+      return answer === 'y' || answer === 'yes' || answer === '是' || answer === '好' || answer === '确认';
     },
   };
   runtime.ui.info(
@@ -246,6 +251,7 @@ export async function runRepl(runtime: AgentRuntime) {
 
 async function submitUserTurn(runtime: AgentRuntime, text: string) {
   assertUserTextWithinLimit(text);
+  runtime.locale = resolveSessionLocale({ text, previous: runtime.locale });
   const staged = runtime.pendingAttachments ?? [];
   runtime.pendingAttachments = [];
 

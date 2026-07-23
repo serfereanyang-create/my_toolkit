@@ -139,17 +139,26 @@ export class TerminalUI {
     const startedAt = this.runningTools.get(tool);
     if (startedAt) this.runningTools.delete(tool);
     const duration = startedAt ? `${Date.now() - startedAt}ms` : 'done';
-    if (this.options.json) return this.jsonEvent('tool_result', { tool, ok: result.ok, durationMs: startedAt ? Date.now() - startedAt : undefined, output: result.output, data: result.data });
+    const plainOutput = stripMarkdownDecorations(result.output ?? '');
+    if (this.options.json) {
+      return this.jsonEvent('tool_result', {
+        tool,
+        ok: result.ok,
+        durationMs: startedAt ? Date.now() - startedAt : undefined,
+        output: plainOutput,
+        data: result.data,
+      });
+    }
     if (this.options.quiet) return;
     const status = result.ok
       ? this.style(`ok ${duration}`, 'green')
       : this.style(`failed ${duration}`, 'red');
     this.writeKeyValue('result', status);
-    if (result.output.trim()) {
+    if (plainOutput.trim()) {
       this.writeKeyValue('output', '');
       // Success output: dim; failure: red. Keeps body quieter than titles.
       const bodyColor = result.ok ? this.color('dim') : this.color('red');
-      this.writeBlock(result.output, bodyColor, { indent: '    ' });
+      this.writeBlock(plainOutput, bodyColor, { indent: '    ' });
     }
   }
 

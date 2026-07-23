@@ -19,9 +19,8 @@ import { formatProjectContext, readProjectContext } from './context.js';
 import { compactMessagesForModel, resolveContextBudgetChars } from './contextBudget.js';
 import { planLocalFallback } from './fallback.js';
 import { formatToolStrategy, planToolStrategy, recentToolResultsFromSession, recoveryHintForToolFailure } from './toolStrategy.js';
-import { detectLocale } from '../i18n/locale.js';
+import { detectLocale, resolveSessionLocale, type Locale } from '../i18n/locale.js';
 import { isBlockedOutput, isCancelledOutput } from '../i18n/messages.js';
-import type { Locale } from '../i18n/locale.js';
 
 export type AgentRuntime = {
   config: AppConfig;
@@ -42,6 +41,8 @@ export type AgentRuntime = {
   reloadMcp?: () => Promise<McpManager>;
   /** Files staged via /attach or /paste-image for the next user turn. */
   pendingAttachments?: import('../cli/attachments.js').Attachment[];
+  /** Sticky UI language for approval prompts and gate messages. */
+  locale?: Locale;
 };
 
 export type AgentTurnOptions = {
@@ -75,7 +76,10 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
     }, {
       confirm: resolveConfirm(runtime),
       onWarning: (message) => runtime.ui.info(summarizeGitSafetyWarning(message)),
-      locale: detectLocale(options.displayText ?? prompt),
+      locale: resolveSessionLocale({
+        text: options.displayText ?? prompt,
+        previous: runtime.locale,
+      }),
     });
   }
 
@@ -109,7 +113,11 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
 
 async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: AgentTurnOptions = {}): Promise<AgentTurnResult> {
   const recentTools = recentToolResultsFromSession(runtime.session);
-  const locale = detectLocale(options.displayText ?? prompt);
+  const locale = resolveSessionLocale({
+    text: options.displayText ?? prompt,
+    previous: runtime.locale,
+  });
+  runtime.locale = locale;
   await runtime.sessions.appendMessage(runtime.session, {
     role: 'user',
     content: prompt,
@@ -124,9 +132,13 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
     try {
       const direct = await executeCommandPlan(runtime, commandPlan, locale);
       if (direct.status === 'completed') return direct.result;
-      runtime.ui.info(`Direct command chain fallback: ${direct.reason}`);
+      runtime.ui.info(locale === 'zh' ? `直接命令链回退：${direct.reason}` : `Direct command chain fallback: ${direct.reason}`);
     } catch (error) {
-      runtime.ui.info(`Direct command chain failed open to provider: ${error instanceof Error ? error.message : String(error)}`);
+      runtime.ui.info(
+        locale === 'zh'
+          ? `直接命令链失败，改走模型：${error instanceof Error ? error.message : String(error)}`
+          : `Direct command chain failed open to provider: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
   const toolStrategy = formatCommandStrategy(commandPlan, extraction)
@@ -302,9 +314,13 @@ async function executeToolAction(
 function resolveConfirm(runtime: AgentRuntime) {
   // Only the interactive REPL installs a confirm callback. Prompt/CI/smoke modes must
   // never block on stdin for git init or other safety confirmations.
-  if (runtime.confirm) return runtime.confirm;
+  if (runtime.confirm) {
+    return async (message: string) => runtime.confirm!(message);
+  }
   if (runtime.config.noInput || runtime.config.prompt !== undefined || runtime.config.ci) return undefined;
-  if (process.stdin.isTTY) return askForApproval;
+  if (process.stdin.isTTY) {
+    return async (message: string) => askForApproval(message, { locale: runtime.locale ?? 'en' });
+  }
   return undefined;
 }
 

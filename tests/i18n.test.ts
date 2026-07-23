@@ -9,6 +9,14 @@ test('detectLocale prefers Chinese when CJK is present', () => {
   assert.equal(detectLocale('please write a file'), 'en');
 });
 
+test('resolveSessionLocale sticks Chinese across short follow-ups', async () => {
+  const { resolveSessionLocale } = await import('../src/i18n/locale.js');
+  assert.equal(resolveSessionLocale({ text: '帮我看磁盘', previous: undefined }), 'zh');
+  assert.equal(resolveSessionLocale({ text: '继续', previous: 'zh' }), 'zh');
+  assert.equal(resolveSessionLocale({ text: 'ok', previous: 'zh' }), 'zh');
+  assert.equal(resolveSessionLocale({ text: 'please rewrite this long english prompt carefully now', previous: 'zh' }), 'en');
+});
+
 test('formatApprovalPrompt localizes risk labels', () => {
   assert.match(
     formatApprovalPrompt({ locale: 'zh', tool: 'write_file', risk: 'write', path: '.smoke/a.md' }),

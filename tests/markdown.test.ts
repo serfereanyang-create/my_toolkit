@@ -8,6 +8,19 @@ test('stripMarkdownDecorations removes bold and headings', () => {
   assert.equal(stripMarkdownDecorations('## Hello\n**world**'), 'Hello\nworld');
   assert.equal(stripMarkdownDecorations('no markdown'), 'no markdown');
   assert.doesNotMatch(stripMarkdownDecorations('### 小节 **x**'), /\*\*|##/);
+  const sample = [
+    '## 一句话',
+    '**现在是“能跑的 MVP”**',
+    '### A. 测试覆盖层',
+    '| 目标 | 完成度 |',
+    '|---|---:|',
+    '| demo | **70–80%** |',
+  ].join('\n');
+  const cleaned = stripMarkdownDecorations(sample);
+  assert.doesNotMatch(cleaned, /\*\*/);
+  assert.doesNotMatch(cleaned, /##/);
+  assert.match(cleaned, /一句话/);
+  assert.match(cleaned, /70–80%/);
 });
 
 test('MarkdownStreamCleaner strips across chunk boundaries', () => {
