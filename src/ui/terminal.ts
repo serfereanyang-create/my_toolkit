@@ -119,7 +119,8 @@ export class TerminalUI {
     if (this.options.json) return this.jsonEvent('assistant', { content: plain });
     if (this.options.quiet) return this.write(plain);
     this.writeSectionTitle('Assistant', 'green');
-    this.writeBlock(plain, this.color('reset'));
+    // Never column-reflow assistant text; only real newlines (console may soft-wrap visually).
+    this.writeBlock(plain, this.color('reset'), { noWrap: true });
   }
 
   toolStart(tool: string, input: unknown) {
@@ -158,7 +159,8 @@ export class TerminalUI {
       this.writeKeyValue('output', '');
       // Success output: dim; failure: red. Keeps body quieter than titles.
       const bodyColor = result.ok ? this.color('dim') : this.color('red');
-      this.writeBlock(plainOutput, bodyColor, { indent: '    ' });
+      // Tool dumps keep original line breaks; no bash-style force wrap.
+      this.writeBlock(plainOutput, bodyColor, { indent: '    ', noWrap: true });
     }
   }
 
@@ -245,9 +247,10 @@ export class TerminalUI {
   private writeBlock(content: string, color: string, options: { indent?: string; maxLines?: number; noWrap?: boolean } = {}) {
     const indent = options.indent ?? '  ';
     const maxLines = options.maxLines ?? defaultBlockMaxLines;
+    // Default noWrap: only split on real newlines. Column wrap is opt-in (legacy / rare).
+    const noWrap = options.noWrap !== false;
     const width = Math.max(24, terminalColumns() - displayWidth(indent));
-    // noWrap: preserve original newlines only (multiline paste / user input). Do not bash-style force reflow.
-    const lines = options.noWrap
+    const lines = noWrap
       ? content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
       : wrapLines(content, width);
     const shown = lines.slice(0, maxLines);

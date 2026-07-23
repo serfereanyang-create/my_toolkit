@@ -46,16 +46,18 @@ test('TerminalUI omits empty tool output blocks', () => {
   assert.doesNotMatch(output, /\n  output:\n/);
 });
 
-test('TerminalUI wraps long lines instead of emitting one oversized row', () => {
+test('TerminalUI does not column-reflow long assistant lines', () => {
   const originalColumns = process.stdout.columns;
   process.stdout.columns = 40;
   try {
     const ui = new TerminalUI({ noColor: true });
-    const output = captureStdout(() => ui.assistant('abcdefghijklmnopqrstuvwxyz0123456789中文中文'));
+    const long = 'abcdefghijklmnopqrstuvwxyz0123456789中文中文';
+    const output = captureStdout(() => ui.assistant(long));
     const assistantLines = output.split(/\r?\n/).filter((line) => line.startsWith('  '));
 
-    assert.ok(assistantLines.length > 1);
-    assert.ok(assistantLines.every((line) => line.length <= 42));
+    // One logical line stays one printed line (console may soft-wrap visually).
+    assert.equal(assistantLines.length, 1);
+    assert.match(assistantLines[0] ?? '', new RegExp(long));
   } finally {
     process.stdout.columns = originalColumns;
   }
