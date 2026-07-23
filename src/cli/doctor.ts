@@ -5,6 +5,7 @@ import type { McpManager } from '../mcp/manager.js';
 import { isSandboxScrubEnabled } from '../safety/sandbox.js';
 import type { Provider } from '../providers/types.js';
 import type { ToolRegistry } from '../tools/index.js';
+import { collectCacheProbe } from '../probe/cacheProbe.js';
 
 export type DoctorCheck = {
   name: string;
@@ -27,6 +28,7 @@ export async function runDoctor(
     providerCheck(provider),
     mcpCheck(mcp),
     sandboxCheck(),
+    cacheProbeCheck(),
   ];
 }
 
@@ -95,5 +97,14 @@ function sandboxCheck(): DoctorCheck {
     detail: scrub
       ? 'process sandbox active (secret env scrub on; timeout tree-kill)'
       : 'process sandbox active (secret env scrub OFF via AICODE_SANDBOX; timeout tree-kill still on)',
+  };
+}
+
+function cacheProbeCheck(): DoctorCheck {
+  const probe = collectCacheProbe();
+  return {
+    name: 'cache',
+    ok: true,
+    detail: `avg hit rate ${probe.averageHitRatePercent}; project-context hits=${probe.buckets[0]?.hits ?? 0} misses=${probe.buckets[0]?.misses ?? 0}; nav hits=${probe.buckets[1]?.hits ?? 0} misses=${probe.buckets[1]?.misses ?? 0}`,
   };
 }

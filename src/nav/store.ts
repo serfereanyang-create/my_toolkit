@@ -7,6 +7,34 @@ import type { NavFileEntry, NavIndexFile } from './types.js';
 const INDEX_VERSION = 1 as const;
 const DEFAULT_MAX_FILES = 5000;
 
+export type NavCacheStats = {
+  hits: number;
+  misses: number;
+  filesCached: number;
+  filesParsed: number;
+  builds: number;
+};
+
+const navCacheStats: NavCacheStats = {
+  hits: 0,
+  misses: 0,
+  filesCached: 0,
+  filesParsed: 0,
+  builds: 0,
+};
+
+export function getNavCacheStats(): NavCacheStats {
+  return { ...navCacheStats };
+}
+
+export function resetNavCacheStats() {
+  navCacheStats.hits = 0;
+  navCacheStats.misses = 0;
+  navCacheStats.filesCached = 0;
+  navCacheStats.filesParsed = 0;
+  navCacheStats.builds = 0;
+}
+
 export class NavIndexStore {
   private readonly indexPath: string;
 
@@ -17,6 +45,9 @@ export class NavIndexStore {
   async loadOrBuild(options?: { maxFiles?: number; force?: boolean }): Promise<NavIndexFile> {
     const maxFiles = options?.maxFiles ?? DEFAULT_MAX_FILES;
     const existing = options?.force ? undefined : await this.readIndex();
+    if (existing) navCacheStats.hits += 1;
+    else navCacheStats.misses += 1;
+    navCacheStats.builds += 1;
     const built = await this.buildIncremental(existing, maxFiles);
     await this.writeIndex(built);
     return built;
@@ -85,6 +116,7 @@ export class NavIndexStore {
 
     const cached = previous.get(rel);
     if (cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size) {
+      navCacheStats.filesCached += 1;
       files.push(cached);
       return;
     }
@@ -95,11 +127,15 @@ export class NavIndexStore {
       try {
         const source = await readFile(current, 'utf8');
         symbols = extractSymbolsFromSource(rel, source, language);
+        navCacheStats.filesParsed += 1;
       } catch {
         symbols = [];
+        navCacheStats.filesParsed += 1;
       }
     } else if (language === 'other') {
       symbols = [];
+    } else {
+      navCacheStats.filesParsed += 1;
     }
 
     files.push({

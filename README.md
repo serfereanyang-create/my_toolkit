@@ -145,6 +145,7 @@ node cli/dist/src/index.js --resume sess_YYYYMMDDHHMMSS_xxxxxxxx
 - `/provider`
 - `/model`
 - `/tools`
+- `/cache` / `/probe` - cache probe: average hit rate for project-context + nav-index
 - `/mcp` - show MCP server status
 - `/mcp reload` - reconnect MCP servers and refresh tools
 - `/attach <path>…` - stage files/images for the next message (drag path into terminal, then attach)

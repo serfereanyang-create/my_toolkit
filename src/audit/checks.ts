@@ -181,9 +181,11 @@ function buildChecks(root: string): Check[] {
     'src/cli/input.ts',
     'src/cli/attachments.ts',
     'src/cli/limits.ts',
+    'src/probe/cacheProbe.ts',
     'tests/fixtures/mcp-echo-server.mjs',
     'tests/input-attachments.test.ts',
     'tests/read-paths.test.ts',
+    'tests/cache-probe.test.ts',
   ];
   requiredFiles.forEach((path) => checks.push({ name: `file exists: ${path}`, run: () => exists(path) }));
 
@@ -428,6 +430,16 @@ function buildChecks(root: string): Check[] {
   }));
   checks.push({ name: 'agent uses compactMessagesForModel', run: () => contains('src/agent/agent.ts', 'compactMessagesForModel') });
 
+  const cacheProbeNeedles = ['collectCacheProbe', 'formatCacheProbe', 'averageHitRate', 'getNavCacheStats', '/cache'];
+  cacheProbeNeedles.forEach((needle) => checks.push({
+    name: `cache probe contains ${needle}`,
+    run: async () =>
+      (await contains('src/probe/cacheProbe.ts', needle))
+      || (await contains('src/nav/store.ts', needle))
+      || (await contains('src/cli/commands.ts', needle))
+      || (await contains('src/cli/doctor.ts', needle)),
+  }));
+
   const fallbackNeedles = ['planLocalFallback', 'rename_file', 'previousUserPrompt'];
   fallbackNeedles.forEach((needle) => checks.push({ name: `fallback contains ${needle}`, run: () => contains('src/agent/fallback.ts', needle) }));
 
@@ -627,12 +639,12 @@ function buildChecks(root: string): Check[] {
     },
   });
 
-  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run live-smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget', 'Git workflow', 'Native tool calling', 'stream', 'Live provider smoke', 'MCP', '.aicode/mcp.json', '/mcp', 'Process sandbox', 'AICODE_SANDBOX', '/attach', '/paste-image', '25KB'];
+  const readmeNeedles = ['aicode CLI MVP', 'OpenAI-compatible', 'Anthropic provider', 'Sessions', '--resume', 'Slash Commands', '不准偷懒开发', 'Verification', 'npm run smoke', 'npm run live-smoke', 'npm run audit:100', 'Task boards', 'Project memory', 'Git safety', '/rollback', '/git publish', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Context budget', 'Git workflow', 'Native tool calling', 'stream', 'Live provider smoke', 'MCP', '.aicode/mcp.json', '/mcp', 'Process sandbox', 'AICODE_SANDBOX', '/attach', '/paste-image', '25KB', '/cache'];
   readmeNeedles.forEach((needle) => checks.push({ name: `README contains ${needle}`, run: () => contains('README.md', needle) }));
 
   checks.push({ name: 'terminal UI has section role colors', run: () => contains('src/ui/terminal.ts', 'section Task') || contains('src/ui/terminal.ts', "writeSectionTitle('Task'") });
 
-  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'stdio', 'OS sandbox', 'process sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Python/Go/Rust/Java/Kotlin', 'Context budget / compaction', 'aicode/board-', 'native tools/tool_calls', 'SSE text streaming', 'live provider smoke'];
+  const matrixNeedles = ['Capability Matrix', 'Command UX/help/version', 'Plugins/hooks', 'MCP', 'stdio', 'OS sandbox', 'process sandbox', 'Final Verification Checklist', 'Long-task planning / task board', 'Project memory', 'Git safety / rollback log', 'Natural-language command extraction', 'Task verify loop', 'Codebase navigation', 'Python/Go/Rust/Java/Kotlin', 'Context budget / compaction', 'Cache probe', 'aicode/board-', 'native tools/tool_calls', 'SSE text streaming', 'live provider smoke'];
   matrixNeedles.forEach((needle) => checks.push({ name: `capability matrix contains ${needle}`, run: () => contains('docs/capability-matrix.md', needle) }));
 
   const liveSmokeNeedles = ['resolveLiveSmokePlan', 'runLiveSmoke', 'AICODE_LIVE_SMOKE', 'OPENAI_API_KEY'];

@@ -31,6 +31,7 @@ import {
   type Attachment,
 } from './attachments.js';
 import { formatByteSize, MAX_USER_TEXT_BYTES_HARD } from './limits.js';
+import { formatCacheProbe } from '../probe/cacheProbe.js';
 
 export async function handleSlashCommand(options: {
   line: string;
@@ -83,6 +84,9 @@ export async function handleSlashCommand(options: {
       'Send a normal message (or empty with only attachments not supported—type a short note) to submit with the next turn.',
     ].join('\n');
   }
+  if (command === '/cache' || command === '/probe' || command === '/probe cache' || command.startsWith('/cache ')) {
+    return formatCacheProbe();
+  }
 
   switch (command) {
     case '/help':
@@ -94,6 +98,7 @@ export async function handleSlashCommand(options: {
         '/model      Show active model',
         '/config     Show effective redacted configuration',
         '/tools      List available tools',
+        '/cache      Cache probe: average hit rate (project-context + nav-index)',
         '/mcp        Show MCP servers (use /mcp reload)',
         '/attach <path>…  Stage files/images for next message (drag path into terminal then /attach)',
         '/paste-image  Capture screenshot from clipboard (Windows)',
@@ -116,7 +121,14 @@ export async function handleSlashCommand(options: {
       ].join('\n');
     case '/status': {
       const checkpoints = (await options.checkpoints?.list()) ?? [];
-      return [`session: ${options.session.id}`, `workspace: ${options.config.workspaceRoot}`, `approval: ${options.config.approval}`, `tool calls: ${options.session.toolCalls.length}`, `checkpoints: ${checkpoints.length}`].join('\n');
+      return [
+        `session: ${options.session.id}`,
+        `workspace: ${options.config.workspaceRoot}`,
+        `approval: ${options.config.approval}`,
+        `tool calls: ${options.session.toolCalls.length}`,
+        `checkpoints: ${checkpoints.length}`,
+        formatCacheProbe().split('\n').slice(0, 2).join(' | '),
+      ].join('\n');
     }
     case '/provider':
       return options.provider.name;
