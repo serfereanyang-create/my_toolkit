@@ -1,4 +1,5 @@
 import { recentActivityTool } from './activity.js';
+import { cacheProbeTool } from './cacheProbe.js';
 import { diskInfoTool } from './disk.js';
 import { createDocxTool } from './docx.js';
 import { environmentInfoTool } from './environment.js';
@@ -19,6 +20,7 @@ export function createDefaultToolRegistry() {
   registry.register(projectStatusTool);
   registry.register(recentActivityTool);
   registry.register(environmentInfoTool);
+  registry.register(cacheProbeTool);
   registry.register(projectIndexTool);
   registry.register(findSymbolTool);
   registry.register(findReferencesTool);

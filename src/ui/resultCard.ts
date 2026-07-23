@@ -32,6 +32,8 @@ export function formatResultCard(options: {
       return formatProcessCard(options.data, options.output, locale);
     case 'environment_info':
       return formatEnvironmentCard(options.data, options.output, locale);
+    case 'cache_probe':
+      return formatCacheCard(options.data, options.output, locale);
     default:
       return undefined;
   }
@@ -118,6 +120,31 @@ function formatEnvironmentCard(data: unknown, output: string, locale: Locale) {
   ].join('\n');
 }
 
+function formatCacheCard(data: unknown, output: string, locale: Locale) {
+  const report = isRecord(data) ? data : undefined;
+  const rate = typeof report?.averageHitRatePercent === 'string'
+    ? report.averageHitRatePercent
+    : (pickLine(output, /average hit rate/i)?.replace(/^.*:\s*/i, '') ?? 'n/a');
+  const lookups = typeof report?.totalLookups === 'number' ? report.totalLookups : undefined;
+  const hits = typeof report?.totalHits === 'number' ? report.totalHits : undefined;
+  const misses = typeof report?.totalMisses === 'number' ? report.totalMisses : undefined;
+  if (locale === 'zh') {
+    const sample = lookups === 0 || rate.includes('n/a')
+      ? '暂无命中样本（本进程还没触发 project-context / nav-index 查询）。'
+      : `平均命中率 ${rate}。`;
+    return [
+      `结论：${sample}`,
+      `数据：lookups=${lookups ?? '?'}（hits=${hits ?? '?'}，misses=${misses ?? '?'}）`,
+      '下一步：同一会话里再问一次项目索引/仓库说明后执行 /cache，命中率才会上升。重启 CLI 会清零。',
+    ].join('\n');
+  }
+  return [
+    `Conclusion: ${lookups === 0 || String(rate).includes('n/a') ? 'no samples yet in this process.' : `average hit rate ${rate}.`}`,
+    `Data: lookups=${lookups ?? '?'} (hits=${hits ?? '?'}, misses=${misses ?? '?'})`,
+    'Next: repeat project-index / context turns in the same session, then /cache. Restart resets counters.',
+  ].join('\n');
+}
+
 function oneLineHint(tool: string, ok: boolean, output: string | undefined, data: unknown, locale: Locale) {
   if (!ok) return locale === 'zh' ? '失败' : 'failed';
   if (tool === 'disk_info') {
@@ -127,6 +154,9 @@ function oneLineHint(tool: string, ok: boolean, output: string | undefined, data
   if (tool === 'process_memory') {
     const rows = processRows(data) ?? parseProcessFromOutput(output ?? '');
     if (rows[0]) return `${rows[0].name} ${fmt(rows[0].memoryMb)}MB`;
+  }
+  if (tool === 'cache_probe' && isRecord(data) && typeof data.averageHitRatePercent === 'string') {
+    return data.averageHitRatePercent;
   }
   const first = (output ?? '').split(/\r?\n/).find((line) => line.trim() && !line.includes('\tpath\t') && !/^name\t/.test(line));
   if (!first) return undefined;

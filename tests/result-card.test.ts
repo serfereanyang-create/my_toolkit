@@ -31,13 +31,13 @@ test('isMetaTranslatedDone detects mock meta finals', () => {
   assert.equal(isMetaTranslatedDone('结论：C: 磁盘还有可用空间。'), false);
 });
 
-test('summarizeToolLine folds disk data into one line', () => {
-  const line = summarizeToolLine({
-    tool: 'disk_info',
-    ok: true,
-    duration: '1ms',
+test('formatResultCard builds cache probe card', () => {
+  const card = formatResultCard({
+    tool: 'cache_probe',
     locale: 'zh',
-    data: { disks: [{ name: 'C:', freeGb: 188.01, totalGb: 412.79, usedGb: 224.77 }] },
+    output: 'Cache probe\naverage hit rate: n/a (no samples)',
+    data: { averageHitRatePercent: 'n/a (no samples)', totalLookups: 0, totalHits: 0, totalMisses: 0 },
   });
-  assert.match(line, /disk_info ok 1ms · 可用 188\.01GB/);
+  assert.match(card ?? '', /结论：暂无命中样本/);
+  assert.match(card ?? '', /lookups=0/);
 });

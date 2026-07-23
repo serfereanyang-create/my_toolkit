@@ -237,7 +237,7 @@ function buildChecks(root: string): Check[] {
   providerNeedles.forEach(([path, needle]) => checks.push({ name: `provider ${path} contains ${needle}`, run: () => contains(path, needle) }));
 
   const registry = createDefaultToolRegistry();
-  const expectedTools = ['project_status', 'recent_activity', 'environment_info', 'project_index', 'find_symbol', 'find_references', 'git_status', 'git_diff', 'git_log', 'list_files', 'read_file', 'write_file', 'search_text', 'process_memory', 'disk_info', 'disk_growth', 'run_command', 'create_docx', 'rename_file', 'apply_patch'];
+  const expectedTools = ['project_status', 'recent_activity', 'environment_info', 'cache_probe', 'project_index', 'find_symbol', 'find_references', 'git_status', 'git_diff', 'git_log', 'list_files', 'read_file', 'write_file', 'search_text', 'process_memory', 'disk_info', 'disk_growth', 'run_command', 'create_docx', 'rename_file', 'apply_patch'];
   expectedTools.forEach((tool) => checks.push({ name: `tool registered: ${tool}`, run: () => registry.get(tool) !== undefined }));
   checks.push({ name: 'tool specs match tool count', run: () => registry.specs().length === expectedTools.length });
   checks.push({ name: 'tool names are unique', run: () => new Set(registry.list().map((tool) => tool.name)).size === registry.list().length });
@@ -247,6 +247,7 @@ function buildChecks(root: string): Check[] {
 
   const toolNeedles: Array<[string, string]> = [
     ['src/tools/activity.ts', 'recentActivityTool'],
+    ['src/tools/cacheProbe.ts', 'cacheProbeTool'],
     ['src/tools/activity.ts', 'git: not a git repository'],
     ['src/tools/nav.ts', 'findSymbolTool'],
     ['src/tools/nav.ts', 'findReferencesTool'],

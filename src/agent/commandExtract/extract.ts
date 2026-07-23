@@ -31,6 +31,11 @@ export function extractCommand(prompt: string): ExtractionResult {
     command,
   };
 
+  // Cache probe first: "缓存命中" must never become a code search rabbit hole.
+  if (isCacheProbePrompt(prompt, normalized)) {
+    return result('cache_probe', slots, 'high', ['cache hit-rate / probe keywords']);
+  }
+
   // Document/path-first: "C:\...\测试.docx看" / "desktop/x.docx" → one-shot read_file, no model loop.
   if (path && isDocumentPath(path) && !hasEditVerb(normalized) && !hasSearchVerb(normalized)) {
     return result('file_read', slots, 'high', ['document or absolute path implies read']);
@@ -101,6 +106,17 @@ export function extractCommand(prompt: string): ExtractionResult {
 
 function result(intent: CommandIntent, slots: CommandSlots, confidence: Confidence, reasons: string[]): ExtractionResult {
   return { intent, slots, confidence, reasons };
+}
+
+function isCacheProbePrompt(prompt: string, normalized: string) {
+  const compact = prompt.replace(/\s+/g, '');
+  // Natural-language aliases for /cache — keep narrow so "缓存机制源码" can still search.
+  if (/^\/?(cache|probe)(\s+cache)?$/i.test(prompt.trim())) return true;
+  if (/缓存命中|命中率|缓存探针|cache\s*hit|hit\s*rate|average\s*hit/i.test(compact)) return true;
+  if (hasAny(normalized, ['cache probe', 'cache status', '查看缓存', '看缓存', '缓存情况', '缓存状态'])) return true;
+  // Short bare "缓存" / "cache" is probe, longer sentences about implementing cache still go to model/search.
+  if (/^(查看|看|显示|show|check)?(一下)?(当前)?(缓存|cache)$/i.test(compact)) return true;
+  return false;
 }
 
 function hasReadVerb(value: string) {

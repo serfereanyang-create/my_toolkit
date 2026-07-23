@@ -12,6 +12,7 @@ const READONLY_EXECUTE_TOOLS = new Set([
   'environment_info',
   'process_memory',
   'recent_activity',
+  'cache_probe',
 ]);
 
 export function planCommand(extraction: ExtractionResult): CommandPlan {
@@ -73,6 +74,14 @@ export function planCommand(extraction: ExtractionResult): CommandPlan {
     }
     case 'project_index':
       return executeOrStrategy(extraction, [{ tool: 'project_index', input: { path: extraction.slots.path ?? '.', maxFiles: 1000 } }], ['project_index'], ['run_command'], 'Project index request.');
+    case 'cache_probe':
+      return executeOrStrategy(
+        extraction,
+        [{ tool: 'cache_probe', input: {} }],
+        ['cache_probe'],
+        ['run_command', 'search_text', 'list_files', 'read_file'],
+        'Cache hit-rate probe (in-process stats only).',
+      );
     case 'project_status':
       return executeOrStrategy(extraction, [{ tool: 'project_status', input: {} }], ['project_status', 'project_index'], ['run_command'], 'Project status request.');
     case 'runtime_info':

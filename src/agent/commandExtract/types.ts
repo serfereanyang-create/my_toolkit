@@ -3,6 +3,7 @@ export type CommandIntent =
   | 'disk_growth'
   | 'project_status'
   | 'project_index'
+  | 'cache_probe'
   | 'code_search'
   | 'file_read'
   | 'runtime_info'

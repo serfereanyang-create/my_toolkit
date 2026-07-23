@@ -25,6 +25,17 @@ test('extracts high-confidence readonly intents and slots', () => {
   assert.equal(read.intent, 'file_read');
   assert.equal(read.slots.path, 'package.json');
   assert.equal(read.confidence, 'high');
+
+  const cache = extractCommand('缓存命中');
+  assert.equal(cache.intent, 'cache_probe');
+  assert.equal(cache.confidence, 'high');
+  const cachePlan = planCommand(cache);
+  assert.equal(cachePlan.mode, 'execute');
+  assert.deepEqual(cachePlan.steps.map((step) => step.tool), ['cache_probe']);
+  assert.equal(extractCommand('查看缓存').intent, 'cache_probe');
+  assert.equal(extractCommand('average hit rate').intent, 'cache_probe');
+  // Longer code-oriented cache talk should NOT force probe (leave to model/search).
+  assert.notEqual(extractCommand('帮我实现一个缓存机制并搜索 cacheKey').intent, 'cache_probe');
 });
 
 test('extracts desktop and absolute docx paths for one-shot read', () => {

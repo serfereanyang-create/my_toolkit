@@ -127,9 +127,10 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
   const projectContext = formatProjectContext(await readProjectContext(runtime.config.workspaceRoot));
   const extraction = extractCommand(prompt);
   const commandPlan = planCommand(extraction);
-  // Mock already plans deterministic multi-step demos one tool per provider turn.
-  // Direct execution is for real providers / non-mock paths.
-  if (commandPlan.mode === 'execute' && runtime.provider.name !== 'mock') {
+  // Mock multi-step demos stay model-driven one tool per turn, except pure cache_probe
+  // which must never fall into a code-search rabbit hole from NL like "缓存命中".
+  const pureDirectOnly = commandPlan.steps.length > 0 && commandPlan.steps.every((step) => step.tool === 'cache_probe');
+  if (commandPlan.mode === 'execute' && (runtime.provider.name !== 'mock' || pureDirectOnly)) {
     try {
       const direct = await executeCommandPlan(runtime, commandPlan, locale);
       if (direct.status === 'completed') return direct.result;
