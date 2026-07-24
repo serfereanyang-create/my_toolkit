@@ -12,6 +12,7 @@ import { planBoardFromGoal, shouldUseTaskBoard } from '../tasks/planner.js';
 import { confirmBoard, formatBoard, runTaskBoardLoop } from '../tasks/runtime.js';
 import { TaskBoardStore } from '../tasks/store.js';
 import { prepareUserContent, type Attachment } from './attachments.js';
+import { runCommandPalette } from './commandPalette.js';
 import { handleSlashCommand } from './commands.js';
 import { isSlashCommandLine, readUserTurn } from './input.js';
 import { assertUserTextWithinLimit, formatByteSize } from './limits.js';
@@ -232,6 +233,21 @@ export async function runRepl(runtime: AgentRuntime) {
 
       if (isSlashCommandLine(turn.text) && !turn.multiline) {
         const line = turn.text.trim();
+        // Floating command palette (OpenCode-style) instead of dumping /help text.
+        if (line === '/help' || line === '/?' || line === '/commands') {
+          rl.pause();
+          try {
+            const palette = await runCommandPalette(interactiveRuntime);
+            if (palette.status === 'exit') break;
+            if (palette.message) runtime.ui.info(palette.message);
+            if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
+              await continueTaskBoard(interactiveRuntime);
+            }
+          } finally {
+            rl.resume();
+          }
+          continue;
+        }
         // Floating Message Actions menu (OpenCode-style overlay, not line dump).
         if (line === '/actions' || line === '/menu') {
           rl.pause();

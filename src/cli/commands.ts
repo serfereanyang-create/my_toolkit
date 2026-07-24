@@ -31,6 +31,7 @@ import {
   type Attachment,
 } from './attachments.js';
 import { formatByteSize, MAX_USER_TEXT_BYTES_HARD } from './limits.js';
+import { formatHelpText } from './commandPalette.js';
 import { formatCacheProbe } from '../probe/cacheProbe.js';
 import { detectLocale } from '../i18n/locale.js';
 import { formatGitConfirm } from '../i18n/messages.js';
@@ -92,36 +93,10 @@ export async function handleSlashCommand(options: {
 
   switch (command) {
     case '/help':
-      return [
-        'Commands:',
-        '/help       Show this help',
-        '/status     Show session and workspace status',
-        '/provider   Show active provider',
-        '/model      Show active model',
-        '/config     Show effective redacted configuration',
-        '/tools      List available tools',
-        '/cache      Cache probe: average hit rate (project-context + nav-index)',
-        '/mcp        Show MCP servers (use /mcp reload)',
-        '/attach <path>…  Stage files/images for next message (drag path into terminal then /attach)',
-        '/paste-image  Capture screenshot from clipboard (Windows)',
-        '/attachments  List staged attachments',
-        '/paste      Multiline paste mode (end with . or /end; keeps original newlines)',
-        '"""          Multiline block (end with """); not bash forced wrap',
-        `Text limit   ${MAX_USER_TEXT_BYTES_HARD} bytes (~25KB) pure text per turn`,
-        '/summary    Summarize the current session',
-        '/plan       Show task board (use /plan confirm|pause|continue|skip|reopen|show)',
-        '/memory     Show project memory (use /memory add|list|forget)',
-        '/rollback   List/show/preview/apply Git safety unit rollbacks',
-        '/git status|commit|publish   Board-linked Git workflow (commit is confirmed)',
-        '/git publish <remote> <local-ref> <remote-branch>  Confirmed non-force push',
-        '/export     Show transcript file path',
-        '/sessions   List recent sessions',
-        '/actions    Message actions overlay (Revert / Copy / Fork)',
-        '/undo       Undo the last checkpointed file change',
-        '/不准偷懒开发       开启学习守门模式',
-        '/不准偷懒开发 状态  查看守门状态',
-        '/exit       Exit interactive mode',
-      ].join('\n');
+    case '/?':
+    case '/commands':
+      // Interactive REPL intercepts /help for the floating palette; this is the text fallback.
+      return formatHelpText();
     case '/status': {
       const checkpoints = (await options.checkpoints?.list()) ?? [];
       return [
