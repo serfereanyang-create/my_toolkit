@@ -15,6 +15,7 @@ import { prepareUserContent, type Attachment } from './attachments.js';
 import { handleSlashCommand } from './commands.js';
 import { isSlashCommandLine, readUserTurn } from './input.js';
 import { assertUserTextWithinLimit, formatByteSize } from './limits.js';
+import { runMessageActions } from './messageActions.js';
 import { detectLocale, resolveSessionLocale } from '../i18n/locale.js';
 import { formatGitConfirm } from '../i18n/messages.js';
 import { chatPromptLabel } from '../ui/home.js';
@@ -230,7 +231,29 @@ export async function runRepl(runtime: AgentRuntime) {
       if (!turn.text.trim() && (interactiveRuntime.pendingAttachments?.length ?? 0) === 0) continue;
 
       if (isSlashCommandLine(turn.text) && !turn.multiline) {
-        const result = await handleSlashCommand({ line: turn.text.trim(), ...interactiveRuntime });
+        const line = turn.text.trim();
+        // Floating Message Actions menu (OpenCode-style overlay, not line dump).
+        if (line === '/actions' || line === '/menu') {
+          rl.pause();
+          try {
+            const status = await runMessageActions({
+              config: interactiveRuntime.config,
+              provider: interactiveRuntime.provider,
+              sessions: interactiveRuntime.sessions,
+              session: interactiveRuntime.session,
+              checkpoints: interactiveRuntime.checkpoints,
+              onSessionForked: (session) => {
+                interactiveRuntime.session = session;
+                runtime.session = session;
+              },
+            });
+            runtime.ui.info(status);
+          } finally {
+            rl.resume();
+          }
+          continue;
+        }
+        const result = await handleSlashCommand({ line, ...interactiveRuntime });
         if (result === '__EXIT__') break;
         runtime.ui.info(result);
         if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {

@@ -116,6 +116,7 @@ export async function handleSlashCommand(options: {
         '/git publish <remote> <local-ref> <remote-branch>  Confirmed non-force push',
         '/export     Show transcript file path',
         '/sessions   List recent sessions',
+        '/actions    Message actions overlay (Revert / Copy / Fork)',
         '/undo       Undo the last checkpointed file change',
         '/不准偷懒开发       开启学习守门模式',
         '/不准偷懒开发 状态  查看守门状态',
@@ -148,6 +149,9 @@ export async function handleSlashCommand(options: {
       const sessions = await options.sessions.list();
       return sessions.slice(0, 10).map((session) => `${session.id} ${session.updatedAt} ${session.provider}/${session.model}`).join('\n') || '(no sessions)';
     }
+    case '/actions':
+    case '/menu':
+      return 'Open Message Actions with /actions in interactive mode (floating menu).';
     case '/undo':
       return options.checkpoints ? options.checkpoints.undoLast() : 'No checkpoint store is available.';
     case '/exit':
