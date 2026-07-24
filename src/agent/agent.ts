@@ -235,6 +235,7 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
     }
 
     let sawTool = false;
+    let terminalCreateDone: { tool: string; output: string } | undefined;
     for (const action of response.actions) {
       if (action.type === 'message') {
         const card = maybeUpgradeMetaMessage(runtime, action.content, lastToolName, locale);
@@ -242,6 +243,22 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
         runtime.ui.assistant(content);
         await runtime.sessions.appendFinalAnswer(runtime.session, content);
         finalAnswer = content;
+        continue;
+      }
+
+      // Model sometimes re-issues create_docx after it already succeeded — do not re-run.
+      if (isDuplicateSuccessfulTool(runtime, action.tool, action.input)) {
+        runtime.ui.info(
+          locale === 'zh'
+            ? `跳过重复工具 ${action.tool}（本轮已成功执行过相同操作）。`
+            : `Skipping duplicate ${action.tool} (same call already succeeded this turn).`,
+        );
+        lastToolName = action.tool;
+        sawTool = true;
+        if (isTerminalCreateTool(action.tool)) {
+          const prior = latestSuccessfulTool(runtime, action.tool);
+          terminalCreateDone = { tool: action.tool, output: prior?.output ?? '' };
+        }
         continue;
       }
 
@@ -259,9 +276,32 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
           outcome: toolResult.outcome ?? 'failed',
         };
       }
+      if (isTerminalCreateTool(action.tool)) {
+        const prior = latestSuccessfulTool(runtime, action.tool);
+        terminalCreateDone = { tool: action.tool, output: prior?.output ?? '' };
+      }
+    }
+
+    // create_docx / rename_file etc. already finished the user goal — stop looping.
+    if (terminalCreateDone) {
+      const message = formatTerminalCreateDone(terminalCreateDone, locale);
+      runtime.ui.assistant(message);
+      await runtime.sessions.appendFinalAnswer(runtime.session, message);
+      return { ok: true, session: runtime.session, finalAnswer: message, outcome: 'done' };
     }
 
     if (!sawTool) {
+      return {
+        ok: true,
+        session: runtime.session,
+        finalAnswer,
+        outcome: 'done',
+      };
+    }
+
+    // If this step only ran tools and the model already emitted a final answer in the same
+    // action list, prefer stopping rather than another provider round-trip.
+    if (finalAnswer) {
       return {
         ok: true,
         session: runtime.session,
@@ -456,6 +496,57 @@ function friendlyModelError(message: string) {
     return '鉴权失败（API key / base URL 不匹配）';
   }
   return message;
+}
+
+/** Tools that complete a user-facing goal — do not keep calling the model after success. */
+function isTerminalCreateTool(tool: string) {
+  return tool === 'create_docx' || tool === 'rename_file';
+}
+
+function toolFingerprint(tool: string, input: unknown) {
+  try {
+    return `${tool}:${JSON.stringify(input ?? {})}`;
+  } catch {
+    return `${tool}:[unserializable]`;
+  }
+}
+
+function isDuplicateSuccessfulTool(runtime: AgentRuntime, tool: string, input: unknown) {
+  const needle = toolFingerprint(tool, input);
+  for (let index = runtime.session.toolCalls.length - 1; index >= 0; index -= 1) {
+    const call = runtime.session.toolCalls[index];
+    if (!call || call.tool !== tool || !call.ok) continue;
+    if (toolFingerprint(call.tool, call.input) === needle) return true;
+    // Same create_docx path even if title/body differ slightly — still treat as done.
+    if (isTerminalCreateTool(tool) && sameCreatePath(call.input, input)) return true;
+  }
+  return false;
+}
+
+function sameCreatePath(left: unknown, right: unknown) {
+  const a = isRecord(left) && typeof left.path === 'string' ? left.path.replace(/\\/g, '/').toLowerCase() : '';
+  const b = isRecord(right) && typeof right.path === 'string' ? right.path.replace(/\\/g, '/').toLowerCase() : '';
+  return Boolean(a && b && a === b);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function formatTerminalCreateDone(done: { tool: string; output: string }, locale: Locale) {
+  const detail = done.output.trim();
+  if (locale === 'zh') {
+    if (done.tool === 'create_docx') {
+      return detail
+        ? `已完成：Word 文档创建成功。\n${detail}`
+        : '已完成：Word 文档创建成功。';
+    }
+    return detail ? `已完成：${done.tool} 成功。\n${detail}` : `已完成：${done.tool} 成功。`;
+  }
+  if (done.tool === 'create_docx') {
+    return detail ? `Done: Word document created.\n${detail}` : 'Done: Word document created.';
+  }
+  return detail ? `Done: ${done.tool} succeeded.\n${detail}` : `Done: ${done.tool} succeeded.`;
 }
 
 function isTerminalToolFailure(output: string) {
