@@ -222,14 +222,13 @@ export async function runRepl(runtime: AgentRuntime) {
       try {
         const useAskCard = process.stdout.isTTY && process.stdin.isTTY && !runtime.config.noColor && !runtime.config.json;
         if (useAskCard) {
-          // Cursor lives inside the Ask card (OpenCode-style), not at an outer aicode> prompt.
+          // One Ask card owns the input UI (clears previous home/card paints).
           turn = await readAskCardTurn({
             model: runtime.provider.model,
             baseUrl: runtime.config.baseUrl,
             providerName: runtime.provider.name,
             noColor: runtime.config.noColor,
           });
-          // Fallback if raw-mode card unavailable.
           if (turn === null && process.stdin.isTTY) {
             // Ctrl+C → exit REPL
             break;

@@ -72,9 +72,11 @@ export class TerminalUI {
     this.modelHint = provider.model || provider.name;
     if (this.options.homeScreen && process.stdout.isTTY) {
       clearScreen();
+      // Logo only — the interactive Ask card is painted once by readAskCardTurn.
       process.stdout.write(`${renderHomeScreen(config, provider, {
         noColor: this.options.noColor,
         version: this.options.version,
+        logoOnly: true,
       })}\n`);
       this.homeActive = true;
       return;

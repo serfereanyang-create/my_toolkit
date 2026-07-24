@@ -33,11 +33,16 @@ const LOGO_COMPACT = [
 export type HomeScreenOptions = {
   noColor?: boolean;
   version?: string;
+  /**
+   * When true (default for interactive Ask-card REPL), only paint the logo.
+   * The single Ask input card is owned by readAskCardTurn — avoids stacked cards.
+   */
+  logoOnly?: boolean;
 };
 
 /**
- * OpenCode-like dark home: big logo, centered ask box, agent/model line, shortcuts.
- * Pure stdout (no extra deps). Best in a dark terminal theme.
+ * OpenCode-like dark home.
+ * Interactive mode uses logoOnly so there is exactly one Ask card (from askCard).
  */
 export function renderHomeScreen(
   config: AppConfig,
@@ -47,8 +52,8 @@ export function renderHomeScreen(
   const color = (name: keyof typeof c) => (options.noColor ? '' : c[name]);
   const cols = Math.max(process.stdout.columns || 100, 60);
   const rows = Math.max(process.stdout.rows || 28, 20);
-  const boxWidth = Math.min(72, Math.max(48, cols - 8));
   const logo = displayWidth(LOGO_WIDE[0] ?? '') + 4 <= cols ? LOGO_WIDE : LOGO_COMPACT;
+  const logoOnly = options.logoOnly !== false;
 
   const pad = (line: string) => {
     const plain = stripAnsi(line);
@@ -56,48 +61,52 @@ export function renderHomeScreen(
     return `${' '.repeat(left)}${line}`;
   };
 
-  const agent = 'Build';
-  const modelLabel = shortenModel(provider.model);
-  const providerLabel = provider.name === 'openai' ? shortHost(config.baseUrl) : provider.name;
-  const statusPlain = `${agent} · ${modelLabel}${providerLabel ? `  ${providerLabel}` : ''}`;
-  const statusLine = `${color('blue')}${color('bold')}${agent}${color('reset')} ${color('dim')}·${color('reset')} ${color('white')}${modelLabel}${color('reset')}${providerLabel ? ` ${color('dim')}${providerLabel}${color('reset')}` : ''}`;
-
-  const innerAsk = 'Ask anything...  "Fix broken tests"';
-  const askPad = Math.max(0, boxWidth - 4 - displayWidth(innerAsk));
-  const statusPad = Math.max(0, boxWidth - 4 - displayWidth(statusPlain));
-  // Blue left accent like OpenCode input card.
-  const accentTop = `${color('blue')}┌${color('gray')}${'─'.repeat(boxWidth - 2)}┐${color('reset')}`;
-  const askRow = `${color('blue')}│${color('reset')} ${color('gray')}${innerAsk}${' '.repeat(askPad)}${color('reset')}`;
-  const statusRow = `${color('blue')}│${color('reset')} ${statusLine}${' '.repeat(statusPad)}`;
-  const accentBot = `${color('blue')}└${color('gray')}${'─'.repeat(boxWidth - 2)}┘${color('reset')}`;
-
-  const shortcuts = `${color('dim')}/help commands   """ multiline${color('reset')}`;
-  const version = options.version ? `${color('dim')}${options.version}${color('reset')}` : '';
-
   const lines: string[] = [];
-  const contentLines = logo.length + 9;
-  const topPad = Math.max(1, Math.floor((rows - contentLines) / 3));
+  // Keep logo in the upper third; leave room below for the single Ask card.
+  const topPad = Math.max(1, Math.floor(rows / 6));
   for (let i = 0; i < topPad; i += 1) lines.push('');
 
   for (const logoLine of logo) {
     lines.push(pad(`${color('white')}${color('bold')}${logoLine}${color('reset')}`));
   }
-  lines.push('');
-  lines.push(pad(accentTop));
-  lines.push(pad(askRow));
-  lines.push(pad(statusRow));
-  lines.push(pad(accentBot));
-  lines.push('');
-  lines.push(pad(shortcuts));
-  if (version) {
+
+  if (!logoOnly) {
+    // Legacy full home (non-interactive previews / tests that want the static card).
+    const boxWidth = Math.min(72, Math.max(48, cols - 8));
+    const agent = 'Build';
+    const modelLabel = shortenModel(provider.model);
+    const providerLabel = provider.name === 'openai' ? shortHost(config.baseUrl) : provider.name;
+    const statusPlain = `${agent} · ${modelLabel}${providerLabel ? `  ${providerLabel}` : ''}`;
+    const statusLine = `${color('blue')}${color('bold')}${agent}${color('reset')} ${color('dim')}·${color('reset')} ${color('white')}${modelLabel}${color('reset')}${providerLabel ? ` ${color('dim')}${providerLabel}${color('reset')}` : ''}`;
+    const innerAsk = 'Ask anything...  "Fix broken tests"';
+    const askPad = Math.max(0, boxWidth - 4 - displayWidth(innerAsk));
+    const statusPad = Math.max(0, boxWidth - 4 - displayWidth(statusPlain));
+    const accentTop = `${color('blue')}┌${color('gray')}${'─'.repeat(boxWidth - 2)}┐${color('reset')}`;
+    const askRow = `${color('blue')}│${color('reset')} ${color('gray')}${innerAsk}${' '.repeat(askPad)}${color('reset')}`;
+    const statusRow = `${color('blue')}│${color('reset')} ${statusLine}${' '.repeat(statusPad)}`;
+    const accentBot = `${color('blue')}└${color('gray')}${'─'.repeat(boxWidth - 2)}┘${color('reset')}`;
     lines.push('');
-    lines.push(`${' '.repeat(Math.max(0, cols - displayWidth(stripAnsi(version)) - 2))}${version}`);
+    lines.push(pad(accentTop));
+    lines.push(pad(askRow));
+    lines.push(pad(statusRow));
+    lines.push(pad(accentBot));
   }
+
+  lines.push('');
+  lines.push(pad(`${color('dim')}/help commands   enter submit${color('reset')}`));
+  if (options.version) {
+    lines.push('');
+    lines.push(`${' '.repeat(Math.max(0, cols - displayWidth(options.version) - 2))}${color('dim')}${options.version}${color('reset')}`);
+  }
+  // Keep provider referenced for future status chips without unused lint when logoOnly.
+  void provider;
+  void config;
   return lines.join('\n');
 }
 
 export function clearScreen() {
-  process.stdout.write('\u001b[2J\u001b[H');
+  // Clear scrollback-visible area + home cursor (Windows Terminal / modern hosts).
+  process.stdout.write('\u001b[2J\u001b[3J\u001b[H');
 }
 
 export function chatPromptLabel(options: { noColor?: boolean } = {}) {

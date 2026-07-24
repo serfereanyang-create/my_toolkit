@@ -51,12 +51,10 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
       placeholder: options.placeholder ?? 'Ask anything...  "Fix broken tests"',
       agentLabel: options.agentLabel ?? 'Build',
     });
-    // Redraw from home without wiping the whole scrollback history of the session:
-    // move to saved cursor position if we have one; else clear screen for first paint.
+    // Always full-clear so only ONE card exists (never stack with home or prior paints).
     output.write('\u001b[?25l');
-    output.write('\u001b[2J\u001b[H');
+    output.write('\u001b[2J\u001b[3J\u001b[H');
     output.write(frame);
-    // Place caret on the input row after left border + space + typed text.
     const { inputRow, inputCol } = caretPosition(text, options);
     output.write(`\u001b[${inputRow};${inputCol}H`);
     output.write('\u001b[?25h');
@@ -166,7 +164,6 @@ export function renderAskCardFrame(options: {
 
   const displayText = options.text.length > 0 ? options.text : options.placeholder;
   const textColor = options.text.length > 0 ? color('white') : color('gray');
-  // Soft-clip only for display inside the card; actual buffer keeps full text.
   const clipped = takeByDisplayWidth(displayText.replace(/\n/g, '⏎'), inner);
   const textPad = Math.max(0, inner - displayWidth(clipped));
   const statusPad = Math.max(0, inner - displayWidth(statusPlain));
@@ -176,9 +173,11 @@ export function renderAskCardFrame(options: {
   const statusRow = `${color('blue')}│${color('reset')} ${statusColored}${' '.repeat(statusPad)}`;
   const accentBot = `${color('blue')}└${color('gray')}${'─'.repeat(boxWidth - 2)}┘${color('reset')}`;
 
+  // Single card, vertically centered once — never stacked mid + bottom duplicates.
+  const cardLines = 4;
+  const hintLines = 2;
+  const topPad = Math.max(1, Math.floor((rows - cardLines - hintLines) / 2));
   const lines: string[] = [];
-  // Keep card roughly mid-screen like OpenCode home, but a bit lower for chat continuity.
-  const topPad = Math.max(1, Math.floor(rows / 3));
   for (let i = 0; i < topPad; i += 1) lines.push('');
   lines.push(pad(accentTop));
   lines.push(pad(askRow));
@@ -189,19 +188,20 @@ export function renderAskCardFrame(options: {
   return `${lines.join('\n')}\n`;
 }
 
-function caretPosition(text: string, options: AskCardOptions) {
+function caretPosition(text: string, _options: AskCardOptions) {
   const cols = Math.max(output.columns || 88, 48);
   const rows = Math.max(output.rows || 24, 16);
   const boxWidth = Math.min(72, Math.max(48, cols - 8));
   const inner = Math.max(8, boxWidth - 4);
-  const topPad = Math.max(1, Math.floor(rows / 3));
-  // Row: topPad empty lines + top border + input row  => 1-based
+  const cardLines = 4;
+  const hintLines = 2;
+  const topPad = Math.max(1, Math.floor((rows - cardLines - hintLines) / 2));
+  // 1-based: empty topPad lines, then border, then input row.
   const inputRow = topPad + 2;
   const visible = takeByDisplayWidth(text.replace(/\n/g, '⏎'), inner);
   const cardLeft = Math.max(0, Math.floor((cols - boxWidth) / 2));
-  // col: left pad + '│ ' + text
   const inputCol = cardLeft + 1 + 2 + displayWidth(visible) + 1;
-  return { inputRow, inputCol: Math.min(cols, inputCol) };
+  return { inputRow, inputCol: Math.min(cols, Math.max(1, inputCol)) };
 }
 
 function shortenModel(model: string) {
