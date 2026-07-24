@@ -309,6 +309,7 @@ export class TerminalUI {
     const cols = Math.max(process.stdout.columns || 88, 48);
     // Leave a little margin so it doesn't feel edge-glued.
     const width = Math.min(cols - 2, Math.max(40, cols - 4));
+    const inner = Math.max(8, width - 4);
     const bodyColor = this.color('white');
     const accent = this.color('blue');
     const panel = this.color('gray');
@@ -318,19 +319,20 @@ export class TerminalUI {
       .replace(/\r/g, '\n')
       .split('\n')
       .slice(0, 12);
-    // Top / bottom use light gray edges; left edge is blue accent.
-    this.write(`\n${accent}┌${panel}${'─'.repeat(Math.max(8, width - 2))}${panel}┐${reset}`);
+    // Top / bottom: blue left corner accent; body rows keep left blue bar + right edge.
+    this.write(`\n${accent}┌${panel}${'─'.repeat(width - 2)}${panel}┐${reset}`);
     for (const line of lines) {
-      const clipped = takeByDisplayWidth(line, Math.max(8, width - 4));
-      const pad = Math.max(0, width - 4 - displayWidth(clipped));
-      this.write(`${accent}│${reset} ${bodyColor}${clipped}${' '.repeat(pad)}${reset}`);
+      const clipped = takeByDisplayWidth(line, inner);
+      const pad = Math.max(0, inner - displayWidth(clipped));
+      this.write(`${accent}│${reset} ${bodyColor}${clipped}${' '.repeat(pad)}${reset} ${panel}│${reset}`);
     }
     if (prompt.split(/\r?\n/).length > lines.length) {
       const more = `… ${prompt.split(/\r?\n/).length - lines.length} more line(s)`;
-      const pad = Math.max(0, width - 4 - displayWidth(more));
-      this.write(`${accent}│${reset} ${this.color('dim')}${more}${' '.repeat(pad)}${reset}`);
+      const clipped = takeByDisplayWidth(more, inner);
+      const pad = Math.max(0, inner - displayWidth(clipped));
+      this.write(`${accent}│${reset} ${this.color('dim')}${clipped}${' '.repeat(pad)}${reset} ${panel}│${reset}`);
     }
-    this.write(`${accent}└${panel}${'─'.repeat(Math.max(8, width - 2))}${panel}┘${reset}`);
+    this.write(`${accent}└${panel}${'─'.repeat(width - 2)}${panel}┘${reset}`);
   }
 
   /** Build · model status row under the user bubble (OpenCode style). */
