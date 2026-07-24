@@ -51,7 +51,15 @@ async function main() {
     }
   }
   const hooks = createNoopHooks();
-  const ui = new TerminalUI({ quiet: config.quiet, json: config.json, noColor: config.noColor, verbose: config.verbose });
+  const version = await packageVersion();
+  const ui = new TerminalUI({
+    quiet: config.quiet,
+    json: config.json,
+    noColor: config.noColor,
+    verbose: config.verbose,
+    homeScreen: !config.prompt && !config.ci && !config.json,
+    version,
+  });
 
   if (config.doctor) {
     const checks = await runDoctor(config, provider, tools, mcp);

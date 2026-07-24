@@ -413,6 +413,9 @@ function buildChecks(root: string): Check[] {
     ['src/ui/terminal.ts', 'wrapLines'],
     ['src/ui/terminal.ts', 'displayWidth'],
     ['src/ui/terminal.ts', 'colors'],
+    ['src/ui/terminal.ts', 'homeScreen'],
+    ['src/ui/home.ts', 'renderHomeScreen'],
+    ['src/ui/consoleWrap.ts', 'disableConsoleSoftWrap'],
     ['src/index.ts', 'createDefaultToolRegistry'],
   ];
   cliNeedles.forEach(([path, needle]) => checks.push({ name: `cli ${path} contains ${needle}`, run: () => contains(path, needle) }));

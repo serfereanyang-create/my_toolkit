@@ -28,8 +28,8 @@ test('TerminalUI lays out task assistant and tool output with clean no-color spa
     ui.toolResult('disk_growth', { ok: true, output: 'sizeMB\tpath\n120.4\tout/cache.bin' });
   });
 
-  assert.match(output, /\n\* Task\n  帮我检查最近的大文件\n/);
-  assert.match(output, /\n\* Assistant\n  先看磁盘增长。\n/);
+  assert.match(output, /\n\* You\n帮我检查最近的大文件\n/);
+  assert.match(output, /\n\* Assistant\n先看磁盘增长。\n/);
   assert.match(output, /\n\* Tool 1 disk_growth\n  input: \{"path":"\.","hours":48\}\n  status: running\n  result: ok \d+ms\n  output:\n    sizeMB\tpath\n    120\.4\tout\/cache\.bin\n/);
   assert.doesNotMatch(output, /waiting for tool result/);
 });
@@ -69,14 +69,20 @@ test('TerminalUI does not column-reflow long assistant lines', () => {
     const ui = new TerminalUI({ noColor: true });
     const long = 'abcdefghijklmnopqrstuvwxyz0123456789中文中文';
     const output = captureStdout(() => ui.assistant(long));
-    const assistantLines = output.split(/\r?\n/).filter((line) => line.startsWith('  '));
-
-    // One logical line stays one printed line (console may soft-wrap visually).
-    assert.equal(assistantLines.length, 1);
-    assert.match(assistantLines[0] ?? '', new RegExp(long));
+    // Assistant body has no left indent and stays one logical line.
+    assert.match(output, new RegExp(`\\n\\* Assistant\\n${long}\\n`));
+    const bodyLines = output.split(/\r?\n/).filter((line) => line === long);
+    assert.equal(bodyLines.length, 1);
   } finally {
     process.stdout.columns = originalColumns;
   }
+});
+
+test('TerminalUI assistant body has no indent padding', () => {
+  const ui = new TerminalUI({ noColor: true });
+  const output = captureStdout(() => ui.assistant('先看磁盘增长。'));
+  assert.match(output, /\n\* Assistant\n先看磁盘增长。\n/);
+  assert.doesNotMatch(output, /\n  先看磁盘增长。/);
 });
 
 test('TerminalUI colored mode uses section markers without painting whole assistant body green', () => {

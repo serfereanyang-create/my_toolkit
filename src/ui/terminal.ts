@@ -1,6 +1,8 @@
 import type { AppConfig } from '../config/types.js';
 import type { Provider } from '../providers/types.js';
 import type { ToolResult } from '../tools/index.js';
+import { disableConsoleSoftWrap } from './consoleWrap.js';
+import { clearScreen, renderHomeScreen } from './home.js';
 import { MarkdownStreamCleaner, stripMarkdownDecorations } from './markdown.js';
 import { summarizeToolLine } from './resultCard.js';
 
@@ -35,6 +37,9 @@ type TerminalUIOptions = {
   noColor?: boolean;
   /** When true, show full tool input/output. Default folds process details. */
   verbose?: boolean;
+  /** OpenCode-like home screen for interactive REPL (not prompt/json/ci). */
+  homeScreen?: boolean;
+  version?: string;
 };
 
 export class TerminalUI {
@@ -47,9 +52,15 @@ export class TerminalUI {
   private readonly runningTools = new Map<string, number>();
   private readonly toolInputs = new Map<string, unknown>();
   private readonly options: TerminalUIOptions;
+  private homeActive = false;
+  private modelHint = 'aicode';
 
   constructor(options: TerminalUIOptions | boolean = {}) {
     this.options = typeof options === 'boolean' ? { quiet: options } : options;
+    // Prefer no soft-wrap in interactive human UI (Windows console otherwise reflows like bash).
+    if (!this.options.quiet && !this.options.json) {
+      disableConsoleSoftWrap();
+    }
   }
 
   get verbose() {
@@ -58,6 +69,16 @@ export class TerminalUI {
 
   banner(config: AppConfig, provider: Provider) {
     if (this.options.quiet || this.options.json || config.noBanner) return;
+    this.modelHint = provider.model || provider.name;
+    if (this.options.homeScreen && process.stdout.isTTY) {
+      clearScreen();
+      process.stdout.write(`${renderHomeScreen(config, provider, {
+        noColor: this.options.noColor,
+        version: this.options.version,
+      })}\n`);
+      this.homeActive = true;
+      return;
+    }
     this.writeBox([
       `${this.style('aicode', 'bold', 'cyan')} ${this.color('dim')}cli mvp${this.color('reset')}`,
       `${this.label('provider')} ${this.color('white')}${provider.name}${this.color('reset')}`,
@@ -73,9 +94,15 @@ export class TerminalUI {
     this.runningTools.clear();
     if (this.options.json) return this.jsonEvent('turn_start', { prompt });
     if (this.options.quiet) return;
-    this.writeSectionTitle('Task', 'blue');
-    // User paste: fold by real newlines only — never column-reflow like bash.
-    this.writeBlock(prompt, this.color('dim'), { maxLines: 12, noWrap: true });
+    if (this.homeActive) {
+      // Leave the home screen once the user starts a real turn.
+      clearScreen();
+      this.homeActive = false;
+      this.write(`${this.color('dim')}aicode · ${this.modelHint}${this.color('reset')}`);
+    }
+    this.writeSectionTitle('You', 'blue');
+    // User paste: fold by real newlines only — never column-reflow like bash. No left indent.
+    this.writeBlock(prompt, this.color('dim'), { indent: '', maxLines: 12, noWrap: true });
   }
 
   modelStart() {
@@ -103,11 +130,13 @@ export class TerminalUI {
     this.stopSpinner();
     if (!this.streamingAssistant) {
       this.streamingAssistant = true;
-      if (!this.options.quiet) this.writeSectionTitle('Assistant', 'green');
+      if (!this.options.quiet) {
+        this.writeSectionTitle('Assistant', 'green');
+        // Stream body starts at column 0 (no indent) so soft-wrap is less "terminal-indented".
+      }
     }
     const cleaned = this.streamCleaner.push(delta);
     if (!cleaned) return;
-    // Stream body in default foreground (not solid green) for long replies.
     process.stdout.write(cleaned);
   }
 
@@ -115,7 +144,6 @@ export class TerminalUI {
     this.stopSpinner();
     const plain = stripMarkdownDecorations(content);
     if (this.streamingAssistant) {
-      // Content was already streamed; avoid duplicate full reprint.
       const tail = this.streamCleaner.flush();
       if (tail && !this.options.json && !this.options.quiet) process.stdout.write(tail);
       this.streamingAssistant = false;
@@ -127,8 +155,8 @@ export class TerminalUI {
     if (this.options.json) return this.jsonEvent('assistant', { content: plain });
     if (this.options.quiet) return this.write(plain);
     this.writeSectionTitle('Assistant', 'green');
-    // Never column-reflow assistant text; only real newlines (console may soft-wrap visually).
-    this.writeBlock(plain, this.color('reset'), { noWrap: true });
+    // No left indent, no column reflow — only real newlines.
+    this.writeBlock(plain, this.color('reset'), { indent: '', noWrap: true });
   }
 
   toolStart(tool: string, input: unknown) {

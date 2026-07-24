@@ -17,6 +17,8 @@ import { isSlashCommandLine, readUserTurn } from './input.js';
 import { assertUserTextWithinLimit, formatByteSize } from './limits.js';
 import { detectLocale, resolveSessionLocale } from '../i18n/locale.js';
 import { formatGitConfirm } from '../i18n/messages.js';
+import { chatPromptLabel } from '../ui/home.js';
+import { restoreConsoleSoftWrap } from '../ui/consoleWrap.js';
 
 type TurnExtras = { parts?: MessagePart[]; displayText?: string };
 
@@ -212,14 +214,14 @@ export async function runRepl(runtime: AgentRuntime) {
       return answer === 'y' || answer === 'yes' || answer === '是' || answer === '好' || answer === '确认';
     },
   };
-  runtime.ui.info(
-    'Type /help. Multiline: """ … """ or /paste (original newlines, no bash reflow). /attach <path>, /paste-image. Text limit 25KB.',
-  );
   try {
     while (true) {
       let turn;
       try {
-        turn = await readUserTurn(rl, 'aicode> ');
+        const prompt = process.stdout.isTTY && !runtime.config.noColor
+          ? chatPromptLabel({ noColor: runtime.config.noColor })
+          : 'aicode> ';
+        turn = await readUserTurn(rl, prompt);
       } catch (error) {
         runtime.ui.error(error instanceof Error ? error.message : String(error));
         continue;
@@ -242,9 +244,13 @@ export async function runRepl(runtime: AgentRuntime) {
       } catch (error) {
         runtime.ui.error(error instanceof Error ? error.message : String(error));
       }
+      if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
+        await continueTaskBoard(interactiveRuntime);
+      }
     }
   } finally {
     rl.close();
+    restoreConsoleSoftWrap();
   }
   return runtime.session;
 }
