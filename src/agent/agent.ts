@@ -184,7 +184,11 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
       runtime.ui.modelEnd();
       const fallbackActions = planLocalFallback(prompt, runtime.session);
       if (fallbackActions.length > 0) {
-        runtime.ui.assistant(`Model request failed: ${errorMessage(error)}. Falling back to local tool planning.`);
+        runtime.ui.assistant(
+          locale === 'zh'
+            ? `模型请求失败：${errorMessage(error)}。改用本地兜底。`
+            : `Model request failed: ${errorMessage(error)}. Falling back to local tool planning.`,
+        );
         for (const action of fallbackActions) {
           const toolResult = await executeToolAction(runtime, action, locale);
           if (!toolResult.ok) {
@@ -200,12 +204,24 @@ async function runAgentTurnCore(runtime: AgentRuntime, prompt: string, options: 
           }
           lastToolName = action.tool;
         }
-        const message = '已使用本地兜底工具完成操作。';
+        const message = locale === 'zh' ? '已使用本地兜底工具完成操作。' : 'Completed with local fallback tools.';
         runtime.ui.assistant(message);
         await runtime.sessions.appendFinalAnswer(runtime.session, message);
         return { ok: true, session: runtime.session, finalAnswer: message, outcome: 'done' };
       }
-      const message = `Model request failed: ${errorMessage(error)}`;
+
+      // Tools already succeeded this turn, but the follow-up model stream died (e.g. "terminated").
+      // Prefer a conclusion from tool results over a bare provider error.
+      const recovered = recoverFromSuccessfulTools(runtime, lastToolName, locale, errorMessage(error));
+      if (recovered) {
+        runtime.ui.assistant(recovered);
+        await runtime.sessions.appendFinalAnswer(runtime.session, recovered);
+        return { ok: true, session: runtime.session, finalAnswer: recovered, outcome: 'done' };
+      }
+
+      const message = locale === 'zh'
+        ? `模型请求失败：${friendlyModelError(errorMessage(error))}。工具若已执行，结果仍保留在会话里；可重试或换 /cache、磁盘等本地命令。`
+        : `Model request failed: ${friendlyModelError(errorMessage(error))}. If tools already ran, results remain in session; retry or use local commands.`;
       runtime.ui.assistant(message);
       await runtime.sessions.appendFinalAnswer(runtime.session, message);
       return {
@@ -380,6 +396,66 @@ function maybeUpgradeMetaMessage(
     }
   }
   return undefined;
+}
+
+function recoverFromSuccessfulTools(
+  runtime: AgentRuntime,
+  lastToolName: string | undefined,
+  locale: Locale,
+  error: string,
+) {
+  const call = latestSuccessfulTool(runtime, lastToolName);
+  if (!call) return undefined;
+  const card = formatResultCard({
+    tool: call.tool,
+    output: call.output,
+    data: call.data,
+    locale,
+  });
+  if (card) {
+    const note = locale === 'zh'
+      ? `\n\n（模型后续连接中断：${friendlyModelError(error)}；以上为已成功工具结果。）`
+      : `\n\n(Model stream interrupted: ${friendlyModelError(error)}; showing successful tool result.)`;
+    return `${card}${note}`;
+  }
+  const snippet = call.output.trim().slice(0, 1200);
+  if (locale === 'zh') {
+    return [
+      `结论：工具 ${call.tool} 已成功，但模型总结时连接中断（${friendlyModelError(error)}）。`,
+      '数据：',
+      snippet,
+      '下一步：可再说一次需求，或直接用 /status /cache 等本地命令。',
+    ].join('\n');
+  }
+  return [
+    `Conclusion: tool ${call.tool} succeeded, but the model stream died (${friendlyModelError(error)}).`,
+    'Data:',
+    snippet,
+    'Next: retry the request, or use local commands like /status /cache.',
+  ].join('\n');
+}
+
+function latestSuccessfulTool(runtime: AgentRuntime, lastToolName: string | undefined) {
+  const preferred = lastToolName
+    ?? [...runtime.session.toolCalls].reverse().find((call) => call.ok && call.output.trim())?.tool;
+  if (!preferred) return undefined;
+  for (let index = runtime.session.toolCalls.length - 1; index >= 0; index -= 1) {
+    const call = runtime.session.toolCalls[index];
+    if (call?.tool === preferred && call.ok && call.output.trim()) return call;
+  }
+  return undefined;
+}
+
+function friendlyModelError(message: string) {
+  const lower = message.toLowerCase();
+  if (lower.includes('terminated') || lower.includes('aborted') || lower.includes('econnreset') || lower.includes('socket')) {
+    return '连接被中断/终止（常见于流式 SSE 超时或代理掐断）';
+  }
+  if (lower.includes('timeout')) return '请求超时';
+  if (lower.includes('401') || lower.includes('invalid api key') || lower.includes('invalid token')) {
+    return '鉴权失败（API key / base URL 不匹配）';
+  }
+  return message;
 }
 
 function isTerminalToolFailure(output: string) {

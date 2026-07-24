@@ -296,20 +296,37 @@ export async function* iterateSseDataLines(response: Response): AsyncGenerator<s
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split(/\r?\n/);
-    buffer = parts.pop() ?? '';
-    for (const line of parts) {
-      const data = extractSseData(line);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split(/\r?\n/);
+      buffer = parts.pop() ?? '';
+      for (const line of parts) {
+        const data = extractSseData(line);
+        if (data !== undefined) yield data;
+      }
+    }
+    if (buffer.trim()) {
+      const data = extractSseData(buffer);
       if (data !== undefined) yield data;
     }
-  }
-  if (buffer.trim()) {
-    const data = extractSseData(buffer);
-    if (data !== undefined) yield data;
+  } catch (error) {
+    // Flush any complete SSE lines already buffered before rethrowing (partial recovery).
+    if (buffer.trim()) {
+      for (const line of buffer.split(/\r?\n/)) {
+        const data = extractSseData(line);
+        if (data !== undefined) yield data;
+      }
+    }
+    throw error;
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // ignore
+    }
   }
 }
 
