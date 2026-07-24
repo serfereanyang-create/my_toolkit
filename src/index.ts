@@ -25,6 +25,11 @@ import { createDefaultToolRegistry } from './tools/index.js';
 import { TerminalUI } from './ui/terminal.js';
 
 async function main() {
+  // Own the process/window title so hosts don't show system32\cmd.
+  if (process.stdout.isTTY && !process.env.AICODE_KEEP_PROCESS_TITLE) {
+    process.title = 'aicode';
+  }
+
   const args = parseArgs(process.argv.slice(2));
   const config = await loadConfig(args);
 

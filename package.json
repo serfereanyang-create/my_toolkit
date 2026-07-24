@@ -14,7 +14,8 @@
     "smoke": "npm run build && node dist/src/index.js --provider mock --approval auto --session-dir .aicode-smoke/sessions --prompt \"smoke multi-tool task: inspect, write, read, and run command\"",
     "live-smoke": "npm run build && node dist/src/cli/liveSmokeMain.js",
     "audit:100": "npm run build && node dist/src/audit/checks.js",
-    "dev": "npm run build && node dist/src/index.js"
+    "dev": "npm run build && node dist/src/index.js",
+    "open": "npm run build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/open-aicode.ps1"
   },
   "keywords": [
     "cli",
