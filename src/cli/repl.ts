@@ -230,6 +230,7 @@ export async function runRepl(runtime: AgentRuntime) {
             providerName: runtime.provider.name,
             noColor: runtime.config.noColor,
             mode: askMode,
+            session: interactiveRuntime.session,
           });
           if (turn === null && process.stdin.isTTY) {
             break;

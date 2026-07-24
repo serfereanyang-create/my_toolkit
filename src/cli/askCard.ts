@@ -2,6 +2,8 @@ import { stdin as input, stdout as output } from 'node:process';
 import { emitKeypressEvents } from 'node:readline';
 import { assertUserTextWithinLimit } from './limits.js';
 import type { ReadTurnResult } from './input.js';
+import type { SessionRecord } from '../session/store.js';
+import { formatSessionTranscript } from '../ui/sessionTranscript.js';
 
 export type AskCardOptions = {
   model: string;
@@ -10,9 +12,10 @@ export type AskCardOptions = {
   noColor?: boolean;
   placeholder?: string;
   agentLabel?: string;
+  session?: SessionRecord;
   /**
-   * home: full clear + logo + card (first screen only).
-   * dock: keep transcript; rewrite ONE fixed-height card in place.
+   * home: logo + card when session is empty.
+   * dock: transcript + card (always full-screen redraw — never stacks).
    */
   mode?: 'home' | 'dock';
 };
@@ -35,13 +38,10 @@ const LOGO_COMPACT = [
   ' ╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
 ];
 
-/** Fixed paint height so every keystroke overwrites the same region (no ghost stacks). */
-const DOCK_FRAME_LINES = 7; // blank + top + ask + status + bot + blank + hint
-const HOME_EXTRA_LINES = LOGO_COMPACT.length + 2; // logo + blank after logo
-
 /**
- * Read a turn with the caret inside ONE OpenCode-like Ask card.
- * Typing rewrites the same card in place — never stacks frames.
+ * Read a turn inside ONE Ask card.
+ * Every keystroke: full clear + (logo|transcript) + single card.
+ * No relative cursor repaint — that was stacking ghosts on Windows Terminal.
  */
 export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurnResult | null> {
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') {
@@ -51,15 +51,13 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
   const mode = options.mode ?? 'home';
   let text = '';
   let closed = false;
-  let hasPainted = false;
-  const frameLines = mode === 'home' ? HOME_EXTRA_LINES + DOCK_FRAME_LINES : DOCK_FRAME_LINES;
   const wasRaw = Boolean((input as NodeJS.ReadStream & { isRaw?: boolean }).isRaw);
   emitKeypressEvents(input);
   input.setRawMode(true);
   input.resume();
 
   const paint = () => {
-    const frame = renderAskCardFrame({
+    const screen = renderFullAskScreen({
       text,
       model: options.model,
       baseUrl: options.baseUrl,
@@ -68,50 +66,19 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
       placeholder: options.placeholder ?? 'Ask anything...  "Fix broken tests"',
       agentLabel: options.agentLabel ?? 'Build',
       mode,
-      fixedLines: frameLines,
+      session: options.session,
     });
-
+    // Atomic full redraw — guaranteed single card.
     output.write('\u001b[?25l');
-    if (mode === 'home' || !hasPainted) {
-      if (mode === 'home') {
-        output.write('\u001b[2J\u001b[3J\u001b[H');
-      } else {
-        // First dock paint: new line under transcript, then fixed block.
-        output.write('\n');
-      }
-      output.write(frame);
-      hasPainted = true;
-    } else {
-      // In-place rewrite: go to top of previous fixed block, overwrite every line.
-      moveToBlockTop(frameLines);
-      output.write(frame);
-    }
-
-    // Caret on ask row (1-based within block).
-    const askRowInBlock = mode === 'home' ? HOME_EXTRA_LINES + 2 : 2;
-    const inputCol = askCaretColumn(text, options);
-    moveToBlockTop(frameLines);
-    if (askRowInBlock > 1) output.write(`\u001b[${askRowInBlock - 1}B`);
-    output.write(`\u001b[${inputCol}G`);
+    output.write('\u001b[2J\u001b[3J\u001b[H');
+    output.write(screen.frame);
+    output.write(`\u001b[${screen.caretRow};${screen.caretCol}H`);
     output.write('\u001b[?25h');
   };
 
   paint();
 
   return new Promise((resolve) => {
-    const eraseBlock = () => {
-      if (!hasPainted) return;
-      moveToBlockTop(frameLines);
-      for (let i = 0; i < frameLines; i += 1) {
-        output.write('\u001b[2K');
-        if (i < frameLines - 1) output.write('\n');
-      }
-      // Back to first wiped line so transcript continues cleanly.
-      if (frameLines > 1) output.write(`\u001b[${frameLines - 1}A`);
-      output.write('\u001b[1G');
-      hasPainted = false;
-    };
-
     const finish = (result: ReadTurnResult | null) => {
       if (closed) return;
       closed = true;
@@ -122,16 +89,8 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
         // ignore
       }
       output.write('\u001b[?25h');
-
-      const submitted = Boolean(result && result.text.trim());
-      if (mode === 'home' && submitted) {
-        // First message: clear home chrome entirely; turnStart draws the user bubble.
-        output.write('\u001b[2J\u001b[3J\u001b[H');
-        hasPainted = false;
-      } else {
-        // Remove ephemeral input card so it never becomes history / never stacks.
-        eraseBlock();
-      }
+      // Leave a clean screen for the turn renderer (user bubble + reply).
+      output.write('\u001b[2J\u001b[3J\u001b[H');
       resolve(result);
     };
 
@@ -165,9 +124,8 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
           const bytes = assertUserTextWithinLimit(normalized);
           finish({ text: normalized, bytes, multiline: false });
         } catch (error) {
-          // Keep single card; show error above next paint.
-          eraseBlock();
-          output.write(`${error instanceof Error ? error.message : String(error)}\n`);
+          // Keep editing; flash error in placeholder area via stderr then repaint.
+          output.write(`\u001b[2J\u001b[3J\u001b[H${error instanceof Error ? error.message : String(error)}\n`);
           paint();
         }
         return;
@@ -191,13 +149,6 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
   });
 }
 
-function moveToBlockTop(frameLines: number) {
-  // After writing frameLines lines each ending with \n, cursor is on the line AFTER the block.
-  // Move up frameLines to the first line of the block, column 1.
-  if (frameLines > 0) output.write(`\u001b[${frameLines}A`);
-  output.write('\u001b[1G');
-}
-
 export function renderAskCardFrame(options: {
   text: string;
   model: string;
@@ -209,18 +160,88 @@ export function renderAskCardFrame(options: {
   mode?: 'home' | 'dock';
   fixedLines?: number;
 }): string {
+  // Back-compat for tests: card fragment only (no full screen).
+  return renderCardOnly(options).join('\n') + '\n';
+}
+
+export function renderFullAskScreen(options: {
+  text: string;
+  model: string;
+  baseUrl?: string;
+  providerName?: string;
+  noColor?: boolean;
+  placeholder: string;
+  agentLabel: string;
+  mode?: 'home' | 'dock';
+  session?: SessionRecord;
+}): { frame: string; caretRow: number; caretCol: number } {
+  const color = (name: keyof typeof c) => (options.noColor ? '' : c[name]);
+  const cols = Math.max(output.columns || 88, 48);
+  const rows = Math.max(output.rows || 24, 16);
+  const mode = options.mode ?? 'home';
+  const hasHistory = Boolean(options.session && options.session.messages.some((message) => message.role === 'user' || message.role === 'assistant'));
+
+  const lines: string[] = [];
+  if (mode === 'home' && !hasHistory) {
+    const topPad = Math.max(1, Math.floor(rows / 8));
+    for (let i = 0; i < topPad; i += 1) lines.push('');
+    for (const logoLine of LOGO_COMPACT) {
+      lines.push(center(logoLine, cols, `${color('white')}${color('bold')}`, color('reset')));
+    }
+    lines.push('');
+  } else if (options.session && hasHistory) {
+    const transcript = formatSessionTranscript(options.session, {
+      maxLines: Math.max(8, rows - 12),
+      noColor: options.noColor,
+    });
+    if (transcript) {
+      for (const row of transcript.split('\n')) lines.push(row);
+      lines.push('');
+    }
+  } else {
+    lines.push('');
+  }
+
+  const card = renderCardOnly({
+    text: options.text,
+    model: options.model,
+    baseUrl: options.baseUrl,
+    providerName: options.providerName,
+    noColor: options.noColor,
+    placeholder: options.placeholder,
+    agentLabel: options.agentLabel,
+  });
+  // Caret is on the ask row of the card (index 1 within card: top, ask, status, bot, blank, hint)
+  const caretRow = lines.length + 2; // 1-based: after existing lines, top border is +1, ask is +2
+  const caretCol = askCaretColumn(options.text, cols);
+  lines.push(...card.map((row) => center(row, cols)));
+
+  // Fit screen: if too tall, keep bottom (card) and trim top transcript.
+  let frameLines = lines;
+  if (frameLines.length > rows - 1) {
+    frameLines = frameLines.slice(frameLines.length - (rows - 1));
+  }
+
+  return {
+    frame: `${frameLines.join('\n')}\n`,
+    caretRow: Math.min(rows, Math.max(1, caretRow - (lines.length - frameLines.length))),
+    caretCol,
+  };
+}
+
+function renderCardOnly(options: {
+  text: string;
+  model: string;
+  baseUrl?: string;
+  providerName?: string;
+  noColor?: boolean;
+  placeholder: string;
+  agentLabel: string;
+}): string[] {
   const color = (name: keyof typeof c) => (options.noColor ? '' : c[name]);
   const cols = Math.max(output.columns || 88, 48);
   const boxWidth = Math.min(72, Math.max(48, cols - 8));
   const inner = Math.max(8, boxWidth - 4);
-  const mode = options.mode ?? 'home';
-  const fixed = options.fixedLines ?? (mode === 'home' ? HOME_EXTRA_LINES + DOCK_FRAME_LINES : DOCK_FRAME_LINES);
-
-  const pad = (line: string) => {
-    const plain = stripAnsi(line);
-    const left = Math.max(0, Math.floor((cols - displayWidth(plain)) / 2));
-    return `${' '.repeat(left)}${line}`;
-  };
 
   const modelLabel = shortenModel(options.model);
   const host = options.providerName === 'openai' || !options.providerName
@@ -235,44 +256,32 @@ export function renderAskCardFrame(options: {
   const textPad = Math.max(0, inner - displayWidth(clipped));
   const statusPad = Math.max(0, inner - displayWidth(statusPlain));
 
-  const accentTop = `${color('blue')}┌${color('gray')}${'─'.repeat(boxWidth - 2)}┐${color('reset')}`;
-  const askRow = `${color('blue')}│${color('reset')} ${textColor}${clipped}${' '.repeat(textPad)}${color('reset')}`;
-  const statusRow = `${color('blue')}│${color('reset')} ${statusColored}${' '.repeat(statusPad)}`;
-  const accentBot = `${color('blue')}└${color('gray')}${'─'.repeat(boxWidth - 2)}┘${color('reset')}`;
-  const hint = `${color('dim')}/help commands   enter submit   esc clear${color('reset')}`;
-
-  const lines: string[] = [];
-  if (mode === 'home') {
-    for (const logoLine of LOGO_COMPACT) {
-      lines.push(pad(`${color('white')}${color('bold')}${logoLine}${color('reset')}`));
-    }
-    lines.push('');
-  } else {
-    lines.push(''); // top spacer of dock block
-  }
-
-  lines.push(pad(accentTop));
-  lines.push(pad(askRow));
-  lines.push(pad(statusRow));
-  lines.push(pad(accentBot));
-  lines.push('');
-  lines.push(pad(hint));
-
-  // Pad / trim to exact fixed height so in-place redraw never leaves ghosts.
-  while (lines.length < fixed) lines.push('');
-  if (lines.length > fixed) lines.length = fixed;
-
-  // Each line ends with \n → cursor ends one row below the block.
-  return `${lines.join('\n')}\n`;
+  return [
+    `${color('blue')}┌${color('gray')}${'─'.repeat(boxWidth - 2)}┐${color('reset')}`,
+    `${color('blue')}│${color('reset')} ${textColor}${clipped}${' '.repeat(textPad)}${color('reset')}`,
+    `${color('blue')}│${color('reset')} ${statusColored}${' '.repeat(statusPad)}`,
+    `${color('blue')}└${color('gray')}${'─'.repeat(boxWidth - 2)}┘${color('reset')}`,
+    '',
+    `${color('dim')}/help commands   enter submit   esc clear${color('reset')}`,
+  ];
 }
 
-function askCaretColumn(text: string, options: AskCardOptions) {
-  const cols = Math.max(output.columns || 88, 48);
+function center(line: string, cols: number, prefix = '', suffix = '') {
+  // If line already has ANSI, measure plain width.
+  const plain = stripAnsi(line);
+  const left = Math.max(0, Math.floor((cols - displayWidth(plain)) / 2));
+  if (prefix || suffix) {
+    // logo path passes raw text + color wrappers
+    return `${' '.repeat(left)}${prefix}${line}${suffix}`;
+  }
+  return `${' '.repeat(left)}${line}`;
+}
+
+function askCaretColumn(text: string, cols: number) {
   const boxWidth = Math.min(72, Math.max(48, cols - 8));
   const inner = Math.max(8, boxWidth - 4);
   const visible = takeByDisplayWidth(text.replace(/\n/g, '⏎'), inner);
   const cardLeft = Math.max(0, Math.floor((cols - boxWidth) / 2));
-  // col: left pad + '│' + space + text + 1
   return Math.min(cols, Math.max(1, cardLeft + 1 + 2 + displayWidth(visible) + 1));
 }
 
