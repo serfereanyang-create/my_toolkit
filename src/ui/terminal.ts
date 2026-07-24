@@ -92,11 +92,10 @@ export class TerminalUI {
     if (this.options.json) return this.jsonEvent('turn_start', { prompt });
     if (this.options.quiet) return;
     if (this.homeActive) {
-      // Leave the home screen once the user starts a real turn.
       clearScreen();
       this.homeActive = false;
     }
-    // OpenCode-like request chrome: user bubble + Build · model row.
+    // Permanent transcript row only (the ephemeral Ask input card is erased on submit).
     this.writeUserBubble(prompt);
     this.writeBuildStatus();
   }

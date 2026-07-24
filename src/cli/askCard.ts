@@ -72,14 +72,16 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
       output.write(frame);
       paintedLines = lines.length;
     } else {
-      // Dock: keep transcript above. On repaint, move up previous card height and redraw.
+      // Dock: keep transcript above. Never append a second card — always rewrite the same block.
       if (paintedLines > 0) {
         output.write(`\u001b[${paintedLines}A`);
         for (let i = 0; i < paintedLines; i += 1) {
-          output.write('\u001b[2K\u001b[1B');
+          output.write('\u001b[2K');
+          if (i < paintedLines - 1) output.write('\u001b[1B');
         }
-        output.write(`\u001b[${paintedLines}A`);
+        output.write(`\u001b[${paintedLines - 1}A`);
       } else {
+        // First dock paint: ensure we start on a fresh line under the transcript.
         output.write('\n');
       }
       output.write(frame);
@@ -101,6 +103,19 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
   paint();
 
   return new Promise((resolve) => {
+    const erasePaintedCard = () => {
+      if (paintedLines <= 0) return;
+      // Move to top of the painted card and wipe every line so it never becomes transcript.
+      output.write(`\u001b[${paintedLines}A`);
+      for (let i = 0; i < paintedLines; i += 1) {
+        output.write('\u001b[2K');
+        if (i < paintedLines - 1) output.write('\u001b[1B');
+      }
+      // Cursor sits on the first wiped line — ready for conversation output.
+      output.write(`\u001b[${paintedLines - 1}A`);
+      paintedLines = 0;
+    };
+
     const finish = (result: ReadTurnResult | null) => {
       if (closed) return;
       closed = true;
@@ -111,12 +126,15 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
         // ignore
       }
       output.write('\u001b[?25h');
-      if (mode === 'home') {
-        // Leave home card; conversation will clear once when the turn starts.
-        output.write('\n');
-      } else if (paintedLines > 0) {
-        // Keep the final docked card as the last lines of the transcript.
-        output.write('\n');
+
+      const submitted = Boolean(result && result.text.trim());
+      if (mode === 'home' && submitted) {
+        // First real message: wipe home (logo+card) entirely; turnStart paints the user bubble.
+        output.write('\u001b[2J\u001b[3J\u001b[H');
+        paintedLines = 0;
+      } else {
+        // Dock / cancel / empty: remove the ephemeral input card only.
+        erasePaintedCard();
       }
       resolve(result);
     };
