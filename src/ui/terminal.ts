@@ -71,9 +71,14 @@ export class TerminalUI {
     if (this.options.quiet || this.options.json || config.noBanner) return;
     this.modelHint = provider.model || provider.name;
     if (this.options.homeScreen && process.stdout.isTTY) {
-      // Interactive Ask-card REPL paints logo+card itself; skip duplicate banner.
-      // Still record model for Build status rows during the turn.
-      this.homeActive = false;
+      // Paint welcome ONCE. Input is normal readline below — no per-keystroke redraw.
+      clearScreen();
+      process.stdout.write(`${renderHomeScreen(config, provider, {
+        noColor: this.options.noColor,
+        version: this.options.version,
+        logoOnly: false,
+      })}\n`);
+      this.homeActive = true;
       return;
     }
     this.writeBox([
@@ -91,10 +96,8 @@ export class TerminalUI {
     this.runningTools.clear();
     if (this.options.json) return this.jsonEvent('turn_start', { prompt });
     if (this.options.quiet) return;
-    if (this.homeActive) {
-      this.homeActive = false;
-    }
-    // Append to scrollback (no full clear) so users can scroll up later.
+    this.homeActive = false;
+    // Append only — never clear screen (preserves scrollback / 往前翻).
     this.writeUserBubble(prompt);
     this.writeBuildStatus();
   }

@@ -12,7 +12,6 @@ import { planBoardFromGoal, shouldUseTaskBoard } from '../tasks/planner.js';
 import { confirmBoard, formatBoard, runTaskBoardLoop } from '../tasks/runtime.js';
 import { TaskBoardStore } from '../tasks/store.js';
 import { prepareUserContent, type Attachment } from './attachments.js';
-import { readAskCardTurn } from './askCard.js';
 import { runCommandPalette } from './commandPalette.js';
 import { handleSlashCommand } from './commands.js';
 import { isSlashCommandLine, readMultilineContinuation, readUserTurn } from './input.js';
@@ -205,7 +204,6 @@ export async function runRepl(runtime: AgentRuntime) {
   const rl = createInterface({ input, output });
   if (!runtime.pendingAttachments) runtime.pendingAttachments = [];
   if (!runtime.locale) runtime.locale = 'zh';
-  let askMode: 'home' | 'dock' = 'home';
   const interactiveRuntime: AgentRuntime = {
     ...runtime,
     pendingAttachments: runtime.pendingAttachments,
@@ -222,34 +220,12 @@ export async function runRepl(runtime: AgentRuntime) {
     while (true) {
       let turn;
       try {
-        const useHomeCard = askMode === 'home'
-          && process.stdout.isTTY
-          && process.stdin.isTTY
-          && !runtime.config.noColor
-          && !runtime.config.json;
-        if (useHomeCard) {
-          // First screen only: fancy Ask card. After that, classic prompt so scrollback works.
-          turn = await readAskCardTurn({
-            model: runtime.provider.model,
-            baseUrl: runtime.config.baseUrl,
-            providerName: runtime.provider.name,
-            noColor: runtime.config.noColor,
-            mode: 'home',
-            session: interactiveRuntime.session,
-          });
-          if (turn === null && process.stdin.isTTY) {
-            break;
-          }
-          if (turn === null) {
-            turn = await readUserTurn(rl, chatPromptLabel({ noColor: runtime.config.noColor }));
-          }
-        } else {
-          // Dock / conversation mode: normal readline — history stays in terminal scrollback.
-          const prompt = process.stdout.isTTY && !runtime.config.noColor
-            ? chatPromptLabel({ noColor: runtime.config.noColor })
-            : 'aicode> ';
-          turn = await readUserTurn(rl, prompt);
-        }
+        // Stable input: normal readline only. Fancy home is painted once by banner().
+        // No per-keystroke full-screen paints (those stacked logos and killed scrollback).
+        const prompt = process.stdout.isTTY && !runtime.config.noColor
+          ? chatPromptLabel({ noColor: runtime.config.noColor })
+          : 'aicode> ';
+        turn = await readUserTurn(rl, prompt);
       } catch (error) {
         runtime.ui.error(error instanceof Error ? error.message : String(error));
         continue;
@@ -283,7 +259,6 @@ export async function runRepl(runtime: AgentRuntime) {
           } finally {
             rl.resume();
           }
-          askMode = 'dock';
           continue;
         }
         if (line === '/actions' || line === '/menu') {
@@ -304,7 +279,6 @@ export async function runRepl(runtime: AgentRuntime) {
           } finally {
             rl.resume();
           }
-          askMode = 'dock';
           continue;
         }
         const result = await handleSlashCommand({ line, ...interactiveRuntime });
@@ -313,7 +287,6 @@ export async function runRepl(runtime: AgentRuntime) {
         if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
           await continueTaskBoard(interactiveRuntime);
         }
-        askMode = 'dock';
         continue;
       }
 
@@ -325,8 +298,6 @@ export async function runRepl(runtime: AgentRuntime) {
       if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
         await continueTaskBoard(interactiveRuntime);
       }
-      // After the first real turn, never wipe the screen back to home.
-      askMode = 'dock';
     }
   } finally {
     rl.close();
