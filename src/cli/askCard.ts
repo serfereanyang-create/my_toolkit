@@ -8,9 +8,13 @@ export type AskCardOptions = {
   baseUrl?: string;
   providerName?: string;
   noColor?: boolean;
-  /** Placeholder shown when empty. */
   placeholder?: string;
   agentLabel?: string;
+  /**
+   * home: full clear + logo + centered card (first screen only).
+   * dock: do NOT clear transcript; redraw only a bottom input card.
+   */
+  mode?: 'home' | 'dock';
 };
 
 const c = {
@@ -22,20 +26,28 @@ const c = {
   gray: '\u001b[90m',
 };
 
+const LOGO_COMPACT = [
+  '  █████╗ ██╗ ██████╗ ██████╗ ██████╗ ███████╗',
+  ' ██╔══██╗██║██╔════╝██╔═══██╗██╔══██╗██╔════╝',
+  ' ███████║██║██║     ██║   ██║██║  ██║█████╗  ',
+  ' ██╔══██║██║██║     ██║   ██║██║  ██║██╔══╝  ',
+  ' ██║  ██║██║╚██████╗╚██████╔╝██████╔╝███████╗',
+  ' ╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
+];
+
 /**
  * Read a turn with the caret inside the OpenCode-like Ask card.
- * - Types into the first row of the card (placeholder when empty)
- * - Second row shows Build · model · host
- * - Enter submits; Esc clears; Ctrl+C cancels (returns null)
- * - Does not force-wrap input text (may soft-clip visually in the card)
+ * home mode clears once and shows logo; dock mode keeps conversation history.
  */
 export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurnResult | null> {
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') {
     return null;
   }
 
+  const mode = options.mode ?? 'home';
   let text = '';
   let closed = false;
+  let paintedLines = 0;
   const wasRaw = Boolean((input as NodeJS.ReadStream & { isRaw?: boolean }).isRaw);
   emitKeypressEvents(input);
   input.setRawMode(true);
@@ -50,13 +62,39 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
       noColor: options.noColor,
       placeholder: options.placeholder ?? 'Ask anything...  "Fix broken tests"',
       agentLabel: options.agentLabel ?? 'Build',
+      mode,
     });
-    // Always full-clear so only ONE card exists (never stack with home or prior paints).
+    const lines = frame.replace(/\n$/, '').split('\n');
     output.write('\u001b[?25l');
-    output.write('\u001b[2J\u001b[3J\u001b[H');
-    output.write(frame);
-    const { inputRow, inputCol } = caretPosition(text, options);
-    output.write(`\u001b[${inputRow};${inputCol}H`);
+    if (mode === 'home') {
+      // First screen only: wipe and show logo + card.
+      output.write('\u001b[2J\u001b[3J\u001b[H');
+      output.write(frame);
+      paintedLines = lines.length;
+    } else {
+      // Dock: keep transcript above. On repaint, move up previous card height and redraw.
+      if (paintedLines > 0) {
+        output.write(`\u001b[${paintedLines}A`);
+        for (let i = 0; i < paintedLines; i += 1) {
+          output.write('\u001b[2K\u001b[1B');
+        }
+        output.write(`\u001b[${paintedLines}A`);
+      } else {
+        output.write('\n');
+      }
+      output.write(frame);
+      paintedLines = lines.length;
+    }
+    const { inputRow, inputCol } = caretPosition(text, { ...options, mode }, paintedLines, mode);
+    if (mode === 'home') {
+      output.write(`\u001b[${inputRow};${inputCol}H`);
+    } else {
+      // Relative caret on the input row of the docked card.
+      const relRow = inputRow; // already 1-based within painted block
+      output.write(`\u001b[${paintedLines}A`);
+      if (relRow > 1) output.write(`\u001b[${relRow - 1}B`);
+      output.write(`\u001b[${inputCol}G`);
+    }
     output.write('\u001b[?25h');
   };
 
@@ -73,8 +111,13 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
         // ignore
       }
       output.write('\u001b[?25h');
-      // Leave a clean line after the card so subsequent output doesn't overwrite it.
-      output.write('\n');
+      if (mode === 'home') {
+        // Leave home card; conversation will clear once when the turn starts.
+        output.write('\n');
+      } else if (paintedLines > 0) {
+        // Keep the final docked card as the last lines of the transcript.
+        output.write('\n');
+      }
       resolve(result);
     };
 
@@ -108,8 +151,8 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
           const bytes = assertUserTextWithinLimit(normalized);
           finish({ text: normalized, bytes, multiline: false });
         } catch (error) {
-          // Flash limit error inside card detail area briefly via stderr, keep editing.
           output.write(`\n${error instanceof Error ? error.message : String(error)}\n`);
+          paintedLines = 0;
           paint();
         }
         return;
@@ -119,7 +162,6 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
         paint();
         return;
       }
-      // Ignore bare navigation for v1 (single-line card input).
       if (key.name === 'up' || key.name === 'down' || key.name === 'left' || key.name === 'right') {
         return;
       }
@@ -142,12 +184,14 @@ export function renderAskCardFrame(options: {
   noColor?: boolean;
   placeholder: string;
   agentLabel: string;
+  mode?: 'home' | 'dock';
 }): string {
   const color = (name: keyof typeof c) => (options.noColor ? '' : c[name]);
   const cols = Math.max(output.columns || 88, 48);
   const rows = Math.max(output.rows || 24, 16);
   const boxWidth = Math.min(72, Math.max(48, cols - 8));
   const inner = Math.max(8, boxWidth - 4);
+  const mode = options.mode ?? 'home';
 
   const pad = (line: string) => {
     const plain = stripAnsi(line);
@@ -173,12 +217,22 @@ export function renderAskCardFrame(options: {
   const statusRow = `${color('blue')}│${color('reset')} ${statusColored}${' '.repeat(statusPad)}`;
   const accentBot = `${color('blue')}└${color('gray')}${'─'.repeat(boxWidth - 2)}┘${color('reset')}`;
 
-  // Single card, vertically centered once — never stacked mid + bottom duplicates.
-  const cardLines = 4;
-  const hintLines = 2;
-  const topPad = Math.max(1, Math.floor((rows - cardLines - hintLines) / 2));
   const lines: string[] = [];
-  for (let i = 0; i < topPad; i += 1) lines.push('');
+  if (mode === 'home') {
+    // Logo + single centered card.
+    const logo = LOGO_COMPACT;
+    const content = logo.length + 8;
+    const topPad = Math.max(1, Math.floor((rows - content) / 4));
+    for (let i = 0; i < topPad; i += 1) lines.push('');
+    for (const logoLine of logo) {
+      lines.push(pad(`${color('white')}${color('bold')}${logoLine}${color('reset')}`));
+    }
+    lines.push('');
+  } else {
+    // Docked under transcript: small gap only.
+    lines.push('');
+  }
+
   lines.push(pad(accentTop));
   lines.push(pad(askRow));
   lines.push(pad(statusRow));
@@ -188,19 +242,25 @@ export function renderAskCardFrame(options: {
   return `${lines.join('\n')}\n`;
 }
 
-function caretPosition(text: string, _options: AskCardOptions) {
+function caretPosition(
+  text: string,
+  options: AskCardOptions,
+  paintedLines: number,
+  mode: 'home' | 'dock',
+) {
   const cols = Math.max(output.columns || 88, 48);
-  const rows = Math.max(output.rows || 24, 16);
   const boxWidth = Math.min(72, Math.max(48, cols - 8));
   const inner = Math.max(8, boxWidth - 4);
-  const cardLines = 4;
-  const hintLines = 2;
-  const topPad = Math.max(1, Math.floor((rows - cardLines - hintLines) / 2));
-  // 1-based: empty topPad lines, then border, then input row.
-  const inputRow = topPad + 2;
   const visible = takeByDisplayWidth(text.replace(/\n/g, '⏎'), inner);
   const cardLeft = Math.max(0, Math.floor((cols - boxWidth) / 2));
   const inputCol = cardLeft + 1 + 2 + displayWidth(visible) + 1;
+
+  // Find the ask row index within the painted frame (1-based).
+  // Frame ends with: border, ask, status, border, empty, hint  => ask is paintedLines - 4
+  // home has logo above; dock has one empty line above.
+  const inputRow = Math.max(1, paintedLines - 4);
+  void options;
+  void mode;
   return { inputRow, inputCol: Math.min(cols, Math.max(1, inputCol)) };
 }
 

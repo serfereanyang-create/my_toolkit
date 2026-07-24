@@ -71,14 +71,9 @@ export class TerminalUI {
     if (this.options.quiet || this.options.json || config.noBanner) return;
     this.modelHint = provider.model || provider.name;
     if (this.options.homeScreen && process.stdout.isTTY) {
-      clearScreen();
-      // Logo only — the interactive Ask card is painted once by readAskCardTurn.
-      process.stdout.write(`${renderHomeScreen(config, provider, {
-        noColor: this.options.noColor,
-        version: this.options.version,
-        logoOnly: true,
-      })}\n`);
-      this.homeActive = true;
+      // Interactive Ask-card REPL paints logo+card itself; skip duplicate banner.
+      // Still record model for Build status rows during the turn.
+      this.homeActive = false;
       return;
     }
     this.writeBox([

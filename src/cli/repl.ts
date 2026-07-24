@@ -204,6 +204,7 @@ export async function runRepl(runtime: AgentRuntime) {
   const rl = createInterface({ input, output });
   if (!runtime.pendingAttachments) runtime.pendingAttachments = [];
   if (!runtime.locale) runtime.locale = 'zh';
+  let askMode: 'home' | 'dock' = 'home';
   const interactiveRuntime: AgentRuntime = {
     ...runtime,
     pendingAttachments: runtime.pendingAttachments,
@@ -222,15 +223,15 @@ export async function runRepl(runtime: AgentRuntime) {
       try {
         const useAskCard = process.stdout.isTTY && process.stdin.isTTY && !runtime.config.noColor && !runtime.config.json;
         if (useAskCard) {
-          // One Ask card owns the input UI (clears previous home/card paints).
+          // home: logo + card (first screen). dock: keep transcript, input card only at bottom.
           turn = await readAskCardTurn({
             model: runtime.provider.model,
             baseUrl: runtime.config.baseUrl,
             providerName: runtime.provider.name,
             noColor: runtime.config.noColor,
+            mode: askMode,
           });
           if (turn === null && process.stdin.isTTY) {
-            // Ctrl+C → exit REPL
             break;
           }
           if (turn === null) {
@@ -244,7 +245,6 @@ export async function runRepl(runtime: AgentRuntime) {
         continue;
       }
       if (!turn) break;
-      // Multiline markers from the Ask card continue with classic ... prompts.
       if (!turn.multiline) {
         const marker = turn.text.trim();
         if (marker === '"""' || marker === '/paste') {
@@ -261,7 +261,6 @@ export async function runRepl(runtime: AgentRuntime) {
 
       if (isSlashCommandLine(turn.text) && !turn.multiline) {
         const line = turn.text.trim();
-        // Floating command palette (OpenCode-style) instead of dumping /help text.
         if (line === '/help' || line === '/?' || line === '/commands') {
           rl.pause();
           try {
@@ -274,9 +273,9 @@ export async function runRepl(runtime: AgentRuntime) {
           } finally {
             rl.resume();
           }
+          askMode = 'dock';
           continue;
         }
-        // Floating Message Actions menu (OpenCode-style overlay, not line dump).
         if (line === '/actions' || line === '/menu') {
           rl.pause();
           try {
@@ -295,6 +294,7 @@ export async function runRepl(runtime: AgentRuntime) {
           } finally {
             rl.resume();
           }
+          askMode = 'dock';
           continue;
         }
         const result = await handleSlashCommand({ line, ...interactiveRuntime });
@@ -303,6 +303,7 @@ export async function runRepl(runtime: AgentRuntime) {
         if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
           await continueTaskBoard(interactiveRuntime);
         }
+        askMode = 'dock';
         continue;
       }
 
@@ -314,6 +315,8 @@ export async function runRepl(runtime: AgentRuntime) {
       if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
         await continueTaskBoard(interactiveRuntime);
       }
+      // After the first real turn, never wipe the screen back to home.
+      askMode = 'dock';
     }
   } finally {
     rl.close();

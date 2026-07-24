@@ -16,6 +16,7 @@ test('renderAskCardFrame puts placeholder and Build status inside the card', () 
       noColor: true,
       placeholder: 'Ask anything...  "Fix broken tests"',
       agentLabel: 'Build',
+      mode: 'home',
     });
     assert.match(empty, /Ask anything/);
     assert.match(empty, /Build/);
@@ -23,6 +24,9 @@ test('renderAskCardFrame puts placeholder and Build status inside the card', () 
     assert.match(empty, /yunqiaoai\.dpdns\.org/);
     assert.match(empty, /┌/);
     assert.match(empty, /│/);
+    // Home mode includes logo.
+    assert.match(empty, /█████/);
+    assert.equal((empty.match(/┌/g) ?? []).length, 1);
 
     const typed = renderAskCardFrame({
       text: '修一下测试',
@@ -32,9 +36,12 @@ test('renderAskCardFrame puts placeholder and Build status inside the card', () 
       noColor: true,
       placeholder: 'Ask anything...  "Fix broken tests"',
       agentLabel: 'Build',
+      mode: 'dock',
     });
     assert.match(typed, /修一下测试/);
     assert.doesNotMatch(typed, /Ask anything/);
+    // Dock mode has no logo (conversation stays above).
+    assert.doesNotMatch(typed, /█████╗ ██╗ ██████╗/);
   } finally {
     process.stdout.columns = originalColumns;
     process.stdout.rows = originalRows;
