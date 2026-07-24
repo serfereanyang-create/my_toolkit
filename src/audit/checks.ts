@@ -388,6 +388,8 @@ function buildChecks(root: string): Check[] {
     ['src/cli/commands.ts', '/actions'],
     ['src/cli/commandPalette.ts', 'runCommandPalette'],
     ['src/cli/commandPalette.ts', 'commandPaletteItems'],
+    ['src/cli/askCard.ts', 'readAskCardTurn'],
+    ['src/cli/askCard.ts', 'renderAskCardFrame'],
     ['src/ui/overlay.ts', 'showOverlayMenu'],
     ['src/cli/messageActions.ts', 'runMessageActions'],
     ['src/cli/commands.ts', '/status'],

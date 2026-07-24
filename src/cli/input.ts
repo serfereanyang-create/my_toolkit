@@ -33,7 +33,21 @@ export async function readUserTurn(rl: ReadlineInterface, prompt = 'aicode> '): 
   return { text, bytes, multiline: false };
 }
 
-async function readUntilMarker(
+/**
+   * Continue multiline collection after the user already entered """ or /paste
+   * (e.g. from the Ask card). Same end markers as readUserTurn.
+   */
+  export async function readMultilineContinuation(
+    rl: ReadlineInterface,
+    mode: 'triple' | 'paste',
+  ): Promise<ReadTurnResult> {
+    if (mode === 'paste') {
+      return readUntilMarker(rl, ['.', '/end'], { includePromptLines: true, pasteBanner: true });
+    }
+    return readUntilMarker(rl, '"""', { includePromptLines: true });
+  }
+
+  async function readUntilMarker(
   rl: ReadlineInterface,
   endMarkers: string | string[],
   options: { includePromptLines?: boolean; pasteBanner?: boolean } = {},

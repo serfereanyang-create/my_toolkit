@@ -12,14 +12,14 @@ import { planBoardFromGoal, shouldUseTaskBoard } from '../tasks/planner.js';
 import { confirmBoard, formatBoard, runTaskBoardLoop } from '../tasks/runtime.js';
 import { TaskBoardStore } from '../tasks/store.js';
 import { prepareUserContent, type Attachment } from './attachments.js';
+import { readAskCardTurn } from './askCard.js';
 import { runCommandPalette } from './commandPalette.js';
 import { handleSlashCommand } from './commands.js';
-import { isSlashCommandLine, readUserTurn } from './input.js';
+import { isSlashCommandLine, readMultilineContinuation, readUserTurn } from './input.js';
 import { assertUserTextWithinLimit, formatByteSize } from './limits.js';
 import { runMessageActions } from './messageActions.js';
 import { detectLocale, resolveSessionLocale } from '../i18n/locale.js';
 import { formatGitConfirm } from '../i18n/messages.js';
-import { chatPromptLabel } from '../ui/home.js';
 import { restoreConsoleSoftWrap } from '../ui/consoleWrap.js';
 
 type TurnExtras = { parts?: MessagePart[]; displayText?: string };
@@ -220,13 +220,42 @@ export async function runRepl(runtime: AgentRuntime) {
     while (true) {
       let turn;
       try {
-        const prompt = process.stdout.isTTY && !runtime.config.noColor
-          ? chatPromptLabel({ noColor: runtime.config.noColor })
-          : 'aicode> ';
-        turn = await readUserTurn(rl, prompt);
+        const useAskCard = process.stdout.isTTY && process.stdin.isTTY && !runtime.config.noColor && !runtime.config.json;
+        if (useAskCard) {
+          // Cursor lives inside the Ask card (OpenCode-style), not at an outer aicode> prompt.
+          turn = await readAskCardTurn({
+            model: runtime.provider.model,
+            baseUrl: runtime.config.baseUrl,
+            providerName: runtime.provider.name,
+            noColor: runtime.config.noColor,
+          });
+          // Fallback if raw-mode card unavailable.
+          if (turn === null && process.stdin.isTTY) {
+            // Ctrl+C → exit REPL
+            break;
+          }
+          if (turn === null) {
+            turn = await readUserTurn(rl, 'aicode> ');
+          }
+        } else {
+          turn = await readUserTurn(rl, 'aicode> ');
+        }
       } catch (error) {
         runtime.ui.error(error instanceof Error ? error.message : String(error));
         continue;
+      }
+      if (!turn) break;
+      // Multiline markers from the Ask card continue with classic ... prompts.
+      if (!turn.multiline) {
+        const marker = turn.text.trim();
+        if (marker === '"""' || marker === '/paste') {
+          try {
+            turn = await readMultilineContinuation(rl, marker === '/paste' ? 'paste' : 'triple');
+          } catch (error) {
+            runtime.ui.error(error instanceof Error ? error.message : String(error));
+            continue;
+          }
+        }
       }
       if (!turn) break;
       if (!turn.text.trim() && (interactiveRuntime.pendingAttachments?.length ?? 0) === 0) continue;
