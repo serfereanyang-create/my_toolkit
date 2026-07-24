@@ -98,18 +98,17 @@ export class TerminalUI {
       // Leave the home screen once the user starts a real turn.
       clearScreen();
       this.homeActive = false;
-      this.write(`${this.color('dim')}aicode · ${this.modelHint}${this.color('reset')}`);
     }
-    this.writeSectionTitle('You', 'blue');
-    // User paste: fold by real newlines only — never column-reflow like bash. No left indent.
-    this.writeBlock(prompt, this.color('dim'), { indent: '', maxLines: 12, noWrap: true });
+    // OpenCode-like request chrome: user bubble + Build · model row.
+    this.writeUserBubble(prompt);
+    this.writeBuildStatus();
   }
 
   modelStart() {
     this.streamingAssistant = false;
     this.streamCleaner = new MarkdownStreamCleaner();
     if (this.options.json) return this.jsonEvent('model_start', { status: 'running' });
-    this.startSpinner('thinking');
+    this.startSpinner('Build');
   }
 
   modelEnd() {
@@ -273,8 +272,10 @@ export class TerminalUI {
   private renderSpinner() {
     const frame = spinnerFrames[this.activeSpinnerFrame % spinnerFrames.length];
     this.activeSpinnerFrame += 1;
+    const model = shortenModelLabel(this.modelHint);
+    // OpenCode-ish busy row: spinner + Build · model
     process.stdout.write(
-      `\r  ${this.color('cyan')}${frame}${this.color('reset')} ${this.color('dim')}${this.activeSpinnerText}…${this.color('reset')}`,
+      `\r  ${this.color('blue')}${frame}${this.color('reset')} ${this.style('Build', 'bold', 'blue')} ${this.color('dim')}· ${model}${this.color('reset')}   `,
     );
   }
 
@@ -297,6 +298,48 @@ export class TerminalUI {
     const head = this.style(title, 'bold', color);
     const suffix = detail ? ` ${this.color('dim')}${detail}${this.color('reset')}` : '';
     this.write(`\n${bar} ${head}${suffix}`);
+  }
+
+  /**
+   * OpenCode-like user request card:
+   *   │  user text...
+   * with a blue left accent (full-width dark panel simulation).
+   */
+  private writeUserBubble(prompt: string) {
+    const cols = Math.max(process.stdout.columns || 88, 48);
+    // Leave a little margin so it doesn't feel edge-glued.
+    const width = Math.min(cols - 2, Math.max(40, cols - 4));
+    const bodyColor = this.color('white');
+    const accent = this.color('blue');
+    const panel = this.color('gray');
+    const reset = this.color('reset');
+    const lines = prompt
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .split('\n')
+      .slice(0, 12);
+    // Top / bottom use light gray edges; left edge is blue accent.
+    this.write(`\n${accent}┌${panel}${'─'.repeat(Math.max(8, width - 2))}${panel}┐${reset}`);
+    for (const line of lines) {
+      const clipped = takeByDisplayWidth(line, Math.max(8, width - 4));
+      const pad = Math.max(0, width - 4 - displayWidth(clipped));
+      this.write(`${accent}│${reset} ${bodyColor}${clipped}${' '.repeat(pad)}${reset}`);
+    }
+    if (prompt.split(/\r?\n/).length > lines.length) {
+      const more = `… ${prompt.split(/\r?\n/).length - lines.length} more line(s)`;
+      const pad = Math.max(0, width - 4 - displayWidth(more));
+      this.write(`${accent}│${reset} ${this.color('dim')}${more}${' '.repeat(pad)}${reset}`);
+    }
+    this.write(`${accent}└${panel}${'─'.repeat(Math.max(8, width - 2))}${panel}┘${reset}`);
+  }
+
+  /** Build · model status row under the user bubble (OpenCode style). */
+  private writeBuildStatus() {
+    const model = shortenModelLabel(this.modelHint);
+    const diamond = this.options.noColor ? '◆' : `${this.color('blue')}◆${this.color('reset')}`;
+    this.write(
+      `${diamond} ${this.style('Build', 'bold', 'blue')} ${this.color('dim')}·${this.color('reset')} ${this.color('white')}${model}${this.color('reset')}`,
+    );
   }
 
   private writeKeyValue(key: string, value: string) {
@@ -392,6 +435,12 @@ function takeByDisplayWidth(value: string, max: number) {
     width = nextWidth;
   }
   return output;
+}
+
+function shortenModelLabel(model: string) {
+  if (!model) return 'model';
+  const bare = model.includes('/') ? model.split('/').pop()! : model;
+  return bare.length > 18 ? `${bare.slice(0, 16)}…` : bare;
 }
 
 function displayWidth(value: string) {

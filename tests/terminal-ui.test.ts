@@ -21,6 +21,8 @@ function captureStdout(run: () => void) {
 
 test('TerminalUI lays out task assistant and tool output with clean no-color spacing', () => {
   const ui = new TerminalUI({ noColor: true, verbose: true });
+  // modelHint used by Build status row
+  (ui as unknown as { modelHint: string }).modelHint = 'gpt-5.5';
   const output = captureStdout(() => {
     ui.turnStart('帮我检查最近的大文件');
     ui.assistant('先看磁盘增长。');
@@ -28,10 +30,25 @@ test('TerminalUI lays out task assistant and tool output with clean no-color spa
     ui.toolResult('disk_growth', { ok: true, output: 'sizeMB\tpath\n120.4\tout/cache.bin' });
   });
 
-  assert.match(output, /\n\* You\n帮我检查最近的大文件\n/);
+  // OpenCode-like user bubble + Build status
+  assert.match(output, /│ 帮我检查最近的大文件/);
+  assert.match(output, /Build · gpt-5\.5|Build.*gpt-5\.5/);
   assert.match(output, /\n\* Assistant\n先看磁盘增长。\n/);
   assert.match(output, /\n\* Tool 1 disk_growth\n  input: \{"path":"\.","hours":48\}\n  status: running\n  result: ok \d+ms\n  output:\n    sizeMB\tpath\n    120\.4\tout\/cache\.bin\n/);
   assert.doesNotMatch(output, /waiting for tool result/);
+  assert.doesNotMatch(output, /\* You\n/);
+});
+
+test('TerminalUI request chrome uses user bubble not Task header', () => {
+  const ui = new TerminalUI({ noColor: true });
+  (ui as unknown as { modelHint: string }).modelHint = 'grok-4.5';
+  const output = captureStdout(() => ui.turnStart('哈哈哈哈'));
+  assert.match(output, /┌/);
+  assert.match(output, /│ 哈哈哈哈/);
+  assert.match(output, /└/);
+  assert.match(output, /Build/);
+  assert.match(output, /grok-4\.5/);
+  assert.doesNotMatch(output, /\* Task|\* You/);
 });
 
 test('TerminalUI folds tool process into one summary line by default', () => {
