@@ -150,7 +150,7 @@ export class TerminalUI {
       return;
     }
     if (this.options.json) return this.jsonEvent('assistant', { content: plain });
-    if (this.options.quiet) return this.write(plain);
+    if (this.options.quiet) return;
     this.writeSectionTitle('Assistant', 'green');
     // No left indent, no column reflow — only real newlines.
     this.writeBlock(plain, this.color('reset'), { indent: '', noWrap: true });
