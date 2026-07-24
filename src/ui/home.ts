@@ -105,8 +105,8 @@ export function renderHomeScreen(
 }
 
 export function clearScreen() {
-  // Clear scrollback-visible area + home cursor (Windows Terminal / modern hosts).
-  process.stdout.write('\u001b[2J\u001b[3J\u001b[H');
+  // Visible area only — do NOT use \u001b[3J (wipes scrollback so users cannot 往前翻).
+  process.stdout.write('\u001b[2J\u001b[H');
 }
 
 export function chatPromptLabel(options: { noColor?: boolean } = {}) {

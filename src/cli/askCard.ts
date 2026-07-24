@@ -68,9 +68,9 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
       mode,
       session: options.session,
     });
-    // Atomic full redraw — guaranteed single card.
+    // Clear visible screen only — never \u001b[3J (that wipes scrollback / 无法往前翻).
     output.write('\u001b[?25l');
-    output.write('\u001b[2J\u001b[3J\u001b[H');
+    output.write('\u001b[2J\u001b[H');
     output.write(screen.frame);
     output.write(`\u001b[${screen.caretRow};${screen.caretCol}H`);
     output.write('\u001b[?25h');
@@ -89,8 +89,8 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
         // ignore
       }
       output.write('\u001b[?25h');
-      // Leave a clean screen for the turn renderer (user bubble + reply).
-      output.write('\u001b[2J\u001b[3J\u001b[H');
+      // Clear visible home card only; keep scrollback. Turn renderer prints below.
+      output.write('\u001b[2J\u001b[H');
       resolve(result);
     };
 
@@ -124,8 +124,7 @@ export async function readAskCardTurn(options: AskCardOptions): Promise<ReadTurn
           const bytes = assertUserTextWithinLimit(normalized);
           finish({ text: normalized, bytes, multiline: false });
         } catch (error) {
-          // Keep editing; flash error in placeholder area via stderr then repaint.
-          output.write(`\u001b[2J\u001b[3J\u001b[H${error instanceof Error ? error.message : String(error)}\n`);
+          output.write(`\u001b[2J\u001b[H${error instanceof Error ? error.message : String(error)}\n`);
           paint();
         }
         return;

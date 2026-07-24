@@ -20,6 +20,7 @@ import { assertUserTextWithinLimit, formatByteSize } from './limits.js';
 import { runMessageActions } from './messageActions.js';
 import { detectLocale, resolveSessionLocale } from '../i18n/locale.js';
 import { formatGitConfirm } from '../i18n/messages.js';
+import { chatPromptLabel } from '../ui/home.js';
 import { restoreConsoleSoftWrap } from '../ui/consoleWrap.js';
 
 type TurnExtras = { parts?: MessagePart[]; displayText?: string };
@@ -221,25 +222,33 @@ export async function runRepl(runtime: AgentRuntime) {
     while (true) {
       let turn;
       try {
-        const useAskCard = process.stdout.isTTY && process.stdin.isTTY && !runtime.config.noColor && !runtime.config.json;
-        if (useAskCard) {
-          // home: logo + card (first screen). dock: keep transcript, input card only at bottom.
+        const useHomeCard = askMode === 'home'
+          && process.stdout.isTTY
+          && process.stdin.isTTY
+          && !runtime.config.noColor
+          && !runtime.config.json;
+        if (useHomeCard) {
+          // First screen only: fancy Ask card. After that, classic prompt so scrollback works.
           turn = await readAskCardTurn({
             model: runtime.provider.model,
             baseUrl: runtime.config.baseUrl,
             providerName: runtime.provider.name,
             noColor: runtime.config.noColor,
-            mode: askMode,
+            mode: 'home',
             session: interactiveRuntime.session,
           });
           if (turn === null && process.stdin.isTTY) {
             break;
           }
           if (turn === null) {
-            turn = await readUserTurn(rl, 'aicode> ');
+            turn = await readUserTurn(rl, chatPromptLabel({ noColor: runtime.config.noColor }));
           }
         } else {
-          turn = await readUserTurn(rl, 'aicode> ');
+          // Dock / conversation mode: normal readline — history stays in terminal scrollback.
+          const prompt = process.stdout.isTTY && !runtime.config.noColor
+            ? chatPromptLabel({ noColor: runtime.config.noColor })
+            : 'aicode> ';
+          turn = await readUserTurn(rl, prompt);
         }
       } catch (error) {
         runtime.ui.error(error instanceof Error ? error.message : String(error));

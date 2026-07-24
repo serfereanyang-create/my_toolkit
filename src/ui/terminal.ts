@@ -92,10 +92,9 @@ export class TerminalUI {
     if (this.options.json) return this.jsonEvent('turn_start', { prompt });
     if (this.options.quiet) return;
     if (this.homeActive) {
-      clearScreen();
       this.homeActive = false;
     }
-    // Permanent transcript row only (the ephemeral Ask input card is erased on submit).
+    // Append to scrollback (no full clear) so users can scroll up later.
     this.writeUserBubble(prompt);
     this.writeBuildStatus();
   }
