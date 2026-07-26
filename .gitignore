@@ -3,8 +3,8 @@
 /*
 
 # Whitelist directories we care about (and their contents via nested rules below).
+# NOTE: cli/ is its own git repository — do NOT track it from the outer repo.
 !/.gitignore
-!/cli/
 !/docs/
 !/ide-desktop/
 
