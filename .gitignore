@@ -1,0 +1,42 @@
+# Default-ignore everything at repo root.
+# We only track the subtrees relevant to the CC Desktop IDE work.
+/*
+
+# Whitelist directories we care about (and their contents via nested rules below).
+!/.gitignore
+!/cli/
+!/docs/
+!/ide-desktop/
+
+# Inside whitelisted trees, ignore common build/vendor/output artifacts.
+**/node_modules/
+**/dist/
+**/build/
+**/out/
+**/.vite/
+**/.turbo/
+**/.next/
+**/coverage/
+**/.nyc_output/
+**/*.tsbuildinfo
+**/.DS_Store
+**/Thumbs.db
+
+# Local env / secrets
+**/.env
+**/.env.*
+!**/.env.example
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+**/*.log
+**/logs/
+
+# Electron packaging artifacts
+**/release/
+**/*.asar
