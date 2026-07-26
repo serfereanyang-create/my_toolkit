@@ -402,6 +402,37 @@ Slash commands:
 
 Disable all MCP loading with `AICODE_MCP=0`. This MVP supports stdio + Content-Length framing only (no HTTP/SSE remote transport yet).
 
+## Desktop Bridge
+
+Desktop bridge mode keeps the CLI agent alive as a long-running child process and
+communicates with a desktop shell (e.g. Electron IDE) through newline-delimited
+JSON on stdin/stdout. It implies `--json`, `--no-banner`, and `--no-input`.
+
+```bash
+node cli/dist/src/index.js --desktop-bridge --provider mock --approval auto --workspace .
+```
+
+Send commands on stdin (one JSON object per line):
+
+```json
+{"type":"user_message","text":"smoke multi-tool task"}
+{"type":"approval_response","requestId":"approval_...","decision":"allow_once"}
+{"type":"ping"}
+{"type":"shutdown"}
+```
+
+The bridge emits events on stdout, including `bridge_ready`, `turn_start`,
+`assistant_delta`, `assistant`, `tool_start`, `tool_result`, `approval_needed`,
+`turn_done`, `pong`, `cancel_ack`, and `error`, plus all standard `--json`
+`TerminalUI` events (`info`, `final`, `model_start`, `model_end`, ...).
+
+Approval decisions accept `allow_once`, `allow_session`, or `deny`. Session
+allowances are cached per `risk:tool` for the lifetime of the child process so
+repeat write calls to the same tool do not re-prompt.
+
+Cooperative cancel is not yet supported by the agent loop; to interrupt an
+in-flight turn the desktop should terminate and respawn the child process.
+
 ## Capability Matrix
 
 See `docs/capability-matrix.md` for the tracked CLI and AI coding agent capabilities, implementation status, evidence, and advanced features that remain outside the MVP scope.

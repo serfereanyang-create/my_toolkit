@@ -59,6 +59,7 @@ function buildChecks(root: string): Check[] {
     'src/cli/completion.ts',
     'src/cli/doctor.ts',
     'src/cli/commands.ts',
+    'src/cli/desktopBridge.ts',
     'src/cli/repl.ts',
     'src/ui/terminal.ts',
     'src/agent/agent.ts',
@@ -427,7 +428,11 @@ function buildChecks(root: string): Check[] {
     ['src/ui/home.ts', 'renderHomeScreen'],
     ['src/ui/consoleWrap.ts', 'disableConsoleSoftWrap'],
     ['src/index.ts', 'createAgentRuntime'],
+    ['src/index.ts', 'desktopBridge'],
     ['src/runtime/createRuntime.ts', 'createDefaultToolRegistry'],
+    ['src/cli/desktopBridge.ts', 'bridge_ready'],
+    ['src/cli/desktopBridge.ts', 'approval_needed'],
+    ['src/cli/desktopBridge.ts', 'DesktopApprovalBroker'],
   ];
   cliNeedles.forEach(([path, needle]) => checks.push({ name: `cli ${path} contains ${needle}`, run: () => contains(path, needle) }));
 

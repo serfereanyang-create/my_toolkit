@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { completionScript } from './cli/completion.js';
 import { formatDoctor, runDoctor } from './cli/doctor.js';
 import { parseArgs } from './cli/args.js';
+import { runDesktopBridge } from './cli/desktopBridge.js';
 import { runPromptMode, runRepl } from './cli/repl.js';
 import { loadConfig, requireProviderAuth } from './config/config.js';
 import { formatMcpStatus } from './mcp/manager.js';
@@ -49,6 +50,12 @@ async function main() {
   if (mcpStatuses.some((status) => status.enabled)) ui.info(formatMcpStatus(mcpStatuses));
 
   try {
+    if (config.desktopBridge) {
+      requireProviderAuth(config);
+      await runDesktopBridge(runtime);
+      return;
+    }
+
     if (config.prompt !== undefined) {
       if (!config.prompt.startsWith('/')) requireProviderAuth(config);
       const result = await runPromptMode(runtime, config.prompt);

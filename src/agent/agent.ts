@@ -33,6 +33,15 @@ export type AgentRuntime = {
   ui: TerminalUI;
   hooks?: HookRegistry;
   confirm?: (message: string) => Promise<boolean>;
+  /**
+   * Optional structured approval callback for tool execution.
+   * When set, replaces the plain `confirm` shim inside ToolContext so UIs
+   * (desktop bridge) can carry tool/risk/input/reason metadata to the user.
+   */
+  toolConfirm?: (
+    message: string,
+    request?: import('../tools/types.js').ApprovalRequest,
+  ) => Promise<import('../tools/types.js').ApprovalDecision>;
   gitSafety?: GitSafetyService;
   gitRollback?: GitRollbackService;
   gitPublisher?: GitRemotePublisher;
@@ -343,7 +352,7 @@ async function executeToolAction(
   const result = await runtime.tools.execute(action.tool, action.input, {
     workspaceRoot: runtime.config.workspaceRoot,
     approval: runtime.config.approval,
-    confirm: resolveConfirm(runtime),
+    confirm: resolveToolConfirm(runtime),
     checkpoints: runtime.checkpoints,
     hooks: runtime.hooks,
     beforeConfirm: () => runtime.ui.pauseSpinnerForPrompt(),
@@ -387,14 +396,30 @@ async function executeToolAction(
 function resolveConfirm(runtime: AgentRuntime) {
   // Only the interactive REPL installs a confirm callback. Prompt/CI/smoke modes must
   // never block on stdin for git init or other safety confirmations.
+  // The desktop bridge overrides `runtime.tools`-side confirm through ToolContext,
+  // so this shim is only used for git-safety and task-board style confirms that
+  // do not need structured approval requests.
   if (runtime.confirm) {
-    return async (message: string) => runtime.confirm!(message);
+    return async (message: string, _request?: import('../tools/types.js').ApprovalRequest) =>
+      runtime.confirm!(message);
   }
   if (runtime.config.noInput || runtime.config.prompt !== undefined || runtime.config.ci) return undefined;
   if (process.stdin.isTTY) {
     return async (message: string) => askForApproval(message, { locale: runtime.locale ?? 'en' });
   }
   return undefined;
+}
+
+/**
+ * Resolve the confirm callback used for tool execution (ToolContext.confirm).
+ * Prefers the structured `toolConfirm` if provided (e.g. desktop bridge),
+ * otherwise falls back to the plain confirm shim.
+ */
+function resolveToolConfirm(runtime: AgentRuntime) {
+  if (runtime.toolConfirm) {
+    return runtime.toolConfirm;
+  }
+  return resolveConfirm(runtime);
 }
 
 /** Collapse noisy Git CRLF / ignored-path dumps into a single short line for the UI. */

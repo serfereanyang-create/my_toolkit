@@ -71,7 +71,14 @@ export class ToolRegistry {
         };
       }
       context.beforeConfirm?.();
-      const approved = await context.confirm(await approvalMessage(name, tool.risk, inputRecord, context, locale));
+      const message = await approvalMessage(name, tool.risk, inputRecord, context, locale);
+      const approved = await context.confirm(message, {
+        tool: name,
+        risk: tool.risk,
+        input: inputRecord,
+        reason: decision.reason,
+        message,
+      });
       context.afterConfirm?.();
       if (!approved) {
         return { ok: false, output: formatApprovalOutcome({ locale, kind: 'cancelled', tool: name }) };
