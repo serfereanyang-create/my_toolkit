@@ -24,6 +24,7 @@ export type CliArgs = {
   doctor?: boolean;
   completionShell?: 'bash' | 'zsh' | 'fish' | 'powershell';
   confirmPlan?: boolean;
+  desktopBridge?: boolean;
 };
 
 export type FileProfileConfig = {
@@ -66,4 +67,5 @@ export type AppConfig = {
   doctor?: boolean;
   completionShell?: 'bash' | 'zsh' | 'fish' | 'powershell';
   confirmPlan?: boolean;
+  desktopBridge?: boolean;
 };

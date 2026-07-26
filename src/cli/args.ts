@@ -109,6 +109,12 @@ export function parseArgs(argv: string[]): CliArgs {
       case '--confirm-plan':
         args.confirmPlan = true;
         break;
+      case '--desktop-bridge':
+        args.desktopBridge = true;
+        args.json = true;
+        args.noBanner = true;
+        args.noInput = true;
+        break;
       case '--doctor':
         args.doctor = true;
         args.noBanner = true;

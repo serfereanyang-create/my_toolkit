@@ -47,6 +47,7 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
     doctor: args.doctor ?? false,
     completionShell: args.completionShell,
     confirmPlan: args.confirmPlan ?? false,
+    desktopBridge: args.desktopBridge ?? false,
   };
 }
 

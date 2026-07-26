@@ -7,22 +7,8 @@ import { formatDoctor, runDoctor } from './cli/doctor.js';
 import { parseArgs } from './cli/args.js';
 import { runPromptMode, runRepl } from './cli/repl.js';
 import { loadConfig, requireProviderAuth } from './config/config.js';
-import { GitAuditLog } from './git-safety/audit.js';
-import { GitSnapshotDiff } from './git-safety/diff.js';
-import { GitProcess } from './git-safety/git.js';
-import { LocalGitPublisher } from './git-safety/publisher.js';
-import { GitRepository } from './git-safety/repository.js';
-import { GitRollbackService } from './git-safety/rollback.js';
-import { GitSafetyService } from './git-safety/service.js';
-import { GitSnapshotStore } from './git-safety/snapshot.js';
-import { createNoopHooks } from './hooks/hooks.js';
-import { formatMcpStatus, loadMcpManager } from './mcp/manager.js';
-import { loadPluginTools } from './plugins/loader.js';
-import { createProvider } from './providers/index.js';
-import { CheckpointStore } from './session/checkpoint.js';
-import { SessionStore } from './session/store.js';
-import { createDefaultToolRegistry } from './tools/index.js';
-import { TerminalUI } from './ui/terminal.js';
+import { formatMcpStatus } from './mcp/manager.js';
+import { createAgentRuntime } from './runtime/createRuntime.js';
 
 async function main() {
   // Own the process/window title so hosts don't show system32\cmd.
@@ -43,94 +29,30 @@ async function main() {
     return;
   }
 
-  const provider = createProvider(config);
-  const tools = createDefaultToolRegistry();
-  for (const tool of await loadPluginTools(config.workspaceRoot)) tools.register(tool);
-  const existingNames = new Set(tools.list().map((tool) => tool.name));
-  let mcp = await loadMcpManager({ workspaceRoot: config.workspaceRoot, existingNames });
-  for (const tool of mcp.tools) {
-    try {
-      tools.register(tool);
-    } catch {
-      // name collision after partial load — skip
-    }
-  }
-  const hooks = createNoopHooks();
-  const version = await packageVersion();
-  const ui = new TerminalUI({
-    quiet: config.quiet,
-    json: config.json,
-    noColor: config.noColor,
-    verbose: config.verbose,
-    homeScreen: !config.prompt && !config.ci && !config.json,
-    version,
-  });
+  const created = await createAgentRuntime(config);
+  const { provider, tools, ui, runtime, mcpStatuses } = created;
 
   if (config.doctor) {
-    const checks = await runDoctor(config, provider, tools, mcp);
+    const checks = await runDoctor(config, provider, tools, runtime.mcp);
     if (config.json) {
       process.stdout.write(`${JSON.stringify({ type: 'doctor', ok: checks.every((check) => check.ok), checks })}\n`);
     } else {
       process.stdout.write(`${formatDoctor(checks)}\n`);
     }
     if (checks.some((check) => !check.ok)) process.exitCode = 1;
-    await mcp.close();
+    await created.close();
     return;
   }
 
-  const sessions = new SessionStore(config.sessionDir);
-  const checkpoints = new CheckpointStore(config.workspaceRoot);
-  const gitProcess = new GitProcess(config.workspaceRoot);
-  const gitAudit = new GitAuditLog(config.workspaceRoot);
-  const gitRepository = new GitRepository(config.workspaceRoot, gitProcess);
-  const gitSnapshots = new GitSnapshotStore(gitProcess, config.workspaceRoot);
-  const gitDiff = new GitSnapshotDiff(gitProcess);
-  const gitSafety = new GitSafetyService(config.workspaceRoot, gitRepository, gitSnapshots, gitDiff, gitAudit);
-  const gitRollback = new GitRollbackService(config.workspaceRoot, gitRepository, gitSnapshots, gitDiff, gitAudit);
-  const gitPublisher = new LocalGitPublisher(config.workspaceRoot, gitProcess, gitAudit);
-  const session = config.resumeSessionId
-    ? await sessions.load(config.resumeSessionId)
-    : await sessions.create({ provider: provider.name, model: provider.model, workspaceRoot: config.workspaceRoot });
-
   ui.banner(config, provider);
-  if (config.resumeSessionId) ui.info(`resumed session: ${session.id}`);
-  if (mcp.statuses.some((status) => status.enabled)) ui.info(formatMcpStatus(mcp.statuses));
+  if (config.resumeSessionId) ui.info(`resumed session: ${runtime.session.id}`);
+  if (mcpStatuses.some((status) => status.enabled)) ui.info(formatMcpStatus(mcpStatuses));
 
-  const runtime = {
-    config,
-    provider,
-    tools,
-    sessions,
-    checkpoints,
-    session,
-    ui,
-    hooks,
-    gitSafety,
-    gitRollback,
-    gitPublisher,
-    gitProcess,
-    gitRepository,
-    get mcp() {
-      return mcp;
-    },
-    async reloadMcp() {
-      await mcp.close();
-      const existingNames = new Set(
-        tools.list().filter((tool) => !tool.name.startsWith('mcp_')).map((tool) => tool.name),
-      );
-      const next = await loadMcpManager({ workspaceRoot: config.workspaceRoot, existingNames });
-      for (const tool of next.tools) {
-        tools.register(tool, { replace: true });
-      }
-      mcp = next;
-      return mcp;
-    },
-  };
   try {
     if (config.prompt !== undefined) {
       if (!config.prompt.startsWith('/')) requireProviderAuth(config);
       const result = await runPromptMode(runtime, config.prompt);
-      ui.final(result.ok, { session: session.id, reason: result.reason });
+      ui.final(result.ok, { session: runtime.session.id, reason: result.reason });
       if (!result.ok) process.exitCode = 1;
       return;
     }
@@ -142,7 +64,7 @@ async function main() {
     requireProviderAuth(config);
     await runRepl(runtime);
   } finally {
-    await mcp.close();
+    await created.close();
   }
 }
 

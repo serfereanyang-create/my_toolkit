@@ -54,6 +54,7 @@ function buildChecks(root: string): Check[] {
     'README.md',
     'docs/capability-matrix.md',
     'src/index.ts',
+    'src/runtime/createRuntime.ts',
     'src/cli/args.ts',
     'src/cli/completion.ts',
     'src/cli/doctor.ts',
@@ -320,7 +321,8 @@ function buildChecks(root: string): Check[] {
       || (await contains('src/mcp/client.ts', needle))
       || (await contains('src/mcp/bridge.ts', needle))
       || (await contains('src/mcp/framing.ts', needle))
-      || (await contains('src/index.ts', needle)),
+      || (await contains('src/index.ts', needle))
+      || (await contains('src/runtime/createRuntime.ts', needle)),
   }));
 
   const sandboxNeedles = ['runSandboxedCommand', 'buildSandboxEnv', 'killProcessTree', 'AICODE_SANDBOX', 'taskkill', 'isSecretEnvKey'];
@@ -424,7 +426,8 @@ function buildChecks(root: string): Check[] {
     ['src/ui/terminal.ts', 'homeScreen'],
     ['src/ui/home.ts', 'renderHomeScreen'],
     ['src/ui/consoleWrap.ts', 'disableConsoleSoftWrap'],
-    ['src/index.ts', 'createDefaultToolRegistry'],
+    ['src/index.ts', 'createAgentRuntime'],
+    ['src/runtime/createRuntime.ts', 'createDefaultToolRegistry'],
   ];
   cliNeedles.forEach(([path, needle]) => checks.push({ name: `cli ${path} contains ${needle}`, run: () => contains(path, needle) }));
 
