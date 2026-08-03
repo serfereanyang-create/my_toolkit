@@ -1,4 +1,5 @@
 import { useEffect, useReducer } from 'react';
+import { AIPanel } from './components/AIPanel';
 import { CodeEditor } from './components/CodeEditor';
 import { EditorTabs } from './components/EditorTabs';
 import { FileTree } from './components/FileTree';
@@ -53,6 +54,24 @@ export default function App() {
     dispatch({ type: 'settings/loaded', settings: { ...settings, providers } });
   }
 
+  async function submitPrompt(text: string) {
+    if (state.agentStatus === 'offline') {
+      dispatch({ type: 'agent/status', status: 'starting' });
+      await desktop.agent.start();
+    }
+    dispatch({ type: 'chat/user', text });
+    await desktop.agent.prompt(text);
+  }
+
+  async function cancelTurn() {
+    await desktop.agent.cancel();
+    dispatch({ type: 'agent/status', status: 'ready' });
+  }
+
+  async function approve(requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') {
+    await desktop.agent.approve(requestId, decision);
+  }
+
   if (!state.workspaceRoot) return <main className="app-shell"><Welcome onOpenWorkspace={openWorkspace} /></main>;
 
   return (
@@ -76,7 +95,7 @@ export default function App() {
           />
         </>
       }
-      ai={<div className="ai-placeholder">Agent panel</div>}
+      ai={<AIPanel state={state} onSubmit={submitPrompt} onCancel={cancelTurn} onApprove={approve} />}
       bottom={<div className="muted">Tool output</div>}
     />
   );

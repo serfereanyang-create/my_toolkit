@@ -308,3 +308,102 @@ h1 {
   padding-top: 12px;
   margin-top: 12px;
 }
+
+.ai-panel {
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 128px;
+}
+
+.chat-log {
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-row {
+  white-space: pre-wrap;
+  line-height: 1.45;
+  font-size: 13px;
+}
+
+.chat-row.user {
+  color: #dce4f0;
+  border-left: 2px solid #4b87d8;
+  padding-left: 10px;
+}
+
+.chat-row.assistant {
+  color: #c4cedb;
+}
+
+.chat-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid #252a33;
+}
+
+.chat-input-row textarea {
+  resize: none;
+  border: 1px solid #303744;
+  border-radius: 6px;
+  background: #10141b;
+  color: #e8ebf0;
+  padding: 10px;
+}
+
+.chat-input-row button,
+.approval-actions button {
+  border: 1px solid #303744;
+  border-radius: 6px;
+  background: #222832;
+  color: #e8ebf0;
+  cursor: pointer;
+}
+
+.tool-card {
+  border: 1px solid #303744;
+  border-radius: 6px;
+  background: #171c25;
+  padding: 10px;
+}
+
+.tool-card.running {
+  border-color: #4b87d8;
+}
+
+.tool-card.failed,
+.approval-card {
+  border-color: #b86b65;
+}
+
+.tool-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #9ebcff;
+}
+
+.tool-card pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  color: #aeb8c6;
+  font-size: 12px;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.approval-actions button {
+  height: 30px;
+  padding: 0 10px;
+}
