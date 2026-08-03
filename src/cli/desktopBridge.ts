@@ -47,59 +47,69 @@ export async function runDesktopBridge(runtime: AgentRuntime) {
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   let busy = false;
 
-  for await (const line of rl) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
+  try {
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
 
-    let command: BridgeCommand;
-    try {
-      command = JSON.parse(trimmed) as BridgeCommand;
-    } catch (error) {
-      emit({ type: 'error', sessionId: runtime.session.id, message: `Invalid bridge JSON: ${errorMessage(error)}` });
-      continue;
-    }
-
-    if (command.type === 'shutdown') break;
-    if (command.type === 'ping') {
-      emit({ type: 'pong', sessionId: runtime.session.id });
-      continue;
-    }
-    if (command.type === 'approval_response') {
-      broker.resolve(command.requestId, command.decision);
-      continue;
-    }
-    if (command.type === 'cancel') {
-      // Cooperative cancel is not yet supported by the agent loop; the desktop
-      // should terminate and respawn the child to interrupt an in-flight turn.
-      emit({
-        type: 'cancel_ack',
-        sessionId: runtime.session.id,
-        note: 'Desktop should terminate and restart the child process for active turns.',
-      });
-      continue;
-    }
-    if (command.type === 'user_message') {
-      if (busy) {
-        emit({ type: 'error', sessionId: runtime.session.id, message: 'Agent turn already running' });
+      let command: BridgeCommand;
+      try {
+        command = JSON.parse(trimmed) as BridgeCommand;
+      } catch (error) {
+        emit({ type: 'error', sessionId: runtime.session.id, message: `Invalid bridge JSON: ${errorMessage(error)}` });
         continue;
       }
-      busy = true;
-      emit({ type: 'turn_start', sessionId: runtime.session.id, prompt: command.text });
-      try {
-        const result = await runPromptMode(runtime, command.text);
+
+      if (command.type === 'shutdown') break;
+      if (command.type === 'ping') {
+        emit({ type: 'pong', sessionId: runtime.session.id });
+        continue;
+      }
+      if (command.type === 'approval_response') {
+        broker.resolve(command.requestId, command.decision);
+        continue;
+      }
+      if (command.type === 'cancel') {
+        // Cooperative cancel is not yet supported by the agent loop; the desktop
+        // should terminate and respawn the child to interrupt an in-flight turn.
         emit({
-          type: 'turn_done',
+          type: 'cancel_ack',
           sessionId: runtime.session.id,
-          status: result.ok ? 'ok' : 'error',
-          reason: result.reason,
+          note: 'Desktop should terminate and restart the child process for active turns.',
         });
-      } catch (error) {
-        emit({ type: 'error', sessionId: runtime.session.id, message: errorMessage(error) });
-        emit({ type: 'turn_done', sessionId: runtime.session.id, status: 'error' });
-      } finally {
-        busy = false;
+        continue;
+      }
+      if (command.type === 'user_message') {
+        if (busy) {
+          emit({ type: 'error', sessionId: runtime.session.id, message: 'Agent turn already running' });
+          continue;
+        }
+        busy = true;
+        emit({ type: 'turn_start', sessionId: runtime.session.id, prompt: command.text });
+        try {
+          const result = await runPromptMode(runtime, command.text);
+          emit({
+            type: 'turn_done',
+            sessionId: runtime.session.id,
+            status: result.ok ? 'ok' : 'error',
+            reason: result.reason,
+          });
+        } catch (error) {
+          emit({ type: 'error', sessionId: runtime.session.id, message: errorMessage(error) });
+          emit({ type: 'turn_done', sessionId: runtime.session.id, status: 'error' });
+        } finally {
+          busy = false;
+        }
       }
     }
+  } finally {
+    // Closing readline and unref-ing stdin releases the event loop so a
+    // `shutdown` command (or EOF) lets the child process exit cleanly. Without
+    // this the piped stdin keeps the process — and any parent that spawned it —
+    // alive indefinitely.
+    rl.close();
+    process.stdin.pause();
+    if (typeof process.stdin.unref === 'function') process.stdin.unref();
   }
 }
 
