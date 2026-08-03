@@ -1,0 +1,18 @@
+PMID- 12345678
+TI  - PubMed NBIB Import Test for Open Literature Sources
+AU  - Doe J
+AU  - Wang L
+DP  - 2024 Jan
+JT  - Open Biomedical Methods
+AID - 10.1234/pubmed.nbib.2024.001 [doi]
+OT  - PubMed
+OT  - NBIB
+AB  - This record validates PubMed NBIB import.
+
+PMID- 87654321
+TI  - NBIB Record Without DOI for Weak Matching
+AU  - Chen R
+DP  - 2023
+JT  - Biomedical Data Notes
+OT  - weak match
+AB  - This record validates title and year fallback matching.

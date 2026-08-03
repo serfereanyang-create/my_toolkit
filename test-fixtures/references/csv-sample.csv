@@ -1,0 +1,3 @@
+title,authors,year,source,doi,url,keywords,abstract
+OpenAlex CSV Import Test,"Garcia M; Liu Y",2025,Open Metadata Journal,10.1234/csv.openalex.2025.001,https://example.org/csv-openalex,"OpenAlex; CSV",This record validates CSV import.
+Custom Table Without DOI,"Han K",2022,Local Research Notes,,https://example.org/no-doi,"custom; weak",This record validates custom table import without DOI.

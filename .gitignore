@@ -8,6 +8,22 @@
 !/docs/
 !/ide-desktop/
 
+# Paper assistant desktop app (科研论文辅助工作台).
+!/src/
+!/electron/
+!/scripts/
+!/assets/
+!/test-fixtures/
+!/index.html
+!/package.json
+!/package-lock.json
+!/tsconfig.json
+!/vite.config.ts
+!/vitest.config.ts
+
+# Local proxy runtime state — contains an apiKey field, never commit.
+/scripts/api-proxy-state.json
+
 # Inside whitelisted trees, ignore common build/vendor/output artifacts.
 **/node_modules/
 **/dist/
@@ -40,3 +56,12 @@
 # Electron packaging artifacts
 **/release/
 **/*.asar
+
+# Portable JDK downloaded for local builds
+tools/
+
+# Android freezer local SDK path
+android-freezer/local.properties
+android-freezer/.gradle/
+android-freezer/app/build/
+android-freezer/build/
