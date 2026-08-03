@@ -19,4 +19,16 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     setApiKey: (providerId, apiKey) => ipcRenderer.invoke('secrets.setApiKey', providerId, apiKey),
     hasApiKey: (providerId) => ipcRenderer.invoke('secrets.hasApiKey', providerId),
   },
+  agent: {
+    start: () => ipcRenderer.invoke('agent.start'),
+    prompt: (text) => ipcRenderer.invoke('agent.prompt', text),
+    cancel: () => ipcRenderer.invoke('agent.cancel'),
+    restart: () => ipcRenderer.invoke('agent.restart'),
+    approve: (requestId, decision) => ipcRenderer.invoke('agent.approve', requestId, decision),
+    onEvent: (handler) => {
+      const listener = (_event, payload) => handler(payload);
+      ipcRenderer.on('agent.event', listener);
+      return () => ipcRenderer.removeListener('agent.event', listener);
+    },
+  },
 });

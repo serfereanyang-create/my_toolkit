@@ -1,6 +1,6 @@
 const { dialog, ipcMain } = require('electron');
 
-function registerIpc({ mainWindow, workspace, settings, secrets }) {
+function registerIpc({ mainWindow, workspace, settings, secrets, agentManager }) {
   ipcMain.handle('workspace.open', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
     if (result.canceled || result.filePaths.length === 0) return { canceled: true };
@@ -22,6 +22,11 @@ function registerIpc({ mainWindow, workspace, settings, secrets }) {
   ipcMain.handle('settings.set', async (_event, next) => await settings.set(next));
   ipcMain.handle('secrets.setApiKey', async (_event, providerId, apiKey) => await secrets.setApiKey(providerId, apiKey));
   ipcMain.handle('secrets.hasApiKey', async (_event, providerId) => await secrets.hasApiKey(providerId));
+  ipcMain.handle('agent.start', async () => await agentManager.start());
+  ipcMain.handle('agent.prompt', async (_event, text) => agentManager.prompt(text));
+  ipcMain.handle('agent.cancel', async () => agentManager.cancel());
+  ipcMain.handle('agent.restart', async () => await agentManager.restart());
+  ipcMain.handle('agent.approve', async (_event, requestId, decision) => agentManager.approve(requestId, decision));
 }
 
 module.exports = { registerIpc };
