@@ -55,3 +55,131 @@ h1 {
   margin: 0;
   color: #9aa4b2;
 }
+
+.ide-shell {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 48px 280px minmax(360px, 1fr) 420px;
+  grid-template-rows: 40px minmax(0, 1fr) 150px;
+  background: #111318;
+  color: #e8ebf0;
+  overflow: hidden;
+}
+
+.top-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 12px;
+  border-bottom: 1px solid #252a33;
+  background: #151821;
+}
+
+.workspace-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #cdd5e0;
+  font-size: 13px;
+}
+
+.status-chips {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: #aab4c2;
+}
+
+.status-chips span {
+  border: 1px solid #303744;
+  border-radius: 6px;
+  padding: 3px 8px;
+  background: #1b2029;
+}
+
+.activity-bar {
+  grid-row: 2 / 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 6px;
+  border-right: 1px solid #252a33;
+  background: #13161d;
+}
+
+.activity-bar button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #8e99aa;
+  cursor: pointer;
+}
+
+.activity-bar button.active,
+.activity-bar button:hover {
+  background: #242a35;
+  color: #e8ebf0;
+}
+
+.sidebar,
+.editor-area,
+.ai-area,
+.bottom-panel {
+  min-width: 0;
+  min-height: 0;
+  border-color: #252a33;
+}
+
+.sidebar {
+  grid-column: 2;
+  grid-row: 2 / 4;
+  border-right: 1px solid #252a33;
+  background: #171a21;
+}
+
+.editor-area {
+  grid-column: 3;
+  grid-row: 2;
+  background: #111318;
+}
+
+.ai-area {
+  grid-column: 4;
+  grid-row: 2 / 4;
+  border-left: 1px solid #252a33;
+  background: #151922;
+}
+
+.bottom-panel {
+  grid-column: 3;
+  grid-row: 3;
+  border-top: 1px solid #252a33;
+  background: #141820;
+}
+
+.pane-title,
+.empty-editor,
+.ai-placeholder {
+  padding: 14px;
+  color: #9aa4b2;
+}
+
+.primary-button {
+  margin-top: 18px;
+  height: 34px;
+  border: 1px solid #3f6fb6;
+  border-radius: 6px;
+  background: #235ea8;
+  color: white;
+  padding: 0 14px;
+  cursor: pointer;
+}
