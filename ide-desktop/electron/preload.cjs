@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     setApiKey: (providerId, apiKey) => ipcRenderer.invoke('secrets.setApiKey', providerId, apiKey),
     hasApiKey: (providerId) => ipcRenderer.invoke('secrets.hasApiKey', providerId),
   },
+  sessions: {
+    list: () => ipcRenderer.invoke('sessions.list'),
+  },
   agent: {
     start: () => ipcRenderer.invoke('agent.start'),
     prompt: (text) => ipcRenderer.invoke('agent.prompt', text),

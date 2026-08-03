@@ -16,6 +16,7 @@ function registerIpc({ mainWindow, workspace, settings, secrets, agentManager })
   });
 
   ipcMain.handle('workspace.getTree', async (_event, relativePath) => await workspace.tree(relativePath || '.'));
+  ipcMain.handle('sessions.list', async () => await workspace.listSessions());
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));
   ipcMain.handle('settings.get', async () => await settings.get());

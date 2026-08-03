@@ -1,5 +1,6 @@
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { AIPanel } from './components/AIPanel';
+import { BottomPanel } from './components/BottomPanel';
 import { CodeEditor } from './components/CodeEditor';
 import { EditorTabs } from './components/EditorTabs';
 import { FileTree } from './components/FileTree';
@@ -11,11 +12,32 @@ import { appReducer, initialState, languageForPath } from './lib/state';
 
 export default function App() {
   const [state, dispatch] = useReducer(appReducer, initialState);
+  const [sessions, setSessions] = useState<string[]>([]);
+
+  // Keep a live ref so the agent event subscription (registered once) can read
+  // current tabs without capturing a stale closure.
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
     desktop.settings.get().then((settings) => dispatch({ type: 'settings/loaded', settings }));
-    return desktop.agent.onEvent((event) => dispatch({ type: 'agent/event', event }));
+    return desktop.agent.onEvent(async (event) => {
+      dispatch({ type: 'agent/event', event });
+      if (event.type === 'tool_result' && event.ok !== false) {
+        const data = event.data as { path?: string } | undefined;
+        const path = data?.path;
+        if (path && stateRef.current.tabs.some((tab) => tab.path === path)) {
+          const content = await desktop.fs.read(path);
+          dispatch({ type: 'tab/opened', tab: { path, content, savedContent: content, language: languageForPath(path) } });
+        }
+      }
+    });
   }, []);
+
+  useEffect(() => {
+    if (state.activeView !== 'sessions' || !state.workspaceRoot) return;
+    desktop.sessions.list().then(setSessions).catch(() => setSessions([]));
+  }, [state.activeView, state.workspaceRoot]);
 
   async function openWorkspace() {
     const result = await desktop.workspace.open();
@@ -55,6 +77,25 @@ export default function App() {
   }
 
   async function submitPrompt(text: string) {
+    if (text === '/help') {
+      dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: '/help /model /provider /status' } });
+      return;
+    }
+    if (text === '/status') {
+      dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: `agent=${state.agentStatus} workspace=${state.workspaceRoot}` } });
+      return;
+    }
+    if (text === '/model') {
+      const provider = state.settings?.providers.find((item) => item.id === state.settings?.activeProviderId);
+      dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: provider ? provider.model : 'mock-code-agent-v1' } });
+      return;
+    }
+    if (text === '/provider') {
+      const provider = state.settings?.providers.find((item) => item.id === state.settings?.activeProviderId);
+      dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: provider ? provider.label : 'Mock' } });
+      return;
+    }
+
     if (state.agentStatus === 'offline') {
       dispatch({ type: 'agent/status', status: 'starting' });
       await desktop.agent.start();
@@ -83,7 +124,16 @@ export default function App() {
           ? <SettingsPanel settings={state.settings} onSave={saveSettings} onSaveKey={saveApiKey} />
           : state.activeView === 'files'
             ? <FileTree tree={state.tree} onOpenFile={openFile} />
-            : <div className="pane-title">{state.activeView}</div>
+            : state.activeView === 'sessions'
+              ? (
+                <div className="session-list">
+                  <div className="pane-title">Sessions</div>
+                  {sessions.length === 0
+                    ? <div className="muted">No sessions yet.</div>
+                    : sessions.map((name) => <div key={name} className="session-row">{name}</div>)}
+                </div>
+              )
+              : <div className="pane-title">{state.activeView}</div>
       }
       editor={
         <>
@@ -96,7 +146,7 @@ export default function App() {
         </>
       }
       ai={<AIPanel state={state} onSubmit={submitPrompt} onCancel={cancelTurn} onApprove={approve} />}
-      bottom={<div className="muted">Tool output</div>}
+      bottom={<BottomPanel state={state} />}
     />
   );
 }

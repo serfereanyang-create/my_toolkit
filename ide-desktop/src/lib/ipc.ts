@@ -18,6 +18,9 @@ type ZCodeDesktopApi = {
     setApiKey(providerId: string, apiKey: string): Promise<{ configured: boolean; hint: string }>;
     hasApiKey(providerId: string): Promise<{ configured: boolean; hint: string }>;
   };
+  sessions: {
+    list(): Promise<string[]>;
+  };
   agent: {
     start(): Promise<{ ok: boolean }>;
     prompt(text: string): Promise<{ ok: boolean }>;

@@ -49,7 +49,18 @@ function createWorkspaceService() {
     }));
   }
 
-  return { setRoot, getRoot, resolveInside, readFile, writeFile, tree };
+  async function listSessions() {
+    const sessionRoot = resolveInside('.aicode/sessions');
+    try {
+      const entries = await fs.readdir(sessionRoot);
+      return entries.filter((name) => name.endsWith('.json')).sort().reverse().slice(0, 30);
+    } catch (error) {
+      if (error && error.code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
+  return { setRoot, getRoot, resolveInside, readFile, writeFile, tree, listSessions };
 }
 
 module.exports = { createWorkspaceService };
