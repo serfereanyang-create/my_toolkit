@@ -254,3 +254,57 @@ h1 {
 .code-editor {
   height: calc(100% - 36px);
 }
+
+.settings-panel {
+  height: 100%;
+  overflow: auto;
+  padding: 14px;
+}
+
+.settings-panel h2,
+.provider-row h3 {
+  margin: 0 0 12px;
+  letter-spacing: 0;
+}
+
+.settings-panel h2 {
+  font-size: 18px;
+}
+
+.provider-row h3 {
+  font-size: 14px;
+  color: #dce4f0;
+}
+
+.field-row {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: #aeb8c6;
+  font-size: 12px;
+}
+
+.field-row input,
+.field-row select {
+  width: 100%;
+  height: 32px;
+  border: 1px solid #303744;
+  border-radius: 6px;
+  background: #10141b;
+  color: #e8ebf0;
+  padding: 0 9px;
+}
+
+.field-row button {
+  height: 30px;
+  border: 1px solid #303744;
+  border-radius: 6px;
+  background: #222832;
+  color: #e8ebf0;
+}
+
+.provider-row {
+  border-top: 1px solid #252a33;
+  padding-top: 12px;
+  margin-top: 12px;
+}
