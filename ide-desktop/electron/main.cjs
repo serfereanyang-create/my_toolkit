@@ -1,5 +1,9 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, safeStorage } = require('electron');
 const path = require('node:path');
+const { createWorkspaceService } = require('./workspace.cjs');
+const { createSettingsStore } = require('./settings-store.cjs');
+const { createSecretStore } = require('./secret-store.cjs');
+const { registerIpc } = require('./ipc.cjs');
 
 let mainWindow;
 
@@ -18,6 +22,11 @@ function createWindow() {
       sandbox: false,
     },
   });
+
+  const workspace = createWorkspaceService();
+  const settings = createSettingsStore(app.getPath('userData'));
+  const secrets = createSecretStore({ userDataDir: app.getPath('userData'), safeStorage });
+  registerIpc({ mainWindow, workspace, settings, secrets });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) mainWindow.loadURL(devUrl);
