@@ -1,8 +1,11 @@
 import { useEffect, useReducer } from 'react';
+import { CodeEditor } from './components/CodeEditor';
+import { EditorTabs } from './components/EditorTabs';
+import { FileTree } from './components/FileTree';
 import { Layout } from './components/Layout';
 import { Welcome } from './components/Welcome';
 import { desktop } from './lib/ipc';
-import { appReducer, initialState } from './lib/state';
+import { appReducer, initialState, languageForPath } from './lib/state';
 
 export default function App() {
   const [state, dispatch] = useReducer(appReducer, initialState);
@@ -14,7 +17,23 @@ export default function App() {
 
   async function openWorkspace() {
     const result = await desktop.workspace.open();
-    if (!result.canceled && result.root) dispatch({ type: 'workspace/opened', root: result.root });
+    if (!result.canceled && result.root) {
+      dispatch({ type: 'workspace/opened', root: result.root });
+      const tree = await desktop.workspace.getTree('.');
+      dispatch({ type: 'tree/loaded', tree });
+    }
+  }
+
+  async function openFile(path: string) {
+    const content = await desktop.fs.read(path);
+    dispatch({ type: 'tab/opened', tab: { path, content, savedContent: content, language: languageForPath(path) } });
+  }
+
+  async function saveActiveFile() {
+    const tab = state.tabs.find((item) => item.path === state.activeTabPath);
+    if (!tab) return;
+    await desktop.fs.write(tab.path, tab.content);
+    dispatch({ type: 'tab/saved', path: tab.path, content: tab.content });
   }
 
   if (!state.workspaceRoot) return <main className="app-shell"><Welcome onOpenWorkspace={openWorkspace} /></main>;
@@ -23,8 +42,17 @@ export default function App() {
     <Layout
       state={state}
       onViewChange={(view) => dispatch({ type: 'view/set', view })}
-      sidebar={<div className="pane-title">{state.activeView}</div>}
-      editor={<div className="empty-editor">Open a file from the sidebar.</div>}
+      sidebar={state.activeView === 'files' ? <FileTree tree={state.tree} onOpenFile={openFile} /> : <div className="pane-title">{state.activeView}</div>}
+      editor={
+        <>
+          <EditorTabs tabs={state.tabs} activePath={state.activeTabPath} onActivate={(path) => dispatch({ type: 'tab/activate', path })} />
+          <CodeEditor
+            tab={state.tabs.find((item) => item.path === state.activeTabPath)}
+            onChange={(content) => state.activeTabPath && dispatch({ type: 'tab/changed', path: state.activeTabPath, content })}
+            onSave={saveActiveFile}
+          />
+        </>
+      }
       ai={<div className="ai-placeholder">Agent panel</div>}
       bottom={<div className="muted">Tool output</div>}
     />
