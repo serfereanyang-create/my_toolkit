@@ -20,3 +20,31 @@ See `../cli/README.md#desktop-bridge` for the protocol.
 - `electron/` — main process, preload, IPC bridge.
 - `src/` — React renderer.
 - `scripts/dev.cjs` — dev orchestrator (starts Vite, then Electron).
+
+## Mock Provider
+
+The default mock provider works without API keys and drives the smoke tests.
+Open a workspace, keep the provider set to Mock, and send a prompt — the agent
+runs its multi-tool chain with no network calls.
+
+## Live Providers
+
+Configure providers in Settings:
+
+- OpenAI-compatible: base URL, model, API key (custom gateways use this path).
+- Anthropic: model, API key.
+- Mock: no key required.
+
+API keys are stored by the Electron main process via `safeStorage` and are never
+returned in full to the renderer — the UI only shows a `configured:####` hint.
+
+## Verification
+
+```bash
+cd ../cli && npm run build && node --test dist/tests/desktop-bridge*.test.js
+cd ../ide-desktop && npm run test && npm run build
+```
+
+`npm run test` runs three phases: TypeScript typecheck, Vitest reducer tests
+(`src/**/*.test.ts`), and Node's test runner for the main-process and bridge
+suites (`tests/*.test.cjs`).

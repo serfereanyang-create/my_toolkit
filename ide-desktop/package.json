@@ -8,7 +8,7 @@
     "dev": "node scripts/dev.cjs",
     "build": "tsc -p tsconfig.json && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run typecheck && vitest run --passWithNoTests",
+    "test": "npm run typecheck && vitest run --passWithNoTests && node --test tests/*.test.cjs",
     "preview": "vite preview --host 127.0.0.1 --port 5174",
     "desktop:run": "npm run build && electron ."
   },
