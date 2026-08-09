@@ -7,6 +7,7 @@ import { formatDoctor, runDoctor } from './cli/doctor.js';
 import { parseArgs } from './cli/args.js';
 import { runDesktopBridge } from './cli/desktopBridge.js';
 import { runPromptMode, runRepl } from './cli/repl.js';
+import { confirmProviderStart } from './cli/startupConfirm.js';
 import { loadConfig, requireProviderAuth } from './config/config.js';
 import { formatMcpStatus } from './mcp/manager.js';
 import { createAgentRuntime } from './runtime/createRuntime.js';
@@ -69,6 +70,11 @@ async function main() {
     }
 
     requireProviderAuth(config);
+    if (!await confirmProviderStart(config, provider)) {
+      process.stdout.write('已取消。\n');
+      await created.close();
+      return;
+    }
     await runRepl(runtime);
   } finally {
     await created.close();
