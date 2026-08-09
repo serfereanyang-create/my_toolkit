@@ -3,3 +3,6 @@ dist/
 release/
 .vite/
 *.tsbuildinfo
+
+# Local security-scanner (mimosa hook) state — never track.
+.mimosa/

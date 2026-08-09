@@ -11,7 +11,7 @@ export function CodeEditor({ tab, onChange, onSave }: { tab?: EditorTab; onChang
     editorRef.current = monaco.editor.create(hostRef.current, {
       value: '',
       language: 'plaintext',
-      theme: 'vs-dark',
+      theme: 'vs',
       automaticLayout: true,
       minimap: { enabled: false },
       fontSize: 13,

@@ -1,5 +1,9 @@
-const { app, BrowserWindow, safeStorage } = require('electron');
+const { app, BrowserWindow, Menu, safeStorage } = require('electron');
 const path = require('node:path');
+
+// The renderer draws its own minimal top bar; drop Electron's native
+// File/Edit/View/Window/Help application menu.
+Menu.setApplicationMenu(null);
 const { createWorkspaceService } = require('./workspace.cjs');
 const { createSettingsStore } = require('./settings-store.cjs');
 const { createSecretStore } = require('./secret-store.cjs');

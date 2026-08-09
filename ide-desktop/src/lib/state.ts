@@ -10,6 +10,7 @@ export type AppAction =
   | { type: 'tab/saved'; path: string; content: string }
   | { type: 'tab/activate'; path: string }
   | { type: 'chat/user'; text: string }
+  | { type: 'chat/clear' }
   | { type: 'agent/status'; status: AppState['agentStatus'] }
   | { type: 'agent/event'; event: AgentEvent }
   | { type: 'bottom/toggle' };
@@ -47,7 +48,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'tab/activate':
       return { ...state, activeTabPath: action.path };
     case 'chat/user':
-      return { ...state, chat: [...state.chat, { id: `user-${Date.now()}`, kind: 'user', text: action.text }] };
+      return { ...state, chat: [...state.chat, { id: `user-${Date.now()}`, kind: 'user', text: action.text, ts: Date.now() }] };
+    case 'chat/clear':
+      return { ...state, chat: [] };
     case 'agent/status':
       return { ...state, agentStatus: action.status };
     case 'agent/event':

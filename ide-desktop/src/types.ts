@@ -38,7 +38,7 @@ export type AgentEvent = {
 };
 
 export type ChatItem =
-  | { id: string; kind: 'user'; text: string }
+  | { id: string; kind: 'user'; text: string; ts?: number }
   | { id: string; kind: 'assistant'; text: string }
   | { id: string; kind: 'tool'; status: 'running' | 'done' | 'failed'; tool: string; input?: unknown; output?: string; ok?: boolean }
   | { id: string; kind: 'approval'; requestId: string; tool: string; message: string; input?: unknown };
