@@ -7,7 +7,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { DownloadOutlined } from '@ant-design/icons';
+import { DownloadOutlined, FileTextOutlined } from '@ant-design/icons';
 import type { Paper } from '../../types/paperApp';
 
 const { Paragraph } = Typography;
@@ -35,6 +35,8 @@ export type QualityDrawerProps = {
   onImportReferences: () => void;
   onExportMarkdown: () => void;
   onExportLibrary: () => void;
+  onOpenReview: () => void;
+  onExportMatrix: () => void;
 };
 
 export function QualityDrawer({
@@ -50,6 +52,8 @@ export function QualityDrawer({
   onImportReferences,
   onExportMarkdown,
   onExportLibrary,
+  onOpenReview,
+  onExportMatrix,
 }: QualityDrawerProps) {
   const completedChecks = selected
     ? checklistItems.filter((item) => Boolean(selected.checklist[item])).length
@@ -131,11 +135,17 @@ export function QualityDrawer({
             <Button block type="primary" onClick={onImportReferences}>
               导入文献
             </Button>
+            <Button block icon={<FileTextOutlined />} onClick={onOpenReview}>
+              生成综述
+            </Button>
             <Tooltip title="保存为 Markdown 文件">
               <Button block icon={<DownloadOutlined />} onClick={onExportMarkdown}>
                 导出 Markdown
               </Button>
             </Tooltip>
+            <Button block icon={<DownloadOutlined />} onClick={onExportMatrix}>
+              导出文献矩阵
+            </Button>
             <Button block onClick={onExportLibrary}>
               导出资料库
             </Button>

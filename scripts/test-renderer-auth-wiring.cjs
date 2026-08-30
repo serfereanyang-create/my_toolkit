@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
+const uiStateSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'uiState.ts'), 'utf8');
 
 for (const marker of [
   'AuthUser',
@@ -35,9 +36,20 @@ for (const marker of [
   "localStorage.setItem(legacyMigrationKey(user.id), 'done')",
   "message.warning('请先登录账户')",
   "className={libraryCollapsed ? 'workbench-body library-collapsed' : 'workbench-body'}",
+  'ReviewDrawer',
+  'AiSettings',
+  'exportMatrix',
+  "label: '生成综述'",
+  "label: '导出文献矩阵'",
+  "'review'",
 ]) {
   assert.ok(source.includes(marker), `renderer is missing: ${marker}`);
 }
+
+assert.ok(
+  uiStateSource.includes("'quality' | 'account' | 'review' | null"),
+  'ActiveDrawer should be widened with review',
+);
 
 assert.ok(!source.includes('className="quality-panel"'), 'fixed quality sider should be removed');
 assert.ok(!source.includes('accountPanelContent'), 'inline account popover panel should be removed');

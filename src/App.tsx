@@ -9,6 +9,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { AccountDrawer } from './components/paper/AccountDrawer';
 import type { AuthMode } from './components/paper/AccountDrawer';
+import { AiSettings } from './components/paper/AiSettings';
 import { AppHeader } from './components/paper/AppHeader';
 import { DisplaySettings } from './components/paper/DisplaySettings';
 import type { AppFont, ContrastLevel } from './components/paper/DisplaySettings';
@@ -16,6 +17,9 @@ import { EmptyWorkspace } from './components/paper/EmptyWorkspace';
 import { PaperLibrary } from './components/paper/PaperLibrary';
 import { PaperWorkspace } from './components/paper/PaperWorkspace';
 import { QualityDrawer, DEFAULT_CHECKLIST_ITEMS } from './components/paper/QualityDrawer';
+import { ReviewDrawer } from './components/paper/ReviewDrawer';
+import { buildLiteratureMatrix } from './lib/literatureMatrix';
+import type { AiReviewApi } from './lib/reviewDigest';
 import {
   getThemeTokens,
   nextActiveDrawer,
@@ -75,6 +79,7 @@ type DesktopApi = {
     load: () => Promise<Paper[]>;
     save: (papers: Paper[]) => Promise<{ ok: true }>;
   };
+  ai: AiReviewApi;
 };
 
 declare global {
@@ -705,6 +710,11 @@ function App() {
     });
   }
 
+  function openReviewDrawer() {
+    setSettingsOpen(false);
+    setActiveDrawer((prev) => nextActiveDrawer(prev, 'review'));
+  }
+
   function closeDrawer() {
     setActiveDrawer(null);
   }
@@ -985,25 +995,37 @@ function App() {
     updateSelected({ evidence: selected.evidence.filter((item) => item.id !== id) });
   }
 
+  async function saveMarkdownFile(name: string, content: string, label = 'Markdown') {
+    if (window.desktopApi) {
+      const result = await window.desktopApi.saveMarkdown(name, content);
+      if (!result.canceled) message.success(`${label} 已保存`);
+      return;
+    }
+
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${name}.md`;
+    link.click();
+    URL.revokeObjectURL(url);
+    message.success(`${label} 已导出`);
+  }
+
   async function exportMarkdown() {
     if (!selected) return;
     const markdown = buildMarkdown(selected);
     const fileName = selected.title.replace(/[\\/:*?"<>|]/g, '_') || 'paper-note';
+    await saveMarkdownFile(fileName, markdown);
+  }
 
-    if (window.desktopApi) {
-      const result = await window.desktopApi.saveMarkdown(fileName, markdown);
-      if (!result.canceled) message.success('Markdown 已保存');
+  async function exportMatrix() {
+    if (filteredPapers.length === 0) {
+      message.warning('当前筛选没有论文');
       return;
     }
-
-    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${fileName}.md`;
-    link.click();
-    URL.revokeObjectURL(url);
-    message.success('Markdown 已导出');
+    const markdown = buildLiteratureMatrix(filteredPapers);
+    await saveMarkdownFile('literature-matrix', markdown, '文献矩阵');
   }
 
   async function exportLibrary() {
@@ -1127,6 +1149,8 @@ function App() {
     { key: 'import-library', label: '导入资料库', onClick: () => { void importLibrary(); } },
     { key: 'export-library', label: '导出资料库', onClick: () => { void exportLibrary(); } },
     { key: 'export-markdown', label: '导出 Markdown', onClick: () => { void exportMarkdown(); } },
+    { key: 'review', label: '生成综述', onClick: openReviewDrawer },
+    { key: 'matrix', label: '导出文献矩阵', onClick: () => { void exportMatrix(); } },
     { key: 'reset-samples', label: '恢复示例', onClick: resetSamples },
     { type: 'divider' as const },
     {
@@ -1194,6 +1218,7 @@ function App() {
                 onTextContrastChange={setTextContrast}
                 onUiContrastChange={setUiContrast}
                 onFontChange={setAppFont}
+                aiSettings={<AiSettings />}
               />
             )}
           />
@@ -1251,6 +1276,15 @@ function App() {
             onImportReferences={() => { void importReferences(); }}
             onExportMarkdown={() => { void exportMarkdown(); }}
             onExportLibrary={() => { void exportLibrary(); }}
+            onOpenReview={openReviewDrawer}
+            onExportMatrix={() => { void exportMatrix(); }}
+          />
+
+          <ReviewDrawer
+            open={activeDrawer === 'review'}
+            onClose={closeDrawer}
+            papers={filteredPapers}
+            onSaveMarkdown={(name, content) => { void saveMarkdownFile(name, content); }}
           />
 
           <AccountDrawer
