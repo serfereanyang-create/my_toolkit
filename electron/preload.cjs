@@ -22,4 +22,26 @@ contextBridge.exposeInMainWorld('desktopApi', {
     load: () => ipcRenderer.invoke('library:load'),
     save: (papers) => ipcRenderer.invoke('library:save', papers),
   },
+  ai: {
+    getConfig: () => ipcRenderer.invoke('ai:get-config'),
+    saveConfig: (input) => ipcRenderer.invoke('ai:save-config', input),
+    testConnection: () => ipcRenderer.invoke('ai:test-connection'),
+    generateReview: (messages) => ipcRenderer.invoke('ai:generate-review', { messages }),
+    cancelReview: () => ipcRenderer.invoke('ai:cancel-review'),
+    onChunk: (callback) => {
+      const listener = (_event, delta) => callback(delta);
+      ipcRenderer.on('ai:review-chunk', listener);
+      return () => ipcRenderer.removeListener('ai:review-chunk', listener);
+    },
+    onDone: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on('ai:review-done', listener);
+      return () => ipcRenderer.removeListener('ai:review-done', listener);
+    },
+    onError: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on('ai:review-error', listener);
+      return () => ipcRenderer.removeListener('ai:review-error', listener);
+    },
+  },
 });

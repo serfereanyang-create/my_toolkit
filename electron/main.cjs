@@ -4,6 +4,7 @@ const path = require('node:path');
 const { openDb, closeDb } = require('./db.cjs');
 const auth = require('./auth.cjs');
 const libraryStore = require('./library-store.cjs');
+const aiService = require('./ai-service.cjs');
 
 let mainWindow;
 
@@ -182,11 +183,29 @@ ipcMain.handle('library:save', (_event, papers) => {
   libraryStore.savePapers(papers || []);
   return { ok: true };
 });
+ipcMain.handle('ai:get-config', () => aiService.getPublicConfig());
+ipcMain.handle('ai:save-config', (_event, input) => aiService.saveConfig(input || {}));
+ipcMain.handle('ai:test-connection', () => aiService.testConnection());
+ipcMain.handle('ai:cancel-review', () => {
+  aiService.cancelReview();
+  return { ok: true };
+});
+ipcMain.handle('ai:generate-review', (event, payload) => {
+  const sender = event.sender;
+  aiService.generateReviewStream({
+    messages: Array.isArray(payload?.messages) ? payload.messages : [],
+    onDelta: (delta) => { if (!sender.isDestroyed()) sender.send('ai:review-chunk', delta); },
+    onDone: (full, meta = {}) => { if (!sender.isDestroyed()) sender.send('ai:review-done', { full, stopped: Boolean(meta.stopped) }); },
+    onError: (message) => { if (!sender.isDestroyed()) sender.send('ai:review-error', { message }); },
+  });
+  return { ok: true };
+});
 
 app.whenReady().then(() => {
   const userDataPath = app.getPath('userData');
   openDb(userDataPath);
   auth.configureAuth({ userDataPath, sessionDays: 30 });
+  aiService.configureAiService({ userDataPath });
   Menu.setApplicationMenu(createMenu());
   createWindow();
 
