@@ -22,6 +22,7 @@ function run() {
   const many = buildReviewDigest(Array.from({ length: 41 }, (_, i) => paper({ id: `p${i}`, title: `T${i}`, tags: [] })));
   assert.equal(many.truncated, true);
   assert.equal(many.totalCount, 41);
+  assert.equal(many.selectedCount, 40);
   const kept = many.groups.flatMap((g) => g.papers);
   assert.equal(kept.length, 40);
 
@@ -29,14 +30,31 @@ function run() {
   const d2 = buildReviewDigest([paper({ question: longQ })]);
   assert.equal(d2.groups[0].papers[0].question.length, 400);
 
-  const evs = Array.from({ length: 10 }, (_, i) => ({ id: `e${i}`, claim: 'y'.repeat(300), support: '', locator: '', reliability: '中', tags: [] }));
+  const evs = Array.from({ length: 10 }, (_, i) => ({ id: `e${i}`, claim: 'y'.repeat(300), support: '', locator: 'z'.repeat(300), reliability: '中', tags: [] }));
   const d3 = buildReviewDigest([paper({ evidence: evs })]);
   const p3 = d3.groups[0].papers[0];
   assert.equal(p3.evidence.length, 8);
   assert.equal(p3.evidence[0].claim.length, 200);
+  assert.equal(p3.evidence[0].locator.length, 200);
 
   const d4 = buildReviewDigest([paper({ tags: [] })]);
   assert.equal(d4.groups[0].tag, '未分组');
+
+  const mt = buildReviewDigest([paper({ id: 'mt', title: 'MT', tags: ['a', 'b'] })]);
+  const mtTags = mt.groups.map((g) => g.tag);
+  assert.deepEqual([...mtTags].sort(), ['a', 'b']);
+  for (const group of mt.groups) {
+    assert.equal(group.papers.length, 1);
+    assert.equal(group.papers[0].id, 'mt');
+  }
+
+  const zh = buildReviewDigest([
+    paper({ id: 'z1', tags: ['nlp'] }),
+    paper({ id: 'z2', tags: ['机器学习'] }),
+  ]);
+  assert.equal(zh.groups[0].tag, '机器学习');
+  assert.equal(zh.groups[1].tag, 'nlp');
+  assert.ok(zh.groups[0].tag.localeCompare(zh.groups[1].tag, 'zh') <= 0);
 
   const empty = buildReviewDigest([]);
   assert.deepEqual(empty.groups, []);
