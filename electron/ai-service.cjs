@@ -11,7 +11,7 @@ const DEFAULT_TEMPERATURE = 0.4;
 const MIN_TEMPERATURE = 0;
 const MAX_TEMPERATURE = 2;
 const CONNECTION_TIMEOUT_MS = 30_000;
-const STREAM_TIMEOUT_MS = 120_000; // spec §9：120s 无响应中断
+const STREAM_TIMEOUT_MS = 120_000; // spec §9：空闲超时（120s 无数据），每收到分片即重置
 const ERROR_SLICE = 200;
 
 const NOT_CONFIGURED_MESSAGE = 'AI 服务尚未配置完整';
@@ -230,20 +230,6 @@ function isAbortLike(err) {
   return err.name === 'AbortError' || err.name === 'TimeoutError' || err.code === 'ABORT_ERR';
 }
 
-function createStreamSignal(controller) {
-  const timeoutSignal = AbortSignal.timeout(state.streamTimeoutMs);
-  if (typeof AbortSignal.any === 'function') {
-    return AbortSignal.any([controller.signal, timeoutSignal]);
-  }
-  // 回退：手动 setTimeout 触发 abort（与取消共用同一 controller）
-  const timer = setTimeout(() => {
-    controller.abort(new Error('生成请求超时'));
-  }, state.streamTimeoutMs);
-  if (typeof timer.unref === 'function') timer.unref();
-  controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
-  return controller.signal;
-}
-
 async function testConnection() {
   const config = getRuntimeConfig();
   if (!config) return { ok: false, error: NOT_CONFIGURED_MESSAGE };
@@ -277,9 +263,35 @@ async function generateReviewStream({ messages, onDelta, onDone, onError } = {})
 
   // 单一在途请求：新请求开始前先中止旧的
   if (inFlightController) inFlightController.abort(new Error('新的生成请求开始'));
-  const controller = new AbortController();
-  inFlightController = controller;
-  const streamSignal = createStreamSignal(controller);
+
+  // 取消与空闲超时是两个中止源，经 AbortSignal.any 合并为一个请求 signal。
+  // 空闲超时（spec §9「120s 无数据」）：超过 streamTimeoutMs 未收到任何数据则中断，
+  // 每收到一个分片就重置计时——持续稳定输出的长综述不会被误杀。
+  // 回退（无 AbortSignal.any）：空闲超时直接中止取消控制器。
+  const cancelController = new AbortController();
+  const hasAbortAny = typeof AbortSignal.any === 'function';
+  const idleController = hasAbortAny ? new AbortController() : cancelController;
+  const streamSignal = hasAbortAny
+    ? AbortSignal.any([cancelController.signal, idleController.signal])
+    : cancelController.signal;
+  inFlightController = cancelController;
+
+  let idleTimer = null;
+  const armIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      idleTimer = null;
+      idleController.abort(new Error('空闲超时'));
+    }, state.streamTimeoutMs);
+    if (typeof idleTimer.unref === 'function') idleTimer.unref();
+  };
+  const clearIdleTimer = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  };
+  armIdleTimer(); // 覆盖「连响应头都收不到」的挂起阶段
 
   const decoder = new TextDecoder('utf8');
   let fullText = '';
@@ -307,6 +319,7 @@ async function generateReviewStream({ messages, onDelta, onDone, onError } = {})
     });
 
     if (!response.ok) {
+      clearIdleTimer();
       const text = await response.text().catch(() => '');
       const error = describeHttpError(response.status, text);
       if (typeof onError === 'function') onError(error);
@@ -316,6 +329,7 @@ async function generateReviewStream({ messages, onDelta, onDone, onError } = {})
     if (response.body && typeof response.body[Symbol.asyncIterator] === 'function') {
       try {
         for await (const chunk of response.body) {
+          armIdleTimer(); // 每次读到数据都重置空闲计时
           buffer += decoder.decode(chunk, { stream: true });
           let index;
           while ((index = buffer.indexOf('\n\n')) !== -1) {
@@ -326,14 +340,15 @@ async function generateReviewStream({ messages, onDelta, onDone, onError } = {})
         }
         buffer += decoder.decode();
       } catch (err) {
-        if (!isAbortLike(err) && !streamSignal.aborted && !controller.signal.aborted) throw err;
-        stopped = true; // 中断 / 取消 / 超时：保留已收内容
+        if (!isAbortLike(err) && !streamSignal.aborted) throw err;
+        stopped = true; // 中断 / 取消 / 空闲超时：保留已收内容
       }
     } else {
       emitEvent(await response.text());
     }
   } catch (err) {
-    if (!isAbortLike(err) && !streamSignal.aborted && !controller.signal.aborted) {
+    if (!isAbortLike(err) && !streamSignal.aborted) {
+      clearIdleTimer();
       const error = describeNetworkError(err);
       if (typeof onError === 'function') onError(error);
       return { ok: false, error };
@@ -341,8 +356,9 @@ async function generateReviewStream({ messages, onDelta, onDone, onError } = {})
     stopped = true;
   }
 
+  clearIdleTimer();
   if (!stopped) emitEvent(buffer); // 冲刷未以空行结尾的残留事件
-  if (inFlightController === controller) inFlightController = null;
+  if (inFlightController === cancelController) inFlightController = null;
   if (typeof onDone === 'function') onDone(fullText, { stopped });
   return { ok: true, stopped, text: fullText };
 }

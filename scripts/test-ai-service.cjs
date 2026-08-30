@@ -17,6 +17,26 @@ const makeTmp = () => {
   return dir;
 };
 
+// 模拟真实 undici 行为：signal 一旦 abort，响应体立刻中断（抛 AbortError）。
+const sleepOrAbort = (ms, signal) => new Promise((resolve, reject) => {
+  const abortError = () => {
+    const err = new Error('This operation was aborted');
+    err.name = 'AbortError';
+    return err;
+  };
+  if (signal.aborted) return reject(abortError());
+  const timer = setTimeout(() => {
+    cleanup();
+    resolve();
+  }, ms);
+  const onAbort = () => {
+    clearTimeout(timer);
+    reject(abortError());
+  };
+  const cleanup = () => signal.removeEventListener('abort', onAbort);
+  signal.addEventListener('abort', onAbort, { once: true });
+});
+
 function testValidateBaseUrl() {
   assert.equal(svc.validateBaseUrl('https://api.example.com/v1'), 'https://api.example.com/v1');
   assert.ok(svc.validateBaseUrl('http://localhost:11434/v1'));
@@ -266,7 +286,7 @@ async function testStreamTimeout() {
     { ok: true },
   );
 
-  // AbortSignal.timeout 的定时器是 unref 的：裸 Node 进程需手动保活事件循环，
+  // 空闲超时定时器是 unref 的：裸 Node 进程需手动保活事件循环，
   // Electron 主进程里 socket 等句柄天然保活，无此问题。
   const keepAlive = setTimeout(() => {}, 10_000);
   try {
@@ -291,6 +311,54 @@ async function testStreamTimeout() {
   }
 }
 
+async function testIdleTimeoutResetsOnChunks() {
+  const dir = makeTmp();
+  // 分片间隔 20ms < 空闲窗口 50ms；总时长约 160ms > 50ms。
+  // 若空闲计时未被重置，流会在 50ms 处被中断；持续到分片则证明每次收数据都重置了计时。
+  const GAP_MS = 20;
+  const CHUNK_COUNT = 8;
+  const fakeFetchSteady = async (url, init) => ({
+    ok: true,
+    status: 200,
+    body: (async function* generate() {
+      for (let i = 0; i < CHUNK_COUNT; i++) {
+        await sleepOrAbort(GAP_MS, init.signal);
+        yield Buffer.from(`data: {"choices":[{"delta":{"content":"${i}"}}]}\n\n`, 'utf8');
+      }
+      yield Buffer.from('data: [DONE]\n\n', 'utf8');
+    })(),
+  });
+  svc.configureAiService({
+    userDataPath: dir,
+    safeStorageApi: goodCodec(),
+    fetchImpl: fakeFetchSteady,
+    streamTimeoutMs: 50,
+  });
+  assert.deepEqual(
+    svc.saveConfig({ baseUrl: 'https://api.example.com/v1', model: 'm', apiKey: 'k' }),
+    { ok: true },
+  );
+
+  let resolveDone;
+  const donePromise = new Promise((resolve) => { resolveDone = resolve; });
+  const deltas = [];
+  const generating = svc.generateReviewStream({
+    messages: [{ role: 'user', content: '写综述' }],
+    onDelta: (piece) => deltas.push(piece),
+    onDone: (text, meta) => resolveDone({ text, meta }),
+    onError: (message) => resolveDone({ error: message }),
+  });
+  const done = await donePromise;
+  await generating;
+
+  const expected = Array.from({ length: CHUNK_COUNT }, (_, i) => String(i));
+  assert.equal(done.error, undefined, 'steady chunks must not be killed by the idle timeout');
+  assert.deepEqual(deltas, expected);
+  assert.equal(done.text, expected.join(''), 'full text received despite total duration > timeout');
+  assert.deepEqual(done.meta, { stopped: false });
+  assert.equal(svc.cancelReview(), false);
+}
+
 async function main() {
   try {
     testValidateBaseUrl();
@@ -303,6 +371,7 @@ async function main() {
     await testStreaming();
     await testCancelMidStream();
     await testStreamTimeout();
+    await testIdleTimeoutResetsOnChunks();
     svc.resetAiService();
     console.log('ai service tests passed');
   } finally {
