@@ -69,7 +69,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'settings/loaded':
       return { ...state, settings: action.settings };
     case 'workspace/opened':
-      return { ...state, workspaceRoot: action.root, tree: [], agentStatus: 'offline', contextStats: null };
+      return { ...state, workspaceRoot: action.root, tree: [], agentStatus: 'offline', contextStats: null, pendingDiffs: [] };
     case 'tree/loaded':
       return { ...state, tree: action.tree };
     case 'view/set':
@@ -84,11 +84,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     case 'chat/clear':
       // Detach from any live bridge so the next prompt starts a fresh session.
-      return { ...state, chat: [], activeSessionId: null, agentStatus: 'offline', contextStats: null, taskSummary: null };
+      // pendingDiffs belong to the old session's approvals — drop them too.
+      return { ...state, chat: [], activeSessionId: null, agentStatus: 'offline', contextStats: null, taskSummary: null, pendingDiffs: [] };
     case 'chat/load':
       // Go offline so the next prompt re-starts the bridge with --resume for
       // the loaded session, keeping desktop chat and CLI session in sync.
-      return { ...state, chat: action.chat, activeSessionId: action.sessionId, agentStatus: 'offline', contextStats: null, taskSummary: null };
+      return { ...state, chat: action.chat, activeSessionId: action.sessionId, agentStatus: 'offline', contextStats: null, taskSummary: null, pendingDiffs: [] };
     case 'agent/status':
       return { ...state, agentStatus: action.status };
     case 'agent/event':
@@ -105,15 +106,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ),
       };
     case 'approval/decided':
-      // Mark the approval card as decided so its buttons disable and it shows
-      // the chosen outcome, giving immediate feedback while the CLI proceeds.
+      // Mark the approval card and its matching diff as decided together.
       return {
         ...state,
         chat: state.chat.map((item) =>
           item.kind === 'approval' && item.requestId === action.requestId
-            ? { ...item, decided: action.decision }
+            ? { ...item, decided: action.decision, diff: item.diff ? { ...item.diff, status: action.decision === 'deny' ? 'rejected' : 'accepted' } : undefined }
             : item,
         ),
+        pendingDiffs: state.pendingDiffs.map((diff) => diff.id === action.requestId
+          ? { ...diff, status: action.decision === 'deny' ? 'rejected' : 'accepted' }
+          : diff),
       };
     case 'bottom/toggle':
       return { ...state, bottomOpen: !state.bottomOpen };
@@ -167,7 +170,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, preview: { ...state.preview, width: Math.max(300, Math.min(720, action.width)) } };
     // ── Diff review ──────────────────────────────────────────────────────────
     case 'diff/queue':
-      return { ...state, pendingDiffs: [...state.pendingDiffs.filter((d) => d.path !== action.diff.path), action.diff] };
+      return { ...state, pendingDiffs: [...state.pendingDiffs.filter((d) => d.id !== action.diff.id), action.diff] };
     case 'diff/decide':
       return { ...state, pendingDiffs: state.pendingDiffs.map((d) => d.id === action.id ? { ...d, status: action.decision } : d) };
     case 'diff/clearAll':
@@ -194,9 +197,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
 function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
   const now = Date.now();
-  const addLog = (entry: Omit<WorkLogEntry, 'id' | 'ts'>, phase: AppState['workPhase'] = state.workPhase): AppState => ({
-    ...state,
-    workLog: [...state.workLog, { ...entry, id: `work-${crypto.randomUUID()}`, ts: now }].slice(-200),
+  const addLog = (entry: Omit<WorkLogEntry, 'id' | 'ts'>, phase: AppState['workPhase'] = state.workPhase, base: AppState = state): AppState => ({
+    ...base,
+    workLog: [...base.workLog, { ...entry, id: `work-${crypto.randomUUID()}`, ts: now }].slice(-200),
     workPhase: phase,
   });
   if (event.type === 'task_board_updated') {
@@ -239,11 +242,16 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
   }
   if (event.type === 'tool_result') {
     const next = finishTurnStep(state, event);
-    return addLog({ type: 'tool', phase: event.ok === false ? 'failed' : 'done', title: String(event.tool || 'tool'), tool: String(event.tool || 'tool'), detail: String(event.output || ''), durationMs: typeof event.durationMs === 'number' ? event.durationMs : undefined, data: event.data }, state.workPhase);
+    return addLog({ type: 'tool', phase: event.ok === false ? 'failed' : 'done', title: String(event.tool || 'tool'), tool: String(event.tool || 'tool'), detail: String(event.output || ''), durationMs: typeof event.durationMs === 'number' ? event.durationMs : undefined, data: event.data }, next.workPhase, next);
   }
   if (event.type === 'approval_needed') {
-    const next = appendChat(state, { id: String(event.requestId || `approval-${crypto.randomUUID()}`), kind: 'approval', requestId: String(event.requestId || ''), tool: String(event.tool || 'tool'), message: String(event.message || 'Approval required'), input: event.input, risk: (event.risk as 'read' | 'write' | 'shell' | 'network' | undefined) });
-    return { ...addLog({ type: 'approval', phase: 'running', title: '等待审批', detail: String(event.message || event.tool || '') }, 'executing'), chat: next.chat };
+    const requestId = String(event.requestId || `approval-${crypto.randomUUID()}`);
+    const diff = event.diff as { path: string; originalContent: string; modifiedContent: string } | undefined;
+    const next = appendChat(state, { id: requestId, kind: 'approval', requestId, tool: String(event.tool || 'tool'), message: String(event.message || 'Approval required'), input: event.input, risk: (event.risk as 'read' | 'write' | 'shell' | 'network' | undefined), diff: diff && typeof diff.path === 'string' ? { id: requestId, path: diff.path, originalContent: diff.originalContent, modifiedContent: diff.modifiedContent, status: 'pending' } : undefined });
+    const withDiff = diff && typeof diff.path === 'string'
+      ? { ...next, pendingDiffs: [...next.pendingDiffs.filter((d) => d.id !== requestId), { id: requestId, path: diff.path, originalContent: diff.originalContent, modifiedContent: diff.modifiedContent, status: 'pending' as const }] }
+      : next;
+    return { ...addLog({ type: 'approval', phase: 'running', title: '等待审批', detail: String(event.message || event.tool || '') }, 'executing'), chat: withDiff.chat, pendingDiffs: withDiff.pendingDiffs };
   }
   // UX-3 fix: errors from the bridge (API key missing, IPC failure, etc.) are
   // now stored as kind:'error' items so ConversationStream can style them

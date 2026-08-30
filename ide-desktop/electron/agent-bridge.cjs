@@ -186,8 +186,14 @@ class AgentBridge extends EventEmitter {
 }
 
 function normalizeCliEvent(event) {
-  if (event.type === 'assistant') return { ...event, type: 'assistant_message', text: event.content || event.text || '' };
-  if (event.type === 'assistant_delta') return { ...event, type: 'assistant_delta', text: event.content || event.text || '' };
+  if (event.type === 'assistant') {
+    const { content, text, ...rest } = event;
+    return { ...rest, type: 'assistant_message', text: content || text || '' };
+  }
+  if (event.type === 'assistant_delta') {
+    const { content, text, ...rest } = event;
+    return { ...rest, type: 'assistant_delta', text: content || text || '' };
+  }
   return event;
 }
 

@@ -203,7 +203,7 @@ export type ChatItem =
   // crash, etc.) render with a distinct error style rather than as AI replies.
   | { id: string; kind: 'error'; text: string }
   | ToolChatItem
-  | { id: string; kind: 'approval'; requestId: string; tool: string; message: string; input?: unknown; risk?: 'read' | 'write' | 'shell' | 'network'; decided?: 'allow_once' | 'allow_session' | 'deny' }
+  | { id: string; kind: 'approval'; requestId: string; tool: string; message: string; input?: unknown; risk?: 'read' | 'write' | 'shell' | 'network'; diff?: PendingDiff; decided?: 'allow_once' | 'allow_session' | 'deny' }
   // A single agent working round: the tool steps it ran, the distinct files it
   // changed (with real per-file diff counts and checkpoint ids for undo), plus
   // genuine elapsed time and added/removed totals summed from tool results.

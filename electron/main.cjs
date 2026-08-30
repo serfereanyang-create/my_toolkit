@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, safeStorage } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { openDb, closeDb } = require('./db.cjs');
@@ -205,7 +205,7 @@ app.whenReady().then(() => {
   const userDataPath = app.getPath('userData');
   openDb(userDataPath);
   auth.configureAuth({ userDataPath, sessionDays: 30 });
-  aiService.configureAiService({ userDataPath });
+  aiService.configureAiService({ userDataPath, safeStorageApi: safeStorage });
   Menu.setApplicationMenu(createMenu());
   createWindow();
 

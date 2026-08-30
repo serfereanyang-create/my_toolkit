@@ -2,26 +2,25 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, X, ChevronsDown, ChevronsUp, GitCompare } from 'lucide-react';
 import type { PendingDiff } from '../../types';
 import type { AppAction } from '../../lib/state';
-import { desktop } from '../../lib/ipc';
 
 type Props = {
   diffs: PendingDiff[];
   dispatch: React.Dispatch<AppAction>;
+  onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void;
 };
 
-export function DiffReview({ diffs, dispatch }: Props) {
+export function DiffReview({ diffs, dispatch, onApprove }: Props) {
   const pending  = diffs.filter((d) => d.status === 'pending');
   const resolved = diffs.filter((d) => d.status !== 'pending');
 
   if (diffs.length === 0) return null;
 
-  async function applyDiff(diff: PendingDiff) {
-    dispatch({ type: 'diff/decide', id: diff.id, decision: 'accepted' });
-    try { await desktop.fs.write(diff.path, diff.modifiedContent); } catch { /* show error via existing chat */ }
+  function applyDiff(diff: PendingDiff) {
+    onApprove(diff.id, 'allow_once');
   }
 
   function rejectDiff(diff: PendingDiff) {
-    dispatch({ type: 'diff/decide', id: diff.id, decision: 'rejected' });
+    onApprove(diff.id, 'deny');
   }
 
   async function acceptAll() {
@@ -51,7 +50,7 @@ export function DiffReview({ diffs, dispatch }: Props) {
           </button>
         </>}
         {resolved.length > 0 && (
-          <button className="diff-btn diff-btn-clear" onClick={clearResolved} title="清除已解决">
+          <button className="diff-btn diff-btn-clear" onClick={clearResolved} title="清空列表（不影响已执行的审批）">
             清除
           </button>
         )}

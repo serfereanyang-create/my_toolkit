@@ -59,6 +59,7 @@ export default function App() {
   const diskMtimes = useRef<Map<string, number>>(new Map());
   // Deferred bridge restart: set when the user switches model mid-turn.
   const pendingRestartRef = useRef(false);
+  const approvingRequests = useRef(new Set<string>());
   const [activeFile, setActiveFile] = useState<string | null>(null);
 
   const stateRef = useRef(state);
@@ -554,10 +555,17 @@ export default function App() {
   }
 
   async function approve(requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') {
-    // Reflect the choice immediately so the card disables and shows the
-    // outcome, then forward it to the CLI over the bridge.
-    dispatch({ type: 'approval/decided', requestId, decision });
-    await desktop.agent.approve(requestId, decision);
+    const approval = stateRef.current.chat.find((item) => item.kind === 'approval' && item.requestId === requestId);
+    if ((approval?.kind === 'approval' && approval.decided) || approvingRequests.current.has(requestId)) return;
+    approvingRequests.current.add(requestId);
+    try {
+      await desktop.agent.approve(requestId, decision);
+      dispatch({ type: 'approval/decided', requestId, decision });
+    } catch (error) {
+      dispatch({ type: 'agent/event', event: { type: 'error', message: `审批提交失败：${cleanIpcError(error)}` } });
+    } finally {
+      approvingRequests.current.delete(requestId);
+    }
   }
 
   async function undoTurn(turnId: string) {
@@ -792,7 +800,7 @@ export default function App() {
         )}
 
         {state.pendingDiffs.length > 0 && mainView !== 'settings' && (
-          <DiffReview diffs={state.pendingDiffs} dispatch={dispatch} />
+          <DiffReview diffs={state.pendingDiffs} dispatch={dispatch} onApprove={approve} />
         )}
 
         {mainView === 'files' && (

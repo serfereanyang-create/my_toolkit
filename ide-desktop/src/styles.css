@@ -1064,6 +1064,34 @@ h1 {
   line-height: 1.5;
 }
 
+.approval-diff-preview {
+  margin-bottom: var(--sp-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--bg-app);
+}
+.approval-diff-title {
+  padding: 6px var(--sp-3);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--fg-muted);
+  font: 600 var(--fs-xs)/1.4 var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.approval-diff-preview pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: var(--sp-2) 0;
+  font: var(--fs-xs)/1.5 var(--font-mono);
+}
+.approval-diff-line { display: block; padding: 0 var(--sp-3); white-space: pre-wrap; }
+.approval-diff-line.added { color: var(--success, #3fb950); background: color-mix(in srgb, var(--success, #3fb950) 10%, transparent); }
+.approval-diff-line.removed { color: var(--danger, #f85149); background: color-mix(in srgb, var(--danger, #f85149) 10%, transparent); }
+.approval-diff-line.context { color: var(--fg-dim); }
+
 
 .tool-title {
   display: flex;

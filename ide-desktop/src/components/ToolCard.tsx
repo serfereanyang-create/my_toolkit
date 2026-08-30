@@ -1,5 +1,5 @@
 import { Wrench, ShieldAlert, CheckCircle2, XCircle, Loader, FileEdit, Terminal, Globe, Lock } from 'lucide-react';
-import type { ChatItem } from '../types';
+import type { ChatItem, PendingDiff } from '../types';
 
 // Risk level → color + icon + label
 const RISK_META: Record<string, { color: string; Icon: React.ElementType; label: string }> = {
@@ -37,6 +37,29 @@ function formatInput(tool: string, input: unknown): string | null {
   return json.length > 200 ? json.slice(0, 200) + '\n…' : json;
 }
 
+function ApprovalDiffPreview({ diff }: { diff: PendingDiff }) {
+  const before = diff.originalContent.split(/\r?\n/);
+  const after = diff.modifiedContent.split(/\r?\n/);
+  const rows: Array<{ prefix: string; text: string; kind: 'removed' | 'added' | 'context' }> = [];
+  const max = Math.max(before.length, after.length);
+  for (let index = 0; index < max && rows.length < 14; index += 1) {
+    const oldLine = before[index];
+    const newLine = after[index];
+    if (oldLine === newLine) {
+      rows.push({ prefix: '  ', text: oldLine ?? '', kind: 'context' });
+    } else {
+      if (oldLine !== undefined) rows.push({ prefix: '- ', text: oldLine, kind: 'removed' });
+      if (newLine !== undefined && rows.length < 14) rows.push({ prefix: '+ ', text: newLine, kind: 'added' });
+    }
+  }
+  return (
+    <div className="approval-diff-preview" aria-label={`文件变更预览 ${diff.path}`}>
+      <div className="approval-diff-title">变更预览 · {diff.path}</div>
+      <pre>{rows.map((row, index) => <span key={`${index}-${row.prefix}`} className={`approval-diff-line ${row.kind}`}>{row.prefix}{row.text}{'\n'}</span>)}</pre>
+    </div>
+  );
+}
+
 export function ToolCard({ item, onApprove }: {
   item: Extract<ChatItem, { kind: 'tool' | 'approval' }>;
   onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void;
@@ -70,6 +93,10 @@ export function ToolCard({ item, onApprove }: {
 
         {inputPreview && (
           <pre className="approval-input-preview">{inputPreview}</pre>
+        )}
+
+        {item.diff && (
+          <ApprovalDiffPreview diff={item.diff} />
         )}
 
         {decided ? (

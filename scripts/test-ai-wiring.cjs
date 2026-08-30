@@ -8,7 +8,7 @@ const preload = fs.readFileSync(path.join(root, 'electron', 'preload.cjs'), 'utf
 for (const channel of ['ai:get-config', 'ai:save-config', 'ai:test-connection', 'ai:generate-review', 'ai:cancel-review']) {
   assert.ok(main.includes(`'${channel}'`), `main missing ${channel}`);
 }
-assert.ok(main.includes('configureAiService({ userDataPath })'), 'ai service not configured at startup');
+assert.ok(main.includes('configureAiService({ userDataPath, safeStorageApi: safeStorage })'), 'ai service not configured with safeStorage at startup');
 assert.ok(preload.includes('ai:'), 'preload missing desktopApi.ai');
 for (const event of ['ai:review-chunk', 'ai:review-done', 'ai:review-error']) {
   assert.ok(main.includes(`'${event}'`), `main missing event ${event}`);
