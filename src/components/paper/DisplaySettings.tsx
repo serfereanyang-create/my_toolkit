@@ -1,4 +1,5 @@
-import { Segmented, Select } from 'antd';
+import { Divider, Segmented, Select } from 'antd';
+import type { ReactNode } from 'react';
 import type { AppTheme } from '../../lib/uiState';
 
 export type ContrastLevel = 'soft' | 'normal' | 'high';
@@ -13,6 +14,7 @@ export type DisplaySettingsProps = {
   onTextContrastChange: (value: ContrastLevel) => void;
   onUiContrastChange: (value: ContrastLevel) => void;
   onFontChange: (value: AppFont) => void;
+  aiSettings?: ReactNode;
 };
 
 const themeOptions: Array<{ label: string; value: AppTheme }> = [
@@ -45,6 +47,7 @@ export function DisplaySettings({
   onTextContrastChange,
   onUiContrastChange,
   onFontChange,
+  aiSettings,
 }: DisplaySettingsProps) {
   return (
     <div className="settings-panel">
@@ -92,6 +95,14 @@ export function DisplaySettings({
           style={{ width: '100%' }}
         />
       </div>
+
+      {aiSettings ? (
+        <>
+          <Divider />
+          <div className="settings-panel-title">AI 服务</div>
+          {aiSettings}
+        </>
+      ) : null}
     </div>
   );
 }
