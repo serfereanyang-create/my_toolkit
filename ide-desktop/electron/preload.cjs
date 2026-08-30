@@ -16,6 +16,14 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
   editor: {
     readFile: (absolutePath) => ipcRenderer.invoke('editor.readFile', absolutePath),
     saveFile: (absolutePath, content) => ipcRenderer.invoke('editor.saveFile', absolutePath, content),
+    watchFile: (absolutePath) => ipcRenderer.invoke('editor.watchFile', absolutePath),
+    unwatchFile: (absolutePath) => ipcRenderer.invoke('editor.unwatchFile', absolutePath),
+    stat: (absolutePath) => ipcRenderer.invoke('editor.stat', absolutePath),
+    onFileChanged: (handler) => {
+      const listener = (_event, payload) => handler(payload);
+      ipcRenderer.on('editor.fileChanged', listener);
+      return () => ipcRenderer.removeListener('editor.fileChanged', listener);
+    },
   },
   settings: {
     get: () => ipcRenderer.invoke('settings.get'),
@@ -144,6 +152,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     branches:     ()                           => ipcRenderer.invoke('git.branches'),
     log:          (n)                          => ipcRenderer.invoke('git.log', n),
     diff:         (staged)                     => ipcRenderer.invoke('git.diff', staged),
+    fileChangeRanges: (filePath)               => ipcRenderer.invoke('git.fileChangeRanges', filePath),
     stage:        (paths)                      => ipcRenderer.invoke('git.stage', paths),
     unstage:      (paths)                      => ipcRenderer.invoke('git.unstage', paths),
     discard:      (paths)                      => ipcRenderer.invoke('git.discard', paths),

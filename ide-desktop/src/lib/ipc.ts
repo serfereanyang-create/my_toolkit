@@ -22,7 +22,10 @@ type ZCodeDesktopApi = {
   editor: {
     readFile(absolutePath: string): Promise<{ ok: boolean; content?: string; error?: string }>;
     saveFile(absolutePath: string, content: string): Promise<{ ok: boolean; error?: string }>;
-    watchFile(absolutePath: string, callback: (content: string) => void): () => void;
+    watchFile(absolutePath: string): Promise<{ ok: boolean; alreadyWatching?: boolean; error?: string }>;
+    unwatchFile(absolutePath: string): Promise<{ ok: boolean }>;
+    stat(absolutePath: string): Promise<{ ok: boolean; mtimeMs?: number; size?: number; error?: string }>;
+    onFileChanged(handler: (payload: { path: string }) => void): () => void;
   };
   settings: {
     get(): Promise<DesktopSettings>;
@@ -131,6 +134,7 @@ type ZCodeDesktopApi = {
     branches(): Promise<GitBranchList>;
     log(n?: number): Promise<GitLogResult>;
     diff(staged?: boolean): Promise<{ ok: boolean; diff?: string; error?: string }>;
+    fileChangeRanges(filePath: string): Promise<{ ok: boolean; file?: string; hunks?: Array<{ start: number; end: number; type: string }>; error?: string }>;
     stage(paths: string[]): Promise<{ ok: boolean; staged?: string[]; error?: string }>;
     unstage(paths: string[]): Promise<{ ok: boolean; unstaged?: string[]; error?: string }>;
     discard(paths: string[]): Promise<{ ok: boolean; discarded?: string[]; error?: string }>;

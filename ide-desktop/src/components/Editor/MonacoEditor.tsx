@@ -5,6 +5,7 @@ import { editorContext } from '../../lib/editorContext';
 import { GhostTextRenderer } from '../../lib/ghostText';
 import { CompletionTrigger } from '../../lib/completionTrigger';
 import { InlineEditWidget } from '../../lib/inlineEdit';
+import { desktop } from '../../lib/ipc';
 
 export interface MonacoEditorProps {
   value: string;
@@ -20,6 +21,33 @@ export function MonacoEditor({ value, language, path, onChange, theme = 'vs-dark
   const ghostRendererRef = useRef<GhostTextRenderer | null>(null);
   const triggerRef = useRef<CompletionTrigger | null>(null);
   const inlineEditRef = useRef<InlineEditWidget | null>(null);
+  const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+
+  // Inline "agent changed these lines" highlights: fetch changed ranges from
+  // git diff for this file and paint them with a soft accent background.
+  useEffect(() => {
+    if (!path) return;
+    let cancelled = false;
+    desktop.git.fileChangeRanges(path).then((result) => {
+      if (cancelled || !result.ok || !result.hunks?.length) return;
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      if (!editor || !monaco) return;
+      const decorations: Monaco.editor.IModelDeltaDecoration[] = result.hunks.map((hunk) => ({
+        range: new monaco.Range(hunk.start, 1, hunk.end + 1, 1),
+        options: {
+          isWholeLine: true,
+          className: 'agent-changed-line',
+          overviewRuler: { color: '#2f81f7', position: 4 },
+          minimap: { color: '#2f81f7', position: 1 },
+        },
+      }));
+      decorationsRef.current?.clear();
+      decorationsRef.current = editor.createDecorationsCollection(decorations);
+    }).catch(() => { /* not a git workspace or file untracked: no highlights */ });
+    return () => { cancelled = true; };
+  }, [path, value]);
+
 
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;

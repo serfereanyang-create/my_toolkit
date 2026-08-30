@@ -804,6 +804,23 @@ h1 {
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 
+.main-tab-badge {
+  align-self: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+/* Inline highlight for lines an agent changed (git diff -U0 ranges) */
+.agent-changed-line {
+  background: color-mix(in srgb, #2f81f7 14%, transparent);
+  border-left: 2px solid #2f81f7;
+}
+
 .main-tab:hover { background: var(--bg-hover); color: var(--fg); }
 .main-tab.active { background: var(--bg-sel); color: var(--fg); }
 
@@ -1328,6 +1345,8 @@ h1 {
 }
 
 .turn-file-row:hover { background: var(--bg-hover, rgba(127, 127, 127, 0.08)); }
+.turn-file-row.clickable { cursor: pointer; }
+.turn-file-row.clickable:hover .turn-file-name { color: var(--accent); text-decoration: underline; }
 .turn-file-name { font-family: var(--font-mono); color: var(--fg); flex: 0 0 auto; }
 .turn-file-path {
   color: var(--fg-dim);

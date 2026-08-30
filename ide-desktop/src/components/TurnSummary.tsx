@@ -156,11 +156,12 @@ function StepRow({ step, onApprove }: {
   );
 }
 
-export function TurnSummary({ item, onApprove, onUndo, now }: {
+export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile }: {
   item: Extract<ChatItem, { kind: 'turn' }>;
   onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void;
   onUndo: (turnId: string) => void;
   now: number;
+  onOpenFile?: (path: string) => void;
 }) {
   const running = item.endedAt === undefined;
   const [collapsed, setCollapsed] = useState(false);
@@ -222,7 +223,12 @@ export function TurnSummary({ item, onApprove, onUndo, now }: {
           {filesOpen && (
             <ul className="turn-file-list">
               {files.map((file) => (
-                <li key={file.path} className="turn-file-row" title={file.path}>
+                <li
+                  key={file.path}
+                  className={`turn-file-row ${onOpenFile ? 'clickable' : ''}`}
+                  title={onOpenFile ? `在编辑器中打开 ${file.path}` : file.path}
+                  onClick={() => onOpenFile?.(file.path)}
+                >
                   <span className="turn-file-name">{baseName(file.path)}</span>
                   <span className="turn-file-path">{file.path}</span>
                   <span className="turn-file-stat">

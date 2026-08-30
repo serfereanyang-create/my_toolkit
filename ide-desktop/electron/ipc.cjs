@@ -157,6 +157,55 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
       return { ok: false, error: error.message };
     }
   });
+
+  // Watch one file for external modifications (agent writes, git ops).
+  // Polling mtime beats fs.watch here: one watcher per OPEN editor tab only,
+  // no recursive native watcher spam, and it works identically on Windows.
+  const fileWatchers = new Map();
+  ipcMain.handle('editor.watchFile', async (_event, absolutePath) => {
+    if (fileWatchers.has(absolutePath)) return { ok: true, alreadyWatching: true };
+    let lastMtime = 0;
+    let lastSize = -1;
+    try {
+      const stat = await fs.stat(absolutePath);
+      lastMtime = stat.mtimeMs;
+      lastSize = stat.size;
+    } catch { return { ok: false, error: 'file not found' }; }
+    const timer = setInterval(async () => {
+      try {
+        const stat = await fs.stat(absolutePath);
+        if (stat.mtimeMs !== lastMtime || stat.size !== lastSize) {
+          lastMtime = stat.mtimeMs;
+          lastSize = stat.size;
+          const mainWindowRef = mainWindow;
+          if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+            mainWindowRef.webContents.send('editor.fileChanged', { path: absolutePath });
+          }
+        }
+      } catch {
+        // File deleted — notify once then keep polling in case it returns.
+      }
+    }, 1200);
+    fileWatchers.set(absolutePath, timer);
+    return { ok: true };
+  });
+
+  ipcMain.handle('editor.unwatchFile', async (_event, absolutePath) => {
+    const timer = fileWatchers.get(absolutePath);
+    if (timer) { clearInterval(timer); fileWatchers.delete(absolutePath); }
+    return { ok: true };
+  });
+
+  // Conflict guard: compare on-disk mtime with what the editor last saw, so a
+  // save can refuse to clobber agent changes made after the file was opened.
+  ipcMain.handle('editor.stat', async (_event, absolutePath) => {
+    try {
+      const stat = await fs.stat(absolutePath);
+      return { ok: true, mtimeMs: stat.mtimeMs, size: stat.size };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
   
   ipcMain.handle('settings.get', async () => await settings.get());
   // Persist settings, then re-materialize persona.md so Personalize/Git prefs
@@ -560,6 +609,8 @@ Edited code:`;
   ipcMain.handle('git.branches',      async () => git.getBranches(workspace.getRoot()));
   ipcMain.handle('git.log',           async (_e, n) => git.getLog(workspace.getRoot(), n));
   ipcMain.handle('git.diff',          async (_e, staged) => git.getDiff(workspace.getRoot(), staged));
+  // Inline editor highlights: current-file changed line ranges from git diff.
+  ipcMain.handle('git.fileChangeRanges', async (_e, filePath) => git.getFileChangeRanges(workspace.getRoot(), filePath));
   ipcMain.handle('git.stage',         async (_e, paths) => git.stage(workspace.getRoot(), paths));
   ipcMain.handle('git.unstage',       async (_e, paths) => git.unstage(workspace.getRoot(), paths));
   ipcMain.handle('git.discard',       async (_e, paths) => git.discardChanges(workspace.getRoot(), paths));

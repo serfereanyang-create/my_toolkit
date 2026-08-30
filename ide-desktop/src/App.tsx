@@ -55,6 +55,10 @@ export default function App() {
   const [infoPanelOpen, setInfoPanelOpen] = useState(false);
   // Editor state
   const [openFiles, setOpenFiles] = useState<Array<{ path: string; content: string; dirty: boolean; language: string }>>([]);
+  // Last-known on-disk mtime per open file, for external-change conflict checks.
+  const diskMtimes = useRef<Map<string, number>>(new Map());
+  // Deferred bridge restart: set when the user switches model mid-turn.
+  const pendingRestartRef = useRef(false);
   const [activeFile, setActiveFile] = useState<string | null>(null);
 
   const stateRef = useRef(state);
@@ -82,6 +86,13 @@ export default function App() {
     });
     return desktop.agent.onEvent(async (event) => {
       dispatch({ type: 'agent/event', event });
+      if (event.type === 'turn_done' && pendingRestartRef.current) {
+        // Model was switched mid-turn; now that files are no longer being
+        // written, it's safe to swap the bridge to the new provider/model.
+        pendingRestartRef.current = false;
+        dispatch({ type: 'agent/status', status: 'starting' });
+        try { await desktop.agent.restart(); } catch { /* next prompt retries */ }
+      }
       if (event.type === 'tool_result' && event.ok !== false) {
         // file-change events are reflected in the file tree only
         void event;
@@ -148,9 +159,21 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Editor tabs belong to a workspace. On any workspace change, drop them all
+  // (and their disk watchers) so saves/watch events can't touch the old tree.
+  function resetEditorTabs() {
+    for (const file of openFilesRef.current) {
+      void desktop.editor.unwatchFile(file.path);
+    }
+    diskMtimes.current.clear();
+    setOpenFiles([]);
+    setActiveFile(null);
+  }
+
   async function openWorkspace() {
     const result = await desktop.workspace.open();
     if (!result.canceled && result.root) {
+      resetEditorTabs();
       dispatch({ type: 'workspace/opened', root: result.root });
       const tree = await desktop.workspace.getTree('.');
       dispatch({ type: 'tree/loaded', tree });
@@ -237,14 +260,19 @@ export default function App() {
 
     // Read file content
     const result = await desktop.editor.readFile(path);
-    if (!result.ok || !result.content) {
+    if (!result.ok) {
       alert(`无法打开文件: ${result.error || '未知错误'}`);
       return;
     }
+    const fileContent = result.content ?? '';
+    // Record on-disk mtime and start watching for external (agent) writes.
+    const stat = await desktop.editor.stat(path);
+    if (stat.ok && stat.mtimeMs !== undefined) diskMtimes.current.set(path, stat.mtimeMs);
+    void desktop.editor.watchFile(path);
 
     const newFile = {
       path,
-      content: result.content,
+      content: fileContent,
       dirty: false,
       language: detectLanguage(path),
     };
@@ -255,19 +283,42 @@ export default function App() {
   }
 
   async function handleSaveFile(path: string, content: string) {
+    // Conflict guard: if the file changed on disk after we opened/last synced
+    // it (e.g. the agent rewrote it), refuse to silently clobber those edits.
+    const disk = await desktop.editor.stat(path);
+    const known = diskMtimes.current.get(path);
+    if (disk.ok && known && disk.mtimeMs !== known) {
+      const reload = window.confirm(
+        '文件在你编辑期间被外部修改（可能是 agent 写入）。\n' +
+        '确定 = 覆盖外部修改并保存我的版本\n取消 = 丢弃我的编辑，加载磁盘上的最新内容'
+      );
+      if (!reload) {
+        const fresh = await desktop.editor.readFile(path);
+        if (fresh.ok && fresh.content !== undefined) {
+          const newContent = fresh.content;
+          setOpenFiles(prev => prev.map(f => f.path === path ? { ...f, content: newContent, dirty: false } : f));
+          diskMtimes.current.set(path, disk.mtimeMs!);
+        }
+        return;
+      }
+    }
     const result = await desktop.editor.saveFile(path, content);
     if (!result.ok) {
       alert(`保存失败: ${result.error || '未知错误'}`);
       return;
     }
+    const after = await desktop.editor.stat(path);
+    if (after.ok && after.mtimeMs !== undefined) diskMtimes.current.set(path, after.mtimeMs);
 
     // Mark as not dirty
-    setOpenFiles(prev => prev.map(f => 
+    setOpenFiles(prev => prev.map(f =>
       f.path === path ? { ...f, content, dirty: false } : f
     ));
   }
 
   function handleCloseFile(path: string) {
+    void desktop.editor.unwatchFile(path);
+    diskMtimes.current.delete(path);
     setOpenFiles(prev => {
       const newFiles = prev.filter(f => f.path !== path);
       // If closing active file, switch to another
@@ -279,6 +330,29 @@ export default function App() {
       return newFiles;
     });
   }
+
+  // External file changes (agent writes, git checkout): auto-reload in the
+  // editor unless the user has unsaved edits in that tab — then mark stale and
+  // let them choose on save via the conflict guard.
+  const openFilesRef = useRef(openFiles);
+  openFilesRef.current = openFiles;
+  useEffect(() => {
+    const unsub = desktop.editor.onFileChanged(async ({ path }) => {
+      const tab = openFilesRef.current.find((f) => f.path === path);
+      if (!tab) return;
+      const fresh = await desktop.editor.readFile(path);
+      if (!fresh.ok || fresh.content === undefined) return;
+      const stat = await desktop.editor.stat(path);
+      if (stat.ok && stat.mtimeMs !== undefined) diskMtimes.current.set(path, stat.mtimeMs);
+      const newContent = fresh.content;
+      setOpenFiles((prev) => prev.map((f) =>
+        f.path === path
+          ? { ...f, content: newContent, dirty: f.dirty && f.content !== newContent }
+          : f,
+      ));
+    });
+    return unsub;
+  }, []);
 
   function handleContentChange(path: string, content: string) {
     setOpenFiles(prev => prev.map(f =>
@@ -511,6 +585,12 @@ export default function App() {
   }
 
   function newChat() {
+    // Detaching while the agent is still running would leave the CLI child
+    // writing files "in the background" with the UI showing an empty chat.
+    // Restart the bridge so the old turn dies with its process.
+    if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
+      void desktop.agent.restart();
+    }
     // The CLI persists the live session to .aicode/sessions as it runs, so a
     // fresh chat just detaches from the current one; nothing is lost.
     dispatch({ type: 'chat/clear' });
@@ -519,6 +599,11 @@ export default function App() {
   }
 
   async function openSession(id: string) {
+    // Same guard as newChat: never leave a live bridge attached while the UI
+    // swaps to a different session — events from the old turn would bleed in.
+    if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
+      try { await desktop.agent.restart(); } catch { /* next prompt will retry start */ }
+    }
     try {
       const record = await desktop.sessions.load(id);
       dispatch({ type: 'chat/load', sessionId: id, chat: sessionToChat(record) });
@@ -660,6 +745,8 @@ export default function App() {
           <span className="main-topbar-spacer" />
           <div className="main-tabs">
             <button className={`main-tab ${mainView === 'chat' ? 'active' : ''}`} onClick={() => setMainView('chat')}>对话</button>
+            <button className={`main-tab ${mainView === 'editor' ? 'active' : ''}`} onClick={() => setMainView('editor')}>编辑器</button>
+            {openFiles.length > 0 && <span className="main-tab-badge">{openFiles.length}</span>}
           </div>
           <div className="window-controls">
             <button className="window-control" title="最小化" onClick={() => void desktop.window.minimize()}><Minimize2 size={15} /></button>
@@ -695,6 +782,7 @@ export default function App() {
             onEditUser={(text) => setPrefill({ text, nonce: Date.now() })}
             onLaunch={handleLaunch}
             onUndo={undoTurn}
+            onOpenFile={handleOpenFile}
             dispatch={dispatch}
           />
         )}
@@ -752,8 +840,14 @@ export default function App() {
               const providers = state.settings.providers.map((p) => (p.id === providerId ? { ...p, model } : p));
               const next = { ...state.settings, activeProviderId: providerId, providers };
               await saveSettings(next);
-              // A running bridge was created with the old provider/model. Restart
-              // it immediately so the next prompt really uses the selected model.
+              // A running bridge was created with the old provider/model. If a
+              // turn is mid-flight, DON'T kill it — a half-written file is worse
+              // than a delayed switch. Defer restart until the turn ends.
+              if (stateRef.current.agentStatus === 'running') {
+                pendingRestartRef.current = true;
+                dispatch({ type: 'agent/event', event: { type: 'info', message: '当前任务完成后将切换模型。' } });
+                return;
+              }
               if (stateRef.current.agentStatus !== 'offline') {
                 dispatch({ type: 'agent/status', status: 'starting' });
                 try {

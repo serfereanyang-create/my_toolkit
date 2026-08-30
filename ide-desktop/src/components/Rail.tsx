@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FilePlus, MessageSquare, Clock, Files, Settings, PanelLeft, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X } from 'lucide-react';
+import { FilePlus, MessageSquare, Clock, Files, Settings, PanelLeft, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, FileCode } from 'lucide-react';
 import type { AppState, SessionMeta } from '../types';
 import { HelpMenu, type HelpAction } from './HelpMenu';
 import { ConversationContextMenu, type ConvoAction } from './ConversationContextMenu';
@@ -158,6 +158,7 @@ export function Rail({ state, sessions, mainView, onNewChat, onOpenWorkspace, on
         </button>
         <button className="rail-item" title="开始新对话" onClick={onNewChat}><FilePlus size={17} /> 新对话</button>
         <button className={`rail-item ${mainView === 'files' ? 'active' : ''}`} onClick={() => onSelectView('files')}><Files size={17} /> 文件</button>
+        <button className={`rail-item ${mainView === 'editor' ? 'active' : ''}`} onClick={() => onSelectView('editor')}><FileCode size={17} /> 编辑器</button>
         <button className={`rail-item ${mainView === 'automation' ? 'active' : ''}`} onClick={() => onSelectView('automation')}><CalendarClock size={17} /> 自动化</button>
         <button className={`rail-item ${mainView === 'settings' ? 'active' : ''}`} onClick={() => onSelectView('settings')}><Settings size={17} /> 设置</button>
       </nav>

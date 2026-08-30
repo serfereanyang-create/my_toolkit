@@ -186,6 +186,27 @@ async function getDiff(root, staged = false) {
 }
 
 /**
+ * Changed line ranges for ONE file, parsed from `git diff -U0 -- <path>`.
+ * Returns { ok, file, hunks: [{ start, end, type: 'added'|'modified' }] }
+ * where start/end are 1-based line numbers in the CURRENT working file.
+ * Used by the editor to draw inline "agent changed these lines" highlights.
+ */
+async function getFileChangeRanges(root, filePath) {
+  const res = await safeGit(root, ['diff', '-U0', '--', filePath]);
+  if (!res.ok) return { ok: false, error: res.error };
+  const hunks = [];
+  const hunkRe = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
+  for (const line of res.stdout.split(/\r?\n/)) {
+    const match = line.match(hunkRe);
+    if (!match) continue;
+    const start = Number(match[1]);
+    const count = match[2] === undefined ? 1 : Number(match[2]);
+    if (count > 0) hunks.push({ start, end: start + count - 1, type: 'added' });
+  }
+  return { ok: true, file: filePath, hunks };
+}
+
+/**
  * Stage one or more paths (relative to workspace root).
  * Returns { ok, staged: string[] }
  */
@@ -367,6 +388,7 @@ module.exports = {
   getBranches,
   getLog,
   getDiff,
+  getFileChangeRanges,
   stage,
   unstage,
   discardChanges,

@@ -10,12 +10,13 @@ import { activeTurnProgress } from '../lib/state';
 import { desktop } from '../lib/ipc';
 import { TaskBoardCard } from './TaskBoardCard';
 
-export function ConversationStream({ state, onApprove, onEditUser, onLaunch, onUndo, dispatch }: {
+export function ConversationStream({ state, onApprove, onEditUser, onLaunch, onUndo, onOpenFile, dispatch }: {
   state: AppState;
   onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void;
   onEditUser: (text: string) => void;
   onLaunch: (id: string) => void;
   onUndo: (turnId: string) => void;
+  onOpenFile?: (path: string) => void;
   dispatch: React.Dispatch<AppAction>;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -85,7 +86,7 @@ export function ConversationStream({ state, onApprove, onEditUser, onLaunch, onU
             re-rendering every second during an active agent turn. */}
         {state.chat.map((item) =>
           item.kind === 'turn'
-            ? <TurnRow key={item.id} item={item} onApprove={onApprove} onUndo={onUndo} now={now} />
+            ? <TurnRow key={item.id} item={item} onApprove={onApprove} onUndo={onUndo} now={now} onOpenFile={onOpenFile} />
             : <Row key={item.id} item={item} onApprove={onApprove} onEditUser={onEditUser} dispatch={dispatch} />
         )}
         <div ref={messagesEndRef} />
@@ -102,13 +103,14 @@ function formatTime(ts?: number): string {
   return `${days[date.getDay()]}${hh}:${mm}`;
 }
 
-function TurnRow({ item, onApprove, onUndo, now }: {
+function TurnRow({ item, onApprove, onUndo, now, onOpenFile }: {
   item: Extract<ChatItem, { kind: 'turn' }>;
   onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void;
   onUndo: (turnId: string) => void;
   now: number;
+  onOpenFile?: (path: string) => void;
 }) {
-  return <TurnSummary item={item} onApprove={onApprove} onUndo={onUndo} now={now} />;
+  return <TurnSummary item={item} onApprove={onApprove} onUndo={onUndo} now={now} onOpenFile={onOpenFile} />;
 }
 
 function Row({ item, onApprove, onEditUser, dispatch }: {
