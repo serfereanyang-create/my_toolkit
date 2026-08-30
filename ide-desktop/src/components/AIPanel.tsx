@@ -2,6 +2,7 @@ import { Send, Square } from 'lucide-react';
 import { useState } from 'react';
 import type { AppState, ChatItem } from '../types';
 import { ToolCard } from './ToolCard';
+import { TurnSummary } from './TurnSummary';
 
 export function AIPanel({ state, onSubmit, onCancel, onApprove }: {
   state: AppState;
@@ -25,7 +26,7 @@ export function AIPanel({ state, onSubmit, onCancel, onApprove }: {
         {state.chat.map((item) => <ChatRow key={item.id} item={item} onApprove={onApprove} />)}
       </div>
       <div className="chat-input-row">
-        <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="Ask ZCode or type /help" onKeyDown={(event) => {
+        <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="Ask YOYcode or type /help" onKeyDown={(event) => {
           if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') submit();
         }} />
         {running ? (
@@ -39,6 +40,7 @@ export function AIPanel({ state, onSubmit, onCancel, onApprove }: {
 }
 
 function ChatRow({ item, onApprove }: { item: ChatItem; onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void }) {
+  if (item.kind === 'turn') return <TurnSummary item={item} onApprove={onApprove} onUndo={() => {}} now={Date.now()} />;
   if (item.kind === 'tool' || item.kind === 'approval') return <ToolCard item={item} onApprove={onApprove} />;
   return <div className={`chat-row ${item.kind}`}>{item.text}</div>;
 }

@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  publicDir: 'resources',
   // Relative asset paths so Electron can load the bundle over file:// in
   // production. With the default '/' base, /assets/* resolves to the OS
   // filesystem root under file:// and the window renders blank.
@@ -15,5 +16,11 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+  },
+  optimizeDeps: {
+    include: ['monaco-editor'],
+  },
+  worker: {
+    format: 'es',
   },
 });

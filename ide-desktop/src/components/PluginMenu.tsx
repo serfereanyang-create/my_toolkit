@@ -16,8 +16,8 @@ const PLUGINS: PluginItem[] = [
   { id: 'spreadsheets', name: 'Spreadsheets', desc: 'Create and edit spreadsheet files', icon: <Sheet size={18} />, tint: '#3aa675' },
   { id: 'presentations', name: 'Presentations', desc: 'Create and edit presentations', icon: <Presentation size={18} />, tint: '#e8a13a' },
   { id: 'template', name: 'Template Creator', desc: 'Create or update reusable templates from reference content', icon: <LayoutTemplate size={18} />, tint: '#9b8cf0' },
-  { id: 'browser', name: '浏览器', desc: 'Control the in-app browser with ZCode', icon: <Globe size={18} />, tint: '#4b9ff0' },
-  { id: 'computer', name: '电脑', desc: 'Control Windows apps from ZCode', icon: <Monitor size={18} />, tint: '#4bb0e0' },
+  { id: 'browser', name: '浏览器', desc: 'Control the in-app browser with YOYcode', icon: <Globe size={18} />, tint: '#4b9ff0' },
+  { id: 'computer', name: '电脑', desc: 'Control Windows apps from YOYcode', icon: <Monitor size={18} />, tint: '#4bb0e0' },
   { id: 'visualize', name: 'Visualize', desc: 'Turn ideas and data into interactive visuals', icon: <Sparkles size={18} />, tint: '#4b83f0' },
 ];
 

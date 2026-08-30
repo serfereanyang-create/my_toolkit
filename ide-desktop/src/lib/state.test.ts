@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appReducer, initialState } from './state';
+import { appReducer, initialState, sessionChangeTotals, activeTurnProgress } from './state';
 
 describe('appReducer', () => {
   it('opens a workspace', () => {
@@ -14,11 +14,224 @@ describe('appReducer', () => {
     expect(two.chat).toEqual([{ id: 'assistant-live', kind: 'assistant', text: 'Hello' }]);
   });
 
+  it('finalizes a streamed reply in place instead of duplicating it', () => {
+    // The CLI streams deltas into an `assistant-live` bubble, then emits one
+    // complete `assistant_message`. The final event must promote the live
+    // bubble in place — not append a second copy of the same text.
+    let s = appReducer(initialState, { type: 'agent/event', event: { type: 'assistant_delta', text: 'Hel' } });
+    s = appReducer(s, { type: 'agent/event', event: { type: 'assistant_delta', text: 'lo world' } });
+    s = appReducer(s, { type: 'agent/event', event: { type: 'assistant_message', text: 'Hello world' } });
+    const assistants = s.chat.filter((item) => item.kind === 'assistant');
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0].text).toBe('Hello world');
+    // The finalized bubble must lose the transient live id so it is stable.
+    expect(assistants[0].id).not.toBe('assistant-live');
+  });
+
+  it('keeps the streamed text when the final message arrives empty', () => {
+    let s = appReducer(initialState, { type: 'agent/event', event: { type: 'assistant_delta', text: 'streamed answer' } });
+    s = appReducer(s, { type: 'agent/event', event: { type: 'assistant_message', text: '' } });
+    const assistants = s.chat.filter((item) => item.kind === 'assistant');
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0].text).toBe('streamed answer');
+  });
+
+  it('appends a non-streamed final message fresh', () => {
+    // Non-streaming provider: no live bubble exists, so the message stands alone.
+    const s = appReducer(initialState, { type: 'agent/event', event: { type: 'assistant_message', text: 'direct reply' } });
+    const assistants = s.chat.filter((item) => item.kind === 'assistant');
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0].text).toBe('direct reply');
+  });
+
   it('creates approval chat items', () => {
     const state = appReducer(initialState, {
       type: 'agent/event',
       event: { type: 'approval_needed', requestId: 'approval_1', tool: 'shell', message: 'Approve shell?', input: { command: 'npm test' } },
     });
     expect(state.chat[0]).toMatchObject({ kind: 'approval', requestId: 'approval_1', tool: 'shell' });
+  });
+
+  it('loads a session into chat and tracks the active session id', () => {
+    const chat = [
+      { id: 'u1', kind: 'user' as const, text: 'hi' },
+      { id: 'a1', kind: 'assistant' as const, text: 'hello' },
+    ];
+    const state = appReducer(initialState, { type: 'chat/load', sessionId: 'sess_x', chat });
+    expect(state.activeSessionId).toBe('sess_x');
+    expect(state.chat).toHaveLength(2);
+    // Opening a past session must detach the running agent so the next prompt resumes it.
+    expect(state.agentStatus).toBe('offline');
+  });
+
+  it('clears chat and drops the active session id + agent', () => {
+    const loaded = appReducer(initialState, {
+      type: 'chat/load',
+      sessionId: 'sess_x',
+      chat: [{ id: 'u1', kind: 'user', text: 'hi' }],
+    });
+    const cleared = appReducer(loaded, { type: 'chat/clear' });
+    expect(cleared.activeSessionId).toBeNull();
+    expect(cleared.chat).toEqual([]);
+    expect(cleared.agentStatus).toBe('offline');
+  });
+
+  const emit = (state: ReturnType<typeof appReducer>, event: Record<string, unknown>) =>
+    appReducer(state, { type: 'agent/event', event: event as never });
+
+  it('groups tool steps into one turn and sums real diff line counts', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    expect(s.agentStatus).toBe('running');
+    s = emit(s, { type: 'tool_start', tool: 'write_file', input: { path: 'a.ts' } });
+    s = emit(s, { type: 'tool_result', tool: 'write_file', ok: true, output: 'Wrote a.ts', data: { added: 10, removed: 2 } });
+    s = emit(s, { type: 'tool_start', tool: 'apply_patch', input: { path: 'b.ts' } });
+    s = emit(s, { type: 'tool_result', tool: 'apply_patch', ok: true, output: 'Patched b.ts', data: { added: 5, removed: 1 } });
+    s = emit(s, { type: 'turn_done' });
+
+    expect(s.agentStatus).toBe('ready');
+    const turns = s.chat.filter((item) => item.kind === 'turn');
+    expect(turns).toHaveLength(1);
+    const turn = turns[0];
+    if (turn.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.steps).toHaveLength(2);
+    expect(turn.added).toBe(15);
+    expect(turn.removed).toBe(3);
+    expect(turn.endedAt).toBeGreaterThanOrEqual(turn.startedAt);
+    expect(turn.steps.every((step) => step.status === 'done')).toBe(true);
+  });
+
+  it('drops an empty turn that ran no tools (pure chat reply)', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'assistant_message', text: 'hi there' });
+    s = emit(s, { type: 'turn_done' });
+    expect(s.chat.some((item) => item.kind === 'turn')).toBe(false);
+    expect(s.chat.filter((item) => item.kind === 'assistant')).toHaveLength(1);
+  });
+
+  it('marks an approval card as decided so its buttons disable', () => {
+    let s = emit(initialState, { type: 'approval_needed', requestId: 'approval_1', tool: 'write_file', message: 'Approve write?', input: { path: 'note.md' } });
+    s = appReducer(s, { type: 'approval/decided', requestId: 'approval_1', decision: 'allow_once' });
+    const card = s.chat.find((item) => item.kind === 'approval');
+    if (card?.kind !== 'approval') throw new Error('expected approval card');
+    expect(card.decided).toBe('allow_once');
+  });
+
+  it('sums session-wide change totals across turns for the topbar badge', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'tool_start', tool: 'write_file', input: { path: 'a.ts' } });
+    s = emit(s, { type: 'tool_result', tool: 'write_file', ok: true, output: 'ok', data: { added: 10, removed: 2 } });
+    s = emit(s, { type: 'turn_done' });
+    s = emit(s, { type: 'turn_start' });
+    s = emit(s, { type: 'tool_start', tool: 'apply_patch', input: { path: 'b.ts' } });
+    s = emit(s, { type: 'tool_result', tool: 'apply_patch', ok: true, output: 'ok', data: { added: 5, removed: 3 } });
+    s = emit(s, { type: 'turn_done' });
+    expect(sessionChangeTotals(s.chat)).toEqual({ added: 15, removed: 5 });
+  });
+
+  it('returns null session change totals when nothing was written', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'assistant_message', text: 'hi' });
+    s = emit(s, { type: 'turn_done' });
+    expect(sessionChangeTotals(s.chat)).toBeNull();
+  });
+
+  it('matches a tool_result to its running step without diff data', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'tool_start', tool: 'shell', input: { command: 'ls' } });
+    s = emit(s, { type: 'tool_result', tool: 'shell', ok: true, output: 'files' });
+    s = emit(s, { type: 'turn_done' });
+    const turn = s.chat.find((item) => item.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.added).toBe(0);
+    expect(turn.removed).toBe(0);
+    expect(turn.steps[0]).toMatchObject({ tool: 'shell', status: 'done', output: 'files' });
+  });
+
+  it('collects distinct changed files with checkpoint ids, merging repeat writes', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    // Two writes to the same file plus one to another: the summary shows 2
+    // distinct files, and the repeated file merges its line counts + ids.
+    s = emit(s, { type: 'tool_start', tool: 'write_file', input: { path: 'a.ts' } });
+    s = emit(s, { type: 'tool_result', tool: 'write_file', ok: true, data: { path: 'a.ts', added: 10, removed: 2, checkpointId: 'cp_a1' } });
+    s = emit(s, { type: 'tool_start', tool: 'write_file', input: { path: 'a.ts' } });
+    s = emit(s, { type: 'tool_result', tool: 'write_file', ok: true, data: { path: 'a.ts', added: 3, removed: 1, checkpointId: 'cp_a2' } });
+    s = emit(s, { type: 'tool_start', tool: 'write_file', input: { path: 'b.ts' } });
+    s = emit(s, { type: 'tool_result', tool: 'write_file', ok: true, data: { path: 'b.ts', added: 5, removed: 0, checkpointId: 'cp_b1' } });
+    s = emit(s, { type: 'turn_done' });
+    const turn = s.chat.find((item) => item.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.files).toHaveLength(2);
+    const a = turn.files.find((f) => f.path === 'a.ts')!;
+    expect(a.added).toBe(13);
+    expect(a.removed).toBe(3);
+    expect(a.checkpointIds).toEqual(['cp_a1', 'cp_a2']);
+    expect(turn.added).toBe(18);
+    expect(turn.removed).toBe(3);
+  });
+
+  it('reflects the undo lifecycle on the matching turn', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'tool_start', tool: 'write_file', input: { path: 'a.ts' } });
+    s = emit(s, { type: 'tool_result', tool: 'write_file', ok: true, data: { path: 'a.ts', added: 4, removed: 0, checkpointId: 'cp_1' } });
+    s = emit(s, { type: 'turn_done' });
+    const turnId = s.chat.find((item) => item.kind === 'turn')!.id;
+
+    s = appReducer(s, { type: 'turn/undo-state', turnId, undo: 'undoing' });
+    let turn = s.chat.find((item) => item.id === turnId);
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.undo).toBe('undoing');
+
+    s = appReducer(s, { type: 'turn/undo-state', turnId, undo: 'undone' });
+    turn = s.chat.find((item) => item.id === turnId);
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.undo).toBe('undone');
+  });
+});
+
+describe('activeTurnProgress', () => {
+  it('returns null when agent is ready but not running', () => {
+    const state = { ...initialState, agentStatus: 'ready' as const };
+    expect(activeTurnProgress(state)).toBeNull();
+  });
+
+  it('returns null when agent is running but no active turn', () => {
+    const state = { ...initialState, agentStatus: 'running' as const };
+    expect(activeTurnProgress(state)).toBeNull();
+  });
+
+  it('returns progress data when agent is running with an active turn', () => {
+    let s = appReducer(initialState, { type: 'agent/event', event: { type: 'turn_start' } });
+    s = { ...s, agentStatus: 'running' as const };
+    s = appReducer(s, { type: 'agent/event', event: { type: 'tool_start', tool: 'write_file', input: { path: 'a.ts' } } });
+    s = { ...s, agentStatus: 'running' as const };
+    s = appReducer(s, { type: 'agent/event', event: { type: 'tool_result', tool: 'write_file', ok: true, data: { added: 10, removed: 2 } } });
+    s = { ...s, agentStatus: 'running' as const };
+    
+    const progress = activeTurnProgress(s);
+    expect(progress).not.toBeNull();
+    expect(progress?.stepCount).toBe(1);
+    expect(progress?.added).toBe(10);
+    expect(progress?.removed).toBe(2);
+    expect(progress?.lastTool).toBe('write_file');
+    expect(progress?.elapsedMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('tracks cumulative changes across multiple tools', () => {
+    let s = appReducer(initialState, { type: 'agent/event', event: { type: 'turn_start' } });
+    s = { ...s, agentStatus: 'running' as const };
+    s = appReducer(s, { type: 'agent/event', event: { type: 'tool_start', tool: 'write_file', input: { path: 'a.ts' } } });
+    s = { ...s, agentStatus: 'running' as const };
+    s = appReducer(s, { type: 'agent/event', event: { type: 'tool_result', tool: 'write_file', ok: true, data: { added: 5, removed: 1 } } });
+    s = { ...s, agentStatus: 'running' as const };
+    s = appReducer(s, { type: 'agent/event', event: { type: 'tool_start', tool: 'edit_file', input: { path: 'b.ts' } } });
+    s = { ...s, agentStatus: 'running' as const };
+    s = appReducer(s, { type: 'agent/event', event: { type: 'tool_result', tool: 'edit_file', ok: true, data: { added: 3, removed: 2 } } });
+    s = { ...s, agentStatus: 'running' as const };
+    
+    const progress = activeTurnProgress(s);
+    expect(progress?.stepCount).toBe(2);
+    expect(progress?.added).toBe(8);
+    expect(progress?.removed).toBe(3);
+    expect(progress?.lastTool).toBe('edit_file');
   });
 });

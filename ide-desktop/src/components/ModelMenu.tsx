@@ -1,0 +1,86 @@
+import { useEffect, useRef, useState } from 'react';
+import { ChevronRight, ChevronDown, Check, SlidersHorizontal } from 'lucide-react';
+import type { ProviderConfig } from '../types';
+
+/*
+ * Model picker popover shown above the composer. Lists providers; expanding one
+ * reveals its selectable models. Picking a model sets it as active for chat.
+ * A "管理模型" row at the bottom deep-links to the model settings page.
+ */
+
+export function ModelMenu({ providers, activeProviderId, activeModel, onPick, onManage, onClose }: {
+  providers: ProviderConfig[];
+  activeProviderId: string;
+  activeModel: string;
+  onPick: (providerId: string, model: string) => void;
+  onManage: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  // Expand the active provider by default so the current model is visible.
+  const [expanded, setExpanded] = useState<string | null>(activeProviderId);
+
+  useEffect(() => {
+    function onDown(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) onClose();
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  // A provider's selectable models: its explicit catalog, or its single default.
+  function modelsOf(provider: ProviderConfig): string[] {
+    if (provider.models && provider.models.length) return provider.models.map((m) => m.id);
+    return provider.model ? [provider.model] : [];
+  }
+
+  return (
+    <div className="model-menu" ref={ref} role="menu">
+      <div className="model-menu-list">
+        {providers.map((provider) => {
+          const models = modelsOf(provider);
+          const isOpen = expanded === provider.id;
+          return (
+            <div key={provider.id} className="model-menu-group">
+              <button
+                className="model-menu-provider"
+                onClick={() => setExpanded(isOpen ? null : provider.id)}
+              >
+                <span className="model-menu-provider-name">{provider.label}</span>
+                {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+              </button>
+              {isOpen && models.map((model) => {
+                const selected = provider.id === activeProviderId && model === activeModel;
+                return (
+                  <button
+                    key={model}
+                    className={`model-menu-item ${selected ? 'selected' : ''}`}
+                    onClick={() => { onPick(provider.id, model); onClose(); }}
+                  >
+                    <span className="model-menu-item-name">{model}</span>
+                    {selected && <Check size={15} className="model-menu-check" />}
+                  </button>
+                );
+              })}
+              {isOpen && models.length === 0 && (
+                <div className="model-menu-empty">该供应商暂无模型</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="model-menu-divider" />
+      <button className="model-menu-manage" onClick={() => { onManage(); onClose(); }}>
+        <SlidersHorizontal size={15} />
+        <span>管理模型</span>
+      </button>
+    </div>
+  );
+}

@@ -1,35 +1,30 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Pin, FolderInput, Trash2, Pencil, Archive, CheckCheck,
-  FolderOpen, Copy, Hash, Link2, MessageSquarePlus, GitBranch, ExternalLink, ChevronRight,
+  Pin, Trash2, Pencil, Archive,
+  FolderOpen, Copy, Hash, Link2, MessageSquarePlus,
 } from 'lucide-react';
 
 export type ConvoAction =
-  | 'pin' | 'move' | 'remove' | 'rename' | 'archive' | 'mark-read'
+  | 'pin' | 'remove' | 'rename' | 'archive'
   | 'reveal' | 'copy-cwd' | 'copy-id' | 'copy-deeplink'
-  | 'continue-chat' | 'continue-worktree' | 'open-window';
+  | 'continue-chat';
 
 type Item =
-  | { kind: 'item'; id: ConvoAction; name: string; icon: JSX.Element; submenu?: boolean }
+  | { kind: 'item'; id: ConvoAction; name: string; icon: JSX.Element }
   | { kind: 'sep' };
 
 const ITEMS: Item[] = [
-  { kind: 'item', id: 'pin', name: '置顶聊天', icon: <Pin size={15} /> },
-  { kind: 'item', id: 'move', name: '移至项目', icon: <FolderInput size={15} />, submenu: true },
-  { kind: 'item', id: 'remove', name: '从 codex 中移除', icon: <Trash2 size={15} /> },
-  { kind: 'item', id: 'rename', name: '重命名聊天', icon: <Pencil size={15} /> },
-  { kind: 'item', id: 'archive', name: '归档聊天', icon: <Archive size={15} /> },
-  { kind: 'item', id: 'mark-read', name: '标记为已读', icon: <CheckCheck size={15} /> },
+  { kind: 'item', id: 'pin',     name: '置顶聊天',       icon: <Pin size={15} /> },
+  { kind: 'item', id: 'rename',  name: '重命名聊天',     icon: <Pencil size={15} /> },
+  { kind: 'item', id: 'archive', name: '归档聊天',       icon: <Archive size={15} /> },
+  { kind: 'item', id: 'remove',  name: '从列表中移除',   icon: <Trash2 size={15} /> },
   { kind: 'sep' },
-  { kind: 'item', id: 'reveal', name: '在资源管理器中打开', icon: <FolderOpen size={15} /> },
-  { kind: 'item', id: 'copy-cwd', name: '复制工作目录', icon: <Copy size={15} /> },
-  { kind: 'item', id: 'copy-id', name: '复制会话 ID', icon: <Hash size={15} /> },
-  { kind: 'item', id: 'copy-deeplink', name: '复制深度链接', icon: <Link2 size={15} /> },
+  { kind: 'item', id: 'reveal',       name: '在资源管理器中打开', icon: <FolderOpen size={15} /> },
+  { kind: 'item', id: 'copy-cwd',     name: '复制工作目录',       icon: <Copy size={15} /> },
+  { kind: 'item', id: 'copy-id',      name: '复制会话 ID',         icon: <Hash size={15} /> },
+  { kind: 'item', id: 'copy-deeplink',name: '复制深度链接',        icon: <Link2 size={15} /> },
   { kind: 'sep' },
   { kind: 'item', id: 'continue-chat', name: '在新聊天中继续', icon: <MessageSquarePlus size={15} /> },
-  { kind: 'item', id: 'continue-worktree', name: '在新工作树中继续', icon: <GitBranch size={15} /> },
-  { kind: 'sep' },
-  { kind: 'item', id: 'open-window', name: '在新窗口中打开', icon: <ExternalLink size={15} /> },
 ];
 
 export function ConversationContextMenu({ x, y, onClose, onPick }: {
@@ -74,7 +69,6 @@ export function ConversationContextMenu({ x, y, onClose, onPick }: {
           <button key={item.id} className="ctx-row" onClick={() => onPick(item.id)}>
             <span className="ctx-icon">{item.icon}</span>
             <span className="ctx-name">{item.name}</span>
-            {item.submenu && <ChevronRight className="ctx-caret" size={14} />}
           </button>
         ))}
     </div>

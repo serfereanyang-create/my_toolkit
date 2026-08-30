@@ -1,0 +1,157 @@
+import { useEffect, useRef, useState } from 'react';
+import { Check, X, ChevronsDown, ChevronsUp, GitCompare } from 'lucide-react';
+import type { PendingDiff } from '../../types';
+import type { AppAction } from '../../lib/state';
+import { desktop } from '../../lib/ipc';
+
+type Props = {
+  diffs: PendingDiff[];
+  dispatch: React.Dispatch<AppAction>;
+};
+
+export function DiffReview({ diffs, dispatch }: Props) {
+  const pending  = diffs.filter((d) => d.status === 'pending');
+  const resolved = diffs.filter((d) => d.status !== 'pending');
+
+  if (diffs.length === 0) return null;
+
+  async function applyDiff(diff: PendingDiff) {
+    dispatch({ type: 'diff/decide', id: diff.id, decision: 'accepted' });
+    try { await desktop.fs.write(diff.path, diff.modifiedContent); } catch { /* show error via existing chat */ }
+  }
+
+  function rejectDiff(diff: PendingDiff) {
+    dispatch({ type: 'diff/decide', id: diff.id, decision: 'rejected' });
+  }
+
+  async function acceptAll() {
+    for (const d of pending) await applyDiff(d);
+  }
+
+  function rejectAll() {
+    for (const d of pending) rejectDiff(d);
+  }
+
+  function clearResolved() {
+    dispatch({ type: 'diff/clearAll' });
+  }
+
+  return (
+    <div className="diff-review-panel" aria-label="待确认文件更改">
+      <div className="diff-review-header">
+        <GitCompare size={14} />
+        <span className="diff-review-title">待确认更改 ({pending.length})</span>
+        <span className="diff-review-spacer" />
+        {pending.length > 0 && <>
+          <button className="diff-btn diff-btn-accept" onClick={acceptAll} title="接受全部">
+            <Check size={12} /> 全部接受
+          </button>
+          <button className="diff-btn diff-btn-reject" onClick={rejectAll} title="拒绝全部">
+            <X size={12} /> 全部拒绝
+          </button>
+        </>}
+        {resolved.length > 0 && (
+          <button className="diff-btn diff-btn-clear" onClick={clearResolved} title="清除已解决">
+            清除
+          </button>
+        )}
+      </div>
+
+      {diffs.map((diff) => (
+        <DiffCard key={diff.id} diff={diff} onAccept={applyDiff} onReject={rejectDiff} />
+      ))}
+    </div>
+  );
+}
+
+function DiffCard({ diff, onAccept, onReject }: {
+  diff: PendingDiff;
+  onAccept: (d: PendingDiff) => void;
+  onReject: (d: PendingDiff) => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const isPending  = diff.status === 'pending';
+  const isAccepted = diff.status === 'accepted';
+
+  // Compute simple line diff summary
+  const oldLines = diff.originalContent.split('\n');
+  const newLines  = diff.modifiedContent.split('\n');
+  const added   = newLines.length - oldLines.length;
+  const name = diff.path.split(/[\\/]/).pop() ?? diff.path;
+
+  return (
+    <div className={`diff-card diff-card--${diff.status}`}>
+      <div className="diff-card-header">
+        <button className="diff-card-toggle" onClick={() => setExpanded((e) => !e)} aria-label="展开/折叠">
+          {expanded ? <ChevronsUp size={12} /> : <ChevronsDown size={12} />}
+        </button>
+        <span className="diff-card-name" title={diff.path}>{name}</span>
+        <span className="diff-card-stats">
+          {added > 0 && <span className="diff-stat-add">+{added}</span>}
+          {added < 0 && <span className="diff-stat-del">{added}</span>}
+        </span>
+        <span className="diff-card-status-badge">{isAccepted ? '✓ 已接受' : diff.status === 'rejected' ? '✗ 已拒绝' : ''}</span>
+        {isPending && <>
+          <button className="diff-btn diff-btn-accept" onClick={() => onAccept(diff)}><Check size={12} /> 接受</button>
+          <button className="diff-btn diff-btn-reject" onClick={() => onReject(diff)}><X size={12} /> 拒绝</button>
+        </>}
+      </div>
+
+      {expanded && (
+        <MonacoDiffView original={diff.originalContent} modified={diff.modifiedContent} />
+      )}
+    </div>
+  );
+}
+
+// Bug-14 fix: replace the Monaco diff editor (which requires the ~15MB
+// monaco-editor package that was left as dead weight after the editor was
+// removed) with a lightweight plain-text diff view. This eliminates the
+// only remaining reference to monaco-editor so the dependency can be dropped.
+function MonacoDiffView({ original, modified }: { original: string; modified: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const origLines = original.split('\n');
+    const modLines  = modified.split('\n');
+    const maxLines  = Math.max(origLines.length, modLines.length);
+
+    // Simple line-by-line diff: mark removed / added / unchanged rows.
+    const rows: { text: string; type: 'del' | 'add' | 'ctx' }[] = [];
+    for (let i = 0; i < maxLines; i++) {
+      const o = origLines[i] ?? '';
+      const m = modLines[i]  ?? '';
+      if (i >= origLines.length) {
+        rows.push({ text: m, type: 'add' });
+      } else if (i >= modLines.length) {
+        rows.push({ text: o, type: 'del' });
+      } else if (o !== m) {
+        if (o) rows.push({ text: o, type: 'del' });
+        if (m) rows.push({ text: m, type: 'add' });
+      } else {
+        rows.push({ text: o, type: 'ctx' });
+      }
+    }
+
+    el.innerHTML = '';
+    const pre = document.createElement('pre');
+    pre.className = 'diff-plain';
+    pre.style.cssText = 'margin:0;padding:8px;font-size:12px;line-height:1.5;overflow:auto;max-height:300px;font-family:var(--font-mono)';
+    for (const row of rows) {
+      const line = document.createElement('div');
+      line.textContent = (row.type === 'del' ? '− ' : row.type === 'add' ? '+ ' : '  ') + row.text;
+      line.style.cssText = row.type === 'del'
+        ? 'background:#c0453c12;color:var(--danger)'
+        : row.type === 'add'
+          ? 'background:#4f8a5216;color:var(--ok)'
+          : 'color:var(--fg-muted)';
+      pre.appendChild(line);
+    }
+    el.appendChild(pre);
+  }, [original, modified]);
+
+  return <div className="diff-monaco" ref={containerRef} />;
+}

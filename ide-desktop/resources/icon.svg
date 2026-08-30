@@ -1,0 +1,51 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle with warm gradient -->
+  <defs>
+    <linearGradient id="warmGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#C4612F;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#A94E22;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="8"/>
+      <feOffset dx="0" dy="4" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.2"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Main circle background -->
+  <circle cx="256" cy="256" r="240" fill="url(#warmGrad)" filter="url(#shadow)"/>
+  
+  <!-- Code brackets symbol (left) -->
+  <path d="M 180 160 L 140 200 L 140 312 L 180 352" 
+        stroke="#FFFFFF" 
+        stroke-width="24" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" 
+        fill="none"/>
+  
+  <!-- Code brackets symbol (right) -->
+  <path d="M 332 160 L 372 200 L 372 312 L 332 352" 
+        stroke="#FFFFFF" 
+        stroke-width="24" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" 
+        fill="none"/>
+  
+  <!-- AI spark/star accent (top-right of brackets) -->
+  <g transform="translate(290, 180)">
+    <circle cx="0" cy="0" r="8" fill="#F7F4EF"/>
+    <line x1="0" y1="-16" x2="0" y2="16" stroke="#F7F4EF" stroke-width="3" stroke-linecap="round"/>
+    <line x1="-16" y1="0" x2="16" y2="0" stroke="#F7F4EF" stroke-width="3" stroke-linecap="round"/>
+    <line x1="-11" y1="-11" x2="11" y2="11" stroke="#F7F4EF" stroke-width="2" stroke-linecap="round"/>
+    <line x1="11" y1="-11" x2="-11" y2="11" stroke="#F7F4EF" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  
+  <!-- Terminal cursor (centered bottom) -->
+  <rect x="236" y="380" width="40" height="6" rx="3" fill="#F7F4EF" opacity="0.9"/>
+</svg>
