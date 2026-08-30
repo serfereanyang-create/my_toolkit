@@ -90,6 +90,34 @@ export function AiSettings() {
     }
   };
 
+  const handleClearKey = async () => {
+    const api = resolveAiReviewApi();
+    if (!api) {
+      setDesktopAvailable(false);
+      return;
+    }
+    setSaving(true);
+    setSaveError('');
+    try {
+      const result = await api.saveConfig({ baseUrl, model, temperature, apiKey: '' });
+      if (result?.ok) {
+        message.success('已清除保存的 API Key');
+        setKeyInput('');
+        try {
+          applyConfig(await api.getConfig());
+        } catch {
+          setDesktopAvailable(false);
+        }
+      } else {
+        setSaveError(result?.error || '清除失败，请重试');
+      }
+    } catch (error) {
+      setSaveError(describeError(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleTest = async () => {
     const api = resolveAiReviewApi();
     if (!api) {
@@ -181,6 +209,11 @@ export function AiSettings() {
         <Button loading={testing} onClick={() => void handleTest()}>
           测试连接
         </Button>
+        {hasKey && !keyInput ? (
+          <Button danger loading={saving} onClick={() => void handleClearKey()}>
+            清除密钥
+          </Button>
+        ) : null}
       </Space>
       <Paragraph className="quiet-note" style={{ marginTop: 8, marginBottom: 0 }}>
         API Key 用系统密钥加密保存，不会回显；测试连接使用已保存的配置。

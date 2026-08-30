@@ -86,6 +86,12 @@ export function ReviewDrawer({ open, onClose, papers, onSaveMarkdown }: ReviewDr
     setPhase('preview');
   }, [open, phase, papers]);
 
+  // 预览阶段筛选结果变化时同步刷新素材计数，避免停留时显示过期数据
+  useEffect(() => {
+    if (!open || phase !== 'preview') return;
+    setDigest(buildReviewDigest(papers));
+  }, [open, phase, papers]);
+
   // 卸载时退订流式事件
   useEffect(() => () => unsubscribeStream(), []);
 

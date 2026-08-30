@@ -7,7 +7,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { DownloadOutlined, FileTextOutlined } from '@ant-design/icons';
+import { DownloadOutlined, FileTextOutlined, TableOutlined } from '@ant-design/icons';
 import type { Paper } from '../../types/paperApp';
 
 const { Paragraph } = Typography;
@@ -143,7 +143,7 @@ export function QualityDrawer({
                 导出 Markdown
               </Button>
             </Tooltip>
-            <Button block icon={<DownloadOutlined />} onClick={onExportMatrix}>
+            <Button block icon={<TableOutlined />} onClick={onExportMatrix}>
               导出文献矩阵
             </Button>
             <Button block onClick={onExportLibrary}>

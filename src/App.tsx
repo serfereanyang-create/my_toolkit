@@ -1284,7 +1284,7 @@ function App() {
             open={activeDrawer === 'review'}
             onClose={closeDrawer}
             papers={filteredPapers}
-            onSaveMarkdown={(name, content) => { void saveMarkdownFile(name, content); }}
+            onSaveMarkdown={(name, content) => { void saveMarkdownFile(name, content, '综述'); }}
           />
 
           <AccountDrawer
