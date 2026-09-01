@@ -1,5 +1,38 @@
 import type { AgentEvent, AutomationRun, AutomationTask, DesktopSettings, TreeNode, SessionMeta, SessionRecord, ReasoningEffort, ToolScope } from '../types';
 
+export type LanguageRange = { line: number; column: number; endLine: number; endColumn: number };
+
+export type LanguageHoverResult = {
+  ok: boolean;
+  result?: { type: string; documentation: string; path: string; range: LanguageRange } | null;
+  error?: string;
+};
+
+export type LanguageDefinitionResult = {
+  ok: boolean;
+  result?: Array<{ path: string; range: LanguageRange }>;
+  error?: string;
+};
+
+export type LanguageReference = {
+  path: string;
+  range: LanguageRange;
+  isDefinition: boolean;
+  lineText: string;
+};
+
+export type LanguageReferencesResult = {
+  ok: boolean;
+  result?: LanguageReference[];
+  error?: string;
+};
+
+export type LanguageCompletionsResult = {
+  ok: boolean;
+  result?: Array<{ label: string; kind: string; detail?: string; insertText: string }>;
+  error?: string;
+};
+
 export type AttachedFile = {
   path: string;
   name: string;
@@ -128,6 +161,12 @@ type ZCodeDesktopApi = {
   fim: {
     complete(req: { prefix: string; suffix: string; language?: string; filepath?: string; maxTokens?: number }): Promise<{ ok: boolean; insert?: string; latencyMs?: number; truncated?: boolean; error?: string }>;
     configure(opts: { provider?: string; apiKey?: string; baseUrl?: string; model?: string; maxTokens?: number }): Promise<{ ok: boolean; error?: string }>;
+  };
+  language: {
+    hover(req: { workspaceRoot: string; path: string; line: number; column: number }): Promise<LanguageHoverResult>;
+    definition(req: { workspaceRoot: string; path: string; line: number; column: number }): Promise<LanguageDefinitionResult>;
+    references(req: { workspaceRoot: string; path: string; line: number; column: number }): Promise<LanguageReferencesResult>;
+    completions(req: { workspaceRoot: string; path: string; line: number; column: number }): Promise<LanguageCompletionsResult>;
   };
   git: {
     status(): Promise<GitStatus>;

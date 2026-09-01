@@ -20,6 +20,7 @@ import { TerminalFloat } from './components/TerminalFloat';
 import { Welcome } from './components/Welcome';
 import { desktop } from './lib/ipc';
 import { appReducer, initialState, languageForPath, sessionChangeTotals, activeTurnProgress, sessionToChat } from './lib/state';
+import { setLanguageWorkspaceRoot } from './lib/languageProviders';
 import type { MentionItem } from './components/MentionPicker';
 import type { ApprovalMode, PreviewFileDescriptor, ProjectDescriptor, ReasoningEffort, SessionMeta, ThemeMode, ToolScope } from './types';
 
@@ -73,6 +74,7 @@ export default function App() {
     // Auto-restore the last workspace (or fall back to home) so the app opens
     // straight into a project instead of forcing a folder picker every launch.
     desktop.workspace.restore().then(async ({ root }) => {
+      setLanguageWorkspaceRoot(root);
       dispatch({ type: 'workspace/opened', root });
       try {
         const tree = await desktop.workspace.getTree('.');
@@ -175,6 +177,7 @@ export default function App() {
     const result = await desktop.workspace.open();
     if (!result.canceled && result.root) {
       resetEditorTabs();
+      setLanguageWorkspaceRoot(result.root);
       dispatch({ type: 'workspace/opened', root: result.root });
       const tree = await desktop.workspace.getTree('.');
       dispatch({ type: 'tree/loaded', tree });

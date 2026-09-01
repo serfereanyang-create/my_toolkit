@@ -5,6 +5,7 @@ import { editorContext } from '../../lib/editorContext';
 import { GhostTextRenderer } from '../../lib/ghostText';
 import { CompletionTrigger } from '../../lib/completionTrigger';
 import { InlineEditWidget } from '../../lib/inlineEdit';
+import { registerLanguageProviders } from '../../lib/languageProviders';
 import { desktop } from '../../lib/ipc';
 
 export interface MonacoEditorProps {
@@ -21,6 +22,7 @@ export function MonacoEditor({ value, language, path, onChange, theme = 'vs-dark
   const ghostRendererRef = useRef<GhostTextRenderer | null>(null);
   const triggerRef = useRef<CompletionTrigger | null>(null);
   const inlineEditRef = useRef<InlineEditWidget | null>(null);
+  const languageDisposableRef = useRef<(() => void) | null>(null);
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
 
   // Inline "agent changed these lines" highlights: fetch changed ranges from
@@ -55,6 +57,12 @@ export function MonacoEditor({ value, language, path, onChange, theme = 'vs-dark
 
     // 初始化上下文追踪
     editorContext.setEditor(editor, monaco, path);
+
+    // Register real language providers (hover, go-to-def, find-refs) for TS/JS
+    const model = editor.getModel();
+    if (model) {
+      languageDisposableRef.current = registerLanguageProviders(monaco, model) ?? null;
+    }
 
     // 初始化幽灵文本渲染器
     ghostRendererRef.current = new GhostTextRenderer(editor, monaco);
@@ -130,6 +138,7 @@ export function MonacoEditor({ value, language, path, onChange, theme = 'vs-dark
       triggerRef.current?.stop();
       ghostRendererRef.current?.hide();
       inlineEditRef.current?.hide();
+      languageDisposableRef.current?.();
       editorContext.dispose();
     };
   }, []);

@@ -144,8 +144,14 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     readSymbolContext:(filePath, line)      => ipcRenderer.invoke('nav.readSymbolContext', filePath, line),
   },
   fim: {
-    complete:   (req)  => ipcRenderer.invoke('fim.complete',  req),
+    complete:   (req) => ipcRenderer.invoke('fim.complete',  req),
     configure:  (opts) => ipcRenderer.invoke('fim.configure', opts),
+  },
+  language: {
+    hover:       (req) => ipcRenderer.invoke('language.hover', req),
+    definition:  (req) => ipcRenderer.invoke('language.definition', req),
+    references:  (req) => ipcRenderer.invoke('language.references', req),
+    completions: (req) => ipcRenderer.invoke('language.completions', req),
   },
   git: {
     status:       ()                           => ipcRenderer.invoke('git.status'),

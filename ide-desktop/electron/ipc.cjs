@@ -14,7 +14,7 @@ async function isDirectory(target) {
   }
 }
 
-function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService }) {
+function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer }) {
   async function materializePersona(root) {
     try {
       const config = await settings.get();
@@ -599,6 +599,51 @@ Edited code:`;
       const srv = await ensureFimServer();
       srv.configure(opts);
       return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // ── Language intelligence (hover / go-to-def / find-refs / completions) ────
+  ipcMain.handle('language.hover', async (_event, req) => {
+    try {
+      if (!ensureLanguageServer) return { ok: false, error: 'Language server not configured' };
+      const srv = await ensureLanguageServer();
+      const result = await srv.query('hover', req);
+      return { ok: true, result };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('language.definition', async (_event, req) => {
+    try {
+      if (!ensureLanguageServer) return { ok: false, error: 'Language server not configured' };
+      const srv = await ensureLanguageServer();
+      const result = await srv.query('definition', req);
+      return { ok: true, result };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('language.references', async (_event, req) => {
+    try {
+      if (!ensureLanguageServer) return { ok: false, error: 'Language server not configured' };
+      const srv = await ensureLanguageServer();
+      const result = await srv.query('references', req);
+      return { ok: true, result };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('language.completions', async (_event, req) => {
+    try {
+      if (!ensureLanguageServer) return { ok: false, error: 'Language server not configured' };
+      const srv = await ensureLanguageServer();
+      const result = await srv.query('completions', req);
+      return { ok: true, result };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

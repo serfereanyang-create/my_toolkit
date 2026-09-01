@@ -20,6 +20,7 @@ const { registerSchemePrivileges } = require('./preview-protocol.cjs');
 const { createPreviewService } = require('./preview-service.cjs');
 const { createPreviewRuntime } = require('./preview-runtime.cjs');
 const { createFimServer } = require('./fim-server.cjs');
+const { createLanguageServer } = require('./language-server.cjs');
 const { CompletionService } = require('./completion-service.cjs');
 
 // Register custom scheme BEFORE app.ready (required by Electron)
@@ -206,12 +207,20 @@ function createWindow() {
   async function ensureFimServer() {
     if (fimServer) return fimServer;
     const config = await settings.get();
-    const providerConfig = config.providers.find((item) => item.id === config.activeProviderId) || config.providers[0];
-    const apiKey = providerConfig.type === 'mock' ? '' : await secrets.getApiKey(providerConfig.id).catch(() => '');
+    const providerConfig = config.providers?.[config.preferences?.defaultProvider || 'openai'] || {};
+    const apiKey = providerConfig.apiKey || process.env.OPENAI_API_KEY || '';
     const fimModel = config.preferences?.fimModel || providerConfig.model;
     const fimProvider = providerConfig.type === 'mock' ? 'openai' : (providerConfig.apiFormat ?? providerConfig.type ?? 'openai');
     fimServer = createFimServer({ cliRoot, provider: fimProvider, apiKey, baseUrl: providerConfig.baseUrl || '', model: fimModel });
     return fimServer;
+  }
+
+  // Language server: boot on first hover/definition/references request
+  let languageServer = null;
+  async function ensureLanguageServer() {
+    if (languageServer) return languageServer;
+    languageServer = createLanguageServer({ cliRoot });
+    return languageServer;
   }
 
   terminalManager.on('event', (event) => {
@@ -229,8 +238,9 @@ function createWindow() {
     previewService.dispose();
     void previewRuntime.stopAll();
     if (fimServer) { fimServer.stop(); fimServer = null; }
+    if (languageServer) { languageServer.stop(); languageServer = null; }
   });
-  registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService });
+  registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   const loadPromise = devUrl
