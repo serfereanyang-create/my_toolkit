@@ -9,18 +9,11 @@ import {
 } from 'antd';
 import { DownloadOutlined, FileTextOutlined, TableOutlined } from '@ant-design/icons';
 import type { Paper } from '../../types/paperApp';
+import { DEFAULT_CHECKLIST_ITEMS } from '../../lib/checklistItems';
 
 const { Paragraph } = Typography;
 
-export const DEFAULT_CHECKLIST_ITEMS = [
-  '研究问题明确',
-  '方法可复现',
-  '样本/数据说明完整',
-  '统计或评估指标清楚',
-  '图表来源可追踪',
-  '局限性已记录',
-  '引用字段完整',
-] as const;
+export { DEFAULT_CHECKLIST_ITEMS };
 
 export type QualityDrawerProps = {
   open: boolean;
