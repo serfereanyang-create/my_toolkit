@@ -18,6 +18,7 @@ import { PaperLibrary } from './components/paper/PaperLibrary';
 import { PaperWorkspace } from './components/paper/PaperWorkspace';
 import { QualityDrawer, DEFAULT_CHECKLIST_ITEMS } from './components/paper/QualityDrawer';
 import { ReviewDrawer } from './components/paper/ReviewDrawer';
+import { StatsDrawer } from './components/paper/StatsDrawer';
 import { inspectCitation } from './lib/citationIssues';
 import { buildLiteratureMatrix } from './lib/literatureMatrix';
 import type { AiReviewApi } from './lib/reviewDigest';
@@ -702,6 +703,11 @@ function App() {
     setActiveDrawer((prev) => nextActiveDrawer(prev, 'review'));
   }
 
+  function openStatsDrawer() {
+    setSettingsOpen(false);
+    setActiveDrawer((prev) => nextActiveDrawer(prev, 'stats'));
+  }
+
   function closeDrawer() {
     setActiveDrawer(null);
   }
@@ -1138,6 +1144,7 @@ function App() {
     { key: 'export-markdown', label: '导出 Markdown', onClick: () => { void exportMarkdown(); } },
     { key: 'review', label: '生成综述', onClick: openReviewDrawer },
     { key: 'matrix', label: '导出文献矩阵', onClick: () => { void exportMatrix(); } },
+    { key: 'stats', label: '统计概览', onClick: openStatsDrawer },
     { key: 'reset-samples', label: '恢复示例', onClick: resetSamples },
     { type: 'divider' as const },
     {
@@ -1264,7 +1271,17 @@ function App() {
             onExportMarkdown={() => { void exportMarkdown(); }}
             onExportLibrary={() => { void exportLibrary(); }}
             onOpenReview={openReviewDrawer}
+            onOpenStats={openStatsDrawer}
             onExportMatrix={() => { void exportMatrix(); }}
+          />
+
+          <StatsDrawer
+            open={activeDrawer === 'stats'}
+            onClose={closeDrawer}
+            papers={papers}
+            accentColor={themeTokens.accent}
+            textColor={themeTokens.textSecondary}
+            borderColor={themeTokens.border}
           />
 
           <ReviewDrawer

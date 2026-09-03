@@ -1,5 +1,5 @@
 export type AppTheme = 'cool' | 'paper' | 'dark';
-export type ActiveDrawer = 'quality' | 'account' | 'review' | null;
+export type ActiveDrawer = 'quality' | 'account' | 'review' | 'stats' | null;
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
 export type SessionStatus = 'loading' | 'authenticated' | 'anonymous';
 

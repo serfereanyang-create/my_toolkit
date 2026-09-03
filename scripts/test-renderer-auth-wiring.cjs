@@ -2,8 +2,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
-const uiStateSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'uiState.ts'), 'utf8');
+const root = path.join(__dirname, '..');
+const source = fs.readFileSync(path.join(root, 'src', 'App.tsx'), 'utf8');
+const uiState = fs.readFileSync(path.join(root, 'src', 'lib', 'uiState.ts'), 'utf8');
 
 for (const marker of [
   'AuthUser',
@@ -37,18 +38,20 @@ for (const marker of [
   "message.warning('请先登录账户')",
   "className={libraryCollapsed ? 'workbench-body library-collapsed' : 'workbench-body'}",
   'ReviewDrawer',
+  'StatsDrawer',
   'AiSettings',
   'exportMatrix',
   "label: '生成综述'",
   "label: '导出文献矩阵'",
+  "label: '统计概览'",
   "'review'",
 ]) {
   assert.ok(source.includes(marker), `renderer is missing: ${marker}`);
 }
 
 assert.ok(
-  uiStateSource.includes("'quality' | 'account' | 'review' | null"),
-  'ActiveDrawer should be widened with review',
+  uiState.includes("'quality' | 'account' | 'review' | 'stats' | null"),
+  'ActiveDrawer missing stats',
 );
 
 assert.ok(!source.includes('className="quality-panel"'), 'fixed quality sider should be removed');

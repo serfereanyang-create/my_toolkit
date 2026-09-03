@@ -7,7 +7,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { DownloadOutlined, FileTextOutlined, TableOutlined } from '@ant-design/icons';
+import { DownloadOutlined, FileTextOutlined, PieChartOutlined, TableOutlined } from '@ant-design/icons';
 import type { Paper } from '../../types/paperApp';
 import { DEFAULT_CHECKLIST_ITEMS } from '../../lib/checklistItems';
 
@@ -29,6 +29,7 @@ export type QualityDrawerProps = {
   onExportMarkdown: () => void;
   onExportLibrary: () => void;
   onOpenReview: () => void;
+  onOpenStats: () => void;
   onExportMatrix: () => void;
 };
 
@@ -46,6 +47,7 @@ export function QualityDrawer({
   onExportMarkdown,
   onExportLibrary,
   onOpenReview,
+  onOpenStats,
   onExportMatrix,
 }: QualityDrawerProps) {
   const completedChecks = selected
@@ -125,6 +127,9 @@ export function QualityDrawer({
             支持 BibTeX、RIS、PubMed NBIB、CNKI 文本和 CSV/TSV。
           </Paragraph>
           <div className="inspector-actions">
+            <Button block icon={<PieChartOutlined />} onClick={onOpenStats}>
+              统计概览
+            </Button>
             <Button block type="primary" onClick={onImportReferences}>
               导入文献
             </Button>
