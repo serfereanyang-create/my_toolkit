@@ -30,14 +30,26 @@ export function modelReasoningCapability(provider: ProviderConfig | undefined): 
   if (vendor === 'zhipu' || /glm[-_]?5\.3/.test(model)) {
     return { mode: 'tiers', supported: true, options: ['auto', 'max', 'high', 'low'], nativeField: 'reasoning_effort', description: 'GLM-5.3 思考始终开启，不能关闭。' , alwaysOn: true };
   }
-  if (vendor === 'deepseek' || /deepseek.*(reasoner|r1|v4)/.test(model)) {
-    return { mode: 'tiers', supported: true, options: ['auto', 'max', 'high', 'low'], nativeField: 'reasoning_effort', description: 'DeepSeek 推理模型不提供关闭选项。', alwaysOn: true };
+  if (vendor === 'deepseek' || model.includes('deepseek')) {
+    // deepseek-reasoner 固定推理不能关闭；deepseek-chat 没有推理
+    if (/deepseek.*(reasoner|r1|v3\.2|thinking)/.test(model)) {
+      return { mode: 'tiers', supported: true, options: ['auto', 'max', 'high', 'low'], nativeField: 'reasoning_effort', description: 'DeepSeek 推理模型固定输出思考，不提供关闭选项（思考内容自动展示）。', alwaysOn: true };
+    }
+    return { mode: 'toggle', supported: false, options: ['auto', 'off'], nativeField: 'none', description: 'DeepSeek 非推理模型（chat/V3）不输出思考过程。' };
   }
-  if (vendor === 'moonshot' || /kimi[-_]?k3|kimi[-_]?k2\.7/.test(model)) {
-    return { mode: 'tiers', supported: true, options: ALWAYS_TIERS, nativeField: 'reasoning_effort', description: 'Kimi 当前推理模型始终开启。', alwaysOn: true };
+  if (vendor === 'moonshot' || /kimi/i.test(model)) {
+    // kimi-k2-thinking 固定推理；k2 非思考系没有推理
+    if (/kimi[-_]?k2[^a-z0-9]*(thinking|reasoning)|kimi[-_]?k2\.5/.test(model)) {
+      return { mode: 'tiers', supported: true, options: ALWAYS_TIERS, nativeField: 'reasoning_effort', description: 'Kimi 思考模型固定开启推理，思考内容自动展示。', alwaysOn: true };
+    }
+    return { mode: 'toggle', supported: false, options: ['auto', 'off'], nativeField: 'none', description: 'Kimi K2 非思考模型不输出推理过程。' };
   }
-  if (vendor === 'xai' || /grok[-_]?(3|4)/.test(model)) {
-    return { mode: 'tiers', supported: true, options: ['auto', 'max', 'high', 'medium', 'low', 'off'], nativeField: 'reasoning_effort', description: 'xAI Grok 支持 none/low/medium/high/xhigh 映射。' };
+  if (vendor === 'xai' || /grok/i.test(model)) {
+    // grok-4 系固定推理；grok-3-mini 接受 low|high 两档
+    if (/grok[-_]?4/.test(model)) {
+      return { mode: 'tiers', supported: true, options: ['auto', 'max', 'high', 'low'], nativeField: 'reasoning_effort', description: 'Grok-4 固定推理，不接受档位参数（思考内容自动展示）。', alwaysOn: true };
+    }
+    return { mode: 'tiers', supported: true, options: ['auto', 'high', 'low', 'off'], nativeField: 'reasoning_effort', description: 'Grok-3 系接受 low/high 两档（中档自动映射到 high）。' };
   }
   if (vendor === 'anthropic' || format === 'anthropic' || format === 'anthropic-messages') {
     if (/claude-(3-5|3-haiku|3-sonnet)/.test(model)) return { mode: 'toggle', supported: false, options: ['auto', 'off'], nativeField: 'thinking', description: '该 Claude 型号未确认支持 extended thinking。' };

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Boxes, Eye, EyeOff, Pencil, Plus, Trash2, Check, X, Plug, Loader2 } from 'lucide-react';
-import type { ApiFormat, CustomModel, DesktopSettings, ProviderConfig } from '../../types';
+import type { ApiFormat, CustomModel, DesktopSettings, ProviderConfig, ProviderVendor } from '../../types';
 import { desktop } from '../../lib/ipc';
 import type { ConnectivityResult } from '../../lib/ipc';
 import { SelectPill, TextField, EmptyState } from './controls';
@@ -19,7 +19,7 @@ const API_FORMAT_OPTIONS: { value: ApiFormat; label: string }[] = [
   { value: 'gemini-generative', label: 'Gemini Generative (/generateContent)' },
 ];
 
-const VENDOR_OPTIONS = [
+const VENDOR_OPTIONS: { value: ProviderVendor; label: string }[] = [
   { value: 'custom', label: '自定义' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'anthropic', label: 'Anthropic' },
@@ -28,7 +28,32 @@ const VENDOR_OPTIONS = [
   { value: 'zhipu', label: 'GLM / 智谱' },
   { value: 'moonshot', label: 'Kimi / Moonshot' },
   { value: 'deepseek', label: 'DeepSeek' },
-] as const;
+];
+
+/**
+ * 厂商预设：选择厂商一键填充官方端点、协议格式和常用模型目录。
+ * CLI 侧会按端点/模型自动识别厂商并应用推理参数适配。
+ */
+const VENDOR_PRESETS: Record<string, { baseUrl: string; apiFormat: ApiFormat; models: string[] }> = {
+  openai: { baseUrl: 'https://api.openai.com/v1', apiFormat: 'openai-chat', models: ['gpt-5.5', 'gpt-5-mini', 'o4-mini'] },
+  anthropic: { baseUrl: 'https://api.anthropic.com/v1', apiFormat: 'anthropic-messages', models: ['claude-sonnet-4-5', 'claude-opus-4-1', 'claude-haiku-4-5'] },
+  google: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta', apiFormat: 'gemini-generative', models: ['gemini-2.5-pro', 'gemini-2.5-flash'] },
+  xai: { baseUrl: 'https://api.x.ai/v1', apiFormat: 'openai-chat', models: ['grok-4-fast', 'grok-4', 'grok-3-mini'] },
+  zhipu: { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiFormat: 'openai-chat', models: ['glm-5.3', 'glm-4.6', 'glm-4.5-air'] },
+  moonshot: { baseUrl: 'https://api.moonshot.cn/v1', apiFormat: 'openai-chat', models: ['kimi-k2-thinking', 'kimi-k2-turbo-preview', 'kimi-k2-0905-preview'] },
+  deepseek: { baseUrl: 'https://api.deepseek.com/v1', apiFormat: 'openai-chat', models: ['deepseek-chat', 'deepseek-reasoner'] },
+};
+
+function applyVendorPreset(vendor: ProviderVendor): Partial<ProviderConfig> {
+  const preset = VENDOR_PRESETS[vendor];
+  if (!preset) return { vendor };
+  return {
+    vendor,
+    baseUrl: preset.baseUrl,
+    apiFormat: preset.apiFormat,
+    models: preset.models.map((id) => ({ id })),
+  };
+}
 
 function newProviderId() {
   return `custom_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -201,6 +226,15 @@ function ProviderDetail({ provider, isActiveForChat, onChange, onSaveKey, onRemo
           <button className="settings-icon-btn" aria-label="删除供应商" onClick={onRemove}><Trash2 size={16} /></button>
         </div>
       </div>
+
+      <label className="model-field">
+        <span className="model-field-label">厂商预设</span>
+        <SelectPill
+          value={provider.vendor ?? 'custom'}
+          onChange={(vendor) => onChange(applyVendorPreset(vendor as ProviderVendor))}
+          options={VENDOR_OPTIONS}
+        />
+      </label>
 
       <label className="model-field">
         <span className="model-field-label">Base URL</span>
