@@ -140,6 +140,7 @@ export async function runTaskBoardLoop(options: {
   store: TaskBoardStore;
   sessions: SessionStore;
   session: SessionRecord;
+  runtime?: import('../agent/agent.js').AgentRuntime;
   maxTasks?: number;
   runTurn: (prompt: string, gitSafetyUnit?: GitUnitContext) => Promise<TaskTurnResult>;
   onInfo?: (message: string) => void;
@@ -147,6 +148,7 @@ export async function runTaskBoardLoop(options: {
   confirm?: (message: string) => Promise<boolean>;
   verifyRunner?: VerifyRunner;
   verifyEnabled?: boolean;
+  onUpdate?: (board: TaskBoard) => void;
 }) {
   const maxTasks = options.maxTasks ?? options.board.tasks.length + 2;
   let executed = 0;
@@ -182,6 +184,7 @@ export async function runTaskBoardLoop(options: {
     };
     await options.store.save(options.board);
     await options.sessions.save(options.session);
+    options.onUpdate?.(options.board);
 
     let memories: ProjectMemoryEntry[] = [];
     try {
@@ -196,6 +199,38 @@ export async function runTaskBoardLoop(options: {
     }
 
     options.onInfo?.(`Running ${task.id}: ${task.title}`);
+    
+    // 专家路由与工具集定制
+    let expertRouting: import('../experts/types.js').ExpertRoutingResult | undefined;
+    let savedTools: import('../tools/registry.js').ToolRegistry | undefined;
+    let savedScope: import('../tools/scope.js').ResolvedToolScope | undefined;
+    
+    if (options.runtime) {
+      const { routeTaskToExpert } = await import('../experts/router.js');
+      const { ToolRegistry } = await import('../tools/registry.js');
+      
+      expertRouting = routeTaskToExpert({
+        task,
+        board: options.board,
+        workspaceRoot: options.session.workspaceRoot,
+      });
+      
+      options.onInfo?.(`[Expert: ${expertRouting.profile.name}, confidence: ${expertRouting.confidence.toFixed(2)}]`);
+      
+      // 定制工具集
+      const allTools = (options.runtime.allTools ?? options.runtime.tools).list();
+      const expertTools = allTools.filter(expertRouting.profile.toolFilter);
+      const expertToolRegistry = ToolRegistry.fromTools(expertTools);
+      
+      // 临时覆盖 runtime
+      savedTools = options.runtime.tools;
+      savedScope = options.runtime.resolvedToolScope;
+      options.runtime.tools = expertToolRegistry;
+      if (expertRouting.profile.toolScopeOverride) {
+        options.runtime.resolvedToolScope = expertRouting.profile.toolScopeOverride;
+      }
+    }
+    
     const unit = options.gitSafety
       ? await options.gitSafety.startUnit({
         kind: 'task',
@@ -211,7 +246,20 @@ export async function runTaskBoardLoop(options: {
     let turn: TaskTurnResult;
     let outcome: GitUnitOutcome = 'done';
     try {
-      turn = await options.runTurn(buildTaskPrompt(options.board, task, memories), unit);
+      // 构建任务 prompt，如果有专家则追加专家系统提示
+      const basePrompt = buildTaskPrompt(options.board, task, memories);
+      const taskPrompt = expertRouting
+        ? `${basePrompt}\n\n${expertRouting.profile.systemPrompt}`
+        : basePrompt;
+      
+      turn = await options.runTurn(taskPrompt, unit);
+      
+      // 记录专家信息
+      if (expertRouting) {
+        task.expertId = expertRouting.profile.id;
+        task.expertConfidence = expertRouting.confidence;
+      }
+      
       const completion = detectTaskCompletion({
         ok: turn.ok,
         finalAnswer: turn.finalAnswer ?? turn.reason ?? '',
@@ -242,6 +290,7 @@ export async function runTaskBoardLoop(options: {
           return { ok: false, status: 'blocked' as const, reason: verified.reason };
         }
         executed += 1;
+        options.onUpdate?.(options.board);
         continue;
       }
 
@@ -261,6 +310,7 @@ export async function runTaskBoardLoop(options: {
       });
       await options.sessions.save(options.session);
       options.onInfo?.(`Blocked on ${task.id}: ${completion.error}`);
+      options.onUpdate?.(options.board);
       outcome = turn.outcome ?? (turn.hadTerminalFailure ? 'failed' : 'blocked');
       if (unit && options.gitSafety) await options.gitSafety.finishUnit(unit, outcome);
       return { ok: false, status: 'blocked' as const, reason: completion.error };
@@ -279,6 +329,14 @@ export async function runTaskBoardLoop(options: {
       if (unit && options.gitSafety) await options.gitSafety.finishUnit(unit, 'failed');
       options.onInfo?.(`Blocked on ${task.id}: ${message}`);
       return { ok: false, status: 'blocked' as const, reason: message };
+    } finally {
+      // 恢复原 tools/scope
+      if (options.runtime && savedTools) {
+        options.runtime.tools = savedTools;
+        if (savedScope) {
+          options.runtime.resolvedToolScope = savedScope;
+        }
+      }
     }
   }
 

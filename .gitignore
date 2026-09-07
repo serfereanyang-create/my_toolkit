@@ -25,3 +25,10 @@ Thumbs.db
 *.tsbuildinfo
 coverage/
 .nyc_output/
+
+# security scanner history / local diagnostics (never commit)
+.mimosa/
+**/.mimosa/
+NUL
+_diag-net.mjs
+fireworks.html

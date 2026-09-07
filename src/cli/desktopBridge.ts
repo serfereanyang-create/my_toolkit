@@ -1,24 +1,38 @@
 import { createInterface } from 'node:readline';
 import type { AgentRuntime } from '../agent/agent.js';
-import { runPromptMode } from './repl.js';
-import type { ApprovalDecision, ApprovalRequest } from '../tools/types.js';
+import { prepareSubmittedUserTurn, runAutomationGoal, runGuardedAgentTurn, runPromptMode } from './repl.js';
+import { DesktopApprovalBroker } from './approvalBroker.js';
+import type { ReasoningEffort } from '../providers/types.js';
+import type { ToolScope } from '../tools/scope.js';
 
 type BridgeCommand =
-  | { type: 'user_message'; text: string; sessionId?: string }
+  | { type: 'user_message'; text: string; sessionId?: string; reasoningEffort?: ReasoningEffort; toolScope?: ToolScope; files?: Array<{ path: string; name: string; size: number }> }
+  | { type: 'automation_task'; taskId: string; goal: string }
   | { type: 'approval_response'; requestId: string; decision: 'allow_once' | 'allow_session' | 'deny' }
+  | { type: 'set_effort'; reasoningEffort: ReasoningEffort }
+  | { type: 'set_tool_scope'; toolScope: ToolScope }
   | { type: 'cancel'; sessionId?: string }
+  | { type: 'undo'; undoId: string; checkpointIds: string[] }
   | { type: 'shutdown' }
+  | { type: 'task_board_action'; action: 'confirm' | 'pause' | 'continue' | 'skip' | 'reopen'; taskId?: string }
   | { type: 'ping' };
 
-type PendingApproval = {
-  request: ApprovalRequest;
-  resolve: (decision: ApprovalDecision) => void;
+export type BridgeRunOptions = {
+  /** Readable stream carrying newline-delimited bridge commands. Defaults to stdin. */
+  input?: NodeJS.ReadableStream;
+  /** Event sink. Defaults to writing newline-delimited JSON to stdout. */
+  emit?: (event: Record<string, unknown>) => void;
+  /**
+   * Approval deadline in milliseconds. Tests inject a short value; production
+   * falls back to the broker default (2 minutes). 0 disables the deadline.
+   */
+  approvalTimeoutMs?: number;
 };
 
 /**
  * Run the CLI in desktop bridge mode.
  *
- * Wire protocol (both directions are newline-delimited JSON on stdin/stdout):
+ * Wire protocol (both directions are newline-delimited JSON):
  *
  *   stdin  commands:  user_message, approval_response, cancel, shutdown, ping
  *   stdout events:    bridge_ready, turn_start, assistant_delta, assistant,
@@ -30,12 +44,30 @@ type PendingApproval = {
  * `approval_needed` events and blocks until the desktop shell posts a
  * matching `approval_response`. It reuses `runPromptMode` so slash commands
  * behave identically to the CLI REPL.
+ *
+ * Injecting `input`/`emit` lets tests drive the whole bridge in-process; the
+ * production entry passes nothing and uses stdin/stdout.
  */
-export async function runDesktopBridge(runtime: AgentRuntime) {
-  const broker = new DesktopApprovalBroker(runtime.session.id);
+export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRunOptions = {}) {
+  const emitEvent = options.emit ?? emit;
+  const broker = new DesktopApprovalBroker(runtime.session.id, { emit: emitEvent, timeoutMs: options.approvalTimeoutMs });
   runtime.toolConfirm = broker.confirm.bind(broker);
+  runtime.taskBoardEmit = (board: any) => {
+    const tasks = Array.isArray(board.tasks) ? board.tasks : [];
+    emitEvent({
+      type: 'task_board_updated',
+      sessionId: runtime.session.id,
+      boardId: board.id,
+      title: board.title,
+      goal: board.goal,
+      status: board.status,
+      runtimeMode: runtime.session.taskRuntime?.mode ?? 'idle',
+      activeTaskId: tasks.find((task: any) => task.status === 'in_progress')?.id,
+      tasks,
+    });
+  };
 
-  emit({
+  emitEvent({
     type: 'bridge_ready',
     sessionId: runtime.session.id,
     provider: runtime.provider.name,
@@ -44,8 +76,14 @@ export async function runDesktopBridge(runtime: AgentRuntime) {
     workspaceRoot: runtime.config.workspaceRoot,
   });
 
-  const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  const rl = createInterface({ input: options.input ?? process.stdin, crlfDelay: Infinity });
   let busy = false;
+  // The in-flight turn runs detached from the read loop so that
+  // `approval_response` lines can still be read and delivered to the broker
+  // while a turn is awaiting an interactive approval. Awaiting the turn inside
+  // the loop would deadlock: the turn blocks on an approval that can only
+  // arrive on a line this same loop must read.
+  let activeTurn: Promise<void> = Promise.resolve();
 
   try {
     for await (const line of rl) {
@@ -56,121 +94,169 @@ export async function runDesktopBridge(runtime: AgentRuntime) {
       try {
         command = JSON.parse(trimmed) as BridgeCommand;
       } catch (error) {
-        emit({ type: 'error', sessionId: runtime.session.id, message: `Invalid bridge JSON: ${errorMessage(error)}` });
+        emitEvent({ type: 'error', sessionId: runtime.session.id, message: `Invalid bridge JSON: ${errorMessage(error)}` });
         continue;
       }
 
       if (command.type === 'shutdown') break;
       if (command.type === 'ping') {
-        emit({ type: 'pong', sessionId: runtime.session.id });
+        emitEvent({ type: 'pong', sessionId: runtime.session.id });
         continue;
       }
       if (command.type === 'approval_response') {
         broker.resolve(command.requestId, command.decision);
         continue;
       }
+      if (command.type === 'set_effort') {
+        // Live-update the reasoning effort for subsequent turns without
+        // respawning the child. Applied to the runtime the agent loop reads.
+        runtime.reasoningEffort = command.reasoningEffort;
+        emitEvent({ type: 'effort_set', sessionId: runtime.session.id, reasoningEffort: command.reasoningEffort });
+        continue;
+      }
+      if (command.type === 'task_board_action') {
+        emitEvent({ type: 'info', sessionId: runtime.session.id, message: `任务计划操作：${command.action}${command.taskId ? ` ${command.taskId}` : ''}` });
+        // TaskBoard command execution is routed through the existing slash-command
+        // implementation to keep one authoritative state machine.
+        const slash = command.action === 'confirm' ? '/plan confirm'
+          : command.action === 'pause' ? '/plan pause'
+          : command.action === 'continue' ? '/plan continue'
+          : command.action === 'skip' ? `/plan skip ${command.taskId ?? ''}`
+          : `/plan reopen ${command.taskId ?? ''}`;
+        if (busy) { emitEvent({ type: 'error', sessionId: runtime.session.id, message: 'Agent turn already running' }); continue; }
+        busy = true;
+        activeTurn = (async () => {
+          try {
+            await runPromptMode(runtime, slash);
+            // Pair the renderer-facing turn lifecycle: runPromptMode may run
+            // agent turns internally (each emitting its own turn_start) but
+            // never emits turn_done itself. Without this the UI would keep a
+            // turn card "running" forever after a task-board action.
+            emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'ok' });
+          } catch (error) {
+            emitEvent({ type: 'error', sessionId: runtime.session.id, message: errorMessage(error) });
+            emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'error' });
+          } finally { busy = false; }
+        })();
+        continue;
+      }
+      if (command.type === 'set_tool_scope') {
+        runtime.toolScope = command.toolScope;
+        emitEvent({ type: 'tool_scope_set', sessionId: runtime.session.id, toolScope: command.toolScope });
+        continue;
+      }
       if (command.type === 'cancel') {
         // Cooperative cancel is not yet supported by the agent loop; the desktop
         // should terminate and respawn the child to interrupt an in-flight turn.
-        emit({
+        // Denying pending approvals here keeps the turn from hanging on an
+        // approval that can never be answered once the shell tears the bridge
+        // down (belt-and-braces alongside the desktop-side kill).
+        broker.denyAll('已取消当前执行');
+        emitEvent({
           type: 'cancel_ack',
           sessionId: runtime.session.id,
           note: 'Desktop should terminate and restart the child process for active turns.',
         });
         continue;
       }
-      if (command.type === 'user_message') {
+      if (command.type === 'undo') {
+        // Revert one turn's worth of file writes by their checkpoint ids. This
+        // uses the real CheckpointStore backups, so files are restored to their
+        // exact pre-turn state (or deleted if they were newly created).
+        try {
+          const outcome = runtime.checkpoints
+            ? await runtime.checkpoints.undoByIds(command.checkpointIds)
+            : { reverted: 0, files: [] as string[] };
+          emitEvent({
+            type: 'undo_done',
+            sessionId: runtime.session.id,
+            undoId: command.undoId,
+            ok: outcome.reverted > 0,
+            reverted: outcome.reverted,
+            files: outcome.files,
+          });
+        } catch (error) {
+          emitEvent({ type: 'undo_done', sessionId: runtime.session.id, undoId: command.undoId, ok: false, reverted: 0, files: [], message: errorMessage(error) });
+        }
+        continue;
+      }
+      if (command.type === 'automation_task') {
         if (busy) {
-          emit({ type: 'error', sessionId: runtime.session.id, message: 'Agent turn already running' });
+          emitEvent({ type: 'automation_done', sessionId: runtime.session.id, taskId: command.taskId, status: 'busy', reason: 'Agent turn already running' });
           continue;
         }
         busy = true;
-        emit({ type: 'turn_start', sessionId: runtime.session.id, prompt: command.text });
-        try {
-          const result = await runPromptMode(runtime, command.text);
-          emit({
-            type: 'turn_done',
-            sessionId: runtime.session.id,
-            status: result.ok ? 'ok' : 'error',
-            reason: result.reason,
-          });
-        } catch (error) {
-          emit({ type: 'error', sessionId: runtime.session.id, message: errorMessage(error) });
-          emit({ type: 'turn_done', sessionId: runtime.session.id, status: 'error' });
-        } finally {
-          busy = false;
+        emitEvent({ type: 'automation_start', sessionId: runtime.session.id, taskId: command.taskId, goal: command.goal });
+        activeTurn = (async () => {
+          try {
+            const result = await runAutomationGoal(runtime, command.goal);
+            emitEvent({
+              type: 'automation_done',
+              sessionId: runtime.session.id,
+              taskId: command.taskId,
+              status: result.ok ? 'ok' : 'error',
+              reason: result.reason,
+            });
+            // Same pairing rationale as task_board_action: the automation goal
+            // runs agent turns internally; close the renderer-facing turn here.
+            emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: result.ok ? 'ok' : 'error' });
+          } catch (error) {
+            emitEvent({ type: 'automation_done', sessionId: runtime.session.id, taskId: command.taskId, status: 'error', reason: errorMessage(error) });
+            emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'error' });
+          } finally {
+            busy = false;
+          }
+        })();
+        continue;
+      }
+      if (command.type === 'user_message') {
+        if (busy) {
+          emitEvent({ type: 'error', sessionId: runtime.session.id, message: 'Agent turn already running' });
+          continue;
         }
+        busy = true;
+        const filePaths = (command.files ?? []).map((file) => file.path).filter((value): value is string => Boolean(value && value.trim()));
+        activeTurn = handleUserMessage(command, runtime, filePaths, emitEvent).finally(() => { busy = false; });
       }
     }
+    // The read loop ended (EOF or `shutdown`). Deny any approvals still pending
+    // BEFORE awaiting the turn — otherwise a turn blocked on an approval that
+    // can never be answered would keep `await activeTurn` (and this process)
+    // alive forever.
+    broker.denyAll('桥接正在关闭');
+    // Let any in-flight turn settle before tearing down stdin on EOF/shutdown.
+    await activeTurn;
   } finally {
-    // Closing readline and unref-ing stdin releases the event loop so a
-    // `shutdown` command (or EOF) lets the child process exit cleanly. Without
-    // this the piped stdin keeps the process — and any parent that spawned it —
-    // alive indefinitely.
+    // Closing readline releases the loop so a `shutdown` command (or EOF) lets
+    // the child process exit cleanly. Only pause/unref the REAL stdin — test
+    // streams must stay untouched for the caller.
     rl.close();
-    process.stdin.pause();
-    if (typeof process.stdin.unref === 'function') process.stdin.unref();
+    if ((options.input ?? process.stdin) === process.stdin) {
+      process.stdin.pause();
+      if (typeof process.stdin.unref === 'function') process.stdin.unref();
+    }
   }
 }
 
 /**
- * Desktop-side approval broker. Emits `approval_needed` events and awaits
- * matching `approval_response` commands. `allow_session` decisions are cached
- * for the lifetime of the bridge process so repeated write tools to the same
- * name skip re-prompting.
+ * Desktop-side bridge turn handler. The approval broker itself lives in
+ * `approvalBroker.ts` so its timeout/denyAll/session-scope behavior is unit
+ * testable without a real bridge process.
  */
-class DesktopApprovalBroker {
-  private readonly pending = new Map<string, PendingApproval>();
-  private readonly sessionAllows = new Set<string>();
-  private sequence = 0;
-
-  constructor(private readonly sessionId: string) {}
-
-  async confirm(message: string, request?: ApprovalRequest): Promise<ApprovalDecision> {
-    const approval: ApprovalRequest = request ?? {
-      tool: 'unknown',
-      risk: 'write',
-      input: {},
-      reason: 'interactive approval required',
-      message,
-    };
-    const allowKey = `${approval.risk}:${approval.tool}`;
-    if (approval.risk === 'write' && this.sessionAllows.has(allowKey)) return true;
-
-    this.sequence += 1;
-    const requestId = `approval_${Date.now()}_${this.sequence}`;
-    emit({
-      type: 'approval_needed',
-      sessionId: this.sessionId,
-      requestId,
-      tool: approval.tool,
-      risk: approval.risk,
-      reason: approval.reason,
-      message: approval.message,
-      input: approval.input,
-    });
-
-    return await new Promise<ApprovalDecision>((resolve) => {
-      this.pending.set(requestId, {
-        request: approval,
-        resolve: (decision) => {
-          if (decision === 'allow_session' && approval.risk === 'write') this.sessionAllows.add(allowKey);
-          resolve(decision);
-        },
-      });
-    });
-  }
-
-  resolve(requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') {
-    const pending = this.pending.get(requestId);
-    if (!pending) {
-      emit({ type: 'error', sessionId: this.sessionId, message: `Unknown approval request: ${requestId}` });
-      return;
-    }
-    this.pending.delete(requestId);
-    if (decision === 'deny') pending.resolve(false);
-    else if (decision === 'allow_once') pending.resolve(true);
-    else pending.resolve('allow_session');
+async function handleUserMessage(command: Extract<BridgeCommand, { type: 'user_message' }>, runtime: AgentRuntime, filePaths: string[], emitEvent: (event: Record<string, unknown>) => void) {
+  if (command.reasoningEffort) runtime.reasoningEffort = command.reasoningEffort;
+  if (command.toolScope) runtime.toolScope = command.toolScope;
+  const submission = await prepareSubmittedUserTurn(runtime, command.text, filePaths);
+  emitEvent({ type: 'turn_start', sessionId: runtime.session.id, prompt: submission.displayText ?? submission.prompt });
+  if (submission.attachments.length > 0) emitEvent({ type: 'info', sessionId: runtime.session.id, message: `Attached ${submission.attachments.length} file(s): ${submission.attachments.map((item) => item.name).join(', ')}` });
+  try {
+    const result = submission.prompt.startsWith('/')
+      ? await runPromptMode(runtime, submission.prompt)
+      : await runGuardedAgentTurn(runtime, submission.prompt, { parts: submission.parts, displayText: submission.displayText });
+    emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: result.ok ? 'ok' : 'error', reason: result.reason });
+  } catch (error) {
+    emitEvent({ type: 'error', sessionId: runtime.session.id, message: errorMessage(error) });
+    emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'error' });
   }
 }
 

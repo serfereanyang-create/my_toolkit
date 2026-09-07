@@ -10,6 +10,8 @@ export type ApprovalRequest = {
   input: Record<string, unknown>;
   reason: string;
   message: string;
+  /** Structured before/after for write tools, computed pre-write. */
+  diff?: { path: string; originalContent: string; modifiedContent: string };
 };
 
 /**
@@ -19,6 +21,13 @@ export type ApprovalRequest = {
  *   (e.g. desktop bridge) may cache the decision for the rest of the session.
  */
 export type ApprovalDecision = boolean | 'allow_session';
+
+export type SubAgentOptions = {
+  /** Only register read-risk tools in the sub-agent. Default false. */
+  readonly?: boolean;
+  /** Max tool-call steps before the sub-agent is cut off. Default 20. */
+  maxSteps?: number;
+};
 
 export type ToolContext = {
   workspaceRoot: string;
@@ -30,6 +39,22 @@ export type ToolContext = {
   afterConfirm?: () => void;
   /** UI language for approval prompts and tool gate messages. */
   locale?: Locale;
+  /**
+   * Allowed hostnames for `network`-risk tools. A network tool may only reach a
+   * host on this list; anything else is denied before any request is made. An
+   * empty or missing list means no network access is permitted.
+   */
+  networkAllowlist?: string[];
+  /** Desktop "任意应用": auto mode may run any non-destructive shell command. */
+  computerAnyApp?: boolean;
+  /** Desktop "始终允许的应用" list: commands launching these skip confirmation. */
+  computerAllowedApps?: string[];
+  /**
+   * Runner injected by the agent to support the spawn_subagent tool.
+   * When present, a sub-agent can be spawned in-process sharing the same
+   * provider, workspace, and approval context.
+   */
+  subAgentRunner?: (goal: string, options?: SubAgentOptions) => Promise<string>;
 };
 
 export type ToolResult = {
@@ -43,6 +68,11 @@ export type ToolDefinition<TInput = unknown> = {
   description: string;
   inputHint: string;
   risk: ToolRisk;
+  /**
+   * When true, this tool is trusted to run without the auto-mode allowlist gate
+   * (used by user-declared plugins). Destructive hard-blocks still apply.
+   */
+  autoApprove?: boolean;
   validate(input: unknown): TInput;
   execute(input: TInput, context: ToolContext): Promise<ToolResult>;
 };

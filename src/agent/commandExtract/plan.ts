@@ -70,7 +70,7 @@ export function planCommand(extraction: ExtractionResult): CommandPlan {
         });
       }
       steps.push({ tool: 'project_index', input: { path: '.', maxFiles: 1000 } });
-      return executeOrStrategy(extraction, steps, ['find_symbol', 'search_text', 'project_index', 'read_file'], ['list_files for broad discovery'], 'Code search request.');
+      return executeOrStrategy(extraction, steps, ['repo_map', 'find_symbol', 'search_text', 'project_index', 'read_file'], ['list_files for broad discovery'], 'Code search request.');
     }
     case 'project_index':
       return executeOrStrategy(extraction, [{ tool: 'project_index', input: { path: extraction.slots.path ?? '.', maxFiles: 1000 } }], ['project_index'], ['run_command'], 'Project index request.');
@@ -93,9 +93,9 @@ export function planCommand(extraction: ExtractionResult): CommandPlan {
     case 'code_edit':
       return strategy(
         extraction,
-        ['find_symbol', 'find_references', 'project_index', 'search_text', 'read_file', 'apply_patch', 'write_file'],
+        ['repo_map', 'ts_hover', 'ts_goto_definition', 'ts_exact_references', 'find_symbol', 'find_references', 'project_index', 'search_text', 'read_file', 'apply_patch', 'write_file'],
         ['run_command before inspection', 'write_file before reading target files'],
-        'Code edit requests remain model-driven with symbol-first strategy.',
+        'Code edit requests remain model-driven with repo_map first, then symbol-first strategy.',
       );
     case 'shell_command':
       return strategy(

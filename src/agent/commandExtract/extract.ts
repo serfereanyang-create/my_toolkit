@@ -110,9 +110,17 @@ function result(intent: CommandIntent, slots: CommandSlots, confidence: Confiden
 
 function isCacheProbePrompt(prompt: string, normalized: string) {
   const compact = prompt.replace(/\s+/g, '');
+  // Implementation-oriented phrasing must still go to search/model, never the
+  // probe: "缓存机制的源码" / "实现一个缓存" / "缓存 bug" are about code, not health.
+  if (/缓存(机制|逻辑|实现|模块|代码|源码|策略|算法|bug|问题)|(实现|写|重构|修复|优化|设计)[^。]{0,6}cache|cache\s*(implementation|module|logic|bug|code)/i.test(compact)) {
+    return false;
+  }
   // Natural-language aliases for /cache — keep narrow so "缓存机制源码" can still search.
   if (/^\/?(cache|probe)(\s+cache)?$/i.test(prompt.trim())) return true;
   if (/缓存命中|命中率|缓存探针|cache\s*hit|hit\s*rate|average\s*hit/i.test(compact)) return true;
+  // Cache efficiency / performance / health phrasing (the variants users type
+  // when they don't know the exact "命中率" term).
+  if (/缓存(效率|表现|性能|健康|状况|用得怎么样|用得如何|命中情况)|cache\s*(performance|efficiency|health|stats?)/i.test(compact)) return true;
   if (hasAny(normalized, ['cache probe', 'cache status', '查看缓存', '看缓存', '缓存情况', '缓存状态'])) return true;
   // Short bare "缓存" / "cache" is probe, longer sentences about implementing cache still go to model/search.
   if (/^(查看|看|显示|show|check)?(一下)?(当前)?(缓存|cache)$/i.test(compact)) return true;

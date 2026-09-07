@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 
-const instructionFiles = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'README.md'];
+const instructionFiles = ['.aicode/persona.md', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'README.md'];
 const maxFileBytes = 4000;
 const maxContextBytes = 12000;
 

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { resolveWorkspacePath } from '../safety/policy.js';
+import { lineDiff } from './lineDiff.js';
 import type { ToolDefinition } from './types.js';
 
 export const applyPatchTool: ToolDefinition<{ path: string; oldText?: string; newText: string }> = {
@@ -18,19 +19,30 @@ export const applyPatchTool: ToolDefinition<{ path: string; oldText?: string; ne
   },
   async execute(input, context) {
     const target = resolveWorkspacePath(context.workspaceRoot, input.path);
-    await context.checkpoints?.beforeWrite(target);
+    const checkpoint = await context.checkpoints?.beforeWrite(target);
     await mkdir(dirname(target), { recursive: true });
     if (input.oldText === undefined) {
       await writeFile(target, input.newText, 'utf8');
-      return { ok: true, output: `Created ${input.path} via patch`, data: { path: input.path, mode: 'create' } };
+      const { added, removed } = lineDiff('', input.newText);
+      return { ok: true, output: `Created ${input.path} via patch (+${added} -${removed})`, data: { path: input.path, mode: 'create', added, removed, checkpointId: checkpoint?.id } };
     }
 
     const current = await readFile(target, 'utf8');
-    if (!current.includes(input.oldText)) {
+    const firstIndex = current.indexOf(input.oldText);
+    if (firstIndex === -1) {
       return { ok: false, output: `Patch target text not found in ${input.path}` };
     }
-    const next = current.replace(input.oldText, input.newText);
+    const lastIndex = current.lastIndexOf(input.oldText);
+    if (firstIndex !== lastIndex) {
+      const occurrences = current.split(input.oldText).length - 1;
+      return { 
+        ok: false, 
+        output: `Ambiguous match: target text appears ${occurrences} times in ${input.path}. Use edit_lines for precise line-based replacement.` 
+      };
+    }
+    const next = current.slice(0, firstIndex) + input.newText + current.slice(firstIndex + input.oldText.length);
     await writeFile(target, next, 'utf8');
-    return { ok: true, output: `Patched ${input.path}`, data: { path: input.path, mode: 'replace' } };
+    const { added, removed } = lineDiff(current, next);
+    return { ok: true, output: `Patched ${input.path} (+${added} -${removed})`, data: { path: input.path, mode: 'replace', added, removed, checkpointId: checkpoint?.id } };
   },
 };

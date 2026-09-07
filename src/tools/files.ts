@@ -2,7 +2,17 @@ import { inflateRawSync } from 'node:zlib';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, relative } from 'node:path';
 import { resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
+import { lineDiff } from './lineDiff.js';
 import type { ToolDefinition } from './types.js';
+
+/** Read a file for diffing; a missing file counts as empty (pure insertion). */
+async function readFileOrEmpty(target: string): Promise<string> {
+  try {
+    return await readFile(target, 'utf8');
+  } catch {
+    return '';
+  }
+}
 
 const ignoredDirs = new Set(['node_modules', 'dist', '.git', '.gradle', 'build', '.aicode', '.aicode-smoke']);
 
@@ -100,10 +110,18 @@ export const writeFileTool: ToolDefinition<{ path: string; content: string }> = 
   },
   async execute(input, context) {
     const target = resolveWorkspacePath(context.workspaceRoot, input.path);
-    await context.checkpoints?.beforeWrite(target);
+    const checkpoint = await context.checkpoints?.beforeWrite(target);
     await mkdir(dirname(target), { recursive: true });
+    // Capture the prior contents (empty when the file is new) so we can report
+    // the genuine added/removed line counts, not an estimate.
+    const previous = await readFileOrEmpty(target);
     await writeFile(target, input.content, 'utf8');
-    return { ok: true, output: `Wrote ${input.path} (${Buffer.byteLength(input.content)} bytes)`, data: { path: input.path, bytes: Buffer.byteLength(input.content) } };
+    const { added, removed } = lineDiff(previous, input.content);
+    return {
+      ok: true,
+      output: `Wrote ${input.path} (${Buffer.byteLength(input.content)} bytes, +${added} -${removed})`,
+      data: { path: input.path, bytes: Buffer.byteLength(input.content), added, removed, checkpointId: checkpoint?.id },
+    };
   },
 };
 

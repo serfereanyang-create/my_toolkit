@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { AgentMessage, ProviderName } from '../providers/types.js';
+import type { AgentMessage, ProviderName, ResponsesContinuation } from '../providers/types.js';
 import type { LazyDevGuardState } from '../guard/types.js';
 import type { TaskRuntimeState } from '../tasks/types.js';
 
@@ -12,6 +12,7 @@ export type ToolCallRecord = {
   ok: boolean;
   output: string;
   data?: unknown;
+  providerCallId?: string;
   createdAt: string;
 };
 
@@ -29,6 +30,9 @@ export type SessionRecord = {
     lazyDev?: LazyDevGuardState;
   };
   taskRuntime?: TaskRuntimeState;
+  /** Persistent session goal set via /goal */
+  goal?: string;
+  providerContinuation?: ResponsesContinuation;
 };
 
 export class SessionStore {

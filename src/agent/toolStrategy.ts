@@ -73,7 +73,7 @@ export function planToolStrategy(input: { prompt: string; recentTools: RecentToo
   if (hasEditVerb && (hasCodePath || hasCodeContext || (!hasDiskGrowth && !hasDiskCapacity && !hasRuntimeInfo))) {
     return strategy(
       'code_edit',
-      ['find_symbol', 'find_references', 'project_index', 'search_text', 'read_file', 'apply_patch', 'write_file'],
+      ['ts_hover', 'ts_goto_definition', 'ts_exact_references', 'find_symbol', 'find_references', 'project_index', 'search_text', 'read_file', 'apply_patch', 'write_file'],
       ['run_command before inspection', 'write_file before reading target files', 'list_files for broad discovery'],
       'Code editing request; locate symbols before editing.',
       [...baseCacheHints, 'Prefer find_symbol before broad file reads.', 'Prefer recently read tool results when the same file is unchanged.'],
@@ -191,3 +191,66 @@ export function recoveryHintForToolFailure(tool: string, output: string): string
   if (tool === 'search_text' && normalized.includes('no matches')) return 'The search had no matches; broaden the query or use project_index before reading random files.';
   return undefined;
 }
+
+/**
+ * Suggest next steps after a successful tool call to guide the agent toward
+ * more efficient workflows. Only returns hints for tools where there's a clear
+ * better alternative or common next step.
+ */
+export function nextStepHint(tool: string, output: string, outputLength: number): string | undefined {
+  const normalized = output.toLowerCase();
+  
+  // Large file reads → suggest targeted tools
+  if (tool === 'read_file' && outputLength > 10000) {
+    return 'Large file. Consider: read_lines for specific ranges, or search_text to find relevant sections.';
+  }
+  
+  // Symbol search success → suggest deeper inspection
+  if (tool === 'find_symbol' && !normalized.includes('no symbols matched')) {
+    return 'Found symbols. Next: use ts_hover to see type info, or ts_goto_definition to jump to source.';
+  }
+  
+  // Project index → suggest focused tools
+  if (tool === 'project_index' && normalized.includes('files:')) {
+    return 'Got project overview. Next: use find_symbol for specific symbols, or search_text for code patterns.';
+  }
+  
+  // Write operations → suggest verification
+  if ((tool === 'write_file' || tool === 'apply_patch' || tool === 'edit_lines') && normalized.includes('patched') || normalized.includes('wrote')) {
+    return 'File modified. Consider: read_file to verify changes, or run_command to test the code.';
+  }
+  
+  return undefined;
+}
+
+/**
+ * Sub-agent strategy hint appended to the system tool-strategy block.
+ * Tells the main agent when and how to delegate via spawn_subagent.
+ */
+export const SUBAGENT_STRATEGY_HINT = `
+## 子智能体委派（spawn_subagent）
+当遇到以下情况时，优先调用 spawn_subagent 工具而不是独自完成所有工作：
+
+**适合委派的场景：**
+- 任务可以分解为 2 个或以上相互独立的子目标（如：同时搜索多个模块、同时写多个文件）
+- 需要先调研再实现（code_search 子 agent 调研 → code_edit 子 agent 实现）
+- 实现代码 + 写测试 + 写文档可以独立完成（code_edit、test_verify、doc_generation 各自委派）
+- Git 操作与代码修改可以分离（code_edit 先改代码，git_ops 后提交）
+
+**expert 角色选择指南：**
+- 只需读代码/查找符号 → code_search
+- 实现/修改/重构代码 → code_edit
+- 编写或运行测试 → test_verify
+- Shell 命令/构建/安装 → shell_runtime
+- Git add/commit/push → git_ops
+- 生成 Word/PPT/PDF 文档 → doc_generation
+- 处理 JSON/CSV/YAML 数据 → data_processing
+- 不确定 → general
+
+**dependsOn 使用规则：**
+- 无数据依赖的任务 → 不设 dependsOn，框架自动并行
+- B 需要 A 的结果 → B.dependsOn = ["A"]，框架自动串行并将 A 的答案注入 B 的 prompt
+
+**你的职责：** spawn_subagent 完成后，读取每个子 agent 的答案并整合给用户一个完整的最终回复。
+`.trim();
+

@@ -49,6 +49,43 @@ export class CheckpointStore {
     const entry = entries.pop();
     if (!entry) return 'No checkpoint to undo.';
 
+    await this.revert(entry);
+
+    await this.save(entries);
+    return `Undid checkpoint ${entry.id} (${entry.action}).`;
+  }
+
+  /**
+   * Revert a specific set of checkpoints (e.g. every write from one agent
+   * turn), newest first so overlapping writes to the same file restore to the
+   * correct pre-turn state. Reverted entries are removed from the index; ids
+   * not found are ignored. Returns the count actually reverted.
+   */
+  async undoByIds(ids: string[]) {
+    if (ids.length === 0) return { reverted: 0, files: [] as string[] };
+    const wanted = new Set(ids);
+    const entries = await this.list();
+    // Walk newest→oldest so a later write's backup wins the final on-disk state.
+    const reverted: string[] = [];
+    const kept: CheckpointEntry[] = [];
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const entry = entries[i];
+      if (wanted.has(entry.id)) {
+        await this.revert(entry);
+        if (entry.path) reverted.push(entry.path);
+        else if (entry.from) reverted.push(entry.from);
+      } else {
+        kept.push(entry);
+      }
+    }
+    // `kept` was built in reverse; restore chronological order before saving.
+    kept.reverse();
+    await this.save(kept);
+    return { reverted: reverted.length, files: reverted };
+  }
+
+  /** Restore a single checkpoint entry's file to its pre-write/rename state. */
+  private async revert(entry: CheckpointEntry) {
     if (entry.action === 'write' && entry.path) {
       if (entry.existed && entry.backupPath) {
         const content = await readFile(entry.backupPath);
@@ -63,9 +100,6 @@ export class CheckpointStore {
       await mkdir(dirname(entry.from), { recursive: true });
       await rename(entry.to, entry.from);
     }
-
-    await this.save(entries);
-    return `Undid checkpoint ${entry.id} (${entry.action}).`;
   }
 
   async list() {

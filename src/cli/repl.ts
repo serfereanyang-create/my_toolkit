@@ -11,7 +11,7 @@ import type { MessagePart } from '../providers/types.js';
 import { planBoardFromGoal, shouldUseTaskBoard } from '../tasks/planner.js';
 import { confirmBoard, formatBoard, runTaskBoardLoop } from '../tasks/runtime.js';
 import { TaskBoardStore } from '../tasks/store.js';
-import { prepareUserContent, type Attachment } from './attachments.js';
+import { buildAttachmentContextLines, prepareUserContent, type Attachment } from './attachments.js';
 import { runCommandPalette } from './commandPalette.js';
 import { handleSlashCommand } from './commands.js';
 import { isSlashCommandLine, readMultilineContinuation, readUserTurn } from './input.js';
@@ -23,6 +23,13 @@ import { chatPromptLabel } from '../ui/home.js';
 import { restoreConsoleSoftWrap } from '../ui/consoleWrap.js';
 
 type TurnExtras = { parts?: MessagePart[]; displayText?: string };
+
+export type SubmittedUserTurn = {
+  prompt: string;
+  parts?: MessagePart[];
+  displayText?: string;
+  attachments: Attachment[];
+};
 
 export async function runPromptMode(runtime: AgentRuntime, prompt: string): Promise<AgentTurnResult> {
   if (prompt.startsWith('/')) {
@@ -45,7 +52,20 @@ export async function runPromptMode(runtime: AgentRuntime, prompt: string): Prom
   });
 }
 
-async function runGuardedAgentTurn(runtime: AgentRuntime, line: string, extras?: TurnExtras): Promise<AgentTurnResult> {
+export async function runGuardedAgentTurn(runtime: AgentRuntime, line: string, extras?: TurnExtras): Promise<AgentTurnResult> {
+  // Inject the sub-agent runner so spawn_subagent can create nested agents
+  // without a circular import. Set once on the root agent; sub-agents inherit
+  // it via the spread in executeToolAction.
+  if (!runtime.runSubAgentTurn) {
+    runtime.runSubAgentTurn = async (subRuntime: AgentRuntime, goal: string): Promise<string> => {
+      const result = await runGuardedAgentTurn(subRuntime, goal, {});
+      // Return the final assistant message as the sub-agent's output
+      const messages = result.session.messages ?? [];
+      const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
+      return result.finalAnswer ?? lastAssistant?.content ?? '(no output)';
+    };
+  }
+
   const guard = runtime.session.guard?.lazyDev;
   if (guard?.enabled) {
     const guardResult = handleLazyDevInput(guard, line);
@@ -67,6 +87,20 @@ async function handleDevelopmentPrompt(runtime: AgentRuntime, prompt: string, ex
     });
   }
 
+  return createAndMaybeRunTaskBoard(runtime, prompt);
+}
+
+export async function runAutomationGoal(runtime: AgentRuntime, goal: string): Promise<AgentTurnResult> {
+  const previousConfirmPlan = runtime.config.confirmPlan;
+  try {
+    runtime.config.confirmPlan = true;
+    return await createAndMaybeRunTaskBoard(runtime, goal);
+  } finally {
+    runtime.config.confirmPlan = previousConfirmPlan;
+  }
+}
+
+async function createAndMaybeRunTaskBoard(runtime: AgentRuntime, prompt: string): Promise<AgentTurnResult> {
   const store = new TaskBoardStore(runtime.config.workspaceRoot);
   const board = planBoardFromGoal(prompt);
   await store.save(board);
@@ -76,6 +110,7 @@ async function handleDevelopmentPrompt(runtime: AgentRuntime, prompt: string, ex
     lastSyncAt: board.createdAt,
   };
   await runtime.sessions.save(runtime.session);
+  runtime.taskBoardEmit?.(board);
   runtime.ui.info(formatBoard(board));
 
   try {
@@ -113,6 +148,7 @@ async function handleDevelopmentPrompt(runtime: AgentRuntime, prompt: string, ex
     lastSyncAt: new Date().toISOString(),
   };
   await runtime.sessions.save(runtime.session);
+  runtime.taskBoardEmit?.(board);
   return continueTaskBoard(runtime);
 }
 
@@ -131,6 +167,7 @@ async function continueTaskBoard(runtime: AgentRuntime): Promise<AgentTurnResult
     store,
     sessions: runtime.sessions,
     session: runtime.session,
+    runtime,  // 新增：传入完整 runtime 以便专家路由访问 tools/provider
     runTurn: async (taskPrompt, gitSafetyUnit) => {
       const result = await runAgentTurn(runtime, taskPrompt, { gitSafetyUnit });
       return {
@@ -142,6 +179,7 @@ async function continueTaskBoard(runtime: AgentRuntime): Promise<AgentTurnResult
       };
     },
     onInfo: (message) => runtime.ui.info(message),
+    onUpdate: (updatedBoard) => runtime.taskBoardEmit?.(updatedBoard),
     gitSafety: runtime.gitSafety,
     confirm: runtime.confirm,
   });
@@ -307,15 +345,35 @@ export async function runRepl(runtime: AgentRuntime) {
 }
 
 async function submitUserTurn(runtime: AgentRuntime, text: string) {
+  const submission = await prepareSubmittedUserTurn(runtime, text);
+
+  if (submission.attachments.length > 0) {
+    runtime.ui.info(
+      `Attached ${submission.attachments.length} file(s): ${submission.attachments.map((a) => a.name).join(', ')} (${formatByteSize(submission.attachments.reduce((n, a) => n + a.bytes, 0))})`,
+    );
+  }
+
+  await runGuardedAgentTurn(runtime, submission.prompt, {
+    parts: submission.parts,
+    displayText: submission.displayText,
+  });
+}
+
+export async function prepareSubmittedUserTurn(
+  runtime: AgentRuntime,
+  text: string,
+  extraPaths: string[] = [],
+): Promise<SubmittedUserTurn> {
   assertUserTextWithinLimit(text);
   runtime.locale = resolveSessionLocale({ text, previous: runtime.locale });
   const staged = runtime.pendingAttachments ?? [];
   runtime.pendingAttachments = [];
 
   const prepared = await prepareUserContent({
-    text: text || (staged.length > 0 ? '(see attachments)' : ''),
+    text: text || (staged.length > 0 || extraPaths.length > 0 ? '(see attachments)' : ''),
     workspaceRoot: runtime.config.workspaceRoot,
     sessionId: runtime.session.id,
+    extraPaths,
   });
 
   const attachments = mergeAttachments(prepared.attachments, staged);
@@ -324,16 +382,12 @@ async function submitUserTurn(runtime: AgentRuntime, text: string) {
     ? text
     : `${text.trim() || '(attachments)'}\n(+${attachments.length} attachment(s): ${attachments.map((a) => a.name).join(', ')})`;
 
-  if (attachments.length > 0) {
-    runtime.ui.info(
-      `Attached ${attachments.length} file(s): ${attachments.map((a) => a.name).join(', ')} (${formatByteSize(attachments.reduce((n, a) => n + a.bytes, 0))})`,
-    );
-  }
-
-  await runGuardedAgentTurn(runtime, prepared.text, {
+  return {
+    prompt: prepared.text,
     parts,
     displayText,
-  });
+    attachments,
+  };
 }
 
 function mergeAttachments(fromText: Attachment[], staged: Attachment[]) {
@@ -348,14 +402,7 @@ async function buildParts(text: string, attachments: Attachment[]): Promise<Mess
     const missing = attachments.filter((a) => !text.includes(a.storedPath));
     if (missing.length > 0) {
       notes.push('');
-      notes.push('[attachments]');
-      for (const item of missing) {
-        notes.push(
-          item.kind === 'image'
-            ? `- image: ${item.name} (${item.bytes} bytes) stored at ${item.storedPath}`
-            : `- file: ${item.name} path=${item.storedPath} (use read_file/list_files as needed)`,
-        );
-      }
+      notes.push(...await buildAttachmentContextLines(missing));
     }
   }
   const fullText = notes.join('\n');

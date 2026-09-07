@@ -15,19 +15,21 @@ import { loadMcpManager } from '../mcp/manager.js';
 import { loadPluginTools } from '../plugins/loader.js';
 import { createProvider } from '../providers/index.js';
 import { CheckpointStore } from '../session/checkpoint.js';
+import { ProjectMemoryStore } from '../memory/store.js';
 import { SessionStore } from '../session/store.js';
 import { createDefaultToolRegistry } from '../tools/index.js';
+import { type ToolScope } from '../tools/scope.js';
 import { TerminalUI } from '../ui/terminal.js';
 
 export async function createAgentRuntime(config: AppConfig) {
   const provider = createProvider(config);
-  const tools = createDefaultToolRegistry();
-  for (const tool of await loadPluginTools(config.workspaceRoot)) tools.register(tool);
-  const existingNames = new Set(tools.list().map((tool) => tool.name));
+  const allTools = createDefaultToolRegistry({ excelAutomation: config.excelAutomation === true });
+  for (const tool of await loadPluginTools(config.workspaceRoot)) allTools.register(tool);
+  const existingNames = new Set(allTools.list().map((tool) => tool.name));
   let mcp = await loadMcpManager({ workspaceRoot: config.workspaceRoot, existingNames });
   for (const tool of mcp.tools) {
     try {
-      tools.register(tool);
+      allTools.register(tool);
     } catch {
       // A plugin/MCP collision should not prevent the core agent from starting.
     }
@@ -45,6 +47,7 @@ export async function createAgentRuntime(config: AppConfig) {
 
   const sessions = new SessionStore(config.sessionDir);
   const checkpoints = new CheckpointStore(config.workspaceRoot);
+  const memory = new ProjectMemoryStore(config.workspaceRoot);
   const gitProcess = new GitProcess(config.workspaceRoot);
   const gitAudit = new GitAuditLog(config.workspaceRoot);
   const gitRepository = new GitRepository(config.workspaceRoot, gitProcess);
@@ -61,12 +64,14 @@ export async function createAgentRuntime(config: AppConfig) {
   const runtime = {
     config,
     provider,
-    tools,
+    tools: allTools,
     sessions,
     checkpoints,
+    memory,
     session,
     ui,
     hooks,
+    toolScope: (config.toolScope ?? 'auto') as ToolScope,
     gitSafety,
     gitRollback,
     gitPublisher,
@@ -78,10 +83,10 @@ export async function createAgentRuntime(config: AppConfig) {
     async reloadMcp() {
       await mcp.close();
       const existingToolNames = new Set(
-        tools.list().filter((tool) => !tool.name.startsWith('mcp_')).map((tool) => tool.name),
+        allTools.list().filter((tool) => !tool.name.startsWith('mcp_')).map((tool) => tool.name),
       );
       const next = await loadMcpManager({ workspaceRoot: config.workspaceRoot, existingNames: existingToolNames });
-      for (const tool of next.tools) tools.register(tool, { replace: true });
+      for (const tool of next.tools) allTools.register(tool, { replace: true });
       mcp = next;
       return mcp;
     },
@@ -89,7 +94,8 @@ export async function createAgentRuntime(config: AppConfig) {
 
   return {
     provider,
-    tools,
+    allTools,
+    tools: allTools,
     ui,
     runtime,
     mcpStatuses: mcp.statuses,

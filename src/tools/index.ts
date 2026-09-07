@@ -1,31 +1,81 @@
+import { spawnSubAgentTool } from './subagent.js';
+import { excelAutomateTool } from './excel.js';
+import { tsHoverTool, tsGotoDefinitionTool, tsExactReferencesTool } from './tsLanguage.js';
 import { recentActivityTool } from './activity.js';
 import { cacheProbeTool } from './cacheProbe.js';
 import { diskInfoTool } from './disk.js';
 import { createDocxTool } from './docx.js';
+import { createDocxTableTool } from './docx-table.js';
+import { insertDocxImageTool } from './docx-image.js';
+import { createPptxTool } from './pptx.js';
+import { convertToPdfTool } from './pdf-convert.js';
+import { pdfToTextTool } from './pdf-text.js';
 import { environmentInfoTool } from './environment.js';
-import { gitDiffTool, gitLogTool, gitStatusTool } from './git.js';
+import { gitDiffTool, gitLogTool, gitStatusTool, gitDiffStagedTool } from './git.js';
 import { diskGrowthTool } from './growth.js';
 import { applyPatchTool } from './patch.js';
 import { processMemoryTool } from './process.js';
 import { projectIndexTool } from './projectIndex.js';
 import { findReferencesTool, findSymbolTool } from './nav.js';
+import { repoMapTool } from './repoMap.js';
 import { renameFileTool } from './rename.js';
 import { projectStatusTool, listFilesTool, readFileTool, writeFileTool } from './files.js';
 import { ToolRegistry } from './registry.js';
 import { searchTextTool } from './search.js';
 import { runCommandTool } from './shell.js';
+import { fetchUrlTool, downloadFileTool, httpPostTool, parseUrlTool, extractPageLinksTool } from './web.js';
+import { createXlsxTool } from './xlsx.js';
+import { readCsvTool, writeCsvTool, csvStatsTool, csvPreviewTool } from './csv.js';
+import { readJsonTool, jsonKeysTool, jsonTypeSummaryTool, jsonMergeTool } from './dataFile.js';
+import { webSearchTool } from './search-web.js';
+import { htmlToTextTool, htmlLinksTool, htmlMetadataTool, htmlHeadingsTool } from './html-text.js';
+import { markdownToHtmlTool, markdownOutlineTool, markdownLinksTool, markdownCodeBlocksTool } from './markdown.js';
+import { imageInfoTool, imageBatchInfoTool, imageAspectRatioTool, imageDominantColorsTool, imageTransparencyTool, imageContentBoundsTool } from './image-info.js';
+import { yamlParseTool, yamlStringifyTool, yamlQueryTool, yamlKeysTool } from './yaml.js';
+import { xmlToTextTool, xmlSummaryTool, xmlQueryTool } from './xml-tools.js';
+import { iniParseTool, propertiesParseTool, tomlParseTool } from './config-parse.js';
+import { rtfToTextTool } from './rtf.js';
+import { createZipTool, listZipTool, extractZipTool, zipSummaryTool } from './zip.js';
+import { fileInfoTool, makeDirTool, copyFileTool, deletePathTool, findFilesTool, countFilesTool } from './fsextra.js';
+import { wordCountTool, headTailTool, sortLinesTool, replaceTextTool, extractMatchesTool } from './textutil.js';
+import { trimTextTool, stripEmptyLinesTool, dedupeLinesTool, filterLinesTool, textSliceTool, extractBetweenTool, textCaseTool, reverseTextTool, splitTextTool, joinTextTool, textFrequencyTool, linePrefixTool, lineSuffixTool } from './text-extra.js';
+import { textContainsTool, textStartsWithTool, textEndsWithTool, textRepeatTool, textTruncateTool, textIndexOfTool, charAtTool, commonPrefixTextTool, commonSuffixTextTool, lineNumbersTool, lineLengthsTool, longestLineTool, shortestLineTool, firstNonemptyLineTool, lastNonemptyLineTool, countSubstringTool } from './text-extra2.js';
+import { textEqualsTool, textCompareTool, textPadTool, textWrapTool, textUnwrapTool, textRemovePrefixTool, textRemoveSuffixTool, nthLineTool, takeLinesTool, dropLinesTool, lineContainsTool, textSlugifyTool, textSurroundTool, textRepeatLinesTool, textLengthTool, textIsEmptyTool } from './text-extra3.js';
+import { base64EncodeTool, base64DecodeTool, hashTextTool, urlEncodeTool, urlDecodeTool, uuidGenerateTool } from './encoding.js';
+import { numberSumTool, numberAverageTool, numberMedianTool, numberMinMaxTool, numberStatsTool, roundNumberTool, clampNumberTool, percentageOfTool, sequenceGenerateTool, baseConvertTool, parseByteSizeTool, formatDurationTool, ratioSimplifyTool } from './number-extra.js';
+import { numberAbsTool, numberSignTool, numberCompareTool, numberSortTool, numberUniqueTool, numberProductTool, percentageChangeTool, byteSizeFormatTool, durationParseTool, numberRangeCheckTool, numberScaleTool, numberModuloTool, numberHistogramTool, numberCumsumTool, numberPercentileTool, linearInterpolateTool } from './number-extra2.js';
+import { currentDatetimeTool, dateDiffTool, calculateTool } from './compute.js';
+import { pathExistsTool, pathNormalizeTool, pathJoinTool, pathRelativeTool, pathDirnameTool, pathBasenameTool, pathExtnameTool, pathPartsTool, listDirsTool, recentFilesTool, largestFilesTool, directorySummaryTool } from './path-extra2.js';
+import { pathIsAbsoluteTool, pathChangeExtTool, pathAncestorsTool, pathDepthTool, pathCommonPrefixTool, pathMatchesGlobTool, fileExtensionsInDirTool, emptyDirsTool, siblingFilesTool, duplicateFilenamesTool, pathCompareTool, pathStemTool, pathParentTool, hiddenFilesTool, directoryDepthSummaryTool, nearestAncestorWithTool } from './path-extra3.js';
+import { filename_searchTool } from './filename-search.js';
+import { listCountTool, listUniqueTool, listSortTool, listReverseTool, listSliceTool, listChunkTool, listUnionTool, listIntersectTool, listDiffTool, listContainsTool, listFrequencyTool, listJoinTool, listIndexOfTool, listFlattenTool, listZipTool2 } from './list-extra.js';
+import { readManyFilesTool, globFilesTool, diffFilesTool, editLinesTool, writeJsonTool, formatJsonTool, jsonToCsvTool, csvToJsonTool, listTreeTool } from './datatools2.js';
+import { readLinesTool, appendFileTool, envGetTool, whichCommandTool } from './sysextra.js';
+import {
+  gitAddTool, gitCommitTool, gitBranchTool, gitCheckoutTool, gitStashTool, gitShowTool, gitBlameTool,
+  gitFetchTool, gitPullTool, gitMergeTool, gitCherryPickTool, gitTagTool,
+  gitResetTool, gitRestoreTool,
+} from './git-write.js';
+import { listScriptsTool, runScriptTool, installDepsTool, typecheckTool, runTestsTool, lintTool, dependencyTreeTool, outdatedDepsTool } from './projectops.js';
 
-export function createDefaultToolRegistry() {
+export function createDefaultToolRegistry(options?: { excelAutomation?: boolean }) {
   const registry = new ToolRegistry();
   registry.register(projectStatusTool);
   registry.register(recentActivityTool);
+  // Precise TS language tools (compiler-backed) — complement the heuristic
+  // find_symbol/find_references with type-aware lookups.
+  registry.register(tsHoverTool);
+  registry.register(tsGotoDefinitionTool);
+  registry.register(tsExactReferencesTool);
   registry.register(environmentInfoTool);
   registry.register(cacheProbeTool);
   registry.register(projectIndexTool);
+  registry.register(repoMapTool);
   registry.register(findSymbolTool);
   registry.register(findReferencesTool);
   registry.register(gitStatusTool);
   registry.register(gitDiffTool);
+  registry.register(gitDiffStagedTool);
   registry.register(gitLogTool);
   registry.register(listFilesTool);
   registry.register(readFileTool);
@@ -36,8 +86,253 @@ export function createDefaultToolRegistry() {
   registry.register(diskGrowthTool);
   registry.register(runCommandTool);
   registry.register(createDocxTool);
+  registry.register(createDocxTableTool);
+  registry.register(insertDocxImageTool);
+  registry.register(createPptxTool);
+  registry.register(createXlsxTool);
+  registry.register(convertToPdfTool);
+  registry.register(pdfToTextTool);
   registry.register(renameFileTool);
   registry.register(applyPatchTool);
+  registry.register(fetchUrlTool);
+  registry.register(downloadFileTool);
+  registry.register(httpPostTool);
+  registry.register(parseUrlTool);
+  registry.register(extractPageLinksTool);
+  registry.register(readCsvTool);
+  registry.register(writeCsvTool);
+  registry.register(csvStatsTool);
+  registry.register(csvPreviewTool);
+  registry.register(readJsonTool);
+  registry.register(jsonKeysTool);
+  registry.register(jsonTypeSummaryTool);
+  registry.register(jsonMergeTool);
+  registry.register(webSearchTool);
+  registry.register(htmlToTextTool);
+  registry.register(htmlLinksTool);
+  registry.register(htmlMetadataTool);
+  registry.register(htmlHeadingsTool);
+  registry.register(markdownToHtmlTool);
+  registry.register(markdownOutlineTool);
+  registry.register(markdownLinksTool);
+  registry.register(markdownCodeBlocksTool);
+  registry.register(imageInfoTool);
+  registry.register(imageBatchInfoTool);
+  registry.register(imageAspectRatioTool);
+  registry.register(imageDominantColorsTool);
+  registry.register(imageTransparencyTool);
+  registry.register(imageContentBoundsTool);
+  registry.register(xmlToTextTool);
+  registry.register(xmlSummaryTool);
+  registry.register(xmlQueryTool);
+  registry.register(iniParseTool);
+  registry.register(propertiesParseTool);
+  registry.register(tomlParseTool);
+  registry.register(rtfToTextTool);
+  registry.register(yamlParseTool);
+  registry.register(yamlStringifyTool);
+  registry.register(yamlQueryTool);
+  registry.register(yamlKeysTool);
+  registry.register(createZipTool);
+  registry.register(listZipTool);
+  registry.register(extractZipTool);
+  registry.register(zipSummaryTool);
+  // Filesystem extras
+  registry.register(fileInfoTool);
+  registry.register(makeDirTool);
+  registry.register(copyFileTool);
+  registry.register(deletePathTool);
+  registry.register(findFilesTool);
+  registry.register(countFilesTool);
+  // Text utilities
+  registry.register(wordCountTool);
+  registry.register(headTailTool);
+  registry.register(sortLinesTool);
+  registry.register(replaceTextTool);
+  registry.register(extractMatchesTool);
+  registry.register(trimTextTool);
+  registry.register(stripEmptyLinesTool);
+  registry.register(dedupeLinesTool);
+  registry.register(filterLinesTool);
+  registry.register(textSliceTool);
+  registry.register(extractBetweenTool);
+  registry.register(textCaseTool);
+  registry.register(reverseTextTool);
+  registry.register(splitTextTool);
+  registry.register(joinTextTool);
+  registry.register(textFrequencyTool);
+  registry.register(linePrefixTool);
+  registry.register(lineSuffixTool);
+  registry.register(textContainsTool);
+  registry.register(textStartsWithTool);
+  registry.register(textEndsWithTool);
+  registry.register(textRepeatTool);
+  registry.register(textTruncateTool);
+  registry.register(textIndexOfTool);
+  registry.register(charAtTool);
+  registry.register(commonPrefixTextTool);
+  registry.register(commonSuffixTextTool);
+  registry.register(lineNumbersTool);
+  registry.register(lineLengthsTool);
+  registry.register(longestLineTool);
+  registry.register(shortestLineTool);
+  registry.register(firstNonemptyLineTool);
+  registry.register(lastNonemptyLineTool);
+  registry.register(countSubstringTool);
+  registry.register(textEqualsTool);
+  registry.register(textCompareTool);
+  registry.register(textPadTool);
+  registry.register(textWrapTool);
+  registry.register(textUnwrapTool);
+  registry.register(textRemovePrefixTool);
+  registry.register(textRemoveSuffixTool);
+  registry.register(nthLineTool);
+  registry.register(takeLinesTool);
+  registry.register(dropLinesTool);
+  registry.register(lineContainsTool);
+  registry.register(textSlugifyTool);
+  registry.register(textSurroundTool);
+  registry.register(textRepeatLinesTool);
+  registry.register(textLengthTool);
+  registry.register(textIsEmptyTool);
+  // Encoding / hashing
+  registry.register(base64EncodeTool);
+  registry.register(base64DecodeTool);
+  registry.register(hashTextTool);
+  registry.register(urlEncodeTool);
+  registry.register(urlDecodeTool);
+  registry.register(uuidGenerateTool);
+  // Number / compute / time
+  registry.register(numberSumTool);
+  registry.register(numberAverageTool);
+  registry.register(numberMedianTool);
+  registry.register(numberMinMaxTool);
+  registry.register(numberStatsTool);
+  registry.register(roundNumberTool);
+  registry.register(clampNumberTool);
+  registry.register(percentageOfTool);
+  registry.register(sequenceGenerateTool);
+  registry.register(baseConvertTool);
+  registry.register(parseByteSizeTool);
+  registry.register(formatDurationTool);
+  registry.register(ratioSimplifyTool);
+  registry.register(numberAbsTool);
+  registry.register(numberSignTool);
+  registry.register(numberCompareTool);
+  registry.register(numberSortTool);
+  registry.register(numberUniqueTool);
+  registry.register(numberProductTool);
+  registry.register(percentageChangeTool);
+  registry.register(byteSizeFormatTool);
+  registry.register(durationParseTool);
+  registry.register(numberRangeCheckTool);
+  registry.register(numberScaleTool);
+  registry.register(numberModuloTool);
+  registry.register(numberHistogramTool);
+  registry.register(numberCumsumTool);
+  registry.register(numberPercentileTool);
+  registry.register(linearInterpolateTool);
+  registry.register(currentDatetimeTool);
+  registry.register(dateDiffTool);
+  registry.register(calculateTool);
+  // Path utilities
+  registry.register(pathExistsTool);
+  registry.register(pathNormalizeTool);
+  registry.register(pathJoinTool);
+  registry.register(pathRelativeTool);
+  registry.register(pathDirnameTool);
+  registry.register(pathBasenameTool);
+  registry.register(pathExtnameTool);
+  registry.register(pathPartsTool);
+  registry.register(listDirsTool);
+  registry.register(recentFilesTool);
+  registry.register(largestFilesTool);
+  registry.register(directorySummaryTool);
+  registry.register(pathIsAbsoluteTool);
+  registry.register(pathChangeExtTool);
+  registry.register(pathAncestorsTool);
+  registry.register(pathDepthTool);
+  registry.register(pathCommonPrefixTool);
+  registry.register(pathMatchesGlobTool);
+  registry.register(fileExtensionsInDirTool);
+  registry.register(emptyDirsTool);
+  registry.register(siblingFilesTool);
+  registry.register(duplicateFilenamesTool);
+  registry.register(pathCompareTool);
+  registry.register(pathStemTool);
+  registry.register(pathParentTool);
+  registry.register(hiddenFilesTool);
+  registry.register(directoryDepthSummaryTool);
+  registry.register(nearestAncestorWithTool);
+  registry.register(filename_searchTool);
+  // List utilities
+  registry.register(listCountTool);
+  registry.register(listUniqueTool);
+  registry.register(listSortTool);
+  registry.register(listReverseTool);
+  registry.register(listSliceTool);
+  registry.register(listChunkTool);
+  registry.register(listUnionTool);
+  registry.register(listIntersectTool);
+  registry.register(listDiffTool);
+  registry.register(listContainsTool);
+  registry.register(listFrequencyTool);
+  registry.register(listJoinTool);
+  registry.register(listIndexOfTool);
+  registry.register(listFlattenTool);
+  registry.register(listZipTool2);
+  // Multi-file + data conversion
+  registry.register(readManyFilesTool);
+  registry.register(globFilesTool);
+  registry.register(diffFilesTool);
+  registry.register(editLinesTool);
+  registry.register(writeJsonTool);
+  registry.register(formatJsonTool);
+  registry.register(jsonToCsvTool);
+  registry.register(csvToJsonTool);
+  registry.register(listTreeTool);
+  // System + line-level file access
+  registry.register(readLinesTool);
+  registry.register(appendFileTool);
+  registry.register(envGetTool);
+  registry.register(whichCommandTool);
+  // Git write / network operations. Local staging tools are autoApprove so
+  // auto mode can commit like CC. Network (fetch/pull) and history-shaping
+  // (merge/cherry-pick/tag) stay behind the normal approval gate. Destructive
+  // force-push / reset --hard / clean -f stay out of git-write.ts entirely.
+  registry.register({ ...gitAddTool, autoApprove: true });
+  registry.register({ ...gitCommitTool, autoApprove: true });
+  registry.register({ ...gitBranchTool, autoApprove: true });
+  registry.register({ ...gitCheckoutTool, autoApprove: true });
+  registry.register({ ...gitStashTool, autoApprove: true });
+  registry.register(gitShowTool);
+  registry.register(gitBlameTool);
+  // fetch/pull/merge/cherry-pick/tag: autoApprove so auto mode can run them
+  // (no path target). ask mode still confirms; deny mode still blocks.
+  registry.register({ ...gitFetchTool, autoApprove: true });
+  registry.register({ ...gitPullTool, autoApprove: true });
+  registry.register({ ...gitMergeTool, autoApprove: true });
+  registry.register({ ...gitCherryPickTool, autoApprove: true });
+  registry.register({ ...gitTagTool, autoApprove: true });
+  // git_reset (soft/mixed only) and git_restore: not autoApprove since they
+  // modify working-tree or index; ask mode will confirm, auto mode allows.
+  registry.register({ ...gitResetTool, autoApprove: true });
+  registry.register({ ...gitRestoreTool, autoApprove: true });
+  // Project ops / code quality
+  registry.register(listScriptsTool);
+  registry.register(runScriptTool);
+  registry.register(installDepsTool);
+  registry.register(typecheckTool);
+  registry.register(runTestsTool);
+  registry.register(lintTool);
+  registry.register(dependencyTreeTool);
+  registry.register(outdatedDepsTool);
+  // Multi-agent: allow the main agent to spawn focused sub-agents in-process.
+  // Sub-agents share the provider/workspace/approval context; depth-limited to
+  // MAX_SUBAGENT_DEPTH to prevent unbounded recursion.
+  registry.register(spawnSubAgentTool);
+  // Excel COM automation: opt-in via the desktop computer-control switch.
+  if (options?.excelAutomation) registry.register(excelAutomateTool);
   return registry;
 }
 

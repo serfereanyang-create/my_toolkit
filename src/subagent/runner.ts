@@ -1,0 +1,121 @@
+import { randomUUID } from 'node:crypto';
+import type { AgentRuntime } from '../agent/agent.js';
+import { runAgentTurn } from '../agent/agent.js';
+import { allExperts } from '../experts/profiles.js';
+import { ToolRegistry } from '../tools/registry.js';
+import { TerminalUI } from '../ui/terminal.js';
+import type { SubAgentResult, SubAgentSpec } from './types.js';
+
+/**
+ * 运行单个子智能体。
+ *
+ * 子 agent 拥有：
+ *  - 独立 SessionRecord（独立历史、独立审计链）
+ *  - 按 ExpertProfile 过滤后的受限 ToolRegistry
+ *  - 可选的推理档位覆盖
+ *  - 上游结果摘要自动注入 prompt 前缀
+ */
+export async function runSubAgent(
+  spec: SubAgentSpec,
+  parentRuntime: AgentRuntime,
+  upstreamResults: Map<string, SubAgentResult>,
+  parentGoal?: string,
+): Promise<SubAgentResult> {
+  const t0 = Date.now();
+
+  // ── 1. 找到对应专家配置 ──────────────────────────────────────────────────────
+  const profile = allExperts.find((e) => e.id === spec.expert) ?? allExperts[allExperts.length - 1]!;
+
+  // ── 2. 创建独立 Session ──────────────────────────────────────────────────────
+  const subSession = await parentRuntime.sessions.create({
+    provider: parentRuntime.provider.name,
+    model: parentRuntime.provider.model,
+    workspaceRoot: parentRuntime.config.workspaceRoot,
+  });
+
+  // ── 3. 构建受限工具集 ────────────────────────────────────────────────────────
+  const sourceTools = parentRuntime.allTools ?? parentRuntime.tools;
+  const filteredTools = ToolRegistry.fromTools(
+    sourceTools.list().filter((tool) =>
+      profile.toolFilter({ name: tool.name, risk: tool.risk, description: tool.description }),
+    ),
+  );
+
+  // ── 4. 组装轻量子运行时（继承 provider/config/sessions，覆盖 session/tools）──
+  const subUI = new TerminalUI({ quiet: true });
+  const subRuntime: AgentRuntime = {
+    ...parentRuntime,
+    session: subSession,
+    tools: filteredTools,
+    allTools: filteredTools,
+    ui: subUI,
+    // 子 agent 不继承 git safety 单元（避免嵌套 unit 污染父 session）
+    gitSafety: undefined,
+    gitRollback: undefined,
+    gitPublisher: undefined,
+    gitProcess: undefined,
+    gitRepository: undefined,
+    // 推理档位覆盖
+    reasoningEffort: spec.reasoningEffort ?? parentRuntime.reasoningEffort,
+    // maxSteps 通过 config 覆盖（浅拷贝 config 避免影响父运行时）
+    config: spec.maxSteps
+      ? { ...parentRuntime.config, maxSteps: spec.maxSteps }
+      : parentRuntime.config,
+    // 子 agent 使用简单的自动批准确认（headless 模式）
+    confirm: () => Promise.resolve(true),
+    toolConfirm: () => Promise.resolve(true),
+  };
+
+  // ── 5. 构建增强 prompt ───────────────────────────────────────────────────────
+  const parts: string[] = [];
+
+  if (parentGoal) {
+    parts.push(`## 主任务背景\n${parentGoal}\n`);
+  }
+
+  if (upstreamResults.size > 0) {
+    const upstreamLines: string[] = [];
+    for (const [depId, result] of upstreamResults) {
+      upstreamLines.push(`- **${depId}** (${result.expert}): ${result.answer.slice(0, 300)}`);
+    }
+    parts.push(`## 上游子任务结果\n${upstreamLines.join('\n')}\n`);
+  }
+
+  if (spec.contextHint) {
+    parts.push(`## 额外背景\n${spec.contextHint}\n`);
+  }
+
+  // 专家角色提示
+  parts.push(`## 你的角色\n${profile.systemPrompt}\n`);
+  parts.push(`## 当前任务\n${spec.goal}`);
+
+  const enrichedGoal = parts.join('\n');
+
+  // ── 6. 执行子 agent ──────────────────────────────────────────────────────────
+  let ok = false;
+  let answer = '';
+  let steps = 0;
+
+  try {
+    const result = await runAgentTurn(subRuntime, enrichedGoal, {
+      displayText: `[subagent:${spec.id}] ${spec.goal.slice(0, 80)}`,
+    });
+    ok = result.ok;
+    answer = result.finalAnswer ?? result.reason ?? '(no answer)';
+    steps = subSession.messages.filter((m) => m.role === 'assistant').length;
+  } catch (err) {
+    ok = false;
+    answer = err instanceof Error ? err.message : String(err);
+  }
+
+  return {
+    id: spec.id,
+    goal: spec.goal,
+    expert: spec.expert,
+    ok,
+    answer,
+    sessionId: subSession.id,
+    durationMs: Date.now() - t0,
+    steps,
+  };
+}

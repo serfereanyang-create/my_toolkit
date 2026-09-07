@@ -1,0 +1,9 @@
+{"type":"turn_start","prompt":"C盘还有多少空间"}
+{"type":"model_start","status":"running"}
+{"type":"model_end","status":"done"}
+{"type":"tool_start","index":1,"tool":"disk_info","input":{"drive":"C"},"status":"running"}
+{"type":"tool_result","tool":"disk_info","ok":true,"durationMs":0,"output":"name\tpath\tusedGB\tfreeGB\ttotalGB\nC:\tC:/\t224.54\t188.25\t412.79","data":{"disks":[{"name":"C:","path":"C:/","usedGb":224.54,"freeGb":188.25,"totalGb":412.79}]}}
+{"type":"model_start","status":"running"}
+{"type":"model_end","status":"done"}
+{"type":"assistant","content":"Done. I translated the natural-language request into 1 tool call(s)."}
+{"type":"final","ok":true,"session":"sess_20260723102516_90b88856"}

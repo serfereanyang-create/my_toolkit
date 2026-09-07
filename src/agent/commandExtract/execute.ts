@@ -92,6 +92,7 @@ async function executeStep(runtime: AgentRuntime, step: PlannedToolStep, locale:
     hooks: runtime.hooks,
     beforeConfirm: () => runtime.ui.pauseSpinnerForPrompt(),
     afterConfirm: () => runtime.ui.resumeSpinnerAfterPrompt(),
+    networkAllowlist: runtime.config.network?.enabled === false ? [] : runtime.config.network?.allowlist,
     locale,
   });
   runtime.ui.toolResult(step.tool, result);

@@ -28,8 +28,25 @@ const colors = {
   white: '\u001b[37m',
 };
 
-const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+// Multiple spinner styles for variety
+const spinnerStyles = {
+  dots: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+  line: ['—', '\\', '|', '/'],
+  arrow: ['←', '↖', '↑', '↗', '→', '↘', '↓', '↙'],
+  bounce: ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'],
+  pulse: ['◐', '◓', '◑', '◒'],
+  dots2: ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'],
+};
+
+const spinnerFrames = spinnerStyles.dots; // Default spinner
 const defaultBlockMaxLines = 80;
+
+// Progress bar characters
+const progressChars = {
+  filled: '█',
+  partial: ['▏', '▎', '▍', '▌', '▋', '▊', '▉'],
+  empty: '░',
+};
 
 type TerminalUIOptions = {
   quiet?: boolean;
@@ -47,6 +64,7 @@ export class TerminalUI {
   private activeSpinner?: NodeJS.Timeout;
   private activeSpinnerText = '';
   private activeSpinnerFrame = 0;
+  private activeSpinnerStyle: keyof typeof spinnerStyles = 'dots';
   private streamingAssistant = false;
   private streamCleaner = new MarkdownStreamCleaner();
   private readonly runningTools = new Map<string, number>();
@@ -54,6 +72,8 @@ export class TerminalUI {
   private readonly options: TerminalUIOptions;
   private homeActive = false;
   private modelHint = 'aicode';
+  private pulseDirection = 1; // For pulsing effects
+  private lastToolOutput = ''; // For animated transitions
 
   constructor(options: TerminalUIOptions | boolean = {}) {
     this.options = typeof options === 'boolean' ? { quiet: options } : options;
@@ -121,6 +141,15 @@ export class TerminalUI {
     this.stopSpinner();
   }
 
+  /**
+   * Emit a real per-turn context/cache snapshot (JSON mode only). Carries the
+   * genuine token breakdown and cache-hit numbers so the desktop can render the
+   * 上下文容量 / 缓存命中率 panel without any estimation. No-op in TTY mode.
+   */
+  contextStats(stats: Record<string, unknown>) {
+    if (this.options.json) return this.jsonEvent('context_stats', stats);
+  }
+
   assistantDelta(delta: string) {
     if (!delta) return;
     if (this.options.json) return this.jsonEvent('assistant_delta', { content: delta });
@@ -161,6 +190,20 @@ export class TerminalUI {
     this.toolIndex += 1;
     this.runningTools.set(tool, Date.now());
     this.toolInputs.set(tool, input);
+    
+    // Choose spinner style based on tool type for variety
+    if (tool.includes('search') || tool.includes('find')) {
+      this.activeSpinnerStyle = 'dots2';
+    } else if (tool.includes('git') || tool.includes('read')) {
+      this.activeSpinnerStyle = 'pulse';
+    } else if (tool.includes('run') || tool.includes('execute')) {
+      this.activeSpinnerStyle = 'arrow';
+    } else if (tool.includes('write') || tool.includes('create')) {
+      this.activeSpinnerStyle = 'bounce';
+    } else {
+      this.activeSpinnerStyle = 'dots';
+    }
+    
     if (this.options.json) return this.jsonEvent('tool_start', { index: this.toolIndex, tool, input, status: 'running' });
     if (this.options.quiet) return;
     if (this.options.verbose) {
@@ -168,8 +211,10 @@ export class TerminalUI {
       this.writeKeyValue('input', formatInput(input, this.options.noColor ?? false));
       this.writeKeyValue('status', `${this.color('dim')}running${this.color('reset')}`);
     } else {
-      // Fold process details into one dim running line; expanded on --verbose.
-      this.write(`${this.color('dim')}* Tool ${this.toolIndex} ${tool} …${this.color('reset')}`);
+      // Animated running line with gradient effect
+      const emoji = this.getToolEmoji(tool);
+      this.write(`${this.color('cyan')}${emoji} ${this.color('reset')}${this.color('dim')}Tool ${this.toolIndex}${this.color('reset')} ${this.style(tool, 'bold')} ${this.color('dim')}…${this.color('reset')}`);
+      this.lastToolOutput = tool;
     }
     this.startSpinner(`${tool}`);
   }
@@ -200,8 +245,11 @@ export class TerminalUI {
         output: plainOutput,
         data: result.data,
       });
-      const color = result.ok ? this.color('dim') : this.color('red');
-      this.write(`${color}* ${line}${this.color('reset')}`);
+      // Animated completion with emoji and color gradient
+      const emoji = result.ok ? '✓' : '✗';
+      const color = result.ok ? this.color('green') : this.color('red');
+      const dimColor = this.color('dim');
+      this.write(`${color}${emoji}${this.color('reset')} ${dimColor}${line}${this.color('reset')}`);
       // On failure, still show a short body so the user can recover without --verbose.
       if (!result.ok && plainOutput.trim()) {
         this.writeBlock(plainOutput, this.color('red'), { indent: '    ', maxLines: 12, noWrap: true });
@@ -210,8 +258,8 @@ export class TerminalUI {
     }
 
     const status = result.ok
-      ? this.style(`ok ${duration}`, 'green')
-      : this.style(`failed ${duration}`, 'red');
+      ? this.style(`✓ ok ${duration}`, 'green')
+      : this.style(`✗ failed ${duration}`, 'red');
     this.writeKeyValue('result', status);
     if (plainOutput.trim()) {
       this.writeKeyValue('output', '');
@@ -257,23 +305,38 @@ export class TerminalUI {
     this.activeSpinnerText = text;
     this.activeSpinnerFrame = 0;
     this.renderSpinner();
-    this.activeSpinner = setInterval(() => this.renderSpinner(), 80);
+    // Faster refresh (60ms) for smoother animation
+    this.activeSpinner = setInterval(() => this.renderSpinner(), 60);
   }
 
   private stopSpinner() {
     if (!this.activeSpinner) return;
     clearInterval(this.activeSpinner);
     this.activeSpinner = undefined;
-    process.stdout.write(`\r${' '.repeat(displayWidth(this.activeSpinnerText) + 16)}\r`);
+    process.stdout.write(`\r${' '.repeat(displayWidth(this.activeSpinnerText) + 32)}\r`);
   }
 
   private renderSpinner() {
-    const frame = spinnerFrames[this.activeSpinnerFrame % spinnerFrames.length];
+    const frames = spinnerStyles[this.activeSpinnerStyle];
+    const frame = frames[this.activeSpinnerFrame % frames.length];
     this.activeSpinnerFrame += 1;
     const model = shortenModelLabel(this.modelHint);
-    // OpenCode-ish busy row: spinner + Build · model
+    
+    // Create pulsing effect with color intensity
+    const pulseIntensity = Math.abs((this.activeSpinnerFrame % 20) - 10) / 10;
+    const pulseColor = pulseIntensity > 0.5 ? this.color('cyan') : this.color('blue');
+    
+    // Animated dots that grow
+    const dots = '.'.repeat((this.activeSpinnerFrame % 4));
+    const spaces = ' '.repeat(3 - dots.length);
+    
+    // Dynamic status with progress indicator
+    const elapsed = Math.floor(this.activeSpinnerFrame * 60 / 1000);
+    const elapsedStr = elapsed > 0 ? `${elapsed}s` : '';
+    
+    // OpenCode-ish busy row with more visual feedback
     process.stdout.write(
-      `\r  ${this.color('blue')}${frame}${this.color('reset')} ${this.style('Build', 'bold', 'blue')} ${this.color('dim')}· ${model}${this.color('reset')}   `,
+      `\r  ${pulseColor}${frame}${this.color('reset')} ${this.style('Build', 'bold', 'cyan')} ${this.color('dim')}· ${model}${dots}${spaces}${elapsedStr ? ` ${elapsedStr}` : ''}${this.color('reset')}   `,
     );
   }
 
@@ -384,6 +447,25 @@ export class TerminalUI {
 
   private color(name: keyof typeof colors) {
     return this.options.noColor ? '' : colors[name];
+  }
+
+  private getToolEmoji(tool: string): string {
+    if (this.options.noColor) return '▸';
+    // Tool-specific emoji for visual variety
+    if (tool.includes('search') || tool.includes('find')) return '🔍';
+    if (tool.includes('git')) return '📦';
+    if (tool.includes('read') || tool.includes('list')) return '📖';
+    if (tool.includes('write') || tool.includes('create')) return '✍️';
+    if (tool.includes('run') || tool.includes('execute') || tool.includes('command')) return '⚡';
+    if (tool.includes('test')) return '🧪';
+    if (tool.includes('build') || tool.includes('compile')) return '🔨';
+    if (tool.includes('fetch') || tool.includes('web')) return '🌐';
+    if (tool.includes('image') || tool.includes('img')) return '🖼️';
+    if (tool.includes('docx') || tool.includes('doc')) return '📝';
+    if (tool.includes('xlsx') || tool.includes('csv')) return '📊';
+    if (tool.includes('pdf')) return '📄';
+    if (tool.includes('zip') || tool.includes('archive')) return '📦';
+    return '▸';
   }
 }
 

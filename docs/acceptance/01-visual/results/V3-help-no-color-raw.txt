@@ -1,0 +1,26 @@
+[2mCommands:
+/help       Show this help
+/status     Show session and workspace status
+/provider   Show active provider
+/model      Show active model
+/config     Show effective redacted configuration
+/tools      List available tools
+/mcp        Show MCP servers (use /mcp reload)
+/attach <path>…  Stage files/images for next message (drag path into terminal then /attach)
+/paste-image  Capture screenshot from clipboard (Windows)
+/attachments  List staged attachments
+/paste      Multiline paste mode (end with . or /end; keeps original newlines)
+"""          Multiline block (end with """); not bash forced wrap
+Text limit   25480 bytes (~25KB) pure text per turn
+/summary    Summarize the current session
+/plan       Show task board (use /plan confirm|pause|continue|skip|reopen|show)
+/memory     Show project memory (use /memory add|list|forget)
+/rollback   List/show/preview/apply Git safety unit rollbacks
+/git status|commit|publish   Board-linked Git workflow (commit is confirmed)
+/git publish <remote> <local-ref> <remote-branch>  Confirmed non-force push
+/export     Show transcript file path
+/sessions   List recent sessions
+/undo       Undo the last checkpointed file change
+/不准偷懒开发       开启学习守门模式
+/不准偷懒开发 状态  查看守门状态
+/exit       Exit interactive mode[0m

@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import packageJson from '../package.json' with { type: 'json' };
+
+// Avoid `import ... with { type: 'json' }` (ExperimentalWarning in Node 22).
+const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version?: string };
 
 const execFileAsync = promisify(execFile);
 const cliPath = resolve('dist/src/index.js');

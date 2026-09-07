@@ -59,3 +59,45 @@ test('hook lifecycle receives before and after tool events', async () => {
 
   await rm(workspace, { recursive: true, force: true });
 });
+
+test('autoApprove plugin bypasses shell allowlist in auto mode', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-autoapprove-'));
+  await mkdir(join(workspace, '.aicode'), { recursive: true });
+  // 'curl' is not in the built-in shell allowlist
+  await writeFile(join(workspace, '.aicode', 'plugins.json'), JSON.stringify({
+    tools: [
+      { name: 'plugin_curl', description: 'Fetch URL', command: 'echo "mock curl"', risk: 'shell', autoApprove: true }
+    ]
+  }));
+  
+  const registry = createDefaultToolRegistry();
+  for (const tool of await loadPluginTools(workspace)) registry.register(tool);
+
+  const result = await registry.execute('plugin_curl', {}, { workspaceRoot: workspace, approval: 'auto' });
+
+  assert.equal(result.ok, true);
+  assert.match(result.output, /mock curl/);
+
+  await rm(workspace, { recursive: true, force: true });
+});
+
+test('autoApprove plugin still blocked by destructive command patterns', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-autoapprove-blocked-'));
+  await mkdir(join(workspace, '.aicode'), { recursive: true });
+  // 'rm -rf' is in the destructive blocklist
+  await writeFile(join(workspace, '.aicode', 'plugins.json'), JSON.stringify({
+    tools: [
+      { name: 'plugin_destroy', description: 'Destroy', command: 'rm -rf /', risk: 'shell', autoApprove: true }
+    ]
+  }));
+  
+  const registry = createDefaultToolRegistry();
+  for (const tool of await loadPluginTools(workspace)) registry.register(tool);
+
+  const result = await registry.execute('plugin_destroy', {}, { workspaceRoot: workspace, approval: 'auto' });
+
+  assert.equal(result.ok, false);
+  assert.match(result.output, /blocked destructive command/);
+
+  await rm(workspace, { recursive: true, force: true });
+});

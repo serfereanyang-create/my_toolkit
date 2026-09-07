@@ -21,6 +21,12 @@ export class ToolRegistry {
     return Array.from(this.tools.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  static fromTools(tools: ToolDefinition[]) {
+    const registry = new ToolRegistry();
+    for (const tool of tools) registry.register(tool);
+    return registry;
+  }
+
   specs() {
     return this.list().map(toolToProviderSpec);
   }
@@ -54,6 +60,11 @@ export class ToolRegistry {
       workspaceRoot: context.workspaceRoot,
       command: typeof inputRecord.command === 'string' ? inputRecord.command : undefined,
       targetPath: approvalTargetPath(inputRecord),
+      url: typeof inputRecord.url === 'string' ? inputRecord.url : undefined,
+      networkAllowlist: context.networkAllowlist,
+      autoApprove: tool.autoApprove === true,
+      computerAnyApp: context.computerAnyApp === true,
+      allowedApps: context.computerAllowedApps,
     });
 
     if (!decision.allowed) {
@@ -72,12 +83,17 @@ export class ToolRegistry {
       }
       context.beforeConfirm?.();
       const message = await approvalMessage(name, tool.risk, inputRecord, context, locale);
+      // Attach a structured before/after diff for write tools so desktop UIs
+      // can render the real change during confirmation. Zero disk access after
+      // this point if the user denies.
+      const diff = tool.risk === 'write' ? await buildWriteDiff(name, inputRecord, context) : undefined;
       const approved = await context.confirm(message, {
         tool: name,
         risk: tool.risk,
         input: inputRecord,
         reason: decision.reason,
         message,
+        diff,
       });
       context.afterConfirm?.();
       if (!approved) {
@@ -118,7 +134,7 @@ function approvalTargetPath(input: Record<string, unknown>) {
 
 async function approvalMessage(
   name: string,
-  risk: 'read' | 'write' | 'shell',
+  risk: 'read' | 'write' | 'shell' | 'network',
   input: Record<string, unknown>,
   context: ToolContext,
   locale: import('../i18n/locale.js').Locale,
@@ -159,6 +175,62 @@ async function diffPreview(name: string, input: Record<string, unknown>, context
     return [`\n--- ${input.path}`, `+++ ${input.path}`, ...simpleDiff(beforeLines, afterLines).slice(0, 12)].join('\n');
   } catch {
     return '';
+  }
+}
+
+/**
+ * Structured before/after for the three write tools, computed WITHOUT touching
+ * disk. Attached to the ApprovalRequest so desktop UIs can render a real diff
+ * during confirmation. Deny at this point is zero-side-effect (no checkpoint,
+ * no write). Mirrors each tool's execute() transformation logic.
+ */
+async function buildWriteDiff(
+  name: string,
+  input: Record<string, unknown>,
+  context: ToolContext,
+): Promise<import('./types.js').ApprovalRequest['diff']> {
+  if (typeof input.path !== 'string' || !input.path) return undefined;
+  try {
+    const target = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const originalContent = await readFile(target, 'utf8').catch(() => '');
+    let modifiedContent: string | undefined;
+
+    if (name === 'write_file' && typeof input.content === 'string') {
+      modifiedContent = input.content;
+    } else if (name === 'apply_patch' && typeof input.newText === 'string') {
+      if (input.oldText === undefined) {
+        modifiedContent = input.newText;
+      } else if (typeof input.oldText === 'string' && originalContent.includes(input.oldText)) {
+        modifiedContent = originalContent.replace(input.oldText, input.newText);
+      } else {
+        return undefined; // tool will fail later anyway
+      }
+    } else if (name === 'edit_lines') {
+      const beforeLines = originalContent === '' ? [] : originalContent.replace(/\r\n/g, '\n').split('\n');
+      let lines = [...beforeLines];
+      const start = typeof input.start === 'number' ? input.start : NaN;
+      const end = typeof input.end === 'number' ? input.end : NaN;
+      const text = typeof input.text === 'string' ? input.text : '';
+      const mode = typeof input.mode === 'string' ? input.mode : 'replace';
+      if (Number.isNaN(start)) return undefined;
+      const replaceMode = mode === 'replace' || mode === 'insert';
+      if (replaceMode) {
+        const inserted = text.length ? text.split(/\r?\n/) : [];
+        lines.splice(start - 1, mode === 'replace' ? Math.max(0, end - start + 1) : 0, ...inserted);
+      } else if (mode === 'delete') {
+        lines.splice(start - 1, Math.max(1, end - start + 1));
+      } else {
+        return undefined;
+      }
+      modifiedContent = lines.join('\n');
+    } else {
+      return undefined;
+    }
+
+    if (modifiedContent === undefined || modifiedContent === originalContent) return undefined;
+    return { path: input.path, originalContent, modifiedContent };
+  } catch {
+    return undefined;
   }
 }
 

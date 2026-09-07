@@ -1,23 +1,61 @@
 import type { AgentAction, AgentMessage, ProviderRequest, ProviderToolSpec } from './types.js';
 
-export function buildToolSystemPrompt(tools: ProviderToolSpec[], projectContext?: string, toolStrategy?: string) {
-  return [
-    'You are a local coding CLI agent. The user writes natural language. When answering requires local project inspection, file edits, search, or command execution, call a tool and wait for the tool result.',
+/**
+ * Runtime facts the model would otherwise have to guess or discover via a tool
+ * call. All optional so existing callers (and tests) that only pass tools/
+ * projectContext/toolStrategy keep working unchanged.
+ */
+export type PromptIdentity = {
+  /** Absolute path to the active workspace root for this session. */
+  workspaceRoot?: string;
+  /** True when this CLI process was spawned as the agent backend for the desktop IDE. */
+  desktopBridge?: boolean;
+};
+
+import { SUBAGENT_STRATEGY_HINT } from '../agent/toolStrategy.js';
+
+export function buildToolSystemPromptParts(
+  tools: ProviderToolSpec[],
+  projectContext?: string,
+  toolStrategy?: string,
+  identity?: PromptIdentity,
+) {
+  const stable = [
+    `You are aicode, a local coding CLI agent${identity?.desktopBridge ? ', running embedded as the backend of the YOYcode Desktop IDE' : ''}. The user writes natural language. When answering requires local project inspection, file edits, search, or command execution, call a tool and wait for the tool result.`,
     'Prefer native tool calling when available. If you must fall back to text, return exactly one tool call as JSON only (raw or fenced), with no extra prose.',
     'For multi-step tasks, request exactly one tool at a time. After the tool result is provided, request the next tool. Only write the final answer after all required tool results are available.',
     'If a tool fails and the failure is recoverable, choose a better dedicated tool or a platform-correct fallback instead of asking the user to run the command manually.',
     'If the user asks to create a Word document or .docx file, use create_docx. Do not use run_command for Word document creation.',
     'After create_docx succeeds, stop. Reply with a short confirmation only — do not call create_docx again for the same file.',
     'To read Desktop Word files use read_file with path like desktop/测试.docx or an absolute Desktop path. read_file extracts .docx text. Do not use workspace-relative desktop/ under the project root.',
+    'For spreadsheets use create_xlsx (rows as a 2D array or an array of objects; optional headers). For tabular text use read_csv / write_csv. For structured data use read_json (optional dot-path query). Prefer these dedicated tools over run_command.',
+    'To find information online when you do not have a URL, use web_search first, then call fetch_url on a chosen result. To fetch a known URL use fetch_url (HTTP GET). Only hosts on the network allowlist are reachable; if fetch_url returns a redirect, call it again with the new URL.',
     'Write final answers as plain terminal text. Do not use Markdown decorations such as **bold**, ## headings, or bullet markdown when talking to the user.',
-    `Runtime platform: ${process.platform}. Prefer dedicated tools over shell commands. For disk capacity/free-space questions, use disk_info. For disk growth/recent large files questions, use disk_growth. For recent activity/session/history questions, use recent_activity. For environment/container/system identity questions, use environment_info. For memory/process ranking questions, use process_memory instead of run_command. If you must run a shell command on Windows, use Windows-compatible commands.`,
+    identity?.workspaceRoot ? `Workspace root: ${identity.workspaceRoot}. All relative paths in tool calls resolve against this root.` : undefined,
+    `Runtime platform: ${process.platform}. Prefer dedicated tools over shell commands. For disk capacity/free-space questions, use disk_info. For disk growth/recent large files questions, use disk_growth. For recent activity/session/history questions, use recent_activity. For environment/container/system identity questions, use environment_info. For memory/process ranking questions, use process_memory instead of run_command. For cache hit-rate / cache health / cache efficiency questions, use cache_probe. If you must run a shell command on Windows, use Windows-compatible commands.`,
     projectContext ? `Project context and instructions:\n${projectContext}` : undefined,
-    toolStrategy,
+    SUBAGENT_STRATEGY_HINT,
     'Text fallback tool call shape:',
     '{"tool":"read_file","input":{"path":"package.json"}}',
     'Available tools:',
     ...tools.map((tool) => `- ${tool.name} [${tool.risk}]: ${tool.description}. Input: ${tool.inputHint}`),
   ].filter((line): line is string => typeof line === 'string').join('\n');
+
+  const dynamic = toolStrategy?.trim()
+    ? `Current-turn tool strategy (dynamic; do not treat as stable project instructions):\n${toolStrategy.trim()}`
+    : undefined;
+
+  return { stable, dynamic };
+}
+
+export function buildToolSystemPrompt(
+  tools: ProviderToolSpec[],
+  projectContext?: string,
+  toolStrategy?: string,
+  identity?: PromptIdentity,
+) {
+  const parts = buildToolSystemPromptParts(tools, projectContext, toolStrategy, identity);
+  return [parts.stable, parts.dynamic].filter((part): part is string => Boolean(part)).join('\n');
 }
 
 export function toOpenAITools(tools: ProviderToolSpec[]) {
@@ -32,11 +70,23 @@ export function toOpenAITools(tools: ProviderToolSpec[]) {
 }
 
 export function toAnthropicTools(tools: ProviderToolSpec[]) {
-  return tools.map((tool) => ({
-    name: tool.name,
-    description: `${tool.description} Risk: ${tool.risk}.`,
-    input_schema: schemaFromInputHint(tool.inputHint),
-  }));
+  return tools.map((tool, index) => {
+    const entry: Record<string, unknown> = {
+      name: tool.name,
+      description: `${tool.description} Risk: ${tool.risk}.`,
+      input_schema: schemaFromInputHint(tool.inputHint),
+    };
+    // The final tool carries the cache_control breakpoint. Anthropic caches the
+    // prefix in evaluation order (tools → system → messages), so this single
+    // breakpoint covers the entire tools JSON plus the system prompt that
+    // follows it as one continuous cached segment (~33K tokens with 245 tools).
+    // Avoids splitting the cache into separate tools-only and system-only
+    // entries that each miss independently.
+    if (index === tools.length - 1) {
+      entry.cache_control = { type: 'ephemeral' };
+    }
+    return entry;
+  });
 }
 
 export function parseOpenAIToolCalls(message: {
@@ -79,7 +129,16 @@ export function parseAnthropicContentBlocks(content: Array<Record<string, unknow
   return parseToolActions(textParts.join('\n'));
 }
 
-function schemaFromInputHint(inputHint: string): Record<string, unknown> {
+export function toOpenAIResponsesTools(tools: ProviderToolSpec[]) {
+  return tools.map((tool) => ({
+    type: 'function',
+    name: tool.name,
+    description: `${tool.description} Risk: ${tool.risk}.`,
+    parameters: schemaFromInputHint(tool.inputHint),
+  }));
+}
+
+export function schemaFromInputHint(inputHint: string): Record<string, unknown> {
   const properties: Record<string, { type: string }> = {};
   const required: string[] = [];
   const objectMatch = inputHint.match(/\{([\s\S]*)\}/);
@@ -146,8 +205,8 @@ export function toToolAwareMessages(messages: AgentMessage[]) {
   });
 }
 
-export function toAnthropicAwareMessages(messages: AgentMessage[]) {
-  const converted = messages.map((message) => {
+export function toAnthropicAwareMessages(messages: AgentMessage[], options?: { slidingCacheBreakpoint?: boolean }) {
+  const converted: Array<{ role: 'user' | 'assistant'; content: unknown }> = messages.map((message) => {
     const role = message.role === 'assistant' ? 'assistant' : 'user';
     if (message.role === 'user' && message.parts && message.parts.some((part) => part.type === 'image')) {
       const content = message.parts.map((part) => {
@@ -170,7 +229,23 @@ export function toAnthropicAwareMessages(messages: AgentMessage[]) {
       content: message.name ? `[tool:${message.name}] ${message.content}` : message.content,
     };
   });
-  return converted.length > 0 ? converted : [{ role: 'user' as const, content: 'Start.' }];
+  const result: Array<{ role: 'user' | 'assistant'; content: unknown }> = converted.length > 0
+    ? converted
+    : [{ role: 'user', content: 'Start.' }];
+  if (options?.slidingCacheBreakpoint && result.length > 0) {
+    // Sliding breakpoint: mark ONLY the last message so each request caches the
+    // full prefix (tools + system + all prior messages) and the next request
+    // reuses it — the breakpoint advances with the conversation. One message
+    // breakpoint + system + tools breakpoints stays within Anthropic's 4-limit.
+    const last = result[result.length - 1]!;
+    if (typeof last.content === 'string') {
+      last.content = [{ type: 'text', text: last.content, cache_control: { type: 'ephemeral' } }];
+    } else if (Array.isArray(last.content) && last.content.length > 0) {
+      const lastBlock = last.content[last.content.length - 1] as Record<string, unknown>;
+      lastBlock.cache_control = { type: 'ephemeral' };
+    }
+  }
+  return result;
 }
 
 export function parseToolActions(content: string): AgentAction[] {
@@ -268,23 +343,42 @@ function normalizeParsedActions(parsed: unknown): AgentAction[] {
   return [];
 }
 
-export async function fetchWithRetry(url: string, init: Parameters<typeof fetch>[1], attempts = 3) {
+export type ProviderTimeouts = {
+  connectTimeoutMs?: number;
+  totalTimeoutMs?: number;
+};
+
+export async function fetchWithRetry(url: string, init: Parameters<typeof fetch>[1], attempts = 3, timeouts: ProviderTimeouts = {}) {
+  const totalTimeoutMs = timeouts.totalTimeoutMs ?? 300_000;
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), totalTimeoutMs);
+    const inputSignal = init?.signal;
+    const abortInput = () => controller.abort();
+    if (inputSignal) {
+      if (inputSignal.aborted) controller.abort();
+      else inputSignal.addEventListener('abort', abortInput, { once: true });
+    }
     try {
-      const response = await fetch(url, init);
+      const response = await fetch(url, { ...init, signal: controller.signal });
       if (response.ok || response.status < 500 || attempt === attempts) return response;
       lastError = new Error(`HTTP ${response.status}`);
     } catch (error) {
-      lastError = error;
+      lastError = error instanceof DOMException && error.name === 'AbortError'
+        ? new Error(`Provider request timed out after ${totalTimeoutMs}ms`)
+        : error;
       if (attempt === attempts) break;
+    } finally {
+      clearTimeout(timer);
+      if (inputSignal) inputSignal.removeEventListener('abort', abortInput);
     }
     await delay(400 * attempt);
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-export async function* iterateSseDataLines(response: Response): AsyncGenerator<string> {
+export async function* iterateSseDataLines(response: Response, idleTimeoutMs = 90_000): AsyncGenerator<string> {
   if (!response.body) {
     const text = await response.text();
     for (const line of text.split(/\r?\n/)) {
@@ -299,7 +393,11 @@ export async function* iterateSseDataLines(response: Response): AsyncGenerator<s
   let buffer = '';
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const readResult = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Provider stream idle timeout after ${idleTimeoutMs}ms`)), idleTimeoutMs)),
+      ]);
+      const { done, value } = readResult;
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       const parts = buffer.split(/\r?\n/);

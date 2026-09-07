@@ -1,0 +1,9 @@
+{"type":"turn_start","prompt":"现在谁最占内存"}
+{"type":"model_start","status":"running"}
+{"type":"model_end","status":"done"}
+{"type":"tool_start","index":1,"tool":"process_memory","input":{"limit":10},"status":"running"}
+{"type":"tool_result","tool":"process_memory","ok":true,"durationMs":458,"output":"name\tpid\tmemoryMB\nMemory Compression\t3692\t2225.3\nZCode\t38760\t644.9\nsteamwebhelper\t7872\t520.8\nsteamwebhelper\t5732\t420.4\nexplorer\t12816\t408.4\nWeixin\t21956\t366.2\nQQ\t14360\t357.9\nMsMpEng\t5988\t351.6\nmsedge\t34208\t343.6\ndwm\t2072\t325","data":{"processes":[{"name":"Memory Compression","pid":3692,"memoryMb":2225.3},{"name":"ZCode","pid":38760,"memoryMb":644.9},{"name":"steamwebhelper","pid":7872,"memoryMb":520.8},{"name":"steamwebhelper","pid":5732,"memoryMb":420.4},{"name":"explorer","pid":12816,"memoryMb":408.4},{"name":"Weixin","pid":21956,"memoryMb":366.2},{"name":"QQ","pid":14360,"memoryMb":357.9},{"name":"MsMpEng","pid":5988,"memoryMb":351.6},{"name":"msedge","pid":34208,"memoryMb":343.6},{"name":"dwm","pid":2072,"memoryMb":325}]}}
+{"type":"model_start","status":"running"}
+{"type":"model_end","status":"done"}
+{"type":"assistant","content":"Done. I translated the natural-language request into 1 tool call(s)."}
+{"type":"final","ok":true,"session":"sess_20260723102517_bb8ca994"}

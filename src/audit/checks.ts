@@ -193,6 +193,7 @@ function buildChecks(root: string): Check[] {
     'tests/cache-probe.test.ts',
     'tests/i18n.test.ts',
     'tests/markdown.test.ts',
+    'tests/tool-scope.test.ts',
   ];
   requiredFiles.forEach((path) => checks.push({ name: `file exists: ${path}`, run: () => exists(path) }));
 
@@ -239,7 +240,7 @@ function buildChecks(root: string): Check[] {
   providerNeedles.forEach(([path, needle]) => checks.push({ name: `provider ${path} contains ${needle}`, run: () => contains(path, needle) }));
 
   const registry = createDefaultToolRegistry();
-  const expectedTools = ['project_status', 'recent_activity', 'environment_info', 'cache_probe', 'project_index', 'find_symbol', 'find_references', 'git_status', 'git_diff', 'git_log', 'list_files', 'read_file', 'write_file', 'search_text', 'process_memory', 'disk_info', 'disk_growth', 'run_command', 'create_docx', 'rename_file', 'apply_patch'];
+  const expectedTools = ['append_file','apply_patch','base_convert','base64_decode','base64_encode','byte_size_format','cache_probe','calculate','char_at','clamp_number','common_prefix_text','common_suffix_text','convert_to_pdf','copy_file','count_files','count_substring','create_docx','create_docx_table','create_pptx','create_xlsx','create_zip','csv_preview','csv_stats','csv_to_json','current_datetime','date_diff','dedupe_lines','delete_path','dependency_tree','diff_files','directory_depth_summary','directory_summary','disk_growth','disk_info','download_file','drop_lines','duplicate_filenames','duration_parse','edit_lines','empty_dirs','env_get','environment_info','extract_between','extract_matches','extract_page_links','extract_zip','fetch_url','file_extensions_in_dir','file_info','filename_search','filter_lines','find_files','find_references','find_symbol','first_nonempty_line','format_duration','format_json','git_add','git_blame','git_branch','git_checkout','git_cherry_pick','git_commit','git_diff','git_diff_staged','git_fetch','git_log','git_merge','git_pull','git_reset','git_restore','git_show','git_stash','git_status','git_tag','glob_files','hash_text','head_tail','hidden_files','html_headings','html_links','html_metadata','html_to_text','http_post','image_aspect_ratio','image_batch_info','image_content_bounds','image_dominant_colors','image_info','image_transparency','ini_parse','insert_docx_image','install_deps','join_text','json_keys','json_merge','json_to_csv','json_type_summary','largest_files','last_nonempty_line','line_contains','line_lengths','line_numbers','line_prefix','line_suffix','linear_interpolate','lint','list_chunk','list_contains','list_count','list_diff','list_dirs','list_files','list_flatten','list_frequency','list_index_of','list_intersect','list_join','list_reverse','list_scripts','list_slice','list_sort','list_tree','list_union','list_unique','list_zip','list_zip_pairs','longest_line','make_dir','markdown_code_blocks','markdown_links','markdown_outline','markdown_to_html','nearest_ancestor_with','nth_line','number_abs','number_average','number_compare','number_cumsum','number_histogram','number_median','number_min_max','number_modulo','number_percentile','number_product','number_range_check','number_scale','number_sign','number_sort','number_stats','number_sum','number_unique','outdated_deps','parse_byte_size','parse_url','path_ancestors','path_basename','path_change_ext','path_common_prefix','path_compare','path_depth','path_dirname','path_exists','path_extname','path_is_absolute','path_join','path_matches_glob','path_normalize','path_parent','path_parts','path_relative','path_stem','pdf_to_text','percentage_change','percentage_of','process_memory','project_index','project_status','properties_parse','ratio_simplify','read_csv','read_file','read_json','read_lines','read_many_files','recent_activity','recent_files','rename_file','repo_map','replace_text','reverse_text','round_number','rtf_to_text','run_command','run_script','run_tests','search_text','sequence_generate','shortest_line','sibling_files','sort_lines','spawn_subagent','split_text','strip_empty_lines','take_lines','text_case','text_compare','text_contains','text_ends_with','text_equals','text_frequency','text_index_of','text_is_empty','text_length','text_pad','text_remove_prefix','text_remove_suffix','text_repeat','text_repeat_lines','text_slice','text_slugify','text_starts_with','text_surround','text_truncate','text_unwrap','text_wrap','toml_parse','trim_text','ts_exact_references','ts_goto_definition','ts_hover','typecheck','url_decode','url_encode','uuid_generate','web_search','which_command','word_count','write_csv','write_file','write_json','xml_query','xml_summary','xml_to_text','yaml_keys','yaml_parse','yaml_query','yaml_stringify','zip_summary'];
   expectedTools.forEach((tool) => checks.push({ name: `tool registered: ${tool}`, run: () => registry.get(tool) !== undefined }));
   checks.push({ name: 'tool specs match tool count', run: () => registry.specs().length === expectedTools.length });
   checks.push({ name: 'tool names are unique', run: () => new Set(registry.list().map((tool) => tool.name)).size === registry.list().length });
@@ -247,9 +248,12 @@ function buildChecks(root: string): Check[] {
   checks.push({ name: 'write tools exist', run: () => registry.list().filter((tool) => tool.risk === 'write').length >= 2 });
   checks.push({ name: 'shell tool exists', run: () => registry.list().some((tool) => tool.risk === 'shell') });
 
+  checks.push({ name: 'tool scope source exists', run: () => exists('src/tools/scope.ts') });
   const toolNeedles: Array<[string, string]> = [
     ['src/tools/activity.ts', 'recentActivityTool'],
     ['src/tools/cacheProbe.ts', 'cacheProbeTool'],
+    ['src/tools/scope.ts', 'resolveToolScope'],
+    ['src/tools/scope.ts', 'selectScopedTools'],
     ['src/tools/activity.ts', 'git: not a git repository'],
     ['src/tools/nav.ts', 'findSymbolTool'],
     ['src/tools/nav.ts', 'findReferencesTool'],
@@ -528,7 +532,7 @@ function buildChecks(root: string): Check[] {
   const toolStrategyTestNeedles = [
     'tool strategy classifies disk growth',
     'tool strategy classifies code edit',
-    'tool system prompt places project context before strategy',
+    'tool system prompt keeps strategy in the dynamic tail after the stable prefix',
     'recovery hints explain path and edit failures',
   ];
   toolStrategyTestNeedles.forEach((needle) => checks.push({ name: `tool strategy test contains ${needle}`, run: () => contains('tests/tool-strategy.test.ts', needle) }));

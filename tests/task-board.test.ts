@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { AgentRuntime } from '../src/agent/agent.js';
 import { parseArgs } from '../src/cli/args.js';
 import { handleSlashCommand } from '../src/cli/commands.js';
-import { runPromptMode } from '../src/cli/repl.js';
+import { runAutomationGoal, runPromptMode } from '../src/cli/repl.js';
 import { loadConfig } from '../src/config/config.js';
 import { createMockProvider } from '../src/providers/mock.js';
 import { SessionStore } from '../src/session/store.js';
@@ -298,6 +298,45 @@ test('large goal drafts a board and confirmPlan auto-runs tasks with mock provid
     assert.ok(board.tasks.some((task) => task.status === 'done' || task.status === 'blocked' || task.status === 'in_progress' || task.status === 'pending'));
     assert.notEqual(board.status, 'draft');
     assert.ok(session.taskRuntime?.boardId);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('runAutomationGoal always creates and confirms a task board', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-automation-goal-'));
+  try {
+    const sessionDir = join(workspace, 'sessions');
+    const sessions = new SessionStore(sessionDir);
+    const session = await sessions.create({ provider: 'mock', model: 'mock', workspaceRoot: workspace });
+    const runtime: AgentRuntime = {
+      config: {
+        provider: 'mock',
+        model: 'mock',
+        approval: 'auto',
+        workspaceRoot: workspace,
+        sessionDir,
+        maxSteps: 8,
+        noBanner: true,
+        confirmPlan: false,
+      },
+      provider: deterministicProvider(),
+      tools: createDefaultToolRegistry(),
+      sessions,
+      session,
+      ui: new TerminalUI(true),
+    };
+
+    const result = await runAutomationGoal(runtime, 'Run checks');
+    assert.equal(result.ok, true);
+    assert.equal(runtime.config.confirmPlan, false, 'temporary auto-confirm is restored');
+
+    const store = new TaskBoardStore(workspace);
+    const boards = await store.list();
+    assert.equal(boards.length, 1);
+    const board = await store.load(boards[0].id);
+    assert.equal(board.status, 'completed');
+    assert.ok(board.tasks.every((task) => task.status === 'done'));
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }

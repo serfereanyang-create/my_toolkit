@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { AgentMessage } from '../src/providers/types.js';
 import { createAnthropicProvider } from '../src/providers/anthropic.js';
 import { createOpenAIProvider } from '../src/providers/openai.js';
-import { buildToolSystemPrompt } from '../src/providers/protocol.js';
+import { buildToolSystemPrompt, buildToolSystemPromptParts } from '../src/providers/protocol.js';
 import { formatToolStrategy, planToolStrategy, recentToolResultsFromSession, recoveryHintForToolFailure } from '../src/agent/toolStrategy.js';
 
 test('recentToolResultsFromSession uses structured status and preserves duplicate tool order', () => {
@@ -185,7 +185,7 @@ test('tool strategy classifies code edit prompts as inspect first', () => {
   const strategy = planToolStrategy({ prompt: '修复登录按钮点击后没有反应的问题', recentTools: [], workspaceRoot: process.cwd() });
 
   assert.equal(strategy.intent, 'code_edit');
-  assert.deepEqual(strategy.recommendedTools, ['find_symbol', 'find_references', 'project_index', 'search_text', 'read_file', 'apply_patch', 'write_file']);
+  assert.deepEqual(strategy.recommendedTools, ['ts_hover', 'ts_goto_definition', 'ts_exact_references', 'find_symbol', 'find_references', 'project_index', 'search_text', 'read_file', 'apply_patch', 'write_file']);
   assert.ok(strategy.avoidTools.includes('run_command before inspection'));
   assert.ok(strategy.cacheHints.some((hint) => hint.includes('find_symbol')));
 });
@@ -309,25 +309,27 @@ test('formatToolStrategy renders compact provider guidance', () => {
 
   assert.match(formatted, /Tool strategy:/);
   assert.match(formatted, /intent=code_edit/);
-  assert.match(formatted, /recommended=find_symbol, find_references, project_index, search_text, read_file, apply_patch, write_file/);
+  assert.match(formatted, /recommended=ts_hover, ts_goto_definition, ts_exact_references, find_symbol, find_references, project_index, search_text, read_file, apply_patch, write_file/);
   assert.match(formatted, /avoid=run_command before inspection/);
   assert.match(formatted, /cacheHints=/);
 });
 
-test('tool system prompt places project context before strategy and tool call shape', () => {
+test('tool system prompt keeps strategy in the dynamic tail after the stable prefix', () => {
   const projectContext = 'project-context-marker';
   const toolStrategy = 'Tool strategy:\nintent=code_edit\nrecommended=project_index, search_text, read_file';
-  const prompt = buildToolSystemPrompt([], projectContext, toolStrategy);
+  const parts = buildToolSystemPromptParts([], projectContext, toolStrategy);
 
-  const projectContextIndex = prompt.indexOf(projectContext);
-  const toolStrategyIndex = prompt.indexOf(toolStrategy);
-  const toolCallShapeIndex = prompt.indexOf('Text fallback tool call shape:');
-
+  // Stable (cacheable) prefix keeps context and fallback shape; strategy is excluded.
+  const stable = parts.stable;
+  const projectContextIndex = stable.indexOf(projectContext);
+  const toolCallShapeIndex = stable.indexOf('Text fallback tool call shape:');
   assert.notEqual(projectContextIndex, -1);
-  assert.notEqual(toolStrategyIndex, -1);
   assert.notEqual(toolCallShapeIndex, -1);
-  assert.ok(projectContextIndex < toolStrategyIndex);
-  assert.ok(toolStrategyIndex < toolCallShapeIndex);
+  assert.ok(projectContextIndex < toolCallShapeIndex);
+  assert.doesNotMatch(stable, /intent=code_edit/);
+
+  // Dynamic block carries the per-turn strategy.
+  assert.match(parts.dynamic ?? '', /intent=code_edit/);
 });
 
 test('tool system prompt omits strategy guidance from one- and two-argument calls', () => {
@@ -337,6 +339,34 @@ test('tool system prompt omits strategy guidance from one- and two-argument call
   assert.doesNotMatch(oneArgumentPrompt, /Tool strategy:/);
   assert.doesNotMatch(twoArgumentPrompt, /Tool strategy:/);
   assert.match(twoArgumentPrompt, /project-context-marker/);
+});
+
+test('tool system prompt always states the agent self-identity', () => {
+  const prompt = buildToolSystemPrompt([]);
+  assert.match(prompt, /You are aicode, a local coding CLI agent/);
+  assert.doesNotMatch(prompt, /running embedded as the backend/);
+});
+
+test('tool system prompt reports desktop-bridge embedding only when identity says so', () => {
+  const bridged = buildToolSystemPrompt([], undefined, undefined, { desktopBridge: true });
+  assert.match(bridged, /running embedded as the backend of the YOYcode Desktop IDE/);
+
+  const notBridged = buildToolSystemPrompt([], undefined, undefined, { desktopBridge: false });
+  assert.doesNotMatch(notBridged, /running embedded as the backend/);
+});
+
+test('tool system prompt includes workspace root only when identity provides it', () => {
+  const withRoot = buildToolSystemPrompt([], undefined, undefined, { workspaceRoot: 'C:/workspace/demo' });
+  assert.match(withRoot, /Workspace root: C:\/workspace\/demo\. All relative paths in tool calls resolve against this root\./);
+
+  const withoutRoot = buildToolSystemPrompt([]);
+  assert.doesNotMatch(withoutRoot, /Workspace root:/);
+});
+
+test('tool system prompt without identity argument matches prior no-identity output', () => {
+  const implicit = buildToolSystemPrompt([], 'ctx-marker', 'strategy-marker');
+  const explicitEmpty = buildToolSystemPrompt([], 'ctx-marker', 'strategy-marker', {});
+  assert.equal(implicit, explicitEmpty);
 });
 
 test('OpenAI serializes tool strategy into the outbound system message', async () => {
@@ -400,8 +430,17 @@ test('Anthropic serializes tool strategy into the outbound system prompt', async
   }
 
   assert.ok(outboundBody);
-  assert.equal(typeof outboundBody.system, 'string');
-  assert.match(String(outboundBody.system), /provider-marker=anthropic/);
+  // System is a block array; the cache breakpoint sits on the LAST block so
+  // Anthropic caches tools + full system as one continuous prefix. When a
+  // dynamic strategy exists it becomes the final (breakpoint) block.
+  assert.ok(Array.isArray(outboundBody.system));
+  const blocks = outboundBody.system as Array<{ type: string; text: string; cache_control?: unknown }>;
+  const stableBlock = blocks[0];
+  const dynamicBlock = blocks.at(-1);
+  assert.equal(stableBlock.type, 'text');
+  assert.doesNotMatch(stableBlock.text, /provider-marker=anthropic/);
+  assert.match(String(dynamicBlock?.text), /provider-marker=anthropic/);
+  assert.deepEqual(dynamicBlock?.cache_control, { type: 'ephemeral' });
 });
 
 test('recovery hints explain path and edit failures', () => {

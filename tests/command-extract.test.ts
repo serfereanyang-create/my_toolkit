@@ -161,7 +161,7 @@ test('strategy-only edit prompt still calls provider with strategy text', async 
     assert.equal(result.ok, true);
     assert.ok(captured);
     assert.match(captured.toolStrategy ?? '', /intent=code_edit/);
-    assert.match(captured.toolStrategy ?? '', /recommended=find_symbol, find_references, project_index, search_text, read_file/);
+    assert.match(captured.toolStrategy ?? '', /recommended=repo_map, ts_hover, ts_goto_definition, ts_exact_references, find_symbol, find_references, project_index, search_text, read_file/);
     assert.equal(runtime.session.toolCalls.length, 0);
   } finally {
     await rm(workspace, { recursive: true, force: true });

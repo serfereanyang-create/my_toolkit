@@ -1,0 +1,25 @@
+┌────────────────────────────────────────────┐
+│ aicode cli mvp                             │
+│ provider: mock                             │
+│ model: mock-code-agent-v1                  │
+│ workspace: C:\Users\34516\ZCodeProject\cli │
+│ approval: auto                             │
+└────────────────────────────────────────────┘
+
+* Task
+  帮我看看项目索引
+
+* Tool 1 project_index
+  input: {"path":".","maxFiles":1000}
+  status: running
+  result: ok 19ms
+  output:
+    files: 156
+    extensions: .json:5, .gitignore:1, .md:8, .txt:3, .ts:138, .mjs:1
+    key files:
+    - package.json
+    - README.md
+    - tsconfig.json
+
+* Assistant
+  Done. I translated the natural-language request into 1 tool call(s).

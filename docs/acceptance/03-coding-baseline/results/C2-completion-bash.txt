@@ -1,0 +1,11 @@
+# bash completion for aicode
+_aicode_completion() {
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+  if [[ "$prev" == "completion" ]]; then
+    COMPREPLY=( $(compgen -W "bash zsh fish powershell" -- "$cur") )
+    return 0
+  fi
+  COMPREPLY=( $(compgen -W "completion --help --version --provider --model --base-url --approval --workspace --session-dir --config --profile --resume --prompt --max-steps --no-banner --json --no-color --quiet --debug --ci --no-input --doctor" -- "$cur") )
+}
+complete -F _aicode_completion aicode

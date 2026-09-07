@@ -1,9 +1,11 @@
 import { resolve } from 'node:path';
 import type { CliArgs } from '../config/types.js';
 import type { ApprovalMode, ProviderName } from '../providers/types.js';
+import type { ToolScope } from '../tools/scope.js';
 
-const providerNames = new Set(['mock', 'openai', 'anthropic']);
-const approvalModes = new Set(['ask', 'auto', 'deny']);
+const providerNames = new Set(['mock', 'openai', 'openai-responses', 'anthropic', 'gemini']);
+const approvalModes = new Set(['ask', 'auto', 'deny', 'plan']);
+const toolScopes = new Set(['auto', 'compact', 'standard', 'full']);
 
 export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {};
@@ -40,10 +42,38 @@ export function parseArgs(argv: string[]): CliArgs {
       case '--base-url':
         args.baseUrl = readValue();
         break;
+      case '--custom-provider':
+        args.customProvider = true;
+        break;
+      case '--computer-any-app':
+        args.computerAnyApp = true;
+        break;
+      case '--excel':
+        args.excelAutomation = true;
+        break;
+      case '--allowed-apps': {
+        const value = readValue();
+        args.allowedApps = value.split(',').map((item) => item.trim()).filter(Boolean);
+        break;
+      }
+      case '--reasoning-effort': {
+        const value = readValue();
+        if (value !== 'auto' && value !== 'off' && value !== 'low' && value !== 'medium' && value !== 'high' && value !== 'max') {
+          throw new Error(`--reasoning-effort must be one of: auto, off, low, medium, high, max`);
+        }
+        args.reasoningEffort = value;
+        break;
+      }
       case '--approval': {
         const value = readValue();
         if (!approvalModes.has(value)) throw new Error(`Unsupported approval mode: ${value}`);
         args.approval = value as ApprovalMode;
+        break;
+      }
+      case '--tool-scope': {
+        const value = readValue();
+        if (!toolScopes.has(value)) throw new Error(`--tool-scope must be one of: auto, compact, standard, full`);
+        args.toolScope = value as ToolScope;
         break;
       }
       case '--workspace':
@@ -114,6 +144,9 @@ export function parseArgs(argv: string[]): CliArgs {
         args.json = true;
         args.noBanner = true;
         args.noInput = true;
+        break;
+      case '--usage-log':
+        args.usageLog = readValue();
         break;
       case '--doctor':
         args.doctor = true;

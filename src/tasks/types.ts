@@ -13,6 +13,10 @@ export type TaskItem = {
   error?: string;
   startedAt?: string;
   finishedAt?: string;
+  /** 本任务使用的专家 ID（用于调试和日志） */
+  expertId?: string;
+  /** 专家路由置信度 (0-1) */
+  expertConfidence?: number;
 };
 
 export type TaskBoard = {

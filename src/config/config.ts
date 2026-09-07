@@ -1,12 +1,15 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { AppConfig, CliArgs, FileConfig, FileProfileConfig } from './types.js';
-import type { ApprovalMode, ProviderName } from '../providers/types.js';
+import type { ApprovalMode, ProviderName, ReasoningEffort } from '../providers/types.js';
+import type { ToolScope } from '../tools/scope.js';
 
 const defaultModels: Record<ProviderName, string> = {
   mock: 'mock-code-agent-v1',
   openai: 'gpt-5.5',
+  'openai-responses': 'gpt-5.5',
   anthropic: 'claude-3-5-sonnet-latest',
+  gemini: 'gemini-2.5-flash',
 };
 
 export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process.env): Promise<AppConfig> {
@@ -26,13 +29,17 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
     provider,
     model,
     baseUrl: args.baseUrl ?? baseUrlFromEnv(provider, env) ?? mergedFileConfig.baseUrl,
+    customProvider: args.customProvider ?? false,
+    computerAnyApp: args.computerAnyApp ?? false,
+    excelAutomation: args.excelAutomation ?? false,
+    allowedApps: args.allowedApps,
     apiKey: apiKeyFromEnv(provider, env) ?? mergedFileConfig.apiKey,
     approval: args.approval ?? approvalFromEnv(env) ?? mergedFileConfig.approval ?? 'ask',
     workspaceRoot,
     sessionDir,
     resumeSessionId: args.resumeSessionId,
     prompt: args.prompt,
-    maxSteps: args.maxSteps ?? maxStepsFromEnv(env) ?? mergedFileConfig.maxSteps ?? 24,
+    maxSteps: args.maxSteps ?? maxStepsFromEnv(env) ?? mergedFileConfig.maxSteps ?? 200,
     noBanner: args.noBanner ?? false,
     version: args.version ?? false,
     json: args.json ?? false,
@@ -48,7 +55,39 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
     completionShell: args.completionShell,
     confirmPlan: args.confirmPlan ?? false,
     desktopBridge: args.desktopBridge ?? false,
+    usageLog: args.usageLog ?? env.AICODE_USAGE_LOG,
+    reasoningEffort: args.reasoningEffort ?? reasoningEffortFromEnv(env) ?? mergedFileConfig.reasoningEffort,
+    toolScope: args.toolScope ?? toolScopeFromEnv(env),
+    network: resolveNetworkConfig(env, mergedFileConfig),
   };
+}
+
+// A conservative default allowlist of read-only reference sources. Users extend
+// this via .aicode/config.json `network.allowlist` or AICODE_NETWORK_ALLOWLIST.
+const DEFAULT_NETWORK_ALLOWLIST = [
+  'wikipedia.org',
+  'developer.mozilla.org',
+  'api.github.com',
+  'raw.githubusercontent.com',
+  'pypi.org',
+  'registry.npmjs.org',
+  // Search endpoint used by the web_search tool (DuckDuckGo HTML, no API key).
+  'duckduckgo.com',
+];
+
+function resolveNetworkConfig(
+  env: NodeJS.ProcessEnv,
+  fileConfig: FileProfileConfig,
+): { enabled: boolean; allowlist: string[] } {
+  const envFlag = env.AICODE_NETWORK;
+  const disabledByEnv = envFlag === '0' || envFlag === 'false' || envFlag === 'off';
+  const enabled = disabledByEnv ? false : fileConfig.network?.enabled ?? true;
+  const envList = env.AICODE_NETWORK_ALLOWLIST
+    ? env.AICODE_NETWORK_ALLOWLIST.split(',').map((s) => s.trim()).filter(Boolean)
+    : undefined;
+  const fileList = fileConfig.network?.allowlist;
+  const allowlist = envList ?? (fileList && fileList.length ? fileList : DEFAULT_NETWORK_ALLOWLIST);
+  return { enabled, allowlist };
 }
 
 export function safeConfig(config: AppConfig) {
@@ -82,7 +121,7 @@ export function requireProviderAuth(config: AppConfig) {
 
 function providerFromEnv(env: NodeJS.ProcessEnv): ProviderName | undefined {
   const value = env.AICODE_PROVIDER;
-  if (value === 'mock' || value === 'openai' || value === 'anthropic') return value;
+  if (value === 'mock' || value === 'openai' || value === 'openai-responses' || value === 'anthropic' || value === 'gemini') return value;
   return undefined;
 }
 
@@ -92,20 +131,34 @@ function approvalFromEnv(env: NodeJS.ProcessEnv): ApprovalMode | undefined {
   return undefined;
 }
 
+function reasoningEffortFromEnv(env: NodeJS.ProcessEnv): ReasoningEffort | undefined {
+  const value = env.AICODE_REASONING_EFFORT;
+  if (value === 'auto' || value === 'off' || value === 'low' || value === 'medium' || value === 'high' || value === 'max') return value;
+  return undefined;
+}
+
+function toolScopeFromEnv(env: NodeJS.ProcessEnv): ToolScope | undefined {
+  const value = env.AICODE_TOOL_SCOPE;
+  if (value === 'auto' || value === 'compact' || value === 'standard' || value === 'full') return value;
+  return undefined;
+}
+
 function modelFromEnv(provider: ProviderName, env: NodeJS.ProcessEnv) {
+  if (provider === 'openai-responses') return env.OPENAI_RESPONSES_MODEL ?? env.OPENAI_MODEL;
   if (provider === 'openai') return env.OPENAI_MODEL;
   if (provider === 'anthropic') return env.ANTHROPIC_MODEL;
   return env.MOCK_MODEL;
 }
 
 function baseUrlFromEnv(provider: ProviderName, env: NodeJS.ProcessEnv) {
+  if (provider === 'openai-responses') return env.OPENAI_RESPONSES_BASE_URL ?? env.AICODE_OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
   if (provider === 'openai') return env.AICODE_OPENAI_BASE_URL ?? 'https://ai.furry.edu.gr/v1';
   if (provider === 'anthropic') return env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com/v1';
   return undefined;
 }
 
 function apiKeyFromEnv(provider: ProviderName, env: NodeJS.ProcessEnv) {
-  if (provider === 'openai') return env.OPENAI_API_KEY;
+  if (provider === 'openai' || provider === 'openai-responses') return env.OPENAI_API_KEY;
   if (provider === 'anthropic') return env.ANTHROPIC_API_KEY;
   return env.MOCK_API_KEY;
 }
@@ -136,6 +189,10 @@ function normalizeFileConfig(input: Record<string, unknown>): FileConfig {
   return { ...base, defaultProfile, profiles };
 }
 
+function reasoningEffortValue(value: unknown): ReasoningEffort | undefined {
+  return value === 'auto' || value === 'off' || value === 'low' || value === 'medium' || value === 'high' || value === 'max' ? value : undefined;
+}
+
 function normalizeProfile(input: Record<string, unknown>): FileProfileConfig {
   return {
     provider: providerValue(input.provider),
@@ -143,9 +200,21 @@ function normalizeProfile(input: Record<string, unknown>): FileProfileConfig {
     baseUrl: typeof input.baseUrl === 'string' ? input.baseUrl : undefined,
     apiKey: typeof input.apiKey === 'string' ? input.apiKey : undefined,
     approval: approvalValue(input.approval),
+    reasoningEffort: reasoningEffortValue(input.reasoningEffort),
     sessionDir: typeof input.sessionDir === 'string' ? input.sessionDir : undefined,
     maxSteps: typeof input.maxSteps === 'number' && Number.isInteger(input.maxSteps) && input.maxSteps > 0 ? input.maxSteps : undefined,
+    network: normalizeNetwork(input.network),
   };
+}
+
+function normalizeNetwork(value: unknown): { enabled?: boolean; allowlist?: string[] } | undefined {
+  if (!isRecord(value)) return undefined;
+  const enabled = typeof value.enabled === 'boolean' ? value.enabled : undefined;
+  const allowlist = Array.isArray(value.allowlist)
+    ? value.allowlist.filter((entry): entry is string => typeof entry === 'string')
+    : undefined;
+  if (enabled === undefined && allowlist === undefined) return undefined;
+  return { enabled, allowlist };
 }
 
 function withoutProfiles(config: FileConfig): FileProfileConfig {

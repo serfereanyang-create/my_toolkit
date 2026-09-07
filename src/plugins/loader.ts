@@ -12,7 +12,11 @@ function pluginToolDefinition(tool: PluginToolManifest): ToolDefinition<{ comman
     name: tool.name,
     description: `[plugin] ${tool.description}`,
     inputHint: '{ "timeoutMs": 30000 }',
-    risk: 'shell',
+    // Manifest may declare a risk tier; default to the safest gate ('shell').
+    risk: tool.risk ?? 'shell',
+    // A workspace owner can opt this command into auto-mode without matching the
+    // built-in shell allowlist. Destructive patterns are still hard-blocked.
+    ...(tool.autoApprove ? { autoApprove: true } : {}),
     validate(input) {
       if (input === undefined || input === null) return { command: tool.command, timeoutMs: 30000 };
       if (typeof input !== 'object' || Array.isArray(input)) throw new Error('expected an object');

@@ -6,10 +6,13 @@ import { test } from 'node:test';
 import { clearProjectContextCache, readProjectContext } from '../src/agent/context.js';
 import { NavIndexStore, resetNavCacheStats } from '../src/nav/store.js';
 import {
+  buildLowCacheHint,
   collectCacheProbe,
   formatCacheProbe,
   formatHitRate,
   hitRate,
+  shouldHintLowCache,
+  type CacheProbeReport,
 } from '../src/probe/cacheProbe.js';
 import { handleSlashCommand } from '../src/cli/commands.js';
 import { loadConfig } from '../src/config/config.js';
@@ -61,6 +64,40 @@ test('collectCacheProbe reports project-context and nav-index averages', async (
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
+});
+
+function makeReport(hits: number, misses: number): CacheProbeReport {
+  const totalLookups = hits + misses;
+  return {
+    buckets: [{ name: 'project-context', hits, misses }],
+    totalHits: hits,
+    totalMisses: misses,
+    totalLookups,
+    averageHitRate: hitRate(hits, misses),
+    averageHitRatePercent: formatHitRate(hits, misses),
+  };
+}
+
+test('shouldHintLowCache only fires on a clearly-cold cache with real samples', () => {
+  // No samples yet — never nag a fresh session.
+  assert.equal(shouldHintLowCache(makeReport(0, 0)), false);
+  // Low rate but too few lookups to be meaningful.
+  assert.equal(shouldHintLowCache(makeReport(0, 2)), false);
+  // Enough lookups AND a low rate (0/6 = 0%) — fire.
+  assert.equal(shouldHintLowCache(makeReport(0, 6)), true);
+  // Enough lookups but a healthy rate (5/6 ≈ 83%) — stay quiet.
+  assert.equal(shouldHintLowCache(makeReport(5, 1)), false);
+  // Exactly at the 50% threshold is not "below", so no hint.
+  assert.equal(shouldHintLowCache(makeReport(4, 4)), false);
+});
+
+test('buildLowCacheHint returns a localized note only when warranted', () => {
+  assert.equal(buildLowCacheHint('zh', makeReport(5, 1)), null);
+  const zh = buildLowCacheHint('zh', makeReport(1, 9));
+  assert.ok(zh && /缓存命中率偏低/.test(zh));
+  assert.ok(zh && /%/.test(zh));
+  const en = buildLowCacheHint('en', makeReport(1, 9));
+  assert.ok(en && /cache hit rate is low/i.test(en));
 });
 
 test('/cache slash command returns probe text', async () => {

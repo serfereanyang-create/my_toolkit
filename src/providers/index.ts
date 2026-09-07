@@ -3,10 +3,14 @@ import type { Provider } from './types.js';
 import { createAnthropicProvider } from './anthropic.js';
 import { createMockProvider } from './mock.js';
 import { createOpenAIProvider } from './openai.js';
+import { createGeminiProvider } from './gemini.js';
+import { createOpenAIResponsesProvider } from './openai-responses.js';
 
 export function createProvider(config: AppConfig): Provider {
   if (config.provider === 'mock') return createMockProvider(config.model);
   if (config.provider === 'openai') return createOpenAIProvider({ apiKey: config.apiKey, baseUrl: config.baseUrl, model: config.model });
+  if (config.provider === 'openai-responses') return createOpenAIResponsesProvider({ apiKey: config.apiKey, baseUrl: config.baseUrl, model: config.model });
   if (config.provider === 'anthropic') return createAnthropicProvider({ apiKey: config.apiKey, baseUrl: config.baseUrl, model: config.model });
+  if (config.provider === 'gemini') return createGeminiProvider({ apiKey: config.apiKey, baseUrl: config.baseUrl, model: config.model });
   throw new Error(`Unsupported provider: ${config.provider satisfies never}`);
 }

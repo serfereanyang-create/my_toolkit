@@ -4,8 +4,8 @@ import type { ToolRisk } from '../safety/policy.js';
 export type ApprovalRisk = ToolRisk;
 
 const riskLabel = {
-  en: { read: 'read', write: 'write', shell: 'shell' },
-  zh: { read: '只读', write: '写入', shell: '命令' },
+  en: { read: 'read', write: 'write', shell: 'shell', network: 'network' },
+  zh: { read: '只读', write: '写入', shell: '命令', network: '联网' },
 } as const;
 
 export function formatApprovalPrompt(options: {

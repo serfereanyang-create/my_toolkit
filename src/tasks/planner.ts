@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { TaskBoard, TaskItem } from './types.js';
 
 export function shouldUseTaskBoard(prompt: string): boolean {
-  const normalized = prompt.trim().toLowerCase();
+  const normalized = normalizePlannerPrompt(prompt);
   if (!normalized) return false;
 
   const smallAsk = hasAny(normalized, [
@@ -73,6 +73,14 @@ function summarizeTitle(goal: string) {
 
 function countSteps(value: string) {
   return value.split(/[，。；;\n]|然后|接着|并|and then|then/).map((part) => part.trim()).filter(Boolean).length;
+}
+
+function normalizePlannerPrompt(prompt: string) {
+  const trimmed = prompt.trim();
+  if (!trimmed) return '';
+  const attachmentIndex = trimmed.search(/\n\s*\[attachments\]\s*(?:\n|$)/i);
+  const withoutAttachments = attachmentIndex >= 0 ? trimmed.slice(0, attachmentIndex) : trimmed;
+  return withoutAttachments.trim().toLowerCase();
 }
 
 function hasAny(value: string, needles: string[]) {

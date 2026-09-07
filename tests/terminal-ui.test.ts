@@ -34,7 +34,7 @@ test('TerminalUI lays out task assistant and tool output with clean no-color spa
   assert.match(output, /│ 帮我检查最近的大文件/);
   assert.match(output, /Build · gpt-5\.5|Build.*gpt-5\.5/);
   assert.match(output, /\n\* Assistant\n先看磁盘增长。\n/);
-  assert.match(output, /\n\* Tool 1 disk_growth\n  input: \{"path":"\.","hours":48\}\n  status: running\n  result: ok \d+ms\n  output:\n    sizeMB\tpath\n    120\.4\tout\/cache\.bin\n/);
+  assert.match(output, /\n\* Tool 1 disk_growth\n  input: \{"path":"\.","hours":48\}\n  status: running\n  result: ✓ ok \d+ms\n  output:\n    sizeMB\tpath\n    120\.4\tout\/cache\.bin\n/);
   assert.doesNotMatch(output, /waiting for tool result/);
   assert.doesNotMatch(output, /\* You\n/);
 });
@@ -61,8 +61,10 @@ test('TerminalUI folds tool process into one summary line by default', () => {
       data: { disks: [{ name: 'C:', path: 'C:/', usedGb: 224.77, freeGb: 188.01, totalGb: 412.79 }] },
     });
   });
-  assert.match(output, /\* Tool 1 disk_info …/);
-  assert.match(output, /\* disk_info ok \d+ms · /);
+  // New format: ▸ Tool 1 disk_info … (emoji when noColor=true becomes ▸)
+  assert.match(output, /▸ Tool 1 disk_info …/);
+  // New format: ✓ disk_info ok (with checkmark)
+  assert.match(output, /✓ disk_info ok \d+ms · /);
   assert.doesNotMatch(output, /\n  input:/);
   assert.doesNotMatch(output, /\n  output:\n/);
 });
@@ -75,7 +77,8 @@ test('TerminalUI omits empty tool output blocks', () => {
   });
 
   assert.match(output, /\n\* Tool 1 git_status\n/);
-  assert.match(output, /  result: ok \d+ms\n/);
+  // New format includes ✓ checkmark
+  assert.match(output, /  result: ✓ ok \d+ms\n/);
   assert.doesNotMatch(output, /\n  output:\n/);
 });
 

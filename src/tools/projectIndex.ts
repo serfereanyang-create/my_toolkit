@@ -22,15 +22,25 @@ export const projectIndexTool: ToolDefinition<{ path: string; maxFiles: number }
   async execute(input, context) {
     const root = resolveWorkspacePath(context.workspaceRoot, input.path);
     const files: string[] = [];
-    await walk(root, context.workspaceRoot, files, input.maxFiles);
+    const requestedMax = input.maxFiles;
+    await walk(root, context.workspaceRoot, files, requestedMax);
+    
     const extensions = countExtensions(files);
     const keyFiles = files.filter((file) => /(^|\/)(package.json|tsconfig.json|README.md|AGENTS.md|CLAUDE.md|GEMINI.md)$/i.test(file));
-    const output = [
+    
+    let output = [
       `files: ${files.length}`,
       `extensions: ${Object.entries(extensions).map(([ext, count]) => `${ext}:${count}`).join(', ') || 'none'}`,
       `key files:\n${keyFiles.map((file) => `- ${file}`).join('\n') || '- none'}`,
     ].join('\n');
-    return { ok: true, output, data: { files: files.length, extensions, keyFiles } };
+    
+    // Add warning if hit the limit
+    if (files.length >= requestedMax) {
+      const coverage = (files.length / (files.length * 1.2) * 100).toFixed(0); // Estimate 20% more exist
+      output += `\n\n⚠️  Reached index limit (${files.length}/${requestedMax}). Results may be incomplete. Consider using find_symbol or search_text for targeted queries.`;
+    }
+    
+    return { ok: true, output, data: { files: files.length, extensions, keyFiles, truncated: files.length >= requestedMax } };
   },
 };
 

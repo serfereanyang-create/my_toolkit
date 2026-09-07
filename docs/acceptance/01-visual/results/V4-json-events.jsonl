@@ -1,0 +1,9 @@
+{"type":"turn_start","prompt":"帮我看看项目索引"}
+{"type":"model_start","status":"running"}
+{"type":"model_end","status":"done"}
+{"type":"tool_start","index":1,"tool":"project_index","input":{"path":".","maxFiles":1000},"status":"running"}
+{"type":"tool_result","tool":"project_index","ok":true,"durationMs":19,"output":"files: 157\nextensions: .json:5, .gitignore:1, .md:8, .txt:3, .jsonl:1, .ts:138, .mjs:1\nkey files:\n- package.json\n- README.md\n- tsconfig.json","data":{"files":157,"extensions":{".json":5,".gitignore":1,".md":8,".txt":3,".jsonl":1,".ts":138,".mjs":1},"keyFiles":["package.json","README.md","tsconfig.json"]}}
+{"type":"model_start","status":"running"}
+{"type":"model_end","status":"done"}
+{"type":"assistant","content":"Done. I translated the natural-language request into 1 tool call(s)."}
+{"type":"final","ok":true,"session":"sess_20260723102113_fc63d130"}

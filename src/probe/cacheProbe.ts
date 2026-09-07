@@ -92,4 +92,44 @@ export function formatCacheProbe(report: CacheProbeReport = collectCacheProbe())
   return lines.join('\n');
 }
 
+/**
+ * Decide whether the agent should proactively surface cache health at the end
+ * of a reply. This is the "self-awareness" path: the agent already holds the
+ * numbers (buildContextStats collects the same report), so instead of waiting
+ * for the user to ask, we flag a clearly-unhealthy cache — but only.
+ *
+ * Guards against noise:
+ *   - Needs a real sample (`totalLookups >= minLookups`), so brand-new sessions
+ *     with 1–2 lookups never nag.
+ *   - Only fires when the average hit rate is meaningfully low
+ *     (`averageHitRate < threshold`), not for a merely imperfect cache.
+ */
+export function shouldHintLowCache(
+  report: CacheProbeReport = collectCacheProbe(),
+  options: { threshold?: number; minLookups?: number } = {},
+): boolean {
+  const threshold = options.threshold ?? 0.5;
+  const minLookups = options.minLookups ?? 5;
+  if (report.averageHitRate === null) return false;
+  if (report.totalLookups < minLookups) return false;
+  return report.averageHitRate < threshold;
+}
+
+/**
+ * One-line, locale-aware proactive note appended to a reply when the local
+ * cache is clearly cold. Kept short so it never overwhelms the real answer.
+ * Returns null when no hint is warranted.
+ */
+export function buildLowCacheHint(
+  locale: 'zh' | 'en',
+  report: CacheProbeReport = collectCacheProbe(),
+  options: { threshold?: number; minLookups?: number } = {},
+): string | null {
+  if (!shouldHintLowCache(report, options)) return null;
+  const pct = report.averageHitRatePercent;
+  return locale === 'zh'
+    ? `提示：本地缓存命中率偏低（${pct}），随着后续轮次复用项目上下文与符号索引会自然回升；如需明细可用 /cache 或 cache_probe 查看。`
+    : `Note: local cache hit rate is low (${pct}); it should recover as later turns reuse project context and the symbol index. Run /cache or cache_probe for details.`;
+}
+
 export type { ProjectContextCacheStats, NavCacheStats };

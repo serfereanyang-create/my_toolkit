@@ -1,9 +1,14 @@
-import type { ApprovalMode, ProviderName } from '../providers/types.js';
+import type { ApprovalMode, ProviderName, ReasoningEffort } from '../providers/types.js';
+import type { ToolScope } from '../tools/scope.js';
 
 export type CliArgs = {
   provider?: ProviderName;
   model?: string;
   baseUrl?: string;
+  customProvider?: boolean;
+  computerAnyApp?: boolean;
+  excelAutomation?: boolean;
+  allowedApps?: string[];
   approval?: ApprovalMode;
   workspace?: string;
   sessionDir?: string;
@@ -25,6 +30,9 @@ export type CliArgs = {
   completionShell?: 'bash' | 'zsh' | 'fish' | 'powershell';
   confirmPlan?: boolean;
   desktopBridge?: boolean;
+  usageLog?: string;
+  reasoningEffort?: ReasoningEffort;
+  toolScope?: ToolScope;
 };
 
 export type FileProfileConfig = {
@@ -35,6 +43,9 @@ export type FileProfileConfig = {
   approval?: ApprovalMode;
   sessionDir?: string;
   maxSteps?: number;
+  reasoningEffort?: ReasoningEffort;
+  /** Network egress policy for the fetch_url tool. */
+  network?: { enabled?: boolean; allowlist?: string[] };
 };
 
 export type FileConfig = FileProfileConfig & {
@@ -47,9 +58,14 @@ export type AppConfig = {
   model: string;
   baseUrl?: string;
   apiKey?: string;
+  customProvider?: boolean;
+  computerAnyApp?: boolean;
+  excelAutomation?: boolean;
+  allowedApps?: string[];
   approval: ApprovalMode;
   workspaceRoot: string;
   sessionDir: string;
+  network?: { enabled?: boolean; allowlist?: string[] };
   resumeSessionId?: string;
   prompt?: string;
   maxSteps: number;
@@ -68,4 +84,7 @@ export type AppConfig = {
   completionShell?: 'bash' | 'zsh' | 'fish' | 'powershell';
   confirmPlan?: boolean;
   desktopBridge?: boolean;
+  usageLog?: string;
+  reasoningEffort?: ReasoningEffort;
+  toolScope?: ToolScope;
 };

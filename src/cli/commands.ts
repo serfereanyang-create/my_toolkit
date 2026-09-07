@@ -35,6 +35,9 @@ import { formatHelpText } from './commandPalette.js';
 import { formatCacheProbe } from '../probe/cacheProbe.js';
 import { detectLocale } from '../i18n/locale.js';
 import { formatGitConfirm } from '../i18n/messages.js';
+import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
+import { join, relative, resolve, extname } from 'node:path';
+import { execFile } from 'node:child_process';
 
 export async function handleSlashCommand(options: {
   line: string;
@@ -57,6 +60,94 @@ export async function handleSlashCommand(options: {
   if (command === '/不准偷懒开发' || command.startsWith('/不准偷懒开发 ')) {
     return handleLazyDevGuardCommand(command, options.session, options.sessions);
   }
+  // ── New commands ────────────────────────────────────────────────────────────
+  if (command === '/compact' || command.startsWith('/compact ')) {
+    return handleCompactCommand(command, options);
+  }
+  if (command === '/goal' || command.startsWith('/goal ')) {
+    return handleGoalCommand(command, options);
+  }
+  if (command === '/init' || command.startsWith('/init ')) {
+    return handleInitCommand(command, options);
+  }
+  if (command === '/clear') {
+    options.session.messages = [];
+    options.session.finalAnswers = [];
+    await options.sessions.save(options.session);
+    return 'Session history cleared. The next message starts a fresh context.';
+  }
+  if (command === '/history' || command.startsWith('/history ')) {
+    return handleHistoryCommand(command, options);
+  }
+  if (command === '/tokens') {
+    const chars = options.session.messages.reduce((s, m) => s + m.content.length, 0);
+    const estTokens = Math.round(chars / 4);
+    return `Context: ${chars.toLocaleString()} chars ≈ ${estTokens.toLocaleString()} tokens | Messages: ${options.session.messages.length}`;
+  }
+  if (command === '/retry') {
+    const lastUser = [...options.session.messages].reverse().find((m) => m.role === 'user');
+    return lastUser ? `Retry with: ${lastUser.content.slice(0, 120)}` : 'No previous user message found.';
+  }
+  if (command === '/doctor') {
+    return handleDoctorCommand(options);
+  }
+  if (command === '/env') {
+    return handleEnvCommand(options);
+  }
+  if (command === '/models') {
+    return handleModelsCommand(options);
+  }
+  if (command === '/thinking' || command.startsWith('/thinking ')) {
+    return handleThinkingCommand(command, options);
+  }
+  if (command === '/scope' || command.startsWith('/scope ')) {
+    return handleScopeCommand(command, options);
+  }
+  if (command === '/review' || command.startsWith('/review ')) {
+    return handleReviewCommand(command, options);
+  }
+  if (command === '/security') {
+    return 'Run a security review with: ask the agent "Please do a security review of this project".\nOr use /mimosa-scan (Mimosa plugin) if installed.';
+  }
+  if (command === '/lint' || command.startsWith('/lint ')) {
+    return handleLintCommand(command, options);
+  }
+  if (command === '/diff') {
+    return handleDiffCommand(options);
+  }
+  if (command === '/complexity' || command.startsWith('/complexity ')) {
+    return handleComplexityCommand(command, options);
+  }
+  if (command === '/deps') {
+    return handleDepsCommand(options);
+  }
+  if (command === '/find' || command.startsWith('/find ')) {
+    return handleFindCommand(command, options);
+  }
+  if (command === '/grep' || command.startsWith('/grep ')) {
+    return handleGrepCommand(command, options);
+  }
+  if (command === '/run' || command.startsWith('/run ')) {
+    return handleRunCommand(command, options);
+  }
+  if (command === '/ls' || command.startsWith('/ls ')) {
+    return handleLsCommand(command, options);
+  }
+  if (command === '/read' || command.startsWith('/read ')) {
+    return handleReadCommand(command, options);
+  }
+  if (command === '/rename' || command.startsWith('/rename ')) {
+    return handleRenameCommand(command, options);
+  }
+  if (command === '/pin') {
+    return handlePinCommand(options);
+  }
+  if (command === '/share') {
+    return `Session export path:\n${options.sessions.filePath(options.session.id)}`;
+  }
+  if (command === '/load' || command.startsWith('/load ')) {
+    return handleLoadCommand(command, options);
+  }
   if (command === '/plan' || command.startsWith('/plan ')) {
     return handlePlanCommand(command, options);
   }
@@ -74,6 +165,9 @@ export async function handleSlashCommand(options: {
   }
   if (command === '/attach' || command.startsWith('/attach ')) {
     return handleAttachCommand(command, options);
+  }
+  if (command === '/automate' || command.startsWith('/automate ')) {
+    return handleAutomateCommand(command, options);
   }
   if (command === '/paste-image' || command === '/clip') {
     return handlePasteImageCommand(options);
@@ -674,4 +768,530 @@ function remainingAttempts(requirement: LazyDevRequirement | undefined) {
 function hasActiveUnpassedRequirement(state: LazyDevGuardState) {
   const status = state.currentRequirement?.status;
   return Boolean(status && status !== 'passed' && status !== 'archived' && status !== 'cancelled');
+}
+
+async function handleAutomateCommand(
+  command: string,
+  options: {
+    config: AppConfig;
+    sessions: SessionStore;
+    session: SessionRecord;
+  },
+): Promise<string> {
+  const { AutomationManager } = await import('../automation/manager.js');
+  const manager = new AutomationManager(options.config.workspaceRoot);
+
+  const parts = command.split(/\s+/);
+  const subcommand = parts[1];
+
+  if (!subcommand || subcommand === 'help') {
+    return [
+      'Automation commands:',
+      '  /automate list                    - List all automation tasks',
+      '  /automate create                  - Create a new automation task (interactive)',
+      '  /automate start <task-id>         - Start an automation task',
+      '  /automate stop <task-id>          - Stop an automation task',
+      '  /automate delete <task-id>        - Delete an automation task',
+      '  /automate status <task-id>        - Show task status and history',
+      '  /automate run <task-id>           - Manually trigger task execution',
+    ].join('\n');
+  }
+
+  if (subcommand === 'list') {
+    const tasks = await manager.listTasks();
+    if (tasks.length === 0) {
+      return 'No automation tasks found. Use /automate create to create one.';
+    }
+    
+    const activeWatchers = manager.getActiveFileWatchers();
+    
+    return tasks.map((t) => {
+      const status = t.enabled ? '✓ enabled' : '✗ disabled';
+      const triggerType = t.trigger.type === 'file_watch' ? '📁 watch' : 
+                         t.trigger.type === 'cron' ? '⏰ cron' : 
+                         t.trigger.type === 'git_event' ? '🔀 git' : '🖱️ manual';
+      const watching = activeWatchers.includes(t.id) ? ' [watching]' : '';
+      const lastRun = t.lastRunAt ? ` | last: ${t.lastRunStatus} at ${t.lastRunAt}` : '';
+      return `${t.id} - ${t.name} [${status}] ${triggerType}${watching}${lastRun}`;
+    }).join('\n');
+  }
+
+  if (subcommand === 'start') {
+    const taskId = parts[2];
+    if (!taskId) return 'Usage: /automate start <task-id>';
+    
+    await manager.startTask(taskId);
+    return `Started automation task: ${taskId}`;
+  }
+
+  if (subcommand === 'stop') {
+    const taskId = parts[2];
+    if (!taskId) return 'Usage: /automate stop <task-id>';
+    
+    await manager.stopTask(taskId);
+    return `Stopped automation task: ${taskId}`;
+  }
+
+  if (subcommand === 'delete') {
+    const taskId = parts[2];
+    if (!taskId) return 'Usage: /automate delete <task-id>';
+    
+    const deleted = await manager.deleteTask(taskId);
+    return deleted ? `Deleted automation task: ${taskId}` : `Task not found: ${taskId}`;
+  }
+
+  if (subcommand === 'status') {
+    const taskId = parts[2];
+    if (!taskId) return 'Usage: /automate status <task-id>';
+    
+    const task = await manager.getTask(taskId);
+    if (!task) return `Task not found: ${taskId}`;
+    
+    const history = await manager.getTaskHistory(taskId, 5);
+    const historyText = history.length > 0
+      ? '\nRecent executions:\n' + history.map((h) => `  ${h.status} at ${h.executedAt}`).join('\n')
+      : '\nNo execution history';
+    
+    let triggerDetails = '';
+    if (task.trigger.type === 'file_watch') {
+      const fw = task.trigger as any;
+      triggerDetails = `\nWatching: ${fw.patterns.join(', ')}\nEvents: ${fw.events.join(', ')}\nDebounce: ${fw.debounceMs || 1000}ms`;
+    } else if (task.trigger.type === 'cron') {
+      const ct = task.trigger as any;
+      triggerDetails = `\nCron: ${ct.expression}`;
+    }
+    
+    const activeWatchers = manager.getActiveFileWatchers();
+    const isWatching = activeWatchers.includes(taskId) ? ' (actively watching)' : '';
+    
+    return [
+      `Task: ${task.name}`,
+      `ID: ${task.id}`,
+      `Status: ${task.enabled ? 'enabled' : 'disabled'}${isWatching}`,
+      `Trigger: ${task.trigger.type}${triggerDetails}`,
+      `Goal: ${task.action.goal}`,
+      `Last run: ${task.lastRunAt || 'never'} (${task.lastRunStatus || 'N/A'})`,
+      `Consecutive failures: ${task.consecutiveFailures || 0}`,
+      historyText,
+    ].join('\n');
+  }
+
+  if (subcommand === 'run') {
+    const taskId = parts[2];
+    if (!taskId) return 'Usage: /automate run <task-id>';
+    
+    // Note: This requires a full AgentRuntime which is not available in this context
+    // In real usage, this should be called from the REPL with proper runtime
+    return 'Manual task execution requires calling AutomationManager.runTask() with a valid runtime. This command is a placeholder - use the API directly for now.';
+  }
+
+  if (subcommand === 'create') {
+    const { InteractiveTaskCreator } = await import('../automation/interactive.js');
+    const creator = new InteractiveTaskCreator();
+    
+    const templateArg = parts[2];
+    
+    if (!templateArg) {
+      // 显示创建指南和模板
+      const templates = creator.getQuickTemplates();
+      const templateList = templates.map((t, i) => 
+        `${i + 1}. ${t.name} - ${t.description}`
+      ).join('\n');
+      
+      return [
+        'Automation Task Creation',
+        '',
+        'Quick Templates:',
+        templateList,
+        '',
+        'To use a template: /automate create <number>',
+        'For detailed guide: /automate create guide',
+        '',
+        'Or create tasks programmatically using AutomationManager API.',
+      ].join('\n');
+    }
+    
+    if (templateArg === 'guide') {
+      return creator.getCreationGuide();
+    }
+    
+    // 如果是数字，显示模板详情
+    const templateIndex = parseInt(templateArg, 10) - 1;
+    const templates = creator.getQuickTemplates();
+    
+    if (templateIndex >= 0 && templateIndex < templates.length) {
+      const template = templates[templateIndex];
+      return [
+        `Template: ${template.name}`,
+        `Description: ${template.description}`,
+        '',
+        'Configuration:',
+        JSON.stringify(template.config, null, 2),
+        '',
+        'To create this task, use the AutomationManager API:',
+        `await manager.createTask(${JSON.stringify(template.config, null, 2)});`,
+        'await manager.startTask(task.id);',
+      ].join('\n');
+    }
+    
+    return 'Invalid template number. Use /automate create to see available templates.';
+  }
+
+  return `Unknown subcommand: ${subcommand}. Try /automate help.`;
+}
+
+// ── New command handlers ───────────────────────────────────────────────────────
+
+async function handleCompactCommand(
+  command: string,
+  options: { session: SessionRecord; sessions: SessionStore },
+): Promise<string> {
+  const arg = command.slice('/compact'.length).trim();
+  const keepLast = arg ? Math.max(2, parseInt(arg, 10) || 20) : 20;
+  const { session, sessions } = options;
+  const total = session.messages.length;
+  if (total <= keepLast) {
+    return `Nothing to compact — session has ${total} message(s) (keep-last: ${keepLast}).`;
+  }
+  const dropped = total - keepLast;
+  const summaryHint = session.finalAnswers.at(-1)?.slice(0, 200) ?? 'Earlier context has been compacted.';
+  session.messages = [
+    {
+      role: 'assistant',
+      content: `[Compacted — ${dropped} message(s) removed. Summary: ${summaryHint}]`,
+      createdAt: new Date().toISOString(),
+    },
+    ...session.messages.slice(-keepLast),
+  ];
+  await sessions.save(session);
+  return `Compacted: kept last ${keepLast} of ${total} message(s) (${dropped} removed). Summary stub injected.`;
+}
+
+async function handleGoalCommand(
+  command: string,
+  options: { session: SessionRecord; sessions: SessionStore },
+): Promise<string> {
+  const text = command.slice('/goal'.length).trim();
+  if (text === 'clear') {
+    options.session.goal = undefined;
+    await options.sessions.save(options.session);
+    return 'Session goal cleared.';
+  }
+  if (!text) {
+    return options.session.goal
+      ? `Current goal: ${options.session.goal}`
+      : 'No goal set. Usage: /goal <text>  |  /goal clear';
+  }
+  options.session.goal = text;
+  await options.sessions.save(options.session);
+  return `Goal set: ${text}`;
+}
+
+async function handleInitCommand(
+  command: string,
+  options: { config: AppConfig },
+): Promise<string> {
+  const extra = command.slice('/init'.length).trim();
+  const agentsPath = join(options.config.workspaceRoot, 'AGENTS.md');
+  let existing = '';
+  try { existing = await readFile(agentsPath, 'utf8'); } catch { /* new file */ }
+  const header = existing || [
+    '# AGENTS.md',
+    '',
+    `Workspace: ${options.config.workspaceRoot}`,
+    `Created: ${new Date().toISOString()}`,
+    '',
+    '## Project Instructions',
+    '',
+    '<!-- Add project-specific instructions for the AI agent here -->',
+    '',
+  ].join('\n');
+  const append = extra ? `\n## Note (${new Date().toISOString()})\n${extra}\n` : '';
+  await writeFile(agentsPath, header + append, 'utf8');
+  return existing
+    ? `Updated ${agentsPath}${extra ? ' with new note.' : '.'}`
+    : `Created ${agentsPath} — edit it to add project instructions.`;
+}
+
+async function handleHistoryCommand(
+  command: string,
+  options: { session: SessionRecord },
+): Promise<string> {
+  const n = Math.min(50, parseInt(command.slice('/history'.length).trim() || '10', 10) || 10);
+  const msgs = options.session.messages.slice(-n);
+  if (!msgs.length) return 'No conversation history yet.';
+  return msgs.map((m, i) => {
+    const role = m.role.padEnd(9);
+    const preview = m.content.replace(/\n+/g, ' ').slice(0, 120);
+    return `${String(i + 1).padStart(2)}. [${role}] ${preview}`;
+  }).join('\n');
+}
+
+async function handleDoctorCommand(
+  options: { config: AppConfig },
+): Promise<string> {
+  const root = options.config.workspaceRoot;
+  const checks: string[] = [];
+  // Node
+  try {
+    const v = process.version;
+    checks.push(`✓ Node.js ${v}`);
+  } catch { checks.push('✗ Node.js: unknown'); }
+  // Git
+  try {
+    await new Promise<void>((res, rej) =>
+      execFile('git', ['--version'], { cwd: root }, (err) => err ? rej(err) : res()));
+    checks.push('✓ git: available');
+  } catch { checks.push('✗ git: not found in PATH'); }
+  // package.json
+  try {
+    const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+    checks.push(`✓ package.json: ${pkg.name ?? '(unnamed)'} v${pkg.version ?? '?'}`);
+  } catch { checks.push('  package.json: not found'); }
+  // AGENTS.md
+  try {
+    await readFile(join(root, 'AGENTS.md'), 'utf8');
+    checks.push('✓ AGENTS.md: present');
+  } catch { checks.push('  AGENTS.md: not found (run /init to create)'); }
+  // .aicode
+  try {
+    await stat(join(root, '.aicode'));
+    checks.push('✓ .aicode/: present');
+  } catch { checks.push('  .aicode/: not found'); }
+  return ['Workspace health check:', ...checks].join('\n');
+}
+
+function handleEnvCommand(options: { config: AppConfig }): string {
+  const sensitive = /key|token|secret|password|auth|credential/i;
+  const vars = Object.entries(process.env)
+    .filter(([k]) => /^(NODE|PATH|HOME|PWD|SHELL|LANG|TERM|AICODE|OPENAI|ANTHROPIC|GITHUB|GIT)/i.test(k))
+    .map(([k, v]) => `${k}=${sensitive.test(k) ? '***' : (v ?? '').slice(0, 80)}`);
+  return [`Workspace: ${options.config.workspaceRoot}`, '', ...vars].join('\n');
+}
+
+function handleModelsCommand(options: { config: AppConfig; provider: Provider }): string {
+  const lines = [
+    `Active: ${options.provider.name}/${options.provider.model}`,
+    `Workspace: ${options.config.workspaceRoot}`,
+    '',
+    'Configure additional providers in settings (Desktop) or --provider / --model CLI flags.',
+  ];
+  return lines.join('\n');
+}
+
+function handleThinkingCommand(command: string, options: { config: AppConfig }): string {
+  const tier = command.slice('/thinking'.length).trim();
+  const valid = ['off', 'low', 'medium', 'high', 'max'];
+  if (!tier) return `Reasoning effort: set via --reasoning-effort or Desktop settings.\nValid: ${valid.join(' | ')}`;
+  if (!valid.includes(tier)) return `Invalid tier "${tier}". Valid: ${valid.join(' | ')}`;
+  return `Set reasoning effort to "${tier}" in Desktop settings → Preferences → Reasoning Effort.`;
+}
+
+function handleScopeCommand(command: string, options: { config: AppConfig }): string {
+  const scope = command.slice('/scope'.length).trim();
+  const valid = ['auto', 'compact', 'standard', 'full'];
+  if (!scope) return `Tool scope: set via --tool-scope or Desktop settings.\nValid: ${valid.join(' | ')}`;
+  if (!valid.includes(scope)) return `Invalid scope "${scope}". Valid: ${valid.join(' | ')}`;
+  return `Set tool scope to "${scope}" in Desktop settings → Preferences → Tool Scope.`;
+}
+
+async function handleReviewCommand(
+  command: string,
+  options: { config: AppConfig },
+): Promise<string> {
+  const target = command.slice('/review'.length).trim();
+  if (!target) return 'Usage: /review <file-or-directory>\nSend this to the agent to perform a code review.';
+  const abs = resolve(options.config.workspaceRoot, target);
+  return `Code review request:\nPlease do a thorough code review of ${abs}.\nLook for: bugs, security issues, style problems, missing error handling, and improvement opportunities.`;
+}
+
+async function handleLintCommand(
+  command: string,
+  options: { config: AppConfig },
+): Promise<string> {
+  const target = command.slice('/lint'.length).trim() || '.';
+  const root = options.config.workspaceRoot;
+  // Try eslint, then tsc, then report
+  for (const [bin, args] of [
+    ['npx', ['eslint', '--max-warnings=0', target]],
+    ['npx', ['tsc', '--noEmit']],
+  ] as [string, string[]][]) {
+    try {
+      const output = await new Promise<string>((res, rej) =>
+        execFile(bin, args, { cwd: root, timeout: 30_000 }, (err, stdout, stderr) => {
+          res(((stdout || '') + (stderr || '')).trim() || (err ? err.message : '(no output)'));
+        }));
+      return `[${bin} ${args.join(' ')}]\n${output.slice(0, 2000)}`;
+    } catch { continue; }
+  }
+  return 'No lint tool found. Install eslint or typescript to use /lint.';
+}
+
+async function handleDiffCommand(options: { config: AppConfig }): Promise<string> {
+  return new Promise((res) =>
+    execFile('git', ['diff', '--stat'], { cwd: options.config.workspaceRoot, timeout: 10_000 }, (err, stdout, stderr) => {
+      const out = (stdout || stderr || '').trim();
+      res(err ? `git diff failed: ${err.message}` : (out || 'Working tree is clean.'));
+    }));
+}
+
+async function handleComplexityCommand(
+  command: string,
+  options: { config: AppConfig },
+): Promise<string> {
+  const target = command.slice('/complexity'.length).trim() || '.';
+  const root = options.config.workspaceRoot;
+  const abs = resolve(root, target);
+  // Walk files and compute simple metrics
+  const results: string[] = [];
+  async function walk(dir: string, depth = 0) {
+    if (depth > 3 || results.length > 15) return;
+    for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) { await walk(full, depth + 1); continue; }
+      const ext = extname(entry.name);
+      if (!['.ts','.tsx','.js','.jsx','.py','.go','.rs'].includes(ext)) continue;
+      const content = await readFile(full, 'utf8').catch(() => '');
+      const lines = content.split('\n').length;
+      const funcs = (content.match(/\bfunction\b|\bdef\b|\bfn\b/g) || []).length;
+      const rel = relative(root, full);
+      results.push(`${rel}: ${lines} lines, ~${funcs} functions`);
+    }
+  }
+  await walk(abs);
+  return results.length
+    ? ['Complexity overview:', ...results].join('\n')
+    : 'No source files found in target.';
+}
+
+async function handleDepsCommand(options: { config: AppConfig }): Promise<string> {
+  try {
+    const pkg = JSON.parse(await readFile(join(options.config.workspaceRoot, 'package.json'), 'utf8'));
+    const deps = Object.entries({ ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) });
+    const depList = deps.slice(0, 30).map(([k, v]) => `  ${k}: ${v}`).join('\n');
+    return [`Dependencies (${deps.length} total):`, depList, deps.length > 30 ? `  … and ${deps.length - 30} more` : ''].filter(Boolean).join('\n');
+  } catch { return 'No package.json found. Try Cargo.toml, requirements.txt, or go.mod manually.'; }
+}
+
+async function handleFindCommand(
+  command: string,
+  options: { config: AppConfig },
+): Promise<string> {
+  const pattern = command.slice('/find'.length).trim();
+  if (!pattern) return 'Usage: /find <pattern>';
+  const lower = pattern.toLowerCase();
+  const results: string[] = [];
+  async function walk(dir: string, depth = 0) {
+    if (depth > 5 || results.length >= 20) return;
+    for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist') continue;
+      const full = join(dir, entry.name);
+      const rel  = relative(options.config.workspaceRoot, full);
+      if (entry.name.toLowerCase().includes(lower) || rel.toLowerCase().includes(lower)) results.push(rel);
+      if (entry.isDirectory()) await walk(full, depth + 1);
+    }
+  }
+  await walk(options.config.workspaceRoot);
+  return results.length ? results.join('\n') : `No files matching "${pattern}".`;
+}
+
+async function handleGrepCommand(
+  command: string,
+  options: { config: AppConfig },
+): Promise<string> {
+  const args = command.slice('/grep'.length).trim().split(/\s+/);
+  const pattern = args[0];
+  if (!pattern) return 'Usage: /grep <pattern> [path]';
+  return new Promise((res) =>
+    execFile('git', ['grep', '-n', '-l', '--', pattern], {
+      cwd: options.config.workspaceRoot, timeout: 15_000,
+    }, (err, stdout) => {
+      const files = stdout.trim().split('\n').filter(Boolean);
+      res(files.length
+        ? `Files matching "${pattern}":\n${files.join('\n')}`
+        : `No matches for "${pattern}".`);
+    }));
+}
+
+async function handleRunCommand(
+  command: string,
+  options: { config: AppConfig },
+): Promise<string> {
+  const cmd = command.slice('/run'.length).trim();
+  if (!cmd) return 'Usage: /run <shell command>';
+  return new Promise((res) => {
+    const [bin, ...rest] = cmd.split(/\s+/);
+    execFile(bin!, rest, { cwd: options.config.workspaceRoot, timeout: 30_000, shell: true }, (err, stdout, stderr) => {
+      const out = ((stdout || '') + (stderr || '')).trim().slice(0, 3000);
+      res(err?.code !== 0 ? `[exit ${err?.code ?? 1}]\n${out}` : out || '(no output)');
+    });
+  });
+}
+
+async function handleLsCommand(
+  command: string,
+  options: { config: AppConfig },
+): Promise<string> {
+  const target = command.slice('/ls'.length).trim() || '.';
+  const abs = resolve(options.config.workspaceRoot, target);
+  const entries = await readdir(abs, { withFileTypes: true }).catch((e) => { throw new Error(String(e.message)); });
+  return entries
+    .filter((e) => !e.name.startsWith('.') || e.name === '.aicode')
+    .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+    .map((e) => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`)
+    .join('\n') || '(empty directory)';
+}
+
+async function handleReadCommand(
+  command: string,
+  options: { config: AppConfig },
+): Promise<string> {
+  const target = command.slice('/read'.length).trim();
+  if (!target) return 'Usage: /read <file>';
+  const abs = resolve(options.config.workspaceRoot, target);
+  const rel = relative(options.config.workspaceRoot, abs);
+  if (rel.startsWith('..')) return 'Path escapes workspace.';
+  const content = await readFile(abs, 'utf8').catch((e) => { throw new Error(String(e.message)); });
+  const lines = content.split('\n');
+  const preview = lines.slice(0, 100).join('\n');
+  const suffix = lines.length > 100 ? `\n… (${lines.length - 100} more lines)` : '';
+  return `--- ${rel} ---\n${preview}${suffix}`;
+}
+
+async function handleRenameCommand(
+  command: string,
+  options: { session: SessionRecord; sessions: SessionStore },
+): Promise<string> {
+  const title = command.slice('/rename'.length).trim();
+  if (!title) return 'Usage: /rename <new title>';
+  // Store title as first finalAnswer acting as title (desktop overlay reads this)
+  if (!options.session.finalAnswers.length) options.session.finalAnswers.push(title);
+  else options.session.finalAnswers[0] = title;
+  await options.sessions.save(options.session);
+  return `Session renamed to: ${title}`;
+}
+
+async function handlePinCommand(
+  options: { session: SessionRecord; sessions: SessionStore },
+): Promise<string> {
+  // Use a guard field to store pin state since SessionRecord has no pinned field
+  const guard = options.session.guard ?? {};
+  const pinned = !((guard as Record<string, unknown>).pinned as boolean);
+  (guard as Record<string, unknown>).pinned = pinned;
+  options.session.guard = guard;
+  await options.sessions.save(options.session);
+  return pinned ? 'Session pinned.' : 'Session unpinned.';
+}
+
+async function handleLoadCommand(
+  command: string,
+  options: { sessions: SessionStore },
+): Promise<string> {
+  const id = command.slice('/load'.length).trim();
+  if (!id) return 'Usage: /load <session-id>\nUse /sessions to list available sessions.';
+  const list = await options.sessions.list();
+  const match = list.find((s) => s.id === id || s.id.endsWith(id));
+  if (!match) return `Session not found: ${id}`;
+  return `To load session "${match.id}", use --resume ${match.id} at startup, or select it from the sessions panel in the Desktop.`;
 }

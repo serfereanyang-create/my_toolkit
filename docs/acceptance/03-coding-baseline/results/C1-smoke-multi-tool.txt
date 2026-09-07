@@ -1,0 +1,143 @@
+[36m┌────────────────────────────────────────────┐[0m
+[36m│[0m [1m[36maicode[0m [2mcli mvp[0m                             [36m│[0m
+[36m│[0m [2mprovider:[0m [37mmock[0m                             [36m│[0m
+[36m│[0m [2mmodel:[0m [37mmock-code-agent-v1[0m                  [36m│[0m
+[36m│[0m [2mworkspace:[0m [2mC:\Users\34516\ZCodeProject\cli[0m [36m│[0m
+[36m│[0m [2mapproval:[0m [2mauto[0m                             [36m│[0m
+[36m└────────────────────────────────────────────┘[0m
+
+[34m*[0m [1m[34mTask[0m
+  [2msmoke multi-tool task: inspect, write, read, and run command[0m
+
+[36m*[0m [1m[36mTool 1[0m [2mproject_status[0m
+  [2minput:[0m [33m{}[0m
+  [2mstatus:[0m [2mrunning[0m
+  [2mresult:[0m [32mok 1ms[0m
+  [2moutput:[0m
+    [2mworkspace: C:\Users\34516\ZCodeProject\cli[0m
+    [2mplatform: win32[0m
+    [2mnode: v24.15.0[0m
+    [2mkey files: package.json, README.md, tsconfig.json[0m
+
+[36m*[0m [1m[36mTool 2[0m [2mlist_files[0m
+  [2minput:[0m [33m{"path":".","maxFiles":80}[0m
+  [2mstatus:[0m [2mrunning[0m
+  [2mresult:[0m [32mok 14ms[0m
+  [2moutput:[0m
+    [2m.aicode-guard-manual/sessions/sess_20260707100615_a2e34bb3.json[0m
+    [2m.aicode-guard-manual/sessions/sess_20260707100630_d6a158d1.json[0m
+    [2m.gitignore[0m
+    [2m.smoke/multi-tool-result.md[0m
+    [2mdocs/acceptance/01-visual/results/V1-version.txt[0m
+    [2mdocs/acceptance/01-visual/results/V2-help.txt[0m
+    [2mdocs/acceptance/01-visual/results/V3-help-no-color-raw.txt[0m
+    [2mdocs/acceptance/01-visual/results/V3-no-color.txt[0m
+    [2mdocs/acceptance/01-visual/results/V3-nocolor-ci.txt[0m
+    [2mdocs/acceptance/01-visual/results/V4-json-events.jsonl[0m
+    [2mdocs/acceptance/01-visual/results/V5-ci-mode.txt[0m
+    [2mdocs/acceptance/03-coding-baseline/results/C1-smoke-multi-tool.txt[0m
+    [2mdocs/capability-matrix.md[0m
+    [2mdocs/superpowers/plans/2026-07-22-mcp-client.md[0m
+    [2mdocs/superpowers/specs/2026-07-22-input-attachments-design.md[0m
+    [2mdocs/superpowers/specs/2026-07-22-mcp-client-design.md[0m
+    [2mdocs/superpowers/specs/2026-07-22-nav-multilang-design.md[0m
+    [2mdocs/superpowers/specs/2026-07-22-os-sandbox-design.md[0m
+    [2mpackage-lock.json[0m
+    [2mpackage.json[0m
+    [2mREADME.md[0m
+    [2msrc/agent/agent.ts[0m
+    [2msrc/agent/commandExtract/execute.ts[0m
+    [2msrc/agent/commandExtract/extract.ts[0m
+    [2msrc/agent/commandExtract/format.ts[0m
+    [2msrc/agent/commandExtract/index.ts[0m
+    [2msrc/agent/commandExtract/plan.ts[0m
+    [2msrc/agent/commandExtract/types.ts[0m
+    [2msrc/agent/context.ts[0m
+    [2msrc/agent/contextBudget.ts[0m
+    [2msrc/agent/fallback.ts[0m
+    [2msrc/agent/toolStrategy.ts[0m
+    [2msrc/audit/checks.ts[0m
+    [2msrc/cli/args.ts[0m
+    [2msrc/cli/attachments.ts[0m
+    [2msrc/cli/commands.ts[0m
+    [2msrc/cli/completion.ts[0m
+    [2msrc/cli/doctor.ts[0m
+    [2msrc/cli/input.ts[0m
+    [2msrc/cli/limits.ts[0m
+    [2msrc/cli/liveSmoke.ts[0m
+    [2msrc/cli/liveSmokeMain.ts[0m
+    [2msrc/cli/repl.ts[0m
+    [2msrc/config/config.ts[0m
+    [2msrc/config/types.ts[0m
+    [2msrc/git-safety/audit.ts[0m
+    [2msrc/git-safety/diff.ts[0m
+    [2msrc/git-safety/format.ts[0m
+    [2msrc/git-safety/git.ts[0m
+    [2msrc/git-safety/publisher.ts[0m
+    [2msrc/git-safety/repository.ts[0m
+    [2msrc/git-safety/rollback.ts[0m
+    [2msrc/git-safety/service.ts[0m
+    [2msrc/git-safety/snapshot.ts[0m
+    [2msrc/git-safety/types.ts[0m
+    [2msrc/git-safety/workflow.ts[0m
+    [2msrc/guard/config.ts[0m
+    [2msrc/guard/confirm.ts[0m
+    [2msrc/guard/domainRegistry.ts[0m
+    [2msrc/guard/lazyDevGuard.ts[0m
+    [2msrc/guard/rules.ts[0m
+    [2msrc/guard/types.ts[0m
+    [2msrc/hooks/hooks.ts[0m
+    [2msrc/index.ts[0m
+    [2msrc/mcp/bridge.ts[0m
+    [2msrc/mcp/client.ts[0m
+    [2msrc/mcp/config.ts[0m
+    [2msrc/mcp/framing.ts[0m
+    [2msrc/mcp/manager.ts[0m
+    [2msrc/mcp/types.ts[0m
+    [2msrc/memory/extract.ts[0m
+    [2msrc/memory/format.ts[0m
+    [2msrc/memory/record.ts[0m
+    [2msrc/memory/select.ts[0m
+    [2msrc/memory/store.ts[0m
+    [2msrc/memory/types.ts[0m
+    [2msrc/nav/extract.ts[0m
+    [2msrc/nav/ignore.ts[0m
+    [2msrc/nav/query.ts[0m
+    [2msrc/nav/store.ts[0m
+
+[36m*[0m [1m[36mTool 3[0m [2mwrite_file[0m
+  [2minput:[0m [33m{"path":".smoke/multi-tool-result.md","content":"# Multi-tool smoke result\n\nmarker: AICODE_SMOKE_MULTI_TOOL\n\nThis file was created by the mock provider through the write_file tool.\n"}[0m
+  [2mstatus:[0m [2mrunning[0m
+  [2mresult:[0m [32mok 15ms[0m
+  [2moutput:[0m
+    [2mWrote .smoke/multi-tool-result.md (132 bytes)[0m
+
+[36m*[0m [1m[36mTool 4[0m [2mread_file[0m
+  [2minput:[0m [33m{"path":".smoke/multi-tool-result.md","maxBytes":2000}[0m
+  [2mstatus:[0m [2mrunning[0m
+  [2mresult:[0m [32mok 1ms[0m
+  [2moutput:[0m
+    [2m# Multi-tool smoke result[0m
+    [2m[0m
+    [2mmarker: AICODE_SMOKE_MULTI_TOOL[0m
+    [2m[0m
+    [2mThis file was created by the mock provider through the write_file tool.[0m
+    [2m[0m
+
+[36m*[0m [1m[36mTool 5[0m [2msearch_text[0m
+  [2minput:[0m [33m{"query":"AICODE_SMOKE_MULTI_TOOL","path":".smoke","maxMatches":10}[0m
+  [2mstatus:[0m [2mrunning[0m
+  [2mresult:[0m [32mok 2ms[0m
+  [2moutput:[0m
+    [2m.smoke/multi-tool-result.md:3: marker: AICODE_SMOKE_MULTI_TOOL[0m
+
+[36m*[0m [1m[36mTool 6[0m [2mrun_command[0m
+  [2minput:[0m [33m{"command":"node --version","timeoutMs":30000}[0m
+  [2mstatus:[0m [2mrunning[0m
+  [2mresult:[0m [32mok 65ms[0m
+  [2moutput:[0m
+    [2mv24.15.0[0m
+
+[32m*[0m [1m[32mAssistant[0m
+  [0mDone. The smoke task used project inspection, file listing, file writing, file reading[0m
+  [0m, search, command execution, and session persistence.[0m
