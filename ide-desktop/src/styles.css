@@ -5469,11 +5469,9 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 }
 .thinking-menu-item:hover,
 .thinking-menu-item.selected { background: var(--bg-hover); }
-/* margin-left:auto pins the label block to the right edge so the selected
-   row (which also renders a trailing check) aligns exactly like the rest —
-   with space-between alone the shrunk copy block would center between the
-   icon and the check. */
-.thinking-menu-copy { display: flex; flex-direction: column; gap: 2px; margin-left: auto; min-width: 0; }
+/* Labels left-align; the selected row's trailing check is pushed to the
+   right edge by space-between, so every row starts at the same x. */
+.thinking-menu-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .thinking-menu-label { font-size: var(--fs-base); font-weight: 500; }
 .thinking-menu-desc { color: var(--fg-dim); font-size: var(--fs-xs); line-height: 1.35; }
 .thinking-menu-item svg { color: var(--blue); flex: 0 0 auto; }

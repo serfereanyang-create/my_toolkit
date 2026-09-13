@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { matchAction, resolveBindings } from './lib/keybindings';
-import { MessageSquare, Files as FilesIcon, Settings as SettingsIcon, Minimize2, AppWindow, PanelBottom, CalendarClock, PanelRight, GitBranch, LayoutDashboard, FileCode, Gauge, Search, Braces, BookmarkCheck, History, BarChart3, StickyNote } from 'lucide-react';
+import { MessageSquare, Files as FilesIcon, Settings as SettingsIcon, CalendarClock, GitBranch, FileCode, Gauge, Search, Braces, BookmarkCheck, History, BarChart3 } from 'lucide-react';
 import { AutomationPanel } from './components/AutomationPanel';
 import { CodeReviewPanel } from './components/CodeReviewPanel';
 import { Composer } from './components/Composer';
@@ -1084,45 +1084,6 @@ export default function App() {
           <span className="main-topbar-spacer" />
           <div className="main-tabs">
             <button className={`main-tab ${mainView === 'chat' ? 'active' : ''}`} onClick={() => setMainView('chat')}>对话</button>
-            <button className={`main-tab ${mainView === 'editor' ? 'active' : ''}`} onClick={() => setMainView('editor')}>编辑器</button>
-            {openFiles.length > 0 && <span className="main-tab-badge">{openFiles.length}</span>}
-            <button className={`main-tab ${mainView === 'quality' ? 'active' : ''}`} onClick={() => setMainView('quality')}>
-              <Gauge size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />质量
-            </button>
-          </div>
-          <div className="window-controls">
-            <button className="window-control" title="最小化" onClick={() => void desktop.window.minimize()}><Minimize2 size={15} /></button>
-            <button className="window-control" title="最大化 / 还原" onClick={() => void desktop.window.toggleMaximize()}><AppWindow size={15} /></button>
-            <button
-              className={`window-control ${infoPanelOpen ? 'active' : ''}`}
-              title="概览面板"
-              onClick={() => setInfoPanelOpen(v => !v)}
-            >
-              <LayoutDashboard size={15} />
-            </button>
-            {state.settings?.preferences?.['gen.bottomPanel'] !== false && (
-              <button
-                className={`window-control ${state.bottomOpen ? 'active' : ''}`}
-                title="底部面板"
-                onClick={() => dispatch({ type: 'bottom/toggle' })}
-              >
-                <PanelBottom size={15} />
-              </button>
-            )}
-            <button
-              className={`window-control ${state.preview.open ? 'active' : ''}`}
-              title="预览栏"
-              onClick={() => dispatch({ type: 'preview/toggle' })}
-            >
-              <PanelRight size={15} />
-            </button>
-            <button
-              className={`window-control ${notesOpen ? 'active' : ''}`}
-              title="会话笔记"
-              onClick={() => setNotesOpen((v) => !v)}
-            >
-              <StickyNote size={15} />
-            </button>
           </div>
         </div>
 
