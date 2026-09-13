@@ -76,16 +76,29 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
 
   const running = state.agentStatus === 'running' || state.agentStatus === 'starting';
 
-  // Live token output speed while the agent streams: sample the growing
-  // "assistant-live" chat item on a 5s sliding window. Tokens are estimated
-  // via the shared CJK-aware estimator (the API only reports real counts at
-  // turn end, too late for a live rate).
-  const liveAssistantText = (() => {
-    const last = state.chat[state.chat.length - 1];
-    return last?.kind === 'assistant' && last.id === 'assistant-live' ? last.text : '';
+  // Live token output speed while the agent streams — Reasonix-style: count
+  // EVERYTHING the model streams this turn, not just the final answer. During
+  // thinking the deltas land in the open turn's `think` step outputs; at answer
+  // time the `assistant-live` bubble grows. Summing all of them keeps one
+  // monotonic per-turn counter, so switching sources never resets the window.
+  // Sampling the bubble alone read 0 tok/s for most of a turn. Tokens come
+  // from the shared CJK-aware estimator (the API only reports real counts at
+  // turn end). A window with zero growth renders '…' (idle between tool
+  // calls), never a misleading 0.
+  const liveStreamText = (() => {
+    let text = '';
+    for (const item of state.chat) {
+      if (item.kind === 'turn') {
+        for (const step of item.steps) {
+          if (step.kind === 'tool' && step.tool === 'think') text += step.output ?? '';
+        }
+      }
+      if (item.kind === 'assistant' && item.id === 'assistant-live') text += item.text;
+    }
+    return text;
   })();
-  const liveTextRef = useRef(liveAssistantText);
-  liveTextRef.current = liveAssistantText;
+  const liveTextRef = useRef(liveStreamText);
+  liveTextRef.current = liveStreamText;
   const [tokenRate, setTokenRate] = useState<number | null>(null);
   useEffect(() => {
     if (!running) { setTokenRate(null); return; }
@@ -97,7 +110,8 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
       const first = samples[0];
       const latest = samples[samples.length - 1];
       const dt = (latest.t - first.t) / 1000;
-      if (dt >= 1) setTokenRate(Math.max(0, Math.round((latest.tokens - first.tokens) / dt)));
+      const growth = latest.tokens - first.tokens;
+      if (dt >= 1) setTokenRate(growth > 0 ? Math.max(1, Math.round(growth / dt)) : null);
     }, 500);
     return () => window.clearInterval(timer);
   }, [running]);
