@@ -1,6 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
 import { resolve } from 'node:path';
-
 const SECRET_ENV_KEYS = [
   /^OPENAI_API_KEY$/i,
   /^ANTHROPIC_API_KEY$/i,
@@ -146,6 +145,54 @@ export function validateSandboxCommand(command: string) {
   }
 }
 
+/**
+ * Undo the classic chat/markdown HTML-entity corruption: a `&&` emitted by
+ * the model or round-tripped through an escaping layer can arrive as
+ * `&amp;&amp;`, which cmd.exe splits into a bogus `amp` command
+ * ("'amp' 不是内部或外部命令"). Rewrite `&amp;` back to `&`, but only
+ * OUTSIDE double quotes — a quoted URL like "a=1&amp;b=2" is valid data and
+ * must survive untouched. Deterministic and unit-tested.
+ */
+export function unescapeAmpEntities(command: string): string {
+  if (!command.includes('&amp;')) return command;
+  let out = '';
+  let inQuotes = false;
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i]!;
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      out += ch;
+      continue;
+    }
+    if (!inQuotes && command.startsWith('&amp;', i)) {
+      out += '&';
+      i += 4;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * Windows consoles default to the OEM codepage (GBK 936 on zh-CN), so native
+ * tools write Chinese as GBK bytes while we decode with utf8 — mojibake.
+ * Flipping the session to 65001 before the real command runs makes child
+ * processes (which inherit the console CP) emit UTF-8.
+ */
+export function buildWindowsShellCommand(command: string): string {
+  return `chcp 65001>nul 2>&1 && ${command}`;
+}
+
+/**
+ * Full Windows channel prep shared by the foreground sandbox runner and the
+ * background job manager: entity repair first, codepage flip second.
+ */
+export function prepareShellCommand(command: string, isWin: boolean): string {
+  const repaired = unescapeAmpEntities(command);
+  return isWin ? buildWindowsShellCommand(repaired) : repaired;
+}
+
 export async function runSandboxedCommand(options: SandboxOptions): Promise<SandboxResult> {
   validateSandboxCommand(options.command);
   const cwd = resolve(options.cwd);
@@ -156,6 +203,11 @@ export async function runSandboxedCommand(options: SandboxOptions): Promise<Sand
 
   const isWin = process.platform === 'win32';
   const shell = options.shell ?? true;
+  // Windows channel hardening: repair `&amp;&amp;` entity corruption before the
+  // string reaches cmd.exe, and switch the console to UTF-8 so Chinese tool
+  // output survives our utf8 decoding (the OEM GBK default was the mojibake
+  // root cause).
+  const finalCommand = isWin ? buildWindowsShellCommand(unescapeAmpEntities(options.command)) : unescapeAmpEntities(options.command);
   const spawnOpts: SpawnOptions = {
     cwd,
     env,
@@ -168,7 +220,7 @@ export async function runSandboxedCommand(options: SandboxOptions): Promise<Sand
   return await new Promise<SandboxResult>((resolvePromise, rejectPromise) => {
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = spawn(options.command, [], spawnOpts) as ChildProcessWithoutNullStreams;
+      child = spawn(finalCommand, [], spawnOpts) as ChildProcessWithoutNullStreams;
     } catch (error) {
       rejectPromise(error instanceof Error ? error : new Error(String(error)));
       return;

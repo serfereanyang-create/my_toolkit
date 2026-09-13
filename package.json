@@ -11,6 +11,11 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/tests/*.test.js",
+    "coverage": "npm run build && node --test --experimental-test-coverage dist/tests/*.test.js",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "smoke": "npm run build && node dist/src/index.js --provider mock --approval auto --session-dir .aicode-smoke/sessions --prompt \"smoke multi-tool task: inspect, write, read, and run command\"",
     "live-smoke": "npm run build && node dist/src/cli/liveSmokeMain.js",
     "audit:100": "npm run build && node dist/src/audit/checks.js",
@@ -24,11 +29,20 @@
   ],
   "license": "UNLICENSED",
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "typescript": "^5.8.2"
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^24.13.3",
+    "@typescript-eslint/eslint-plugin": "^8.70.0",
+    "@typescript-eslint/parser": "^8.70.0",
+    "eslint": "^9.39.5",
+    "prettier": "^3.9.6",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.70.0"
   },
   "dependencies": {
+    "better-sqlite3": "^11.10.0",
     "chokidar": "^3.6.0",
-    "sharp": "^0.35.3"
+    "glob": "^10.3.10",
+    "sharp": "^0.35.3",
+    "typescript": "^5.8.2"
   }
 }

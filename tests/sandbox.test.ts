@@ -5,12 +5,52 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   buildSandboxEnv,
+  buildWindowsShellCommand,
   isSandboxScrubEnabled,
   isSecretEnvKey,
   runSandboxedCommand,
+  unescapeAmpEntities,
   validateSandboxCommand,
 } from '../src/safety/sandbox.js';
 import { createDefaultToolRegistry } from '../src/tools/index.js';
+
+test('unescapeAmpEntities repairs &amp;&amp; outside quotes only', () => {
+  // The observed corruption: model-emitted `npm run build && npm test` arrives
+  // as `npm run build &amp;&amp; npm test`; cmd.exe split it and ran "amp".
+  assert.equal(unescapeAmpEntities('npm run build &amp;&amp; npm test'), 'npm run build && npm test');
+  assert.equal(unescapeAmpEntities('a &amp; b &amp;&amp; c'), 'a & b && c');
+  // Quoted payloads (URLs, literal text) must survive untouched.
+  assert.equal(unescapeAmpEntities('fetch "https://x/?a=1&amp;b=2"'), 'fetch "https://x/?a=1&amp;b=2"');
+  // Commands without the entity are byte-identical.
+  assert.equal(unescapeAmpEntities('git status &amp;'), 'git status &');
+  assert.equal(unescapeAmpEntities('node --version'), 'node --version');
+});
+
+test('buildWindowsShellCommand prefixes UTF-8 codepage flip without leaking output', () => {
+  const built = buildWindowsShellCommand('node --version');
+  assert.ok(built.startsWith('chcp 65001'));
+  assert.ok(built.endsWith('&& node --version'));
+});
+
+test('Windows runSandboxedCommand chain: entity repair + UTF-8 output end to end', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-sandbox-win-'));
+  try {
+    const command = process.platform === 'win32'
+      ? 'node -e "console.log(\'构建成功\')" &amp;&amp; node -e "console.log(2)"'
+      : 'node -e "console.log(1)"';
+    const result = await runSandboxedCommand({ command, cwd: workspace, timeoutMs: 20000, scrubSecrets: true });
+    assert.equal(result.timedOut, false);
+    assert.equal(result.code, 0, `stderr: ${result.stderr}`);
+    if (process.platform === 'win32') {
+      // No "'amp' is not recognized" and Chinese survives as real UTF-8.
+      assert.ok(!result.stderr.toLowerCase().includes("'amp'"), `entity leaked: ${result.stderr}`);
+      assert.match(result.stdout, /构建成功/);
+      assert.match(result.stdout, /2/);
+    }
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
 
 test('sandbox env scrub removes secrets and keeps PATH', () => {
   assert.equal(isSecretEnvKey('OPENAI_API_KEY'), true);

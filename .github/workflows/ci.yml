@@ -1,0 +1,24 @@
+name: CI
+
+# Gates: strict typecheck, full node:test suite, and the >100-point
+# self-audit. Push/PR on main must stay green — the same three checks the
+# agent runs locally after every edit (verify loop).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run audit:100
