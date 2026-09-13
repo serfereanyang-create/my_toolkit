@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Notification, safeStorage, protocol } = require('electron');
+const { app, BrowserWindow, Menu, Notification, safeStorage, protocol, nativeImage } = require('electron');
 const path = require('node:path');
 const { automationBus } = require('./automation.cjs');
 
@@ -352,7 +352,11 @@ function createWindow() {
     show: false,
     title: 'YOYcode Desktop IDE',
     backgroundColor: '#f8fafc',
-    icon: path.join(__dirname, '..', 'resources', process.platform === 'win32' ? 'icon.ico' : 'icon-512.png'),
+    // Empty window icon: hides the title-bar glyph on Windows (the user asked
+    // for it gone) while the packaged app's taskbar identity stays driven by
+    // the AppUserModelID icon. Setting this after creation would flash the
+    // default Electron icon first.
+    icon: nativeImage.createEmpty(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
