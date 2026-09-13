@@ -187,28 +187,41 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile, expandAl
   const elapsed = fmtElapsedCompact((item.endedAt ?? now) - item.startedAt);
   const files = item.files ?? [];
   const hasFiles = files.length > 0;
+  const hasSteps = item.steps.length > 0;
   const undoable = files.some((f) => f.checkpointIds.length > 0);
   const undoState = item.undo ?? 'idle';
 
   return (
     <section className={`turn-summary ${running ? 'running' : 'done'}`}>
-      {/* Step list — default expanded, collapsible */}
-      {!collapsed && (
+      {/* Step list — default expanded, collapsible. A running turn with no
+          steps yet still shows a "thinking" placeholder so the row is never
+          an empty dead zone; a finished zero-step turn (transient, endTurn
+          drops these) renders nothing and the header is not a toggle. */}
+      {!collapsed && (hasSteps || running) && (
         <div className="turn-steps-inline">
-          {item.steps.map((step) => (
-            <StepRow key={step.id} step={step} onApprove={onApprove} expandAll={expandAll} />
-          ))}
+          {hasSteps
+            ? item.steps.map((step) => (
+                <StepRow key={step.id} step={step} onApprove={onApprove} expandAll={expandAll} />
+              ))
+            : (
+              <div className="step-row running">
+                <span className="codex-bullet blink">•</span>
+                <span className="step-action">Running</span>
+                <span className="step-summary">思考中…</span>
+              </div>
+            )}
         </div>
       )}
 
       {/* Footer bar: elapsed · steps · changes · collapse toggle */}
       <button
         className="turn-head"
-        onClick={() => setCollapsed((v) => !v)}
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? '展开步骤' : '折叠步骤'}
+        onClick={() => hasSteps && setCollapsed((v) => !v)}
+        aria-expanded={hasSteps ? !collapsed : undefined}
+        aria-label={hasSteps ? (collapsed ? '展开步骤' : '折叠步骤') : undefined}
+        style={hasSteps ? undefined : { cursor: 'default' }}
       >
-        <ChevronRight className={`turn-caret ${!collapsed ? 'open' : ''}`} size={15} />
+        {hasSteps && <ChevronRight className={`turn-caret ${!collapsed ? 'open' : ''}`} size={15} />}
         {/* separators.rs turn-end row: `Worked for 1m 30s · done 10:45 PM` */}
         <span className="turn-elapsed">
           {running
@@ -217,7 +230,7 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile, expandAl
           {running ? `Working for ${elapsed}` : `Worked for ${elapsed}`}
           {!running && item.endedAt ? ` · done ${formatDoneClock(item.endedAt)}` : ''}
         </span>
-        <span className="turn-count">{item.steps.length} 步</span>
+        {hasSteps && <span className="turn-count">{item.steps.length} 步</span>}
         {(item.added > 0 || item.removed > 0) && (
           <>
             <span className="turn-count">·</span>

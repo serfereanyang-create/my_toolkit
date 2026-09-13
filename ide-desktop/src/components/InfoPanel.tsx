@@ -254,8 +254,14 @@ function TerminalSection({ state, onOpenTerminal }: { state: AppState; onOpenTer
 }
 
 // ── Agent section ─────────────────────────────────────────────────────────────
+// Always expandable: while running it shows live progress; when idle/offline it
+// shows the last turn's full workflow (sourced from chat history, so it survives
+// reopening a session — the user asked to see the agent's workflow any time,
+// not only during a live turn). The bridge is lazily started on first prompt,
+// so "离线" is explained rather than left as a dead-end badge.
 function AgentSection({ state }: { state: AppState }) {
   const progress = activeTurnProgress(state);
+  const [open, setOpen] = useState(true);
   const [, forceUpdate] = useState(0);
 
   useEffect(() => {
@@ -272,10 +278,12 @@ function AgentSection({ state }: { state: AppState }) {
   };
 
   const changes = sessionChangeTotals(state.chat);
+  const lastTurn = [...state.chat].reverse().find((c): c is Extract<ChatItem, { kind: 'turn' }> => c.kind === 'turn');
+  const lastTurnSec = lastTurn ? Math.max(0, Math.round(((lastTurn.endedAt ?? Date.now()) - lastTurn.startedAt) / 1000)) : 0;
 
   return (
     <div className="ip-section">
-      <div className="ip-section-head" style={{ cursor: 'default' }}>
+      <button className="ip-section-head" onClick={() => setOpen(v => !v)}>
         <span className="ip-row-icon"><Bot size={13}/></span>
         <span className="ip-section-label">智能体</span>
         <span className="ip-row-spacer"/>
@@ -283,25 +291,60 @@ function AgentSection({ state }: { state: AppState }) {
           {state.agentStatus === 'running' && <Loader2 size={11} className="spin"/>}
           {statusLabel[state.agentStatus]}
         </span>
-      </div>
-      {progress && (
+        <span className="ip-section-chevron">{open ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}</span>
+      </button>
+      {open && (
         <div className="ip-section-body">
-          <div className="ip-row">
-            <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-              已用 {fmt(progress.elapsedMs)} · {progress.stepCount} 步
-            </span>
-          </div>
-          {changes && (
+          {progress ? (
+            <>
+              <div className="ip-row">
+                <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                  已用 {fmt(progress.elapsedMs)} · {progress.stepCount} 步
+                </span>
+              </div>
+              {changes && (
+                <div className="ip-row">
+                  <span className="ip-add">+{changes.added}</span>
+                  <span style={{ margin: '0 4px', color: 'var(--fg-dim)' }}>−</span>
+                  <span className="ip-del">{changes.removed}</span>
+                </div>
+              )}
+              {progress.lastTool && (
+                <div className="ip-step-row">
+                  <Loader2 size={12} className="spin ip-step-icon"/>
+                  <span className="ip-step-label">{progress.lastTool}</span>
+                </div>
+              )}
+            </>
+          ) : lastTurn && lastTurn.steps.length > 0 ? (
+            <>
+              <div className="ip-row">
+                <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                  上次工作 {lastTurnSec}秒 · {lastTurn.steps.length} 步
+                </span>
+              </div>
+              {lastTurn.steps.slice(-8).map((step) => (
+                <div key={step.id} className="ip-step-row">
+                  {step.status === 'running'
+                    ? <Loader2 size={12} className="spin ip-step-icon"/>
+                    : step.status === 'done' && step.ok !== false
+                      ? <CheckCircle2 size={12} className="ip-step-icon ip-step-done"/>
+                      : <Circle size={12} className="ip-step-icon ip-step-muted"/>
+                  }
+                  <span className="ip-step-label">{step.tool}</span>
+                  {step.durationMs != null && (
+                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--fg-dim)' }}>
+                      {(step.durationMs / 1000).toFixed(1)}s
+                    </span>
+                  )}
+                </div>
+              ))}
+            </>
+          ) : (
             <div className="ip-row">
-              <span className="ip-add">+{changes.added}</span>
-              <span style={{ margin: '0 4px', color: 'var(--fg-dim)' }}>−</span>
-              <span className="ip-del">{changes.removed}</span>
-            </div>
-          )}
-          {progress.lastTool && (
-            <div className="ip-step-row">
-              <Loader2 size={12} className="spin ip-step-icon"/>
-              <span className="ip-step-label">{progress.lastTool}</span>
+              <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+                {state.agentStatus === 'offline' ? '尚未连接 · 发送消息时自动连接' : '还没有工作记录'}
+              </span>
             </div>
           )}
         </div>
