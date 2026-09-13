@@ -8354,3 +8354,23 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
   overflow: hidden;
 }
 .diff-monaco .diff-plain { white-space: pre-wrap; word-break: break-all; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Context compaction divider (Codex "正在压缩上下文 / 上下文已自动压缩")
+   ═══════════════════════════════════════════════════════════════════ */
+.compaction-divider {
+  display: flex; align-items: center; gap: 10px;
+  margin: 14px 0;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  user-select: none;
+}
+.compaction-divider-line { flex: 1; height: 1px; background: var(--border-subtle); min-width: 0; }
+.compaction-divider-label {
+  display: inline-flex; align-items: center; gap: 5px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.compaction-divider.running .compaction-divider-label { animation: compaction-pulse 1.6s ease-in-out infinite; }
+.compaction-divider.failed .compaction-divider-label { color: var(--danger); }
+@keyframes compaction-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }

@@ -210,6 +210,9 @@ export type ChatItem =
   // UX-3 fix: dedicated 'error' kind so system errors (API key missing, bridge
   // crash, etc.) render with a distinct error style rather than as AI replies.
   | { id: string; kind: 'error'; text: string }
+  // Context compaction divider (Codex "正在压缩上下文" → "上下文已自动压缩").
+  // 'running' rows flip to 'done'/'failed' when the follow-up event arrives.
+  | { id: string; kind: 'compaction'; phase: 'running' | 'done' | 'failed'; auto: boolean; before?: number; after?: number; reason?: string }
   | ToolChatItem
   | { id: string; kind: 'approval'; requestId: string; tool: string; message: string; input?: unknown; risk?: 'read' | 'write' | 'shell' | 'network'; diff?: PendingDiff; decided?: 'allow_once' | 'allow_session' | 'deny'; autoReason?: string }
   // A single agent working round: the tool steps it ran, the distinct files it

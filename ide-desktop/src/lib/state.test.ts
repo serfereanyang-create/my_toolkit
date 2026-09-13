@@ -143,6 +143,35 @@ describe('appReducer', () => {
     expect(card.diff).toBeUndefined();
   });
 
+  it('compaction started appends a running divider, completed flips it in place', () => {
+    let s = emit(initialState, { type: 'context_compaction', phase: 'started', auto: true, before: 42 });
+    const rows = s.chat.filter((item) => item.kind === 'compaction');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind === 'compaction' && rows[0].phase).toBe('running');
+    s = emit(s, { type: 'context_compaction', phase: 'completed', auto: true, before: 42, after: 3 });
+    const after = s.chat.filter((item) => item.kind === 'compaction');
+    expect(after).toHaveLength(1);
+    expect(after[0].kind === 'compaction' && after[0].phase).toBe('done');
+    expect(after[0].kind === 'compaction' && after[0].after).toBe(3);
+    // The work log records the outcome for the details panel.
+    expect(s.workLog.some((e) => e.title === '上下文已自动压缩')).toBe(true);
+  });
+
+  it('manual /compact divider says 已压缩 (not 自动), and failure flips to failed', () => {
+    let s = emit(initialState, { type: 'context_compaction', phase: 'started', auto: false, before: 30 });
+    s = emit(s, { type: 'context_compaction', phase: 'failed', auto: false, reason: 'provider exploded' });
+    const row = s.chat.find((item) => item.kind === 'compaction');
+    expect(row?.kind === 'compaction' && row.phase).toBe('failed');
+    expect(row?.kind === 'compaction' && row.reason).toBe('provider exploded');
+    expect(s.workLog.some((e) => e.title === '上下文压缩失败')).toBe(true);
+  });
+
+  it('a completed event without a prior started still appends a done row', () => {
+    const s = emit(initialState, { type: 'context_compaction', phase: 'completed', auto: true, before: 40, after: 3 });
+    const row = s.chat.find((item) => item.kind === 'compaction');
+    expect(row?.kind === 'compaction' && row.phase).toBe('done');
+  });
+
   const statsEvent = (inputTokens: number, cacheRead: number, reported = true) => ({
     type: 'context_stats', provider: 'p', model: 'm',
     inputTokens, outputTokens: 800,

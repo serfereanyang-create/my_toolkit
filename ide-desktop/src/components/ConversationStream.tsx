@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { Wifi, Copy, Pencil, Check } from 'lucide-react';
+import { Wifi, Copy, Pencil, Check, FoldVertical } from 'lucide-react';
 import type { AppState, ChatItem } from '../types';
 import type { AppAction } from '../lib/state';
 import { ToolCard } from './ToolCard';
@@ -163,6 +163,25 @@ function Row({ item, onApprove, onEditUser, dispatch }: {
   dispatch: React.Dispatch<AppAction>;
 }) {
   if (item.kind === 'tool' || item.kind === 'approval') return <ToolCard item={item} onApprove={onApprove} />;
+  if (item.kind === 'compaction') {
+    // Codex renders compaction as a full-width hairline divider with the
+    // label centered over it; the running row pulses, the done row is static.
+    const label = item.phase === 'running'
+      ? '正在压缩上下文'
+      : item.phase === 'failed'
+        ? '上下文压缩失败'
+        : item.auto ? '上下文已自动压缩' : '上下文已压缩';
+    return (
+      <div className={`compaction-divider ${item.phase}`} role="status">
+        <span className="compaction-divider-line" />
+        <span className="compaction-divider-label">
+          {item.phase !== 'running' && <FoldVertical size={13} />}
+          {label}
+        </span>
+        <span className="compaction-divider-line" />
+      </div>
+    );
+  }
   if (item.kind === 'user') {
     return (
       <div className="msg-user-group">

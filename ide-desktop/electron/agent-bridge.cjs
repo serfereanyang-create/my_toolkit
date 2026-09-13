@@ -24,6 +24,12 @@ class AgentBridge extends EventEmitter {
     this.excelAutomation = options.excelAutomation === true;
     this.toolScope = options.toolScope || 'auto';
     this.confirmPlan = options.confirmPlan === true;
+    // Token size of the active model's context window. When known, the CLI's
+    // pre-turn auto-compact (90% threshold) becomes active in this bridge via
+    // AICODE_CONTEXT_WINDOW; undefined leaves compaction manual-only.
+    this.contextWindowTokens = Number.isFinite(options.contextWindowTokens) && options.contextWindowTokens > 0
+      ? Math.floor(options.contextWindowTokens)
+      : undefined;
     this.child = null;
     this.buffer = '';
     // Every child process gets its own generation. A killed process can emit
@@ -94,6 +100,11 @@ class AgentBridge extends EventEmitter {
     // of duplicating the openai/anthropic conditional here.
     const envVar = apiKeyEnvVar(this.provider);
     if (envVar && this.apiKey) env[envVar] = this.apiKey;
+    // The CLI reads AICODE_CONTEXT_WINDOW (autoCompact.resolveContextWindowTokens)
+    // to arm pre-turn auto-compaction. Never inherit a stale value from the
+    // parent env — the desktop setting is the single source of truth.
+    delete env.AICODE_CONTEXT_WINDOW;
+    if (this.contextWindowTokens) env.AICODE_CONTEXT_WINDOW = String(this.contextWindowTokens);
 
     let child;
     try {

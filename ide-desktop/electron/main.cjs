@@ -48,6 +48,16 @@ function normalizeToolScope(value) {
   return ['auto', 'compact', 'standard', 'full'].includes(value) ? value : 'auto';
 }
 
+// Token size of the active model's context window, taken from the provider's
+// model catalog (same source the renderer's context-usage badge uses).
+// undefined → the CLI keeps auto-compaction disarmed and /compact stays manual.
+function contextWindowForModel(providerConfig) {
+  if (!providerConfig || !Array.isArray(providerConfig.models)) return undefined;
+  const match = providerConfig.models.find((entry) => entry && entry.id === providerConfig.model);
+  const tokens = match && Number(match.contextWindow);
+  return Number.isFinite(tokens) && tokens > 0 ? Math.floor(tokens) : undefined;
+}
+
 /*
  * OS-level notification for key task states (approval needed / turn done /
  * error / agent offline). Honors the 常规→通知 preferences:
@@ -170,6 +180,7 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
       approval: config.approval,
       reasoningEffort,
       toolScope,
+      contextWindowTokens: contextWindowForModel(providerConfig),
       confirmPlan: config.preferences?.taskExecutionMode === 'auto',
       resumeSessionId: resumeSessionId || undefined,
     });
@@ -223,6 +234,7 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
       baseUrl: resolveBaseUrl(providerConfig),
       apiKey,
       approval: 'deny',
+      contextWindowTokens: contextWindowForModel(providerConfig),
     });
     sideBridge.on('event', (event) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sidechat.event', event);

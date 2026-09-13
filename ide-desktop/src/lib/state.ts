@@ -239,6 +239,41 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
     return previous ? { ...stepped, workLog: stepped.workLog.map((entry) => entry.id === previous.id ? { ...entry, phase: 'done', durationMs: typeof event.durationMs === 'number' ? event.durationMs : entry.durationMs } : entry) } : stepped;
   }
   if (event.type === 'info') return addLog({ type: 'info', phase: 'info', title: '过程提示', detail: String(event.content ?? event.message ?? '') }, state.workPhase);
+  if (event.type === 'context_compaction') {
+    // Codex-style divider row: "正在压缩上下文" while the summarization model
+    // call runs, then it flips to "上下文已自动压缩" (auto) / "上下文已压缩"
+    // (manual /compact) with the real message counts.
+    const auto = event.auto !== false;
+    const phase = event.phase === 'completed' ? 'done' : event.phase === 'failed' ? 'failed' : 'running';
+    const before = typeof event.before === 'number' ? event.before : undefined;
+    const after = typeof event.after === 'number' ? event.after : undefined;
+    const reason = typeof event.reason === 'string' ? event.reason : undefined;
+    if (phase === 'running') {
+      const next = appendChat(state, { id: `compaction-${crypto.randomUUID()}`, kind: 'compaction', phase, auto, before });
+      return addLog({ type: 'info', phase: 'running', title: auto ? '正在压缩上下文' : '正在压缩上下文（手动）', detail: before ? `会话共 ${before} 条消息` : '' }, state.workPhase, next);
+    }
+    // Flip the newest still-running divider; if none exists (e.g. the started
+    // event was lost), append a finished one so the outcome is never silent.
+    let flipped = false;
+    const chat = [...state.chat];
+    for (let i = chat.length - 1; i >= 0; i -= 1) {
+      const item = chat[i];
+      if (item.kind === 'compaction' && item.phase === 'running') {
+        chat[i] = { ...item, phase, before: item.before ?? before, after, reason };
+        flipped = true;
+        break;
+      }
+    }
+    if (!flipped) chat.push({ id: `compaction-${crypto.randomUUID()}`, kind: 'compaction', phase, auto, before, after, reason });
+    const detail = phase === 'failed'
+      ? `压缩失败：${reason || '未知原因'}，已保留完整历史`
+      : before !== undefined && after !== undefined ? `${before} → ${after} 条消息` : '';
+    return addLog(
+      { type: 'info', phase: phase === 'failed' ? 'failed' : 'done', title: phase === 'failed' ? '上下文压缩失败' : auto ? '上下文已自动压缩' : '上下文已压缩', detail },
+      state.workPhase,
+      { ...state, chat },
+    );
+  }
   if (event.type === 'turn_start') {
     // The CLI emits turn_start both from the bridge wrapper and from inside
     // runAgentTurn. A duplicate for an already-open turn must not wipe the
