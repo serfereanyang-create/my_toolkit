@@ -202,6 +202,8 @@ export type ToolChatItem = {
   startedAt?: number;
   /** How long the tool took to complete in milliseconds */
   durationMs?: number;
+  /** computer_screenshot: PNG as a data URL, rendered inline on the tool card. */
+  screenshot?: string;
 };
 
 export type ChatItem =

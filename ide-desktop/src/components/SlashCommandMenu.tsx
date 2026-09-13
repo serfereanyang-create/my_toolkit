@@ -87,6 +87,8 @@ const SLASH_COMMANDS: SlashCommand[] = [
 
   // ── 高级 ───────────────────────────────────────────────────────────────────
   { command: '/plan',            description: '显示/管理任务板（确认/暂停/继续）', category: 'advanced' },
+  { command: '/computer use',    description: '唤醒电脑操控：截图看屏、点击、输入、滚动（本会话有效）', category: 'advanced', badge: 'GUI' },
+  { command: '/computer off',    description: '关闭本会话的电脑操控',               category: 'advanced' },
   { command: '/memory list',     description: '列出项目记忆条目',                 category: 'advanced' },
   { command: '/memory add',      description: '添加一条项目记忆',                 category: 'advanced' },
   { command: '/automate list',   description: '列出自动化任务',                   category: 'advanced' },

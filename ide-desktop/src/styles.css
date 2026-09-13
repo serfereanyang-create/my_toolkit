@@ -1719,6 +1719,18 @@ h1 {
   border-top: 1px solid var(--border-subtle);
 }
 
+/* computer_screenshot: the actual desktop frame the agent is looking at. */
+.tool-screenshot {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  margin: var(--sp-2) 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  background: var(--bg-base);
+}
+
 .turn-summary {
   align-self: stretch;
   border: 0;

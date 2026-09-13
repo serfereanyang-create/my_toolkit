@@ -199,6 +199,9 @@ export function ToolCard({ item, onApprove }: {
         )}
       </div>
       {inputText && <pre>{inputText}</pre>}
+      {item.screenshot && (
+        <img className="tool-screenshot" src={item.screenshot} alt={`${item.tool} 截图`} />
+      )}
       {outputText && (showRaw
         ? <pre>{outputText}</pre>
         : <JsonViewer text={outputText!} height={280} />)}

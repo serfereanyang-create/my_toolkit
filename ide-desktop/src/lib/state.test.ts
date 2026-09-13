@@ -108,6 +108,24 @@ describe('appReducer', () => {
     expect(s.chat.filter((item) => item.kind === 'assistant')).toHaveLength(1);
   });
 
+  it('computer_screenshot results surface the PNG as an inline data URL on the step', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'tool_start', tool: 'computer_screenshot', input: {} });
+    s = emit(s, {
+      type: 'tool_result', tool: 'computer_screenshot', ok: true, output: 'Screenshot saved',
+      data: { computerImage: { mediaType: 'image/png', data: 'AAAA', path: '.aicode/computer/shot.png' } },
+    });
+    const turn = s.chat.find((item) => item.kind === 'turn');
+    if (!turn || turn.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.steps[0]?.screenshot).toBe('data:image/png;base64,AAAA');
+    // Non-screenshot tools never gain the field.
+    s = emit(s, { type: 'tool_start', tool: 'computer_click', input: { x: 1, y: 2 } });
+    s = emit(s, { type: 'tool_result', tool: 'computer_click', ok: true, output: 'clicked' });
+    const turn2 = s.chat.find((item) => item.kind === 'turn');
+    if (!turn2 || turn2.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn2.steps[1]?.screenshot).toBeUndefined();
+  });
+
   it('marks an approval card as decided so its buttons disable', () => {
     let s = emit(initialState, { type: 'approval_needed', requestId: 'approval_1', tool: 'write_file', message: 'Approve write?', input: { path: 'note.md' } });
     s = appReducer(s, { type: 'approval/decided', requestId: 'approval_1', decision: 'allow_once' });

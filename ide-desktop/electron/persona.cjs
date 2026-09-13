@@ -153,6 +153,8 @@ function buildComputerSection(prefs) {
     lines.push('- 用户已启用 Microsoft Excel 加载项支持，可以调用 Excel 相关命令。');
   }
 
+  lines.push('- 电脑操控（computer use）：用户可用 /computer use 指令或（在完全访问模式下）由你自主唤醒截图/点击/输入/滚动等桌面控制工具。看到 GUI 任务需求时，先 computer_screenshot 观察屏幕，再执行单个动作并再次截图验证效果。');
+
   if (!anyApp || allowed.length > 0 || excel) {
     return `### 电脑操控权限\n${lines.join('\n')}`;
   }

@@ -464,10 +464,16 @@ function finishTurnStep(state: AppState, event: AgentEvent): AppState {
   const removed = data && typeof data.removed === 'number' ? data.removed : 0;
   const filePath = data && typeof data.path === 'string' ? data.path : undefined;
   const checkpointId = data && typeof data.checkpointId === 'string' ? data.checkpointId : undefined;
+  // computer_screenshot ships the PNG base64 in data.computerImage; surface it
+  // as a data URL so the tool card can render the actual screen the agent saw.
+  const computerImage = data && isRecord(data.computerImage) ? data.computerImage : undefined;
+  const screenshot = computerImage && typeof computerImage.data === 'string' && computerImage.data
+    ? `data:${String(computerImage.mediaType || 'image/png')};base64,${computerImage.data}`
+    : undefined;
   const index = openTurnIndex(state);
   if (index === -1) {
     // No active turn: emit a standalone done card as before.
-    return appendChat(state, { id: `tool-${Date.now()}`, kind: 'tool', status: ok ? 'done' : 'failed', tool, output, ok, added: added || undefined, removed: removed || undefined });
+    return appendChat(state, { id: `tool-${Date.now()}`, kind: 'tool', status: ok ? 'done' : 'failed', tool, output, ok, added: added || undefined, removed: removed || undefined, screenshot });
   }
   const turn = state.chat[index];
   if (turn.kind !== 'turn') return state;
@@ -478,13 +484,13 @@ function finishTurnStep(state: AppState, event: AgentEvent): AppState {
     if (steps[i].status === 'running' && steps[i].tool === tool) {
       const startedAt = steps[i].startedAt;
       const durationMs = startedAt ? Date.now() - startedAt : undefined;
-      steps[i] = { ...steps[i], status: ok ? 'done' : 'failed', output, ok, added: added || undefined, removed: removed || undefined, durationMs };
+      steps[i] = { ...steps[i], status: ok ? 'done' : 'failed', output, ok, added: added || undefined, removed: removed || undefined, durationMs, screenshot };
       matched = true;
       break;
     }
   }
   if (!matched) {
-    steps.push({ id: `tool-${Date.now()}`, kind: 'tool', status: ok ? 'done' : 'failed', tool, output, ok, added: added || undefined, removed: removed || undefined });
+    steps.push({ id: `tool-${Date.now()}`, kind: 'tool', status: ok ? 'done' : 'failed', tool, output, ok, added: added || undefined, removed: removed || undefined, screenshot });
   }
   // Track distinct changed files for the "N 个文件已更改" summary. A file
   // written twice in one turn merges its line counts and keeps every
