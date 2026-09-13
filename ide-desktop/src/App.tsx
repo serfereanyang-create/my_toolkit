@@ -984,6 +984,16 @@ export default function App() {
   // During the brief startup restore, show a neutral splash instead of the
   // folder picker. Restore always resolves a workspace (last-used or home), so
   // Welcome only appears if restore genuinely failed to set any root.
+  // NOTE: every hook must run BEFORE these early returns — a useMemo placed
+  // after them changes the hook count between renders and crashes React #310.
+  // Oldest live approval request drives the blocking modal; auto-decided
+  // (sandbox) approvals carry `decided` on arrival and never surface here.
+  const pendingApproval = useMemo(
+    () => state.chat.find((item): item is Extract<ChatItem, { kind: 'approval' }> =>
+      item.kind === 'approval' && !item.decided) ?? null,
+    [state.chat],
+  );
+
   if (booting) return <main className="app-shell" />;
   if (!state.workspaceRoot) return <main className="app-shell"><Welcome onOpenWorkspace={openWorkspace} /></main>;
 
@@ -1024,14 +1034,6 @@ export default function App() {
     editor: { icon: <FileCode size={16} />, label: '编辑器' },
     quality: { icon: <Gauge size={16} />, label: '质量' },
   };
-
-  // Oldest live approval request drives the blocking modal; auto-decided
-  // (sandbox) approvals carry `decided` on arrival and never surface here.
-  const pendingApproval = useMemo(
-    () => state.chat.find((item): item is Extract<ChatItem, { kind: 'approval' }> =>
-      item.kind === 'approval' && !item.decided) ?? null,
-    [state.chat],
-  );
 
   return (
     <div
