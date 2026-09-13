@@ -1173,7 +1173,7 @@ export default function App() {
 
         {mainView === 'git' && (
           <div className="secondary">
-            <GitPanel forcePush={Boolean(state.settings?.preferences?.gitForcePush)} branchPrefix={typeof state.settings?.preferences?.gitBranchPrefix === 'string' ? state.settings.preferences.gitBranchPrefix : 'codex/'} />
+            <GitPanel state={state} forcePush={Boolean(state.settings?.preferences?.gitForcePush)} branchPrefix={typeof state.settings?.preferences?.gitBranchPrefix === 'string' ? state.settings.preferences.gitBranchPrefix : 'codex/'} />
           </div>
         )}
 

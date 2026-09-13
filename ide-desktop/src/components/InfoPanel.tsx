@@ -2,11 +2,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   GitBranch, GitCommit, Upload, ChevronDown, ChevronRight,
   CheckCircle2, Circle, Loader2, Minus, X, Maximize2,
-  TerminalSquare, Bot, ListTodo,
+  TerminalSquare, Bot, ListTodo, FileDiff,
 } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import type { AppState, ChatItem, ToolChatItem } from '../types';
-import type { GitStatus } from '../lib/ipc';
+import type { GitStatus, GitBranchList } from '../lib/ipc';
+import { BranchMenu } from './GitPanel';
+import { formatGoalElapsed } from '../lib/gitPanelFormat';
 import { sessionChangeTotals, activeTurnProgress } from '../lib/state';
 
 /*
@@ -28,14 +30,20 @@ function fmtElapsed(startedAt: number) {
 // ── Git section ───────────────────────────────────────────────────────────────
 function GitSection({ onCommitPush }: { onCommitPush: () => void }) {
   const [status, setStatus] = useState<GitStatus | null>(null);
+  const [branches, setBranches] = useState<GitBranchList | null>(null);
+  const [stats, setStats] = useState<{ added: number; removed: number } | null>(null);
   const [open, setOpen] = useState(true);
+  const [branchMenu, setBranchMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        const s = await desktop.git.status();
-        if (!cancelled) setStatus(s);
+        const [s, d] = await Promise.all([desktop.git.status(), desktop.git.diffStats()]);
+        if (cancelled) return;
+        setStatus(s);
+        if (d.ok) setStats({ added: d.added ?? 0, removed: d.removed ?? 0 });
       } catch { /* ignore */ }
     };
     void load();
@@ -43,9 +51,36 @@ function GitSection({ onCommitPush }: { onCommitPush: () => void }) {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  // 分支菜单打开时才拉分支列表（避免常驻轮询）
+  useEffect(() => {
+    if (!branchMenu || branches) return;
+    void desktop.git.branches().then((b) => { if (b.ok) setBranches(b); });
+  }, [branchMenu, branches]);
+
+  // 点击外部 / Esc 关闭分支菜单
+  useEffect(() => {
+    if (!branchMenu) return;
+    const onDoc = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setBranchMenu(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setBranchMenu(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [branchMenu]);
+
   if (!status?.ok) return null;
 
   const changed = (status.staged?.length ?? 0) + (status.unstaged?.length ?? 0) + (status.untracked?.length ?? 0);
+
+  const doCheckout = async (b: string) => {
+    const r = await desktop.git.checkout(b);
+    if (r.ok) setBranchMenu(false);
+  };
+  const doCreate = async (b: string) => {
+    const r = await desktop.git.createBranch(b);
+    if (r.ok) setBranchMenu(false);
+  };
 
   return (
     <div className="ip-section">
@@ -55,27 +90,39 @@ function GitSection({ onCommitPush }: { onCommitPush: () => void }) {
       </button>
       {open && (
         <div className="ip-section-body">
-          {/* 更改行 */}
+          {/* 更改行：真实 +N −M 行级统计 */}
           <div className="ip-row">
-            <span className="ip-row-icon"><GitCommit size={13}/></span>
+            <span className="ip-row-icon"><FileDiff size={13}/></span>
             <span className="ip-row-label">更改</span>
             <span className="ip-row-spacer"/>
             {changed > 0 ? (
               <>
-                <span className="ip-add">+{(status.staged?.reduce((a,_) => a+1,0) ?? 0) + (status.unstaged?.reduce((a,_) => a+1,0) ?? 0)}</span>
-                <span style={{ margin: '0 3px', color: 'var(--fg-dim)' }}>/</span>
-                <span className="ip-del">−{status.untracked?.length ?? 0} 未追踪</span>
+                <span className="ip-add">+{stats?.added ?? changed}</span>
+                <span className="ip-del">−{stats?.removed ?? 0}</span>
               </>
             ) : (
               <span style={{ color: 'var(--fg-dim)', fontSize: 11 }}>干净</span>
             )}
           </div>
-          {/* 分支行 */}
-          <div className="ip-row">
-            <span className="ip-row-icon"><GitBranch size={13}/></span>
-            <span className="ip-row-label ip-branch-name" title={status.branch}>{status.branch ?? '—'}</span>
-            {(status.ahead ?? 0) > 0 && <span className="ip-badge ip-badge-up">↑{status.ahead}</span>}
-            {(status.behind ?? 0) > 0 && <span className="ip-badge ip-badge-down">↓{status.behind}</span>}
+          {/* 分支行：点击弹出 Codex 风格分支下拉 */}
+          <div className="ip-branch-wrap" ref={menuRef}>
+            <button className="ip-row ip-row-clickable" onClick={() => setBranchMenu(v => !v)}>
+              <span className="ip-row-icon"><GitBranch size={13}/></span>
+              <span className="ip-row-label ip-branch-name" title={status.branch}>{status.branch ?? '—'}</span>
+              {(status.ahead ?? 0) > 0 && <span className="ip-badge ip-badge-up">↑{status.ahead}</span>}
+              {(status.behind ?? 0) > 0 && <span className="ip-badge ip-badge-down">↓{status.behind}</span>}
+              <span className="ip-row-spacer"/>
+              <ChevronDown size={12} className={`ip-row-chev ${branchMenu ? 'open' : ''}`}/>
+            </button>
+            {branchMenu && branches && (
+              <BranchMenu
+                branches={branches}
+                status={status}
+                onCheckout={(b) => void doCheckout(b)}
+                onCreate={(b) => void doCreate(b)}
+                onClose={() => setBranchMenu(false)}
+              />
+            )}
           </div>
           {/* 提交/推送 */}
           <button className="ip-action-row" onClick={onCommitPush}>
@@ -91,9 +138,17 @@ function GitSection({ onCommitPush }: { onCommitPush: () => void }) {
 // ── Plan / Task section ───────────────────────────────────────────────────────
 function PlanSection({ state }: { state: AppState }) {
   const [open, setOpen] = useState(true);
-  const { taskSummary, chat } = state;
+  const [, setTick] = useState(0);
+  const { taskSummary, chat, taskBoard } = state;
 
-  if (!taskSummary) return null;
+  // 目标计时：board 执行中每秒刷新
+  useEffect(() => {
+    if (!taskBoard || taskBoard.runtimeMode !== 'executing') return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [taskBoard?.runtimeMode]);
+
+  if (!taskSummary && !taskBoard) return null;
 
   // Find todo items from the current / latest turn
   const turns = chat.filter((c): c is Extract<ChatItem, { kind: 'turn' }> => c.kind === 'turn');
@@ -101,36 +156,64 @@ function PlanSection({ state }: { state: AppState }) {
   const done = allSteps.filter((s) => s.status === 'done' && s.ok).length;
   const total = allSteps.length;
 
+  const boardDone = taskBoard ? taskBoard.tasks.filter((t) => t.status === 'done' || t.status === 'skipped').length : 0;
+  const goalElapsed = taskBoard?.startedAt ? formatGoalElapsed(Date.now() - taskBoard.startedAt) : null;
+
   return (
     <div className="ip-section">
       <button className="ip-section-head" onClick={() => setOpen(v => !v)}>
-        <span className="ip-section-label">计划</span>
+        <span className="ip-section-label">{taskBoard ? '目标' : '计划'}</span>
+        {taskBoard && goalElapsed && <span className="ip-goal-time">{goalElapsed}</span>}
         <span className="ip-section-chevron">{open ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}</span>
       </button>
       {open && (
         <div className="ip-section-body">
-          <div className="ip-row ip-plan-title">
-            <ListTodo size={13} style={{ flexShrink: 0 }}/>
-            <span className="ip-plan-text" title={taskSummary.title}>{taskSummary.title}</span>
-          </div>
-          {total > 0 && (
-            <div className="ip-row">
-              <span className="ip-row-label" style={{ color: 'var(--fg-dim)' }}>进程</span>
-              <span className="ip-row-spacer"/>
-              <span style={{ fontSize: 12 }}>{done}/{total}</span>
-            </div>
+          {taskBoard ? (
+            <>
+              {taskBoard.goal && <div className="ip-goal-text" title={taskBoard.goal}>{taskBoard.goal}</div>}
+              <div className="ip-row">
+                <span className="ip-row-label" style={{ color: 'var(--fg-dim)' }}>进程</span>
+                <span className="ip-row-spacer"/>
+                <span style={{ fontSize: 12 }}>{boardDone}/{taskBoard.tasks.length}</span>
+              </div>
+              {taskBoard.tasks.slice(-6).map((t) => (
+                <div key={t.id} className="ip-step-row">
+                  {t.status === 'in_progress'
+                    ? <Loader2 size={12} className="spin ip-step-icon"/>
+                    : t.status === 'done' || t.status === 'skipped'
+                      ? <CheckCircle2 size={12} className="ip-step-icon ip-step-done"/>
+                      : <Circle size={12} className="ip-step-icon ip-step-muted"/>
+                  }
+                  <span className={`ip-step-label ${t.status === 'done' || t.status === 'skipped' ? 'strike' : ''}`}>{t.title}</span>
+                </div>
+              ))}
+            </>
+          ) : (
+            <>
+              <div className="ip-row ip-plan-title">
+                <ListTodo size={13} style={{ flexShrink: 0 }}/>
+                <span className="ip-plan-text" title={taskSummary?.title}>{taskSummary?.title}</span>
+              </div>
+              {total > 0 && (
+                <div className="ip-row">
+                  <span className="ip-row-label" style={{ color: 'var(--fg-dim)' }}>进程</span>
+                  <span className="ip-row-spacer"/>
+                  <span style={{ fontSize: 12 }}>{done}/{total}</span>
+                </div>
+              )}
+              {allSteps.slice(-3).reverse().map((step) => (
+                <div key={step.id} className="ip-step-row">
+                  {step.status === 'running'
+                    ? <Loader2 size={12} className="spin ip-step-icon"/>
+                    : step.ok
+                      ? <CheckCircle2 size={12} className="ip-step-icon ip-step-done"/>
+                      : <Circle size={12} className="ip-step-icon ip-step-muted"/>
+                  }
+                  <span className="ip-step-label">{step.tool}</span>
+                </div>
+              ))}
+            </>
           )}
-          {allSteps.slice(-3).reverse().map((step) => (
-            <div key={step.id} className="ip-step-row">
-              {step.status === 'running'
-                ? <Loader2 size={12} className="spin ip-step-icon"/>
-                : step.ok
-                  ? <CheckCircle2 size={12} className="ip-step-icon ip-step-done"/>
-                  : <Circle size={12} className="ip-step-icon ip-step-muted"/>
-              }
-              <span className="ip-step-label">{step.tool}</span>
-            </div>
-          ))}
         </div>
       )}
     </div>

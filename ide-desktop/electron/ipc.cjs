@@ -944,6 +944,8 @@ Edited code:`;
   ipcMain.handle('git.branches',      async () => git.getBranches(workspace.getRoot()));
   ipcMain.handle('git.log',           async (_e, n) => git.getLog(workspace.getRoot(), n));
   ipcMain.handle('git.diff',          async (_e, staged) => git.getDiff(workspace.getRoot(), staged));
+  // Line-level change totals (+N −M) for the Git tools card.
+  ipcMain.handle('git.diffStats',     async () => git.getDiffStats(workspace.getRoot()));
   // Inline editor highlights: current-file changed line ranges from git diff.
   ipcMain.handle('git.fileChangeRanges', async (_e, filePath) => git.getFileChangeRanges(workspace.getRoot(), filePath));
   ipcMain.handle('git.stage',         async (_e, paths) => git.stage(workspace.getRoot(), paths));

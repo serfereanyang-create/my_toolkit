@@ -239,6 +239,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     branches:     ()                           => ipcRenderer.invoke('git.branches'),
     log:          (n)                          => ipcRenderer.invoke('git.log', n),
     diff:         (staged)                     => ipcRenderer.invoke('git.diff', staged),
+    diffStats:    ()                           => ipcRenderer.invoke('git.diffStats'),
     fileChangeRanges: (filePath)               => ipcRenderer.invoke('git.fileChangeRanges', filePath),
     stage:        (paths)                      => ipcRenderer.invoke('git.stage', paths),
     unstage:      (paths)                      => ipcRenderer.invoke('git.unstage', paths),

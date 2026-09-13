@@ -259,6 +259,7 @@ type ZCodeDesktopApi = {
     branches(): Promise<GitBranchList>;
     log(n?: number): Promise<GitLogResult>;
     diff(staged?: boolean): Promise<{ ok: boolean; diff?: string; error?: string }>;
+    diffStats(): Promise<GitDiffStats>;
     fileChangeRanges(filePath: string): Promise<{ ok: boolean; file?: string; hunks?: Array<{ start: number; end: number; type: string }>; error?: string }>;
     stage(paths: string[]): Promise<{ ok: boolean; staged?: string[]; error?: string }>;
     unstage(paths: string[]): Promise<{ ok: boolean; unstaged?: string[]; error?: string }>;
@@ -303,6 +304,15 @@ export type GitBranchList = {
   current?: string;
   local?: string[];
   remote?: string[];
+  error?: string;
+};
+
+/** Line-level working-tree totals for the Git tools card (+N −M badge). */
+export type GitDiffStats = {
+  ok: boolean;
+  added?: number;
+  removed?: number;
+  fileCount?: number;
   error?: string;
 };
 

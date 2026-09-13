@@ -257,6 +257,8 @@ export type TaskBoard = {
   status: TaskBoardStatus;
   runtimeMode: 'idle' | 'planning' | 'awaiting_confirm' | 'executing' | 'paused';
   activeTaskId?: string;
+  /** Wall-clock ms when this board was first received; drives the goal elapsed timer. */
+  startedAt?: number;
   tasks: Array<{
     id: string;
     title: string;

@@ -203,7 +203,13 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
     workPhase: phase,
   });
   if (event.type === 'task_board_updated') {
-    return { ...addLog({ type: 'task', phase: 'info', title: '任务计划已更新', detail: String(event.title ?? '') , data: event.tasks }, state.workPhase), taskBoard: event as unknown as TaskBoard };
+    const board = event as unknown as TaskBoard;
+    // Keep the first-seen timestamp across updates of the same board so the
+    // goal elapsed timer doesn't reset on every task change.
+    const startedAt = state.taskBoard && state.taskBoard.id === board.id && state.taskBoard.startedAt
+      ? state.taskBoard.startedAt
+      : now;
+    return { ...addLog({ type: 'task', phase: 'info', title: '任务计划已更新', detail: String(event.title ?? '') , data: event.tasks }, state.workPhase), taskBoard: { ...board, startedAt } };
   }
   if (event.type === 'bridge_ready') {
     const sessionId = typeof event.sessionId === 'string' && event.sessionId ? event.sessionId : null;

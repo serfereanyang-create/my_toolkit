@@ -25,6 +25,8 @@
 
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const execAsync = promisify(execFile);
 
@@ -183,6 +185,87 @@ async function getDiff(root, staged = false) {
     ? `${res.stdout.slice(0, MAX_DIFF_BYTES)}\n\n[diff truncated — ${res.stdout.length} bytes total]`
     : res.stdout;
   return { ok: true, diff: text };
+}
+
+/**
+ * Working-tree diff line stats — the "+427 −0" badge in the Git tools card.
+ *
+ * Counts added/removed lines across staged changes, unstaged changes, and
+ * the full contents of untracked files (matching how VS Code / Codex report
+ * "changes").  Untracked counting is capped so a huge drop of binary files
+ * can never stall the panel.
+ *
+ * Returns { ok, added, removed, fileCount }.
+ */
+const UNTRACKED_LINE_CAP = 200000;   // stop counting lines past this point
+const UNTRACKED_FILE_CAP = 2000;     // stop enumerating untracked files past this count
+
+async function getDiffStats(root) {
+  const [stagedRes, unstagedRes, untrackedRes] = await Promise.all([
+    safeGit(root, ['diff', '--cached', '--numstat']),
+    safeGit(root, ['diff', '--numstat']),
+    safeGit(root, ['ls-files', '--others', '--exclude-standard']),
+  ]);
+  if (!stagedRes.ok) return { ok: false, error: stagedRes.error };
+
+  // numstat lines: "<added>\t<removed>\t<path>" — binary files report "-".
+  const parseNumstat = (text) => {
+    let added = 0;
+    let removed = 0;
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      const tab1 = line.indexOf('\t');
+      if (tab1 < 0) continue;
+      const tab2 = line.indexOf('\t', tab1 + 1);
+      if (tab2 < 0) continue;
+      const a = Number(line.slice(0, tab1));
+      const r = Number(line.slice(tab1 + 1, tab2));
+      if (Number.isFinite(a)) added += a;
+      if (Number.isFinite(r)) removed += r;
+    }
+    return { added, removed };
+  };
+
+  const staged = parseNumstat(stagedRes.stdout);
+  const unstaged = parseNumstat(unstagedRes.stdout);
+
+  // Untracked files contribute their whole content as "added" lines.
+  // A path is only counted once even if it appears in both lists (git
+  // numstat never reports untracked, but staged renames can overlap).
+  let untrackedAdded = 0;
+  const untrackedFiles = (untrackedRes.ok ? untrackedRes.stdout.split('\n').filter(Boolean) : [])
+    .slice(0, UNTRACKED_FILE_CAP);
+  let budget = UNTRACKED_LINE_CAP;
+  for (const rel of untrackedFiles) {
+    if (budget <= 0) break;
+    try {
+      const abs = path.resolve(root, rel);
+      const stat = fs.statSync(abs);
+      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue;
+      const text = fs.readFileSync(abs, 'utf8');
+      // Count newline-terminated lines; a trailing final line without a
+      // newline still counts as one line if non-empty.
+      let n = 0;
+      for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
+      if (text.length > 0 && text.charCodeAt(text.length - 1) !== 10) n++;
+      const capped = Math.min(n, budget);
+      untrackedAdded += capped;
+      budget -= capped;
+    } catch { /* unreadable or vanished — skip */ }
+  }
+
+  const fileCount = new Set([
+    ...stagedRes.stdout.split('\n').map((l) => l.split('\t')[2]).filter(Boolean),
+    ...unstagedRes.stdout.split('\n').map((l) => l.split('\t')[2]).filter(Boolean),
+    ...untrackedFiles,
+  ]).size;
+
+  return {
+    ok: true,
+    added: staged.added + unstaged.added + untrackedAdded,
+    removed: staged.removed + unstaged.removed,
+    fileCount,
+  };
 }
 
 /**
@@ -388,6 +471,7 @@ module.exports = {
   getBranches,
   getLog,
   getDiff,
+  getDiffStats,
   getFileChangeRanges,
   stage,
   unstage,
