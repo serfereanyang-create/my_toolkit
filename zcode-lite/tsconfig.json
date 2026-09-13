@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "rootDir": ".",
+    "outDir": "dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": false,
+    "sourceMap": true,
+    "noEmitOnError": true,
+    "forceConsistentCasingInFileNames": true,
+    "noImplicitOverride": true,
+    "allowSyntheticDefaultImports": true
+  },
+  "include": ["src/**/*", "tests/**/*"]
+}

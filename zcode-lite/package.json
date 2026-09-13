@@ -1,0 +1,17 @@
+{
+  "name": "zcode-lite",
+  "version": "0.1.0",
+  "description": "Windows-first lightweight multi-provider agent CLI",
+  "type": "module",
+  "bin": { "zcode-lite": "dist/src/index.js" },
+  "main": "dist/src/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/index.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "smoke": "npm run build && node dist/src/index.js --provider mock --approval auto --prompt \"list files\""
+  },
+  "engines": { "node": ">=18.17" },
+  "devDependencies": { "@types/node": "^20.11.0", "typescript": "^5.4.0" },
+  "license": "MIT"
+}

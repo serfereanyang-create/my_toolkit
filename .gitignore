@@ -7,6 +7,7 @@
 !/.gitignore
 !/docs/
 !/ide-desktop/
+!/zcode-lite/
 
 # Paper assistant desktop app (科研论文辅助工作台).
 !/src/
@@ -28,6 +29,15 @@
 **/node_modules/
 **/dist/
 **/build/
+
+# Keep ZCode-lite source and package metadata visible to the outer repository.
+!/zcode-lite/src/
+!/zcode-lite/tests/
+!/zcode-lite/package.json
+!/zcode-lite/package-lock.json
+!/zcode-lite/tsconfig.json
+!/zcode-lite/README.md
+!/zcode-lite/.gitignore
 **/out/
 **/.vite/
 **/.turbo/

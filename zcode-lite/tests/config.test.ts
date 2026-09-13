@@ -1,0 +1,2 @@
+import test from 'node:test'; import assert from 'node:assert/strict'; import { resolveConfig } from '../src/config/config.js';
+test('config resolves CLI over environment', async () => { const config = await resolveConfig({ provider: 'mock', approval: 'auto', workspace: process.cwd(), json: false, help: false }, { ZCL_PROVIDER: 'openai', ZCL_MAX_STEPS: '3' }); assert.equal(config.provider, 'mock'); assert.equal(config.approval, 'auto'); assert.equal(config.maxSteps, 3); });
