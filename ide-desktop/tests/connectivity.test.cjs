@@ -164,3 +164,34 @@ test('timeout via abort produces a timeout message', async () => {
   assert.equal(result.ok, false);
   assert.match(result.message, /超时/);
 });
+
+test('thinking-only anthropic response passes (glm-5.3 style)', async () => {
+  // Thinking models burn the whole budget on the thinking phase: content has
+  // only a thinking block, no text block. That is a healthy endpoint answer.
+  const result = await testProviderConnection(
+    { providerConfig: { type: 'custom', apiFormat: 'anthropic-messages', baseUrl: 'https://relay.test/v1', model: 'glm-5.3' }, apiKey: 'sk-x' },
+    {
+      fetch: async () => new Response(JSON.stringify({
+        id: 'msg_1',
+        model: 'glm-5.3',
+        stop_reason: 'max_tokens',
+        content: [{ type: 'thinking', text: '用户只是 ping，我简短回应即可。' }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.match(result.sample, /^\[思考中\]/);
+});
+
+test('anthropic-configured gateway answering in OpenAI shape still passes', async () => {
+  const result = await testProviderConnection(
+    { providerConfig: { type: 'custom', apiFormat: 'anthropic-messages', baseUrl: 'https://relay.test/v1', model: 'glm-5.3' }, apiKey: 'sk-x' },
+    {
+      fetch: async () => new Response(JSON.stringify({
+        choices: [{ message: { role: 'assistant', content: 'pong' } }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.sample, 'pong');
+});

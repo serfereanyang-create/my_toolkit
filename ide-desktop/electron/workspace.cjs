@@ -1,11 +1,18 @@
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const path = require('node:path');
 
 function createWorkspaceService() {
   let root = '';
 
   function setRoot(nextRoot) {
-    root = path.resolve(nextRoot);
+    if (typeof nextRoot !== 'string' || !nextRoot.trim()) throw new Error('Workspace root is required');
+    const resolved = path.resolve(nextRoot);
+    const canonical = fsSync.realpathSync(resolved);
+    if (!fsSync.statSync(canonical).isDirectory()) throw new Error('Workspace root is not a directory');
+    // Keep one canonical spelling for all downstream path comparisons. This
+    // also prevents a workspace symlink from changing the security boundary.
+    root = canonical;
     return root;
   }
 

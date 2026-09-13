@@ -5,6 +5,7 @@
  * ephemeral session — it cannot access window.zcodeDesktop.
  */
 'use strict';
+const path = require('node:path');
 const { WebContentsView, session, shell } = require('electron');
 const { handlePreviewProtocol } = require('./preview-protocol.cjs');
 
@@ -14,6 +15,10 @@ class PreviewService {
     this._view    = null;
     this._partition = null;
     this._tokenRegistry = new Map();
+    // Static preview servers require a per-server capability header. Keep the
+    // mapping in the isolated preview session rather than putting tokens in
+    // URLs, where they could leak through history or referrers.
+    this._runtimeTokens = new Map(); // loopback port → token
     this._bounds  = { x: 0, y: 0, width: 0, height: 0 };
     this._visible = false;
     this._stateListeners = [];
@@ -22,7 +27,53 @@ class PreviewService {
 
   /** Register a file token so the custom protocol can validate requests. */
   registerToken(token, entry) { this._tokenRegistry.set(token, entry); }
-  revokeToken(token)          { this._tokenRegistry.delete(token); }
+  revokeToken(token) {
+    this._tokenRegistry.delete(token);
+    for (const [port, serverToken] of this._runtimeTokens) {
+      if (serverToken === token) this._runtimeTokens.delete(port);
+    }
+  }
+  /** Drop every registered capability; used when the workspace changes. */
+  revokeAllTokens() {
+    this._tokenRegistry.clear();
+    this._runtimeTokens.clear();
+  }
+
+  /**
+   * Inject the capability header only for requests to the currently displayed
+   * local preview server. Electron's webRequest API runs in the isolated
+   * session, so renderer pages cannot forge or observe this header.
+   */
+  registerRuntimeToken(port, token) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || typeof token !== 'string' || !token) {
+      throw new Error('Invalid preview runtime capability');
+    }
+    this._runtimeTokens.set(port, token);
+  }
+
+  revokeRuntimeToken(token) {
+    for (const [port, serverToken] of this._runtimeTokens) {
+      if (serverToken === token) this._runtimeTokens.delete(port);
+    }
+  }
+
+  validateToken(token, expected = {}) {
+    if (typeof token !== 'string' || !token) return false;
+    const entry = this._tokenRegistry.get(token);
+    if (!entry || typeof entry !== 'object') return false;
+    const samePath = (left, right) => {
+      if (typeof left !== 'string' || typeof right !== 'string') return false;
+      const a = path.resolve(left);
+      const b = path.resolve(right);
+      return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+    };
+    if (expected.workspaceRoot !== undefined && !samePath(entry.workspaceRoot, expected.workspaceRoot)) return false;
+    if (expected.kind !== undefined && entry.kind !== expected.kind) return false;
+    if (expected.absolutePath !== undefined && !samePath(entry.absolutePath, expected.absolutePath)) return false;
+    return true;
+  }
+
+  getTokenEntry(token) { return this._tokenRegistry.get(token) || null; }
 
   _onState(state) { for (const fn of this._stateListeners) fn(state); }
 
@@ -42,7 +93,17 @@ class PreviewService {
     // Attach the custom protocol handler to this session
     handlePreviewProtocol(ses, this._tokenRegistry);
 
-    // Block all permission requests (camera, mic, notifications, etc.)
+    // Add the capability header only for registered loopback preview ports.
+    // Header details are never exposed to the renderer page.
+    ses.webRequest.onBeforeSendHeaders({ urls: ['http://127.0.0.1:*/*'] }, (details, callback) => {
+      try {
+        const u = new URL(details.url);
+        const port = Number(u.port || 80);
+        const token = this._runtimeTokens.get(port);
+        if (token) details.requestHeaders['X-Preview-Token'] = token;
+      } catch { /* malformed request; leave it unchanged */ }
+      callback({ requestHeaders: details.requestHeaders });
+    });
     ses.setPermissionRequestHandler((_wc, _perm, callback) => callback(false));
     ses.setPermissionCheckHandler(() => false);
 
@@ -205,6 +266,7 @@ class PreviewService {
       this._view = null;
     }
     this._tokenRegistry.clear();
+    this._runtimeTokens.clear();
     this._stateListeners = [];
     this._visible = false;
   }

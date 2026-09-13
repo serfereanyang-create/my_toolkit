@@ -14,11 +14,11 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     saveTempImage: (filename, base64Data) => ipcRenderer.invoke('fs.saveTempImage', filename, base64Data),
   },
   editor: {
-    readFile: (absolutePath) => ipcRenderer.invoke('editor.readFile', absolutePath),
-    saveFile: (absolutePath, content) => ipcRenderer.invoke('editor.saveFile', absolutePath, content),
-    watchFile: (absolutePath) => ipcRenderer.invoke('editor.watchFile', absolutePath),
-    unwatchFile: (absolutePath) => ipcRenderer.invoke('editor.unwatchFile', absolutePath),
-    stat: (absolutePath) => ipcRenderer.invoke('editor.stat', absolutePath),
+    readFile: (relativePath) => ipcRenderer.invoke('editor.readFile', relativePath),
+    saveFile: (relativePath, content) => ipcRenderer.invoke('editor.saveFile', relativePath, content),
+    watchFile: (relativePath) => ipcRenderer.invoke('editor.watchFile', relativePath),
+    unwatchFile: (relativePath) => ipcRenderer.invoke('editor.unwatchFile', relativePath),
+    stat: (relativePath) => ipcRenderer.invoke('editor.stat', relativePath),
     onFileChanged: (handler) => {
       const listener = (_event, payload) => handler(payload);
       ipcRenderer.on('editor.fileChanged', listener);
@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     hourly:  (hours) => ipcRenderer.invoke('usage.hourly', hours),
     cachePrediction: (model) => ipcRenderer.invoke('usage.cachePrediction', model),
     records: (hours, offset, limit) => ipcRenderer.invoke('usage.records', hours, offset, limit),
+    exportCsv: (hours) => ipcRenderer.invoke('usage.exportCsv', hours),
   },
   sessions: {
     list: () => ipcRenderer.invoke('sessions.list'),
@@ -86,11 +87,23 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     cancel: () => ipcRenderer.invoke('agent.cancel'),
     restart: () => ipcRenderer.invoke('agent.restart'),
     approve: (requestId, decision) => ipcRenderer.invoke('agent.approve', requestId, decision),
-    undo: (checkpointIds) => ipcRenderer.invoke('agent.undo', checkpointIds),
+    undo: (checkpointIds, undoId) => ipcRenderer.invoke('agent.undo', checkpointIds, undoId),
     onEvent: (handler) => {
       const listener = (_event, payload) => handler(payload);
       ipcRenderer.on('agent.event', listener);
       return () => ipcRenderer.removeListener('agent.event', listener);
+    },
+  },
+  // Side chat runs its own bridge/session; events arrive on a separate channel
+  // so they never interleave with the main conversation stream.
+  sideChat: {
+    prompt: (text) => ipcRenderer.invoke('sidechat.prompt', text),
+    cancel: () => ipcRenderer.invoke('sidechat.cancel'),
+    reset: () => ipcRenderer.invoke('sidechat.reset'),
+    onEvent: (handler) => {
+      const listener = (_event, payload) => handler(payload);
+      ipcRenderer.on('sidechat.event', listener);
+      return () => ipcRenderer.removeListener('sidechat.event', listener);
     },
   },
   ai: {
@@ -138,10 +151,78 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
   computer: {
     detectBrowserExtension: () => ipcRenderer.invoke('computer.detectBrowserExtension'),
   },
+  quality: {
+    invoke: (toolName, input, revision) => ipcRenderer.invoke('quality.invoke', toolName, input, revision),
+    listTools: () => ipcRenderer.invoke('quality.listTools'),
+    latest: (toolName) => ipcRenderer.invoke('quality.latest', toolName),
+    history: (toolName, limit) => ipcRenderer.invoke('quality.history', toolName, limit),
+  },
+  app: {
+    getVersion: () => ipcRenderer.invoke('app.version'),
+  },
   nav: {
     symbols:          (pattern)            => ipcRenderer.invoke('nav.symbols',          pattern),
     fileSearch:       (pattern)            => ipcRenderer.invoke('nav.fileSearch',        pattern),
     readSymbolContext:(filePath, line)      => ipcRenderer.invoke('nav.readSymbolContext', filePath, line),
+  },
+  search: {
+    text: (query, options) => ipcRenderer.invoke('search.text', query, options),
+    sessions: (query, options) => ipcRenderer.invoke('search.sessions', query, options),
+  },
+  quickopen: {
+    index: (force) => ipcRenderer.invoke('quickopen.index', force),
+  },
+  bookmarks: {
+    listAll:    ()                        => ipcRenderer.invoke('bookmarks.listAll'),
+    listFor:    (relPath)                 => ipcRenderer.invoke('bookmarks.listFor', relPath),
+    toggle:     (relPath, line, anchor)   => ipcRenderer.invoke('bookmarks.toggle', relPath, line, anchor),
+    annotate:   (relPath, line, note)     => ipcRenderer.invoke('bookmarks.annotate', relPath, line, note),
+    move:       (relPath, fromLine, toLine) => ipcRenderer.invoke('bookmarks.move', relPath, fromLine, toLine),
+    remove:     (relPath, line)           => ipcRenderer.invoke('bookmarks.remove', relPath, line),
+    clearFile:  (relPath)                 => ipcRenderer.invoke('bookmarks.clearFile', relPath),
+  },
+  history: {
+    list:    (relPath)            => ipcRenderer.invoke('history.list', relPath),
+    read:    (relPath, id)        => ipcRenderer.invoke('history.read', relPath, id),
+    restore: (relPath, id)        => ipcRenderer.invoke('history.restore', relPath, id),
+    remove:  (relPath, id)        => ipcRenderer.invoke('history.remove', relPath, id),
+    clear:   (relPath)            => ipcRenderer.invoke('history.clear', relPath),
+    tracked: ()                   => ipcRenderer.invoke('history.tracked'),
+  },
+  stats: {
+    census: (options) => ipcRenderer.invoke('stats.census', options),
+  },
+  notes: {
+    list:    (sessionId)              => ipcRenderer.invoke('notes.list', sessionId),
+    add:     (sessionId, input)       => ipcRenderer.invoke('notes.add', sessionId, input),
+    update:  (sessionId, noteId, patch) => ipcRenderer.invoke('notes.update', sessionId, noteId, patch),
+    remove:  (sessionId, noteId)      => ipcRenderer.invoke('notes.remove', sessionId, noteId),
+    clear:   (sessionId)              => ipcRenderer.invoke('notes.clear', sessionId),
+    summary: ()                       => ipcRenderer.invoke('notes.summary'),
+  },
+  tags: {
+    listAll: ()                    => ipcRenderer.invoke('tags.listAll'),
+    set:     (sessionId, tags)     => ipcRenderer.invoke('tags.set', sessionId, tags),
+    toggle:  (sessionId, tag)      => ipcRenderer.invoke('tags.toggle', sessionId, tag),
+    remove:  (sessionId)           => ipcRenderer.invoke('tags.remove', sessionId),
+  },
+  keybindings: {
+    get: ()                     => ipcRenderer.invoke('keybindings.get'),
+    set: (actionId, chord)      => ipcRenderer.invoke('keybindings.set', actionId, chord),
+  },
+  plugins: {
+    catalog: () => ipcRenderer.invoke('plugins.catalog'),
+    status:    () => ipcRenderer.invoke('plugins.status'),
+  },
+  snippets: {
+    list:    ()            => ipcRenderer.invoke('snippets.list'),
+    search:  (query)       => ipcRenderer.invoke('snippets.search', query),
+    create:  (input)       => ipcRenderer.invoke('snippets.create', input),
+    update:  (id, patch)   => ipcRenderer.invoke('snippets.update', id, patch),
+    remove:  (id)          => ipcRenderer.invoke('snippets.remove', id),
+    touch:   (id)          => ipcRenderer.invoke('snippets.touch', id),
+    export:  ()            => ipcRenderer.invoke('snippets.export'),
+    import:  (rawJson)     => ipcRenderer.invoke('snippets.import', rawJson),
   },
   fim: {
     complete:   (req) => ipcRenderer.invoke('fim.complete',  req),

@@ -76,6 +76,7 @@ type ZCodeDesktopApi = {
     hourly(hours: 24 | 36 | 48): Promise<UsageHourlySummary>;
     cachePrediction(model?: string): Promise<CachePrediction>;
     records(hours: 24 | 36 | 48, offset: number, limit: number): Promise<UsageRecordsResult>;
+    exportCsv(hours: 24 | 36 | 48): Promise<{ csv: string; count: number }>;
   };
   sessions: {
     list(): Promise<SessionMeta[]>;
@@ -109,7 +110,18 @@ type ZCodeDesktopApi = {
     cancel(): Promise<{ ok: boolean }>;
     restart(): Promise<{ ok: boolean }>;
     approve(requestId: string, decision: 'allow_once' | 'allow_session' | 'deny'): Promise<{ ok: boolean }>;
-    undo(checkpointIds: string[]): Promise<{ ok: boolean }>;
+    /** turnId 由 CLI 在 undo_done 事件中回显，是撤销结果归属的权威标识。 */
+    undo(checkpointIds: string[], turnId?: string): Promise<{ ok: boolean }>;
+    onEvent(handler: (event: AgentEvent) => void): () => void;
+  };
+  /**
+   * Independent side-chat channel: its own bridge child and session, events on
+   * a dedicated channel. Writes are auto-denied (read-only assistant).
+   */
+  sideChat: {
+    prompt(text: string): Promise<{ ok: boolean }>;
+    cancel(): Promise<{ ok: boolean }>;
+    reset(): Promise<{ ok: boolean }>;
     onEvent(handler: (event: AgentEvent) => void): () => void;
   };
   ai: {
@@ -126,6 +138,21 @@ type ZCodeDesktopApi = {
   };
   computer: {
     detectBrowserExtension(): Promise<{ installed: boolean; extensions: Array<{ browser: string; extensionId: string; name: string }> }>;
+  };
+  /**
+   * Typed quality tool gateway: invokes a read-only CLI analysis tool through
+   * the main-process allowlist. Write-risk tools are refused on both sides.
+   */
+  quality: {
+    invoke(toolName: string, input?: Record<string, unknown>, revision?: string): Promise<{ ok: boolean; output?: string; data?: unknown; error?: string }>;
+    listTools(): Promise<{ ok: boolean; tools: string[] }>;
+    /** 最近一次持久化的质量记录（.aicode/quality/<tool>/latest.json）。 */
+    latest(toolName: string): Promise<{ schemaVersion: number; tool: string; capturedAt: string; revision?: string; input?: unknown; result?: { ok: boolean; output?: string; data?: unknown } } | null>;
+    /** 最近 limit 条历史（新→旧）。 */
+    history(toolName: string, limit?: number): Promise<Array<{ schemaVersion: number; tool: string; capturedAt: string; revision?: string; result?: { ok: boolean } }>>;
+  };
+  app: {
+    getVersion(): Promise<{ version: string }>;
   };
   terminal: {
     create(options?: { cwd?: string }): Promise<{ id: string; cwd: string; shell: string }>;
@@ -157,6 +184,65 @@ type ZCodeDesktopApi = {
     symbols(pattern: string): Promise<NavSymbolHit[]>;
     fileSearch(pattern: string): Promise<NavFileHit[]>;
     readSymbolContext(filePath: string, line: number): Promise<NavSymbolContext>;
+  };
+  search: {
+    text(query: string, options?: SearchOptions): Promise<SearchResult>;
+    sessions(query: string, options?: SessionSearchOptions): Promise<SessionSearchResult>;
+  };
+  quickopen: {
+    index(force?: boolean): Promise<QuickOpenIndex>;
+  };
+  tags: {
+    listAll(): Promise<Record<string, string[]>>;
+    set(sessionId: string, tags: string[]): Promise<{ ok: boolean; sessionId?: string; tags?: string[]; error?: string }>;
+    toggle(sessionId: string, tag: string): Promise<{ ok: boolean; sessionId?: string; tags?: string[]; error?: string }>;
+    remove(sessionId: string): Promise<{ ok: boolean; removed?: string; error?: string }>;
+  };
+  keybindings: {
+    get(): Promise<Record<string, string>>;
+    set(actionId: string, chord: string | null): Promise<{ ok: boolean; actionId?: string; chord?: string | null; error?: string }>;
+  };
+  plugins: {
+    catalog(): Promise<import('./plugins').PluginDef[]>;
+    status(): Promise<import('./plugins').PluginStatus>;
+  };
+  snippets: {
+    list(): Promise<Snippet[]>;
+    search(query: string): Promise<Snippet[]>;
+    create(input: SnippetInput): Promise<Snippet>;
+    update(id: string, patch: Partial<SnippetInput>): Promise<Snippet>;
+    remove(id: string): Promise<{ ok: boolean; id: string }>;
+    touch(id: string): Promise<{ ok: boolean; id: string; usageCount: number }>;
+    export(): Promise<string>;
+    import(rawJson: string): Promise<Snippet[]>;
+  };
+  bookmarks: {
+    listAll(): Promise<BookmarkGroup[]>;
+    listFor(relPath: string): Promise<Bookmark[]>;
+    toggle(relPath: string, line: number, anchor?: string): Promise<{ ok: boolean; path: string; line: number; marked: boolean; count?: number }>;
+    annotate(relPath: string, line: number, note: string): Promise<Bookmark>;
+    move(relPath: string, fromLine: number, toLine: number): Promise<Bookmark>;
+    remove(relPath: string, line: number): Promise<{ ok: boolean }>;
+    clearFile(relPath: string): Promise<{ ok: boolean }>;
+  };
+  history: {
+    list(relPath: string): Promise<HistoryEntry[]>;
+    read(relPath: string, id: string): Promise<{ ok: boolean; content?: string; error?: string }>;
+    restore(relPath: string, id: string): Promise<{ ok: boolean; error?: string }>;
+    remove(relPath: string, id: string): Promise<{ ok: boolean; error?: string }>;
+    clear(relPath: string): Promise<{ ok: boolean; error?: string }>;
+    tracked(): Promise<TrackedFile[]>;
+  };
+  stats: {
+    census(options?: { path?: string }): Promise<CodeCensus>;
+  };
+  notes: {
+    list(sessionId: string): Promise<SessionNote[]>;
+    add(sessionId: string, input: { text: string; pinned?: boolean }): Promise<SessionNote>;
+    update(sessionId: string, noteId: string, patch: Partial<{ text: string; pinned: boolean }>): Promise<SessionNote>;
+    remove(sessionId: string, noteId: string): Promise<{ ok: boolean }>;
+    clear(sessionId: string): Promise<{ ok: boolean }>;
+    summary(): Promise<NotesSummaryRow[]>;
   };
   fim: {
     complete(req: { prefix: string; suffix: string; language?: string; filepath?: string; maxTokens?: number }): Promise<{ ok: boolean; insert?: string; latencyMs?: number; truncated?: boolean; error?: string }>;
@@ -234,8 +320,14 @@ export type GitLogResult = {
   error?: string;
 };
 
+export type UsageSource = 'provider-reported' | 'local-estimate';
+
 export type UsageModelStats = {
+  /** Stable identity: provider + baseUrl + model, not model id alone. */
+  key?: string;
   model: string;
+  provider?: string;
+  baseUrl?: string;
   total: number;
   input: number;
   output: number;
@@ -243,6 +335,7 @@ export type UsageModelStats = {
   cacheCreation: number;
   rounds: number;
   lastUsed?: number;
+  source?: UsageSource;
 };
 
 export type UsageTotals = {
@@ -252,6 +345,7 @@ export type UsageTotals = {
   output: number;
   cacheRead: number;
   cacheCreation: number;
+  source?: UsageSource;
 };
 
 export type UsageRecord = {
@@ -266,6 +360,15 @@ export type UsageRecord = {
   cacheCreation: number;
   total: number;
   reasoningEffort?: string;
+  source?: UsageSource;
+  /** 关联字段（新 ledger 行才有）。 */
+  sessionId?: string;
+  turnId?: string;
+  toolCalls?: number;
+  toolsUsed?: string[];
+  boardId?: string;
+  taskId?: string;
+  durationMs?: number;
 };
 
 export type UsageRecordsResult = {
@@ -282,13 +385,34 @@ export type UsageDay = {
   cacheRead: number;
   cacheCreation: number;
   byModel: Record<string, number>;
+  /** Lossless provider+baseUrl+model buckets; optional for old IPC payloads. */
+  byIdentity?: Record<string, number>;
+  source?: UsageSource;
 };
 
 export type UsageSummary = {
   days: number;
   daily: UsageDay[];
   models: UsageModelStats[];
+  /** 按会话聚合的下钻（新 ledger 行才有 sessionId；按 token 降序，前 10）。 */
+  sessions?: UsageSessionStats[];
   totals: UsageTotals;
+  source?: UsageSource;
+};
+
+export type UsageSessionStats = {
+  sessionId: string;
+  rounds: number;
+  tokens: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  toolCalls: number;
+  firstTs: number;
+  lastTs: number;
+  toolsUsed: string[];
+  boardId?: string;
+  taskId?: string;
 };
 
 export type UsageHourlyPoint = {
@@ -301,6 +425,8 @@ export type UsageHourlyPoint = {
   cacheRead: number;
   cacheCreation: number;
   byModel: Record<string, number>;
+  byIdentity?: Record<string, number>;
+  source?: UsageSource;
 };
 
 export type UsageHourlySummary = {
@@ -309,6 +435,7 @@ export type UsageHourlySummary = {
   models: UsageModelStats[];
   totals: UsageTotals;
   records: UsageRecord[];
+  source?: UsageSource;
 };
 
 // Real historical prompt-cache-hit-rate prediction. `predicted` is null when
@@ -354,6 +481,199 @@ export type NavSymbolContext = {
   context: string;
   startLine: number;
 } | null;
+
+// ── Workspace full-text search (iteration 3) ─────────────────────────────────
+
+export type SearchOptions = {
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+  regex?: boolean;
+  include?: string;
+  exclude?: string;
+  path?: string;
+  maxResults?: number;
+};
+
+export type SearchMatchContext = {
+  line: number;
+  content: string;
+  matched: boolean;
+};
+
+export type SearchHit = {
+  path: string;
+  line: number;
+  column: number;
+  matched: string;
+  preview: string;
+  context: SearchMatchContext[];
+};
+
+export type SearchResult = {
+  query: string;
+  options: Required<Pick<SearchOptions, 'caseSensitive' | 'wholeWord' | 'regex' | 'include' | 'exclude'>>;
+  results: SearchHit[];
+  filesScanned: number;
+  skippedBinary: number;
+  skippedLarge: number;
+  truncated: boolean;
+  elapsedMs: number;
+  error?: string;
+};
+
+// ── Cross-session transcript search (iteration 16) ───────────────────────────
+
+export type SessionSearchOptions = {
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+  regex?: boolean;
+  roles?: string[];
+  maxResults?: number;
+  context?: number;
+};
+
+export type SessionSearchContextLine = { line: number; text: string; matched: boolean };
+
+export type SessionSearchHit = {
+  messageIndex: number;
+  role: string;
+  createdAt: string;
+  lineNo?: number;
+  matchedText: string;
+  context: SessionSearchContextLine[];
+};
+
+export type SessionSearchResultRow = {
+  sessionId: string;
+  updatedAt: string;
+  model: string;
+  hitCount: number;
+  hits: SessionSearchHit[];
+};
+
+export type SessionSearchResult = {
+  query: string;
+  options: Record<string, unknown>;
+  results: SessionSearchResultRow[];
+  sessionsScanned: number;
+  corrupted?: number;
+  truncated?: boolean;
+  elapsedMs: number;
+  error?: string;
+};
+
+// ── Quick-open file index (iteration 17) ─────────────────────────────────────
+
+export type QuickOpenFile = { path: string; mtimeMs: number };
+
+export type QuickOpenIndex = {
+  files: QuickOpenFile[];
+  truncated: boolean;
+  elapsedMs: number;
+  cached: boolean;
+  error?: string;
+};
+
+// ── Code snippets library (iteration 4) ──────────────────────────────────────
+
+export type Snippet = {
+  id: string;
+  title: string;
+  language: string;
+  body: string;
+  tags: string[];
+  description: string;
+  usageCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SnippetInput = {
+  title: string;
+  language?: string;
+  body: string;
+  tags?: string[];
+  description?: string;
+};
+
+// ── Line bookmarks (iteration 6) ─────────────────────────────────────────────
+
+export type Bookmark = {
+  line: number;
+  anchor: string;
+  note: string;
+  createdAt: string;
+};
+
+export type BookmarkGroup = {
+  path: string;
+  bookmarks: Bookmark[];
+};
+
+// ── File save history timeline (iteration 7) ─────────────────────────────────
+
+export type HistoryEntry = {
+  /** Snapshot id — the stored file name under the hash directory. */
+  id: string;
+  ts: number;
+  size: number;
+};
+
+export type TrackedFile = {
+  path: string;
+  count: number;
+  lastTs: number;
+  totalBytes: number;
+};
+
+// ── Workspace code census (iteration 9) ──────────────────────────────────────
+
+export type CensusLanguage = {
+  language: string;
+  files: number;
+  lines: number;
+  code: number;
+  comment: number;
+  blank: number;
+};
+
+export type CensusDir = { dir: string; files: number; bytes: number };
+export type CensusFile = { path: string; bytes: number; lines: number };
+export type CensusTodo = { path: string; line: number; text: string };
+
+export type CodeCensus = {
+  error?: string;
+  totalFiles: number;
+  totalBytes?: number;
+  totalLines?: number;
+  codeLines?: number;
+  commentLines?: number;
+  blankLines?: number;
+  languages?: CensusLanguage[];
+  directories?: CensusDir[];
+  largestFiles?: CensusFile[];
+  todos?: CensusTodo[];
+  todoCount?: number;
+  skippedLarge?: number;
+  elapsedMs?: number;
+};
+
+// ── Session notes sidecar (iteration 10) ─────────────────────────────────────
+
+export type SessionNote = {
+  id: string;
+  text: string;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NotesSummaryRow = {
+  sessionId: string;
+  count: number;
+  pinned: number;
+  lastUpdatedAt: string;
+};
 
 // ── AI API types ──────────────────────────────────────────────────────────────
 

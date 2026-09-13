@@ -1,19 +1,30 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  ChevronRight, Clock, Loader, Undo2, FileEdit, Check,
-  Search, Pencil, Terminal, Globe, Brain, Wrench, Eye, FolderOpen,
+  ChevronRight, Clock, Undo2, FileEdit, Check,
 } from 'lucide-react';
 import type { ChatItem, ToolChatItem } from '../types';
 import { ToolCard } from './ToolCard';
 
-function formatElapsed(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 1000));
+/** status_indicator_widget.rs fmt_elapsed_compact: 42s / 3m 05s / 1h 02m 03s. */
+function fmtElapsedCompact(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const seconds = total % 60;
-  if (hours > 0) return `${hours}小时${minutes}分`;
-  if (minutes > 0) return `${minutes}分${seconds}秒`;
-  return `${seconds}秒`;
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
+  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  return `${seconds}s`;
+}
+
+/** separators.rs "done %-I:%M %p". */
+function formatDoneClock(ts: number): string {
+  const date = new Date(ts);
+  let hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  return `${hours}:${minutes} ${suffix}`;
 }
 
 function formatDuration(ms?: number): string {
@@ -48,31 +59,16 @@ function categorize(tool: string): ToolCategory {
   return 'other';
 }
 
-const CATEGORY_ICONS: Record<ToolCategory, React.ElementType> = {
-  search: Search,
-  read: Eye,
-  write: Pencil,
-  shell: Terminal,
-  network: Globe,
-  think: Brain,
-  other: Wrench,
-};
-
-const CATEGORY_LABELS: Record<ToolCategory, string> = {
-  search: '搜索',
-  read: '读取',
-  write: '编辑',
-  shell: '命令',
-  network: '网络',
-  think: '思考',
-  other: '工具',
-};
-
 // Build a one-line summary for a tool step
 function stepSummary(step: ToolChatItem): string {
   const input = step.input && typeof step.input === 'object' ? step.input as Record<string, unknown> : {};
   const cat = categorize(step.tool);
 
+  if (cat === 'think') {
+    if (step.status === 'running') return '思考中…';
+    const text = (step.output || '').trim();
+    return text ? text.slice(0, 42) : '思考完成';
+  }
   if (cat === 'search') {
     const query = input.query ?? input.pattern ?? input.text ?? input.name ?? '';
     const path = input.path ?? input.directory ?? '';
@@ -110,17 +106,41 @@ function stepSummary(step: ToolChatItem): string {
   return step.tool;
 }
 
-// Single collapsible step row
-function StepRow({ step, onApprove }: {
+/** status/helpers.rs format_tokens_compact: uppercase K/M/B/T, decimals by scale. */
+function formatTokensCompact(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) return '0';
+  if (tokens < 1000) return String(Math.round(tokens));
+  const units: Array<[number, string]> = [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
+  for (const [scale, suffix] of units) {
+    if (tokens >= scale) {
+      const scaled = tokens / scale;
+      const decimals = scaled < 10 ? 2 : scaled < 100 ? 1 : 0;
+      let text = scaled.toFixed(decimals);
+      if (text.includes('.')) text = text.replace(/0+$/, '').replace(/\.$/, '');
+      return `${text}${suffix}`;
+    }
+  }
+  return String(tokens);
+}
+
+// Single collapsible step row — codex exec_cell/render.rs language:
+// `[•] Running|Ran <title>` with a blinking bullet while active, green/red
+// bullets on completion, dim summary, no per-category icons.
+function StepRow({ step, onApprove, expandAll }: {
   step: ToolChatItem;
   onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void;
+  expandAll?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const cat = categorize(step.tool);
-  const Icon = CATEGORY_ICONS[cat];
+  // Ctrl+O global toggle: follow the app-wide expand state whenever it flips;
+  // per-row clicks still work between toggles.
+  useEffect(() => {
+    if (expandAll !== undefined) setExpanded(expandAll);
+  }, [expandAll]);
   const summary = stepSummary(step);
   const dur = formatDuration(step.durationMs);
   const hasDetail = step.input !== undefined || step.output;
+  const actionLabel = step.status === 'running' ? 'Running' : 'Ran';
 
   return (
     <div className={`step-row ${step.status}`}>
@@ -130,11 +150,8 @@ function StepRow({ step, onApprove }: {
         style={{ cursor: hasDetail ? 'pointer' : 'default' }}
         aria-expanded={expanded}
       >
-        {step.status === 'running'
-          ? <Loader size={13} className="step-spin" />
-          : <Icon size={13} className={`step-icon step-icon-${cat}`} />
-        }
-        <span className="step-label">{CATEGORY_LABELS[cat]}</span>
+        <span className={`codex-bullet ${step.status === 'running' ? 'blink' : step.status === 'failed' ? 'failed' : 'ok'}`}>•</span>
+        <span className="step-action">{actionLabel}</span>
         {summary && <span className="step-summary">{summary}</span>}
         {dur && step.status !== 'running' && <span className="step-dur">{dur}</span>}
         {(step.added || step.removed) && step.status !== 'running' && (
@@ -156,17 +173,18 @@ function StepRow({ step, onApprove }: {
   );
 }
 
-export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile }: {
+export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile, expandAll }: {
   item: Extract<ChatItem, { kind: 'turn' }>;
   onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void;
   onUndo: (turnId: string) => void;
   now: number;
   onOpenFile?: (path: string) => void;
+  expandAll?: boolean;
 }) {
   const running = item.endedAt === undefined;
   const [collapsed, setCollapsed] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
-  const elapsed = formatElapsed((item.endedAt ?? now) - item.startedAt);
+  const elapsed = fmtElapsedCompact((item.endedAt ?? now) - item.startedAt);
   const files = item.files ?? [];
   const hasFiles = files.length > 0;
   const undoable = files.some((f) => f.checkpointIds.length > 0);
@@ -178,7 +196,7 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile }: {
       {!collapsed && (
         <div className="turn-steps-inline">
           {item.steps.map((step) => (
-            <StepRow key={step.id} step={step} onApprove={onApprove} />
+            <StepRow key={step.id} step={step} onApprove={onApprove} expandAll={expandAll} />
           ))}
         </div>
       )}
@@ -191,9 +209,13 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile }: {
         aria-label={collapsed ? '展开步骤' : '折叠步骤'}
       >
         <ChevronRight className={`turn-caret ${!collapsed ? 'open' : ''}`} size={15} />
+        {/* separators.rs turn-end row: `Worked for 1m 30s · done 10:45 PM` */}
         <span className="turn-elapsed">
-          {running ? <Loader className="turn-spin" size={14} /> : <Clock size={14} />}
-          已工作 {elapsed}
+          {running
+            ? <span className="codex-bullet blink">•</span>
+            : <Clock size={14} />}
+          {running ? `Working for ${elapsed}` : `Worked for ${elapsed}`}
+          {!running && item.endedAt ? ` · done ${formatDoneClock(item.endedAt)}` : ''}
         </span>
         <span className="turn-count">{item.steps.length} 步</span>
         {(item.added > 0 || item.removed > 0) && (
@@ -203,6 +225,12 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile }: {
             <span className="turn-del">-{item.removed}</span>
           </>
         )}
+        {item.ctxTokens ? (
+          <span className="turn-ctx" title="本轮真实上下文占用（来自 CLI context_stats 事件）">
+            · {formatTokensCompact(item.ctxTokens)} used
+            {item.cacheRate !== null && item.cacheRate !== undefined ? ` · cache ${item.cacheRate}%` : ''}
+          </span>
+        ) : null}
       </button>
 
       {/* Changed-files bar */}

@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 export interface EditorTab {
   path: string;
   dirty: boolean;
+  stale?: boolean;
 }
 
 export interface EditorTabsProps {
@@ -26,12 +27,13 @@ export function EditorTabs({ tabs, activeTab, onTabClick, onTabClose }: EditorTa
       {tabs.map((tab) => (
         <div
           key={tab.path}
-          className={`editor-tab ${tab.path === activeTab ? 'active' : ''} ${tab.dirty ? 'dirty' : ''}`}
+          className={`editor-tab ${tab.path === activeTab ? 'active' : ''} ${tab.dirty ? 'dirty' : ''} ${tab.stale ? 'stale' : ''}`}
           onClick={() => onTabClick(tab.path)}
-          title={tab.path}
+          title={tab.stale ? `${tab.path}（磁盘内容已变化，保存前需确认）` : tab.path}
         >
           <span className="editor-tab-name">{getFileName(tab.path)}</span>
           {tab.dirty && <span className="editor-tab-dot">●</span>}
+          {tab.stale && <span className="editor-tab-stale" title="磁盘内容已变化，保存前需确认">!</span>}
           <button
             className="editor-tab-close"
             onClick={(e) => {

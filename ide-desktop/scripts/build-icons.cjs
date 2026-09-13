@@ -3,20 +3,31 @@ const sharp = require('sharp');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const svgPath = path.join(__dirname, '..', 'resources', 'icon.svg');
 const outDir = path.join(__dirname, '..', 'resources');
 
+// Prefer the committed raster source (icon-source.jpg) so a custom brand image
+// survives every rebuild; fall back to the vector icon.svg when it is absent.
+const rasterSource = path.join(outDir, 'icon-source.jpg');
+const svgPath = path.join(outDir, 'icon.svg');
+
+function loadSource() {
+  if (fs.existsSync(rasterSource)) {
+    console.log('Building icon assets from icon-source.jpg...');
+    return fs.readFileSync(rasterSource);
+  }
+  console.log('Building icon assets from icon.svg...');
+  return fs.readFileSync(svgPath);
+}
+
 async function buildIcons() {
-  const svgBuffer = fs.readFileSync(svgPath);
+  const sourceBuffer = loadSource();
 
   // PNG sizes for supported platforms.
   const sizes = [16, 32, 48, 64, 128, 256, 512, 1024];
 
-  console.log('Building icon assets from icon.svg...');
-
   for (const size of sizes) {
-    await sharp(svgBuffer)
-      .resize(size, size)
+    await sharp(sourceBuffer)
+      .resize(size, size, { fit: 'cover', position: 'centre' })
       .png()
       .toFile(path.join(outDir, `icon-${size}.png`));
     console.log(`  built icon-${size}.png`);
@@ -25,7 +36,7 @@ async function buildIcons() {
   // Windows ICO containing the standard shell sizes.
   const icoSizes = [16, 32, 48, 256];
   const icoBuffers = await Promise.all(
-    icoSizes.map(size => sharp(svgBuffer).resize(size, size).png().toBuffer())
+    icoSizes.map(size => sharp(sourceBuffer).resize(size, size, { fit: 'cover', position: 'centre' }).png().toBuffer())
   );
   
   // Simple ICO file builder (header + directory + PNGs)

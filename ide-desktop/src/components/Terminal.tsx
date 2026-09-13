@@ -29,6 +29,13 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
   const [tabs, setTabs] = useState<{ id: string; title: string }[]>([]);
   const [activeId, setActiveId] = useState<string>('');
 
+  const terminalTheme = () => {
+    const dark = typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark';
+    return dark
+      ? { background: '#202022', foreground: '#f5f5f5', cursor: '#f5f5f5', selectionBackground: '#38383c' }
+      : { background: '#ffffff', foreground: '#172033', cursor: '#315fbb', selectionBackground: '#dce8f8' };
+  };
+
   useEffect(() => {
     const off = desktop.terminal.onEvent((event) => {
       const tab = tabsRef.current.get(event.id);
@@ -47,9 +54,9 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
 
   async function createTab() {
     const term = new Xterm({
-      fontFamily: 'JetBrains Mono, Cascadia Code, SFMono-Regular, Consolas, monospace',
+      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', 'Noto Sans Mono CJK SC', Consolas, monospace",
       fontSize: 12, cursorBlink: true,
-      theme: { background: '#ffffff', foreground: '#1f1e1d', cursor: '#1f1e1d', selectionBackground: '#d6e4ff' },
+      theme: terminalTheme(),
       convertEol: false,
     });
     const fit = new FitAddon();
@@ -79,6 +86,16 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
       tabsRef.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => {
+      const theme = terminalTheme();
+      for (const tab of tabsRef.current.values()) tab.term.options.theme = theme;
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {

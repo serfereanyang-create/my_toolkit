@@ -1,6 +1,10 @@
-const { app, BrowserWindow, Menu, safeStorage, protocol } = require('electron');
+const { app, BrowserWindow, Menu, Notification, safeStorage, protocol } = require('electron');
 const path = require('node:path');
 const { automationBus } = require('./automation.cjs');
+
+// Windows shows toast notifications only when the app has a stable
+// AppUserModelId; without it the Electron default is silently dropped.
+if (process.platform === 'win32') app.setAppUserModelId('com.yoycode.desktop');
 
 // The renderer draws its own minimal top bar; drop Electron's native
 // File/Edit/View/Window/Help application menu.
@@ -8,6 +12,12 @@ Menu.setApplicationMenu(null);
 const { createWorkspaceService } = require('./workspace.cjs');
 const { createSettingsStore } = require('./settings-store.cjs');
 const { createSecretStore } = require('./secret-store.cjs');
+const { createSnippetsStore } = require('./snippets-store.cjs');
+const { createBookmarkStore } = require('./bookmarks-store.cjs');
+const { createFileHistoryStore } = require('./file-history.cjs');
+const { createSessionNotesStore } = require('./session-notes.cjs');
+const { createSessionTagsStore } = require('./session-tags.cjs');
+const { createKeybindingsStore } = require('./keybindings-store.cjs');
 const { registerIpc } = require('./ipc.cjs');
 const { AgentBridge } = require('./agent-bridge.cjs');
 const { TerminalManager } = require('./terminal.cjs');
@@ -35,6 +45,57 @@ function normalizeEffort(value) {
 
 function normalizeToolScope(value) {
   return ['auto', 'compact', 'standard', 'full'].includes(value) ? value : 'auto';
+}
+
+/*
+ * OS-level notification for key task states (approval needed / turn done /
+ * error / agent offline). Honors the 常规→通知 preferences:
+ *  - gen.turnNotify: 'always' | 'unfocused' (default) | 'never'
+ *  - gen.permissionNotify: approval reminders can be switched off entirely
+ * When the user is looking at the app, the in-app toasts already cover it.
+ * Clicking the notification focuses the window.
+ */
+async function notifyKeyState(event, window, settingsStore) {
+  const rules = {
+    approval_needed: { title: '需要确认执行', body: `工具 ${String(event.tool || '')} 等待你的批准`, pref: 'permission' },
+    turn_done: { title: '任务完成', body: '智能体已完成本轮工作', pref: 'turn' },
+    error: { title: '执行出错', body: String(event.message || '智能体报告了一个错误'), pref: 'turn' },
+    agent_offline: { title: '连接断开', body: '智能体已离线，下次提问时会自动重连', pref: 'turn' },
+  };
+  const rule = rules[event.type];
+  if (!rule) return;
+
+  let prefs = {};
+  try {
+    const config = settingsStore ? await settingsStore.get() : null;
+    prefs = (config && config.preferences) || {};
+  } catch {
+    // Settings unavailable: fall back to the unfocused-only default.
+  }
+  if (rule.pref === 'permission' && prefs['gen.permissionNotify'] === false) return;
+  const background = !window || window.isDestroyed() || window.isMinimized() || !window.isFocused();
+  if (rule.pref === 'turn') {
+    const mode = typeof prefs['gen.turnNotify'] === 'string' ? prefs['gen.turnNotify'] : 'unfocused';
+    if (mode === 'never') return;
+    if (mode === 'unfocused' && !background) return;
+  } else if (!background) {
+    // Approval reminders: background-only as well (the in-app toast covers the
+    // focused case; a system banner on top of it would be pure noise).
+    return;
+  }
+  if (!Notification.isSupported()) return;
+  try {
+    const notification = new Notification({ title: rule.title, body: rule.body, silent: false });
+    notification.on('click', () => {
+      if (window && !window.isDestroyed()) {
+        if (window.isMinimized()) window.restore();
+        window.focus();
+      }
+    });
+    notification.show();
+  } catch {
+    // Notification failures (permission, OS policy) must never break the event stream.
+  }
 }
 
 function createAgentManager({ mainWindow, workspace, settings, secrets }) {
@@ -77,24 +138,57 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
       resumeSessionId: resumeSessionId || undefined,
     });
     bridge.on('event', (event) => {
-      mainWindow.webContents.send('agent.event', event);
+      // The window may be closing while the child is still draining events.
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent.event', event);
+      notifyKeyState(event, mainWindow, settings);
       if (event.type === 'automation_done') {
         // Bug-12 fix: use the dedicated automationBus instead of mainWindow.emit()
         // so the handler in automation.cjs survives window recreation.
         automationBus.emit('automation.done', event);
       }
     });
-    bridge.start();
+    // Do not report startup complete until the CLI has emitted bridge_ready;
+    // otherwise the first prompt can race the child process initialization.
+    await bridge.start();
     return { ok: true };
+  }
+
+  // ── Side chat: an independent bridge with its own session ──────────────────
+  // Runs alongside the main conversation instead of sharing it. Writes are
+  // auto-denied (approval: 'deny'), so the side agent is a read-only assistant
+  // that can inspect the workspace while the main agent is editing.
+  let sideBridge;
+  async function startSideChat() {
+    const config = await settings.get();
+    const providerConfig = config.providers.find((item) => item.id === config.activeProviderId) || config.providers[0];
+    const apiKey = providerConfig.type === 'mock' ? '' : await secrets.getApiKey(providerConfig.id);
+    if (providerConfig.type !== 'mock' && !apiKey) throw new Error(`API key is missing for ${providerConfig.label}`);
+    if (sideBridge) sideBridge.dispose();
+    sideBridge = new AgentBridge({
+      cliRoot: path.resolve(__dirname, '..', '..', 'cli'),
+      workspaceRoot: workspace.getRoot(),
+      // Separate session scope so side conversations never appear in (or get
+      // resumed by) the main session list.
+      sessionDir: path.join(workspace.getRoot(), '.aicode', 'sessions-side'),
+      provider: cliProviderName(providerConfig),
+      model: providerConfig.model,
+      baseUrl: resolveBaseUrl(providerConfig),
+      apiKey,
+      approval: 'deny',
+    });
+    sideBridge.on('event', (event) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sidechat.event', event);
+    });
+    await sideBridge.start();
   }
 
   return {
     start(resumeSessionId) {
       return start(resumeSessionId);
     },
-    taskBoardAction(action, taskId) {
+    async taskBoardAction(action, taskId) {
       if (!bridge) throw new Error('Agent is not started');
-      bridge.taskBoardAction(action, taskId);
+      await bridge.taskBoardAction(action, taskId);
       return { ok: true };
     },
     async prompt(text, files, toolScope) {
@@ -103,12 +197,40 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
       // user to resend the message manually.
       if (!bridge || !bridge.child) await start();
       if (!bridge || !bridge.child) throw new Error('Agent bridge failed to start');
-      bridge.prompt(text, files, toolScope);
+      await bridge.prompt(text, files, toolScope);
       return { ok: true };
     },
     async automationTask(taskId, goal) {
       if (!bridge) await start();
-      bridge.automationTask(taskId, goal);
+      await bridge.automationTask(taskId, goal);
+      return { ok: true };
+    },
+    async sideChatPrompt(text) {
+      const normalized = String(text ?? '');
+      if (!normalized.trim()) throw new Error('Side chat message is empty');
+      if (!sideBridge || !sideBridge.child) await startSideChat();
+      if (!sideBridge || !sideBridge.child) throw new Error('Side chat bridge failed to start');
+      await sideBridge.prompt(normalized);
+      return { ok: true };
+    },
+    sideChatCancel() {
+      if (sideBridge) sideBridge.cancel();
+      return { ok: true };
+    },
+    /** Drop the side session so the next prompt starts a fresh conversation. */
+    sideChatReset() {
+      if (sideBridge) {
+        sideBridge.dispose();
+        sideBridge = undefined;
+      }
+      return { ok: true };
+    },
+    /** Workspace switch: the side agent is workspace-bound like the main one. */
+    sideChatRestart() {
+      if (sideBridge) {
+        sideBridge.dispose();
+        sideBridge = undefined;
+      }
       return { ok: true };
     },
     setEffort(reasoningEffort) {
@@ -122,14 +244,14 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
       if (bridge) bridge.setToolScope(normalized);
       return { ok: true, toolScope: normalized };
     },
-    approve(requestId, decision) {
+    async approve(requestId, decision) {
       if (!bridge) throw new Error('Agent is not started');
-      bridge.approve(requestId, decision);
+      await bridge.approve(requestId, decision);
       return { ok: true };
     },
-    undo(checkpointIds) {
+    async undo(checkpointIds, undoId) {
       if (!bridge) throw new Error('Agent is not started');
-      bridge.undo(Array.isArray(checkpointIds) ? checkpointIds : []);
+      await bridge.undo(Array.isArray(checkpointIds) ? checkpointIds : [], undoId);
       return { ok: true };
     },
     cancel() {
@@ -137,9 +259,26 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
       return { ok: true };
     },
     async restart() {
-      if (bridge) bridge.restart();
+      if (bridge) await bridge.restart();
       else await start();
       return { ok: true };
+    },
+    /**
+     * Drop the live bridge without starting a new one. The approval mode is
+     * baked into the CLI child at spawn time, so changing it in settings must
+     * invalidate the running bridge; the next prompt lazily re-starts with the
+     * new mode (prompt() already recovers from a missing bridge).
+     */
+    invalidate() {
+      if (bridge) {
+        bridge.dispose();
+        bridge = null;
+      }
+      return { ok: true };
+    },
+    dispose() {
+      if (bridge) bridge.dispose();
+      if (sideBridge) sideBridge.dispose();
     },
   };
 }
@@ -152,7 +291,7 @@ function createWindow() {
     minHeight: 720,
     show: false,
     title: 'YOYcode Desktop IDE',
-    backgroundColor: '#111318',
+    backgroundColor: '#f8fafc',
     icon: path.join(__dirname, '..', 'resources', process.platform === 'win32' ? 'icon.ico' : 'icon-512.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -170,6 +309,12 @@ function createWindow() {
   const workspace = createWorkspaceService();
   const settings = createSettingsStore(app.getPath('userData'));
   const secrets = createSecretStore({ userDataDir: app.getPath('userData'), safeStorage });
+  const snippets = createSnippetsStore(app.getPath('userData'));
+  const bookmarks = createBookmarkStore(() => workspace.getRoot());
+  const fileHistory = createFileHistoryStore(app.getPath('userData'));
+  const notes = createSessionNotesStore(app.getPath('userData'));
+  const sessionTags = createSessionTagsStore(() => workspace.getRoot());
+  const keybindings = createKeybindingsStore(app.getPath('userData'));
   const connectivity = { test: (args) => testProviderConnection(args) };
   const usage = createUsageStore();
   const agentManager = createAgentManager({ mainWindow, workspace, settings, secrets });
@@ -239,8 +384,11 @@ function createWindow() {
     void previewRuntime.stopAll();
     if (fimServer) { fimServer.stop(); fimServer = null; }
     if (languageServer) { languageServer.stop(); languageServer = null; }
+    // The agent children must not outlive the window: they would keep running
+    // turns (and writing to the workspace) with nowhere to send their events.
+    agentManager.dispose();
   });
-  registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer });
+  registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   const loadPromise = devUrl

@@ -92,6 +92,14 @@ export type DesktopPreferences = {
   computerAnyApp?: boolean;
   computerExcel?: boolean;
   computerAllowedApps?: string[];   // list of exe/app names allowed without ask
+  // Editor prefs (AppearanceSettings → Monaco). All have real consumers.
+  uiFontSize?: number;
+  uiChineseFont?: string;
+  uiEnglishFont?: string;
+  codeFontSize?: number;
+  editorTabSize?: number;
+  editorMinimap?: boolean;
+  editorWordWrap?: boolean;
   [key: string]: unknown;
 };
 
@@ -217,6 +225,10 @@ export type ChatItem =
       added: number;
       removed: number;
       undo?: 'idle' | 'undoing' | 'undone' | 'failed';
+      /** Codex-style per-turn footer: real context/cache numbers stamped from
+       *  the latest context_stats snapshot while this turn was running. */
+      ctxTokens?: number;
+      cacheRate?: number | null;
     };
 
 // One distinct file changed during a turn. `checkpointIds` are the CLI backup

@@ -13,8 +13,12 @@ import { Segmented, EmptyState } from './controls';
  * history.
  *
  * Two views over the selected window (7, 30, or 90 days):
- *   - 活跃热力图: per-day intensity grid (GitHub-style), hover shows tokens/rounds.
- *   - 按天 Token 趋势: per-day stacked bars, one color segment per model.
+ *   - 活跃热力图: per-day intensity grid, exactly covering the selected range.
+ *   - 按天 Token 趋势: per-day stacked bars, one color segment per provider/model.
+ *
+ * Cache fields retain their provenance in the IPC payload. Provider-reported
+ * counts are real API fields; local-estimate is only the CLI's prediction and
+ * is never added to token totals.
  */
 
 // Deterministic, colorblind-friendly-ish palette. Assigned by model rank so the
@@ -115,6 +119,32 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<20 | 50 | 100>(20);
   const [loadingRecords, setLoadingRecords] = useState(false);
+  // Iteration 21: CSV export of the whole window.
+  const [exporting, setExporting] = useState(false);
+
+  async function exportUsageCsv(hoursWindow: 24 | 36 | 48) {
+    setExporting(true);
+    try {
+      const { csv, count } = await desktop.usage.exportCsv(hoursWindow);
+      if (count === 0) {
+        window.alert('时间窗口内没有可导出的记录。');
+        return;
+      }
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+      try {
+        await desktop.fs.write(`.aicode/exports/usage-${hoursWindow}h-${stamp}.csv`, csv);
+        window.alert(`已导出 ${count} 条记录到 .aicode/exports/usage-${hoursWindow}h-${stamp}.csv`);
+      } catch {
+        // No workspace (fs.write rejects): fall back to the clipboard.
+        await desktop.clipboard.write(csv);
+        window.alert(`已复制 ${count} 条记录的 CSV 到剪贴板（未打开工作区，无法写入文件）。`);
+      }
+    } catch {
+      window.alert('导出失败。');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   // Load daily summary
   useEffect(() => {
@@ -171,13 +201,19 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
 
   const colorByModel = useMemo(() => {
     const map = new Map<string, string>();
-    (summary?.models ?? []).forEach((m, index) => map.set(m.model, colorForIndex(index)));
+    (summary?.models ?? []).forEach((m, index) => {
+      const key = m.key ?? `${m.provider ?? ''}\u001f${m.baseUrl ?? ''}\u001f${m.model}`;
+      map.set(key, colorForIndex(index));
+    });
     return map;
   }, [summary]);
 
   const hourlyColorByModel = useMemo(() => {
     const map = new Map<string, string>();
-    (hourly?.models ?? []).forEach((m, index) => map.set(m.model, colorForIndex(index)));
+    (hourly?.models ?? []).forEach((m, index) => {
+      const key = m.key ?? `${m.provider ?? ''}\u001f${m.baseUrl ?? ''}\u001f${m.model}`;
+      map.set(key, colorForIndex(index));
+    });
     return map;
   }, [hourly]);
 
@@ -191,6 +227,9 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
           <h1 className="settings-page-title">用量统计</h1>
           <p className="settings-page-subtitle">
             真实 Token 用量，来自本地用量账本。仅统计供应商实际返回的 token，不含估算。
+          </p>
+          <p className="usage-settings-source-note">
+            缓存字段来源：{summary?.source === 'provider-reported' ? '供应商实报' : summary?.source === 'local-estimate' ? '本地估算（不计入 Token 总量）' : '未提供'}
           </p>
         </div>
         <Segmented<'7' | '30' | '90'>
@@ -212,6 +251,7 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
         <>
           <UsageTotals summary={summary!} />
           <ModelDonut summary={summary!} colorByModel={colorByModel} />
+          <SessionBreakdown summary={summary!} />
           <Heatmap summary={summary!} />
           <TrendChart summary={summary!} />
           <Legend summary={summary!} colorByModel={colorByModel} />
@@ -276,6 +316,8 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
                     setPage(1);
                   }}
                   activeProviderId={activeProviderId}
+                  onExport={() => { void exportUsageCsv(hours); }}
+                  exporting={exporting}
                 />
               ) : (
                 <EmptyState
@@ -296,6 +338,16 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
       )}
     </div>
   );
+}
+
+function usageKey(model: UsageModelStats): string {
+  return model.key ?? `${model.provider ?? ''}\u001f${model.baseUrl ?? ''}\u001f${model.model}`;
+}
+
+function usageLabel(model: UsageModelStats): string {
+  return model.provider && model.provider !== 'unknown'
+    ? `${model.provider}/${model.model}`
+    : model.model;
 }
 
 function UsageTotals({ summary }: { summary: UsageSummary }) {
@@ -327,7 +379,7 @@ const DONUT_TOP_N = 5;
 const OTHER_COLOR = '#1f9c8f';
 
 function ModelDonut({ summary, colorByModel }: { summary: UsageSummary; colorByModel: Map<string, string> }) {
-  // 每个模型的总 tokens = total + cacheRead + cacheCreation
+  // 每个 provider+baseUrl+model bucket 的总 tokens = total + cacheRead + cacheCreation
   const modelsWithCache = summary.models.map(m => ({
     ...m,
     totalWithCache: m.total + m.cacheRead + m.cacheCreation,
@@ -337,12 +389,13 @@ function ModelDonut({ summary, colorByModel }: { summary: UsageSummary; colorByM
   const top = sorted.slice(0, DONUT_TOP_N);
   const restTotal = sorted.slice(DONUT_TOP_N).reduce((sum, m) => sum + m.totalWithCache, 0);
 
-  const rows: { model: string; total: number; color: string }[] = top.map((m) => ({
-    model: m.model,
+  const rows: { key: string; model: string; total: number; color: string }[] = top.map((m) => ({
+    key: usageKey(m),
+    model: usageLabel(m),
     total: m.totalWithCache,
-    color: colorByModel.get(m.model) ?? colorForIndex(0),
+    color: colorByModel.get(usageKey(m)) ?? colorForIndex(0),
   }));
-  if (restTotal > 0) rows.push({ model: '其他模型', total: restTotal, color: OTHER_COLOR });
+  if (restTotal > 0) rows.push({ key: 'other', model: '其他模型', total: restTotal, color: OTHER_COLOR });
 
   // SVG ring geometry. circumference drives the dasharray segment lengths.
   const radius = 70;
@@ -384,7 +437,7 @@ function ModelDonut({ summary, colorByModel }: { summary: UsageSummary; colorByM
         </div>
         <div className="usage-donut-list">
           {rows.map((row) => (
-            <div key={row.model} className="usage-donut-row">
+            <div key={row.key} className="usage-donut-row">
               <span className="usage-donut-name">
                 <span className="usage-legend-dot" style={{ background: row.color }} />
                 {row.model}
@@ -400,18 +453,55 @@ function ModelDonut({ summary, colorByModel }: { summary: UsageSummary; colorByM
 }
 
 // Local day-of-week (0 = Sun .. 6 = Sat) for a YYYY-MM-DD date string, parsed
-// as a local date (not UTC) so the calendar alignment matches the same local
-// midnight boundaries used to bucket entries in usage-store.cjs.
+// as a local date (not UTC) so the calendar alignment matches usage-store.
 function dayOfWeek(date: string): number {
   const [y, m, d] = date.split('-').map(Number);
   return new Date(y, m - 1, d).getDay();
+}
+
+/**
+ * 会话下钻：按会话聚合的 token/轮次/工具调用（仅新版 ledger 行携带
+ * sessionId；旧数据没有该维度时整个区块隐藏）。
+ */
+function SessionBreakdown({ summary }: { summary: UsageSummary }) {
+  const sessions = summary.sessions ?? [];
+  if (sessions.length === 0) return null;
+
+  return (
+    <div className="usage-block">
+      <div className="usage-block-head">
+        <span className="usage-block-title">会话下钻</span>
+        <span className="usage-heatmap-readout">按 token 排序</span>
+      </div>
+      <div className="usage-sessions">
+        {sessions.map((session) => (
+          <div key={session.sessionId} className="usage-session-row">
+            <div className="usage-session-head">
+              <span className="usage-session-id" title={session.sessionId}>
+                {session.sessionId.slice(0, 12)}…
+              </span>
+              {session.boardId && (
+                <span className="usage-session-board" title={`任务板 ${session.boardId}`}>任务板</span>
+              )}
+              <span className="usage-session-tokens">{formatTokensCN(session.tokens)} tokens</span>
+            </div>
+            <div className="usage-session-meta">
+              {session.rounds} 轮 · 工具调用 {session.toolCalls} 次
+              {session.toolsUsed.length > 0 && ` · ${session.toolsUsed.slice(0, 4).join(', ')}${session.toolsUsed.length > 4 ? ' 等' : ''}`}
+              {' · '}
+              {new Date(session.firstTs).toLocaleString()} – {new Date(session.lastTs).toLocaleTimeString()}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function Heatmap({ summary }: { summary: UsageSummary }) {
   const [hover, setHover] = useState<{ date: string; total: number; rounds: number; input: number; output: number; cacheRead: number; cacheCreation: number } | null>(null);
   const max = Math.max(1, ...summary.daily.map((d) => d.total));
 
-  // Intensity bucket 0..4
   function bucket(total: number): number {
     if (total <= 0) return 0;
     const ratio = total / max;
@@ -425,50 +515,10 @@ function Heatmap({ summary }: { summary: UsageSummary }) {
     ? `${shortDate(hover.date)}：${formatTokens(hover.total)} tokens（输入 ${formatTokens(hover.input)} · 输出 ${formatTokens(hover.output)} · 缓存读 ${formatTokens(hover.cacheRead)} · 缓存写 ${formatTokens(hover.cacheCreation)}）· ${hover.rounds} 轮`
     : '悬停查看某天用量';
 
-  // Fixed 120 cells: 20 columns × 6 rows.
-  // Today is the LAST cell (index 119 = bottom-right corner).
-  // Grid flows column-by-column from top-to-bottom, left-to-right.
-  // So cell index i → column = Math.floor(i/6), row = i%6.
-  // Today = index 119, yesterday = 118, …, 119 days ago = index 0.
-  const TOTAL = 120;
-
-  // Build a date→data map for quick lookup
-  const byDate = new Map<string, { total: number; rounds: number; input: number; output: number; cacheRead: number; cacheCreation: number }>();
-  for (const d of summary.daily) {
-    byDate.set(d.date, { 
-      total: d.total, 
-      rounds: d.rounds,
-      input: d.input,
-      output: d.output,
-      cacheRead: d.cacheRead,
-      cacheCreation: d.cacheCreation,
-    });
-  }
-
-  // Generate the 120 date strings (index 0 = oldest, 119 = today)
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const cells = Array.from({ length: TOTAL }, (_, i) => {
-    const daysAgo = TOTAL - 1 - i;
-    const d = new Date(today);
-    d.setDate(d.getDate() - daysAgo);
-    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const data = byDate.get(dateStr);
-    return { 
-      dateStr, 
-      total: data?.total ?? 0, 
-      rounds: data?.rounds ?? 0,
-      input: data?.input ?? 0,
-      output: data?.output ?? 0,
-      cacheRead: data?.cacheRead ?? 0,
-      cacheCreation: data?.cacheCreation ?? 0,
-    };
-  });
-
   return (
     <div className="usage-block">
       <div className="usage-block-head">
-        <span className="usage-block-title">活跃热力图</span>
+        <span className="usage-block-title">活跃热力图（{summary.days} 天）</span>
         <span className="usage-heatmap-readout">{label}</span>
         <span className="usage-heatmap-scale">
           <span className="usage-scale-label">较少</span>
@@ -476,13 +526,13 @@ function Heatmap({ summary }: { summary: UsageSummary }) {
           <span className="usage-scale-label">较多</span>
         </span>
       </div>
-      <div className="usage-heatmap-grid usage-heatmap-fixed">
-        {cells.map((cell) => (
+      <div className="usage-heatmap-grid" style={{ gridTemplateRows: 'repeat(7, 13px)' }}>
+        {summary.daily.map((cell) => (
           <span
-            key={cell.dateStr}
+            key={cell.date}
             className={`usage-cell b${bucket(cell.total)}`}
-            title={`${shortDate(cell.dateStr)}：${cell.total > 0 ? `${formatTokens(cell.total)} tokens（输入 ${formatTokens(cell.input)} · 输出 ${formatTokens(cell.output)} · 缓存读 ${formatTokens(cell.cacheRead)} · 缓存写 ${formatTokens(cell.cacheCreation)}）· ${cell.rounds} 轮` : '无记录'}`}
-            onMouseEnter={() => setHover(cell.total > 0 ? { date: cell.dateStr, ...cell } : null)}
+            title={`${shortDate(cell.date)}：${cell.total > 0 ? `${formatTokens(cell.total)} tokens（输入 ${formatTokens(cell.input)} · 输出 ${formatTokens(cell.output)} · 缓存读 ${formatTokens(cell.cacheRead)} · 缓存写 ${formatTokens(cell.cacheCreation)}）· ${cell.rounds} 轮` : '无记录'}`}
+            onMouseEnter={() => setHover(cell.total > 0 ? { date: cell.date, total: cell.total, rounds: cell.rounds, input: cell.input, output: cell.output, cacheRead: cell.cacheRead, cacheCreation: cell.cacheCreation } : null)}
             onMouseLeave={() => setHover(null)}
           />
         ))}
@@ -664,13 +714,16 @@ function TrendChart({ summary }: { summary: UsageSummary }) {
 function Legend({ summary, colorByModel }: { summary: UsageSummary; colorByModel: Map<string, string> }) {
   return (
     <div className="usage-legend">
-      {summary.models.map((m) => (
-        <span key={m.model} className="usage-legend-item">
-          <span className="usage-legend-dot" style={{ background: colorByModel.get(m.model) }} />
-          <span className="usage-legend-name">{m.model}</span>
-          <span className="usage-legend-value">{formatTokens(m.total)}</span>
-        </span>
-      ))}
+      {summary.models.map((m) => {
+        const key = usageKey(m);
+        return (
+          <span key={key} className="usage-legend-item">
+            <span className="usage-legend-dot" style={{ background: colorByModel.get(key) }} />
+            <span className="usage-legend-name">{usageLabel(m)}</span>
+            <span className="usage-legend-value">{formatTokens(m.total)}</span>
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -718,7 +771,7 @@ function ProviderConsumption({ summary, settings, colorByModel }: {
   settings: DesktopSettings | null;
   colorByModel: Map<string, string>;
 }) {
-  const [hover, setHover] = useState<{ hour: string; provider: string; cost: number } | null>(null);
+  const [hover, setHover] = useState<{ hour: number; provider: string; cost: number } | null>(null);
 
   // Safety check
   if (!summary.records || summary.records.length === 0) {
@@ -743,20 +796,21 @@ function ProviderConsumption({ summary, settings, colorByModel }: {
   
   try {
     summary.records.forEach((rec: UsageRecord & { ts?: number }) => {
-    const label = findProviderLabel(settings, rec.model, rec.provider, rec.baseUrl);
-    if (!providerColors.has(label)) {
-      providerColors.set(label, colors[providerColors.size % colors.length]);
+    const providerLabel = findProviderLabel(settings, rec.model, rec.provider, rec.baseUrl);
+    if (!providerColors.has(providerLabel)) {
+      providerColors.set(providerLabel, colors[providerColors.size % colors.length]);
     }
-    
-    const hourKey = new Date(rec.timestamp ?? rec.ts ?? 0).toISOString().slice(0, 13); // YYYY-MM-DDTHH
+
+    const hourDate = new Date(rec.timestamp ?? rec.ts ?? 0);
+    const hourKey = `${hourDate.getFullYear()}-${String(hourDate.getMonth() + 1).padStart(2, '0')}-${String(hourDate.getDate()).padStart(2, '0')}T${String(hourDate.getHours()).padStart(2, '0')}`;
     if (!byHourProvider.has(hourKey)) {
       byHourProvider.set(hourKey, new Map());
     }
-    
+
     const hourData = byHourProvider.get(hourKey)!;
-    // Match the exact provider first. Without baseUrl, identical model ids from
-    // 星/33/hanhe would incorrectly use the first provider's price.
-    const pricing = findModelPricing(settings, rec.model, undefined, rec.baseUrl);
+    // Resolve pricing with the complete ledger identity to avoid same-model
+    // price mismatches between providers/endpoints.
+    const pricing = findModelPricing(settings, rec.model, undefined, rec.baseUrl, rec.provider);
     const rawCost = pricing
       ? (rec.input / 1_000_000) * (pricing.inputPricePerM ?? 0)
         + (rec.output / 1_000_000) * (pricing.outputPricePerM ?? 0)
@@ -765,7 +819,7 @@ function ProviderConsumption({ summary, settings, colorByModel }: {
       : 0;
     const cost = Number.isFinite(rawCost) && rawCost >= 0 ? rawCost : 0;
     
-    hourData.set(label, (hourData.get(label) ?? 0) + cost);
+    hourData.set(providerLabel, (hourData.get(providerLabel) ?? 0) + cost);
   });
   } catch (error) {
     console.error('Provider consumption chart error:', error);
@@ -781,18 +835,22 @@ function ProviderConsumption({ summary, settings, colorByModel }: {
     );
   }
 
-  // Build timeline data
-  const providers = Array.from(providerColors.keys()).sort();
-  const hours = Array.from(byHourProvider.keys()).sort();
-  
-  // Only show last 24 hours
-  const recentHours = hours.slice(-24);
-  
-  const series = providers.map(provider => ({
-    label: provider,
-    color: providerColors.get(provider)!,
-    data: recentHours.map(hour => byHourProvider.get(hour)?.get(provider) ?? 0),
-  }));
+    const hours = summary.hourly.map((point) => point.startTs);
+    const hourKeys = hours.map((timestamp) => {
+      const date = new Date(timestamp);
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}`;
+    });
+    const providers = Array.from(providerColors.keys()).sort();
+
+    // The hourly summary is already filtered to the user's selected range.
+    // Render every bucket so 36h/48h selections are not silently truncated.
+    const recentHours = hourKeys;
+
+    const series = providers.map(provider => ({
+      label: provider,
+      color: providerColors.get(provider)!,
+      data: recentHours.map(hour => byHourProvider.get(hour)?.get(provider) ?? 0),
+    }));
 
   const maxCost = Math.max(0.00001, ...recentHours.map(hour =>
     providers.reduce((sum, p) => {
@@ -822,7 +880,7 @@ function ProviderConsumption({ summary, settings, colorByModel }: {
         <span className="usage-block-title">供应商消费趋势</span>
         {hover && (
           <span className="usage-heatmap-readout">
-            {formatHour(recentHours[parseInt(hover.hour)])} · {hover.provider}：¥{hover.cost.toFixed(2)}
+            {formatHour(recentHours[hover.hour])} · {hover.provider}：¥{hover.cost.toFixed(2)}
           </span>
         )}
         <span className="usage-heatmap-scale">
@@ -879,7 +937,7 @@ function ProviderConsumption({ summary, settings, colorByModel }: {
                 width={20}
                 height={chartH}
                 fill="transparent"
-                onMouseEnter={() => costs.length > 0 && setHover({ hour: String(i), provider: costs[0].provider, cost: costs.reduce((sum, c) => sum + c.cost, 0) })}
+                onMouseEnter={() => costs.length > 0 && setHover({ hour: i, provider: costs[0].provider, cost: costs.reduce((sum, c) => sum + c.cost, 0) })}
                 onMouseLeave={() => setHover(null)}
               />
               {costs.map(c => (
@@ -919,13 +977,19 @@ function ProviderConsumption({ summary, settings, colorByModel }: {
 //   2. Any provider with matching model + pricing
 //   3. Active provider with matching model (no pricing configured)
 //   4. Any provider with matching model (no pricing)
-function findModelPricing(settings: DesktopSettings | null, model: string, activeProviderId?: string, baseUrl?: string) {
+const LEGACY_PROVIDER_TYPES = new Set(['openai', 'anthropic', 'gemini', 'mock']);
+
+function findModelPricing(settings: DesktopSettings | null, model: string, activeProviderId?: string, baseUrl?: string, rawProvider?: string) {
   if (!settings) return null;
-  if (baseUrl) {
-    const provider = settings.providers.find((p) => p.baseUrl && p.baseUrl.replace(/\/$/, '') === baseUrl.replace(/\/$/, ''));
-    const exact = provider?.models?.find((m) => m.id === model);
-    if (exact) return exact;
-  }
+  const normalizedUrl = baseUrl?.replace(/\/+$/, '');
+  const exactProvider = settings.providers.find((p) => {
+    const providerUrl = p.baseUrl?.replace(/\/+$/, '');
+    return (normalizedUrl && providerUrl === normalizedUrl)
+      || (!normalizedUrl && rawProvider && (p.id === rawProvider || (LEGACY_PROVIDER_TYPES.has(rawProvider) && p.type === rawProvider)));
+  });
+  const exact = exactProvider?.models?.find((m) => m.id === model);
+  if (exact) return exact;
+
   let fallback: CustomModel | null = null;
   let activeFallback: CustomModel | null = null;
 
@@ -934,32 +998,37 @@ function findModelPricing(settings: DesktopSettings | null, model: string, activ
     for (const m of provider.models ?? []) {
       if (m.id !== model) continue;
       const hasPricing = m.inputPricePerM != null || m.outputPricePerM != null;
-      if (hasPricing && isActive) return m;          // best match: active + priced
-      if (hasPricing && !fallback) fallback = m;     // any priced match
-      if (!hasPricing && isActive && !activeFallback) activeFallback = m; // active, no price
+      if (hasPricing && isActive) return m;
+      if (hasPricing && !fallback) fallback = m;
+      if (!hasPricing && isActive && !activeFallback) activeFallback = m;
     }
   }
   return fallback ?? activeFallback;
 }
 
 // Find the custom provider label for a given model.
-// Priority: match by baseUrl first (most precise), then by model+pricing, finally raw provider string.
+// Exact ledger provider/baseUrl identity always wins; model-only matching is
+// retained only for legacy records that lack identity fields.
 function findProviderLabel(settings: DesktopSettings | null, model: string, rawProvider: string, baseUrl?: string): string {
   if (!settings) return rawProvider;
-  // 1. Exact baseUrl match — most reliable when available
-  if (baseUrl) {
-    const byUrl = settings.providers.find((p) => p.baseUrl && p.baseUrl.replace(/\/$/, '') === baseUrl.replace(/\/$/, ''));
+  const normalizedUrl = baseUrl?.replace(/\/+$/, '');
+  if (normalizedUrl) {
+    const byUrl = settings.providers.find((p) => p.baseUrl?.replace(/\/+$/, '') === normalizedUrl);
     if (byUrl) return byUrl.label || byUrl.id;
   }
-  // 2. Fall back to model+pricing priority
+  const byId = settings.providers.find((p) => p.id === rawProvider);
+  if (byId) return byId.label || byId.id;
+  if (LEGACY_PROVIDER_TYPES.has(rawProvider)) {
+    const byType = settings.providers.find((p) => p.type === rawProvider);
+    if (byType) return byType.label || byType.id;
+  }
+
   let fallbackLabel: string | null = null;
   for (const provider of settings.providers) {
-    const models = provider.models ?? [];
-    const match = models.find((m) => m.id === model);
+    const match = (provider.models ?? []).find((m) => m.id === model);
     if (!match) continue;
-    const hasPricing = match.inputPricePerM != null || match.outputPricePerM != null;
     const label = provider.label || provider.id;
-    if (hasPricing) return label;
+    if (match.inputPricePerM != null || match.outputPricePerM != null) return label;
     if (!fallbackLabel) fallbackLabel = label;
   }
   return fallbackLabel ?? rawProvider;
@@ -1022,7 +1091,7 @@ function CostTable({ summary, settings, colorByModel, activeProviderId }: {
           </thead>
           <tbody>
             {summary.models.map((m) => {
-              const pricing = findModelPricing(settings, m.model, activeProviderId ?? settings?.activeProviderId);
+              const pricing = findModelPricing(settings, m.model, activeProviderId ?? settings?.activeProviderId, m.baseUrl, m.provider);
               let cost = 0;
               let costOk = false;
               if (pricing) {
@@ -1044,10 +1113,10 @@ function CostTable({ summary, settings, colorByModel, activeProviderId }: {
               const callMode = inferCallMode(m.model);
               const lastUsedTime = m.lastUsed ? formatLastUsed(m.lastUsed) : '—';
               return (
-                <tr key={m.model}>
+                <tr key={usageKey(m)}>
                   <td>
-                    <span className="usage-cost-dot" style={{ background: colorByModel.get(m.model) }} />
-                    <code className="usage-cost-model">{m.model}</code>
+                    <span className="usage-cost-dot" style={{ background: colorByModel.get(usageKey(m)) }} />
+                    <code className="usage-cost-model">{usageLabel(m)}</code>
                   </td>
                   <td className="num">{formatTokens(m.total)}</td>
                   <td className="num">{formatTokens(m.input)}</td>
@@ -1126,6 +1195,8 @@ function DetailedRecordsTable({
   onPageChange, 
   onPageSizeChange,
   activeProviderId,
+  onExport,
+  exporting,
 }: {
   records: UsageRecordsResult;
   settings: DesktopSettings | null;
@@ -1134,6 +1205,8 @@ function DetailedRecordsTable({
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: 20 | 50 | 100) => void;
   activeProviderId?: string;
+  onExport: () => void;
+  exporting: boolean;
 }) {
   const totalPages = Math.ceil(records.total / pageSize);
   const startIndex = (page - 1) * pageSize + 1;
@@ -1146,6 +1219,9 @@ function DetailedRecordsTable({
         <span className="usage-heatmap-readout">
           共 {records.total} 条记录 · 价格需在 设置 → 模型 中配置
         </span>
+        <button type="button" className="usage-export-csv" onClick={onExport} disabled={exporting} title="导出当前时间窗口的全部记录为 CSV">
+          {exporting ? '导出中…' : '导出 CSV'}
+        </button>
       </div>
       <div className="usage-records-table-wrap">
         <table className="usage-records-table">
@@ -1166,7 +1242,7 @@ function DetailedRecordsTable({
           </thead>
           <tbody>
             {records.records.map((record, index) => {
-              const pricing = findModelPricing(settings, record.model, activeProviderId ?? settings?.activeProviderId);
+              const pricing = findModelPricing(settings, record.model, activeProviderId ?? settings?.activeProviderId, record.baseUrl, record.provider);
               let cost = 0;
               if (pricing) {
                 cost += (record.input / 1_000_000) * (pricing.inputPricePerM ?? 0);

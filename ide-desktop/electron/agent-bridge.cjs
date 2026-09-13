@@ -26,10 +26,44 @@ class AgentBridge extends EventEmitter {
     this.confirmPlan = options.confirmPlan === true;
     this.child = null;
     this.buffer = '';
+    // Every child process gets its own generation. A killed process can emit
+    // `exit` after a replacement has already been spawned; stale callbacks must
+    // never clear or report on the replacement child.
+    this.generation = 0;
+    this.readyGeneration = 0;
+    this.ready = false;
+    this.readyPromise = null;
+    this.readyResolve = null;
+    this.readyReject = null;
+    this.readyTimer = null;
   }
 
   start() {
-    if (this.child) return;
+    if (this.child) return this.readyPromise || Promise.resolve();
+    const generation = ++this.generation;
+    this.buffer = '';
+    this.readyGeneration = generation;
+    this.ready = false;
+    this.readyPromise = new Promise((resolve, reject) => {
+      this.readyResolve = resolve;
+      this.readyReject = reject;
+    });
+    // Callers that use the historical fire-and-forget start() API must not
+    // create an unhandled rejection if the child fails before bridge_ready.
+    this.readyPromise.catch(() => {});
+    this.readyTimer = setTimeout(() => {
+      if (this.generation !== generation || this.readyGeneration !== generation || this.ready) return;
+      const error = new Error('Timed out waiting for agent bridge_ready');
+      const child = this.child;
+      this.child = null;
+      this.generation += 1;
+      this.rejectReady(generation, error);
+      if (child && !child.killed) child.kill();
+      this.emit('event', { type: 'error', message: error.message });
+      this.emit('event', { type: 'agent_offline', code: -1 });
+    }, 15000);
+    if (typeof this.readyTimer.unref === 'function') this.readyTimer.unref();
+
     const args = [
       path.join(this.cliRoot, 'dist', 'src', 'index.js'),
       '--desktop-bridge',
@@ -61,26 +95,85 @@ class AgentBridge extends EventEmitter {
     const envVar = apiKeyEnvVar(this.provider);
     if (envVar && this.apiKey) env[envVar] = this.apiKey;
 
-    this.child = spawn(process.execPath, args, {
-      cwd: this.cliRoot,
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    let child;
+    try {
+      child = spawn(process.execPath, args, {
+        cwd: this.cliRoot,
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      this.generation += 1;
+      this.rejectReady(generation, error);
+      throw error;
+    }
+    this.attach(child, generation);
+    return this.readyPromise;
+  }
 
-    this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', (chunk) => this.handleStdout(chunk));
-    this.child.stderr.setEncoding('utf8');
-    this.child.stderr.on('data', (chunk) => {
+  /**
+   * Wire one child process into the bridge. Every handler closes over its own
+   * child AND its generation, so once cancel()/dispose()/restart replaces the
+   * child, all events from the stale process are dropped: the old bridge can
+   * never mark a freshly started one offline or leak old turn output.
+   */
+  attach(child, generation = ++this.generation) {
+    this.child = child;
+
+    child.stdout.setEncoding?.('utf8');
+    child.stdout.on('data', (chunk) => this.handleStdout(chunk, generation, child));
+    child.stderr.setEncoding?.('utf8');
+    child.stderr.on('data', (chunk) => {
+      // An old child may flush stderr after restart. Never surface stale errors
+      // or let them affect the replacement bridge.
+      if (generation !== this.generation || this.child !== child) return;
       const text = String(chunk);
-      // Suppress Node.js ExperimentalWarning lines — they are informational and
-      // must never surface as agent errors that block or corrupt the conversation.
-      if (text.includes('ExperimentalWarning') || text.includes('(node:') && text.includes('Warning:')) return;
-      this.emit('event', { type: 'error', message: redact(text) });
+      // Suppress Node.js ExperimentalWarning lines line-wise — they are
+      // informational and must never surface as agent errors. Matching per
+      // line keeps a real error that shares a chunk with a warning visible.
+      const lines = text.split(/\r?\n/);
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        if (line.includes('ExperimentalWarning') || (line.includes('(node:') && line.includes('Warning:'))) continue;
+        // The trailing explainer line Node/Electron prints after any warning
+        // ("(Use `electron --trace-warnings ...` to show where the warning was
+        // created)") is not an error either.
+        if (line.includes('--trace-warnings')) continue;
+        this.emit('event', { type: 'error', message: redact(line) });
+      }
     });
-    this.child.on('exit', (code) => {
-      this.emit('event', { type: 'agent_offline', code });
+    child.once('error', (error) => {
+      if (generation !== this.generation || this.child !== child) return;
       this.child = null;
+      this.generation += 1;
+      this.clearReadyWait(generation);
+      this.rejectReady(generation, error);
+      this.emit('event', { type: 'error', message: redact(error.message) });
+      this.emit('event', { type: 'agent_offline', code: -1 });
     });
+    child.once('exit', (code) => {
+      // The child that was cancelled/replaced is intentionally stale. Its exit
+      // event must not null out or report offline for the current generation.
+      if (generation !== this.generation || this.child !== child) return;
+      // Flush a trailing event that never received its newline before death;
+      // dropping it would silently lose e.g. the final turn_done.
+      this.flushStdoutBuffer();
+      this.child = null;
+      this.generation += 1;
+      this.clearReadyWait(generation);
+      this.rejectReady(generation, new Error(`Agent bridge exited before bridge_ready (code ${code ?? 'unknown'})`));
+      this.ready = false;
+      this.emit('event', { type: 'agent_offline', code });
+    });
+  }
+
+  async waitUntilReady() {
+    if (!this.child) throw new Error('Agent bridge is not running');
+    // Keep direct/manual AgentBridge users compatible: a child assigned without
+    // start() has no readiness handshake to await and is already usable.
+    if (this.ready || !this.readyPromise) return;
+    await this.readyPromise;
+    if (!this.child || !this.ready) throw new Error('Agent bridge is not ready');
   }
 
   send(command) {
@@ -88,7 +181,8 @@ class AgentBridge extends EventEmitter {
     this.child.stdin.write(`${JSON.stringify(command)}\n`);
   }
 
-  prompt(text, files, toolScope) {
+  async prompt(text, files, toolScope) {
+    await this.waitUntilReady();
     // Carry the current effort tier with each message so the live change takes
     // effect on the very next turn without restarting the child.
     const command = { type: 'user_message', text };
@@ -98,63 +192,103 @@ class AgentBridge extends EventEmitter {
     this.send(command);
   }
 
-  taskBoardAction(action, taskId) {
+  async taskBoardAction(action, taskId) {
+    await this.waitUntilReady();
     this.send({ type: 'task_board_action', action, taskId });
   }
 
-  automationTask(taskId, goal) {
+  async automationTask(taskId, goal) {
+    await this.waitUntilReady();
     this.send({ type: 'automation_task', taskId, goal });
   }
 
   setEffort(reasoningEffort) {
     this.reasoningEffort = reasoningEffort;
     // Update the running child too (no-op if not started; start() will pass it).
-    if (this.child && this.child.stdin.writable) {
+    if (this.child && this.ready && this.child.stdin.writable) {
       this.send({ type: 'set_effort', reasoningEffort });
     }
   }
 
   setToolScope(toolScope) {
     this.toolScope = toolScope;
-    if (this.child && this.child.stdin.writable) {
+    if (this.child && this.ready && this.child.stdin.writable) {
       this.send({ type: 'set_tool_scope', toolScope });
     }
   }
 
-  approve(requestId, decision) {
+  async approve(requestId, decision) {
+    await this.waitUntilReady();
     this.send({ type: 'approval_response', requestId, decision });
   }
 
   // Revert one turn's file writes by their CLI checkpoint ids. The CLI replies
-  // with an `undo_done` event carrying the real reverted count.
-  undo(checkpointIds) {
-    this.send({ type: 'undo', checkpointIds: Array.isArray(checkpointIds) ? checkpointIds : [] });
+  // with an `undo_done` event carrying the same undoId so the renderer can
+  // match the result back to the turn card that requested the undo.
+  async undo(checkpointIds, undoId) {
+    await this.waitUntilReady();
+    this.send({
+      type: 'undo',
+      undoId: undoId ?? `undo_${Date.now()}`,
+      checkpointIds: Array.isArray(checkpointIds) ? checkpointIds : [],
+    });
+  }
+
+  clearReadyWait(generation) {
+    if (generation !== undefined && generation !== this.readyGeneration) return;
+    if (this.readyTimer) clearTimeout(this.readyTimer);
+    this.readyTimer = null;
+  }
+
+  resolveReady(generation) {
+    if (generation !== this.readyGeneration || this.ready) return;
+    this.clearReadyWait(generation);
+    this.ready = true;
+    const resolve = this.readyResolve;
+    this.readyResolve = null;
+    this.readyReject = null;
+    if (resolve) resolve();
+  }
+
+  rejectReady(generation, error) {
+    if (generation !== this.readyGeneration) return;
+    this.clearReadyWait(generation);
+    const reject = this.readyReject;
+    this.readyResolve = null;
+    this.readyReject = null;
+    if (reject) reject(error);
   }
 
   cancel() {
-    if (!this.child) return;
-    // Kill the child first so the natural 'exit' handler does not fire
-    // agent_offline a second time after we emit it here.
     const child = this.child;
+    if (!child) return;
+    // Invalidate this generation before killing the process. Windows may emit
+    // `exit` after a replacement has spawned; its stale callback is ignored.
+    const generation = this.generation;
+    this.generation += 1;
     this.child = null;
-    child.kill();
+    this.ready = false;
+    this.rejectReady(generation, new Error('Agent bridge cancelled'));
+    if (!child.killed) killTree(child);
     // Emit turn_done synchronously so the UI stops the spinner immediately,
-    // then emit agent_offline so App.tsx sets agentStatus='offline' and the
-    // next prompt correctly re-starts the bridge instead of calling prompt()
-    // on a dead child.
+    // then emit agent_offline so the next prompt correctly starts a new bridge.
     this.emit('event', { type: 'turn_done', status: 'cancelled' });
     this.emit('event', { type: 'agent_offline', code: -1 });
   }
 
-  restart() {
+  async restart() {
     this.cancel();
-    this.start();
+    return this.start();
   }
 
   dispose() {
-    if (!this.child) return;
     const child = this.child;
+    if (!child) return;
+    const generation = this.generation;
+    this.generation += 1;
     this.child = null;
+    this.ready = false;
+    this.rejectReady(generation, new Error('Agent bridge disposed'));
     // Ask for a graceful shutdown, then guarantee termination. The CLI releases
     // its stdin on `shutdown`, but a hard-kill fallback avoids leaking a child
     // process if the graceful path stalls.
@@ -164,25 +298,63 @@ class AgentBridge extends EventEmitter {
       // stdin already closed; fall through to kill.
     }
     const killTimer = setTimeout(() => {
-      if (!child.killed) child.kill();
+      if (!child.killed) killTree(child);
     }, 1000);
     if (typeof killTimer.unref === 'function') killTimer.unref();
     child.once('exit', () => clearTimeout(killTimer));
   }
 
-  handleStdout(chunk) {
+  handleStdout(chunk, generation = this.generation, child = this.child) {
+    if (generation !== this.generation || child !== this.child) return;
     this.buffer += chunk;
     const lines = this.buffer.split(/\r?\n/);
     this.buffer = lines.pop() || '';
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
-        this.emit('event', normalizeCliEvent(JSON.parse(line)));
-      } catch (error) {
-        this.emit('event', { type: 'error', message: `Invalid agent event: ${error.message}` });
+        const event = normalizeCliEvent(JSON.parse(line));
+        if (event.type === 'bridge_ready') this.resolveReady(generation);
+        this.emit('event', event);
+      } catch {
+        // Not JSON: library chatter on stdout (tool progress logs like
+        // "[GraphBuilder] ...", dependency warnings). The protocol handshake is
+        // bridge_ready; a broken protocol surfaces as a start timeout, so
+        // chatty lines must not become conversation errors.
       }
     }
   }
+
+  /** Parse and emit any complete JSON line left in the buffer (child died). */
+  flushStdoutBuffer() {
+    const rest = this.buffer;
+    this.buffer = '';
+    if (!rest.trim()) return;
+    try {
+      this.emit('event', normalizeCliEvent(JSON.parse(rest)));
+    } catch {
+      // Trailing garbage without a newline — same policy as chatty lines.
+    }
+  }
+}
+
+/**
+ * Terminate a child and its whole process tree. `child.kill()` alone leaves
+ * CLI-spawned shell grandchildren running on Windows; taskkill /T reaches them.
+ */
+function killTree(child) {
+  if (!child.pid) {
+    child.kill?.();
+    return;
+  }
+  if (process.platform === 'win32') {
+    try {
+      spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      return;
+    } catch {
+      // taskkill unavailable — fall through to the plain kill.
+    }
+  }
+  child.kill?.();
 }
 
 function normalizeCliEvent(event) {

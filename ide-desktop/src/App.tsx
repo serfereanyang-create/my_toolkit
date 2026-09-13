@@ -1,30 +1,50 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { MessageSquare, Files as FilesIcon, Settings as SettingsIcon, Minimize2, AppWindow, PanelBottom, CalendarClock, PanelRight, GitBranch, LayoutDashboard, FileCode } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { matchAction, resolveBindings } from './lib/keybindings';
+import { MessageSquare, Files as FilesIcon, Settings as SettingsIcon, Minimize2, AppWindow, PanelBottom, CalendarClock, PanelRight, GitBranch, LayoutDashboard, FileCode, Gauge, Search, Braces, BookmarkCheck, History, BarChart3, StickyNote } from 'lucide-react';
 import { AutomationPanel } from './components/AutomationPanel';
+import { CodeReviewPanel } from './components/CodeReviewPanel';
 import { Composer } from './components/Composer';
 import { ConversationStream } from './components/ConversationStream';
+import { CoveragePanel } from './components/CoveragePanel';
 import { DiffReview } from './components/DiffReview/DiffReview';
-import { EditorView } from './components/Editor/EditorView';
+import { EditorView, type OpenFile } from './components/Editor/EditorView';
 import { FileTree } from './components/FileTree';
 import { GitPanel } from './components/GitPanel';
+import { HelpOverlay, type HelpOverlayTab } from './components/HelpOverlay';
 import { InfoPanel } from './components/InfoPanel';
+import { PerformancePanel } from './components/PerformancePanel';
 import { PreviewSidebar } from './components/Preview/PreviewSidebar';
+import { QualityDashboard } from './components/QualityDashboard';
+import { RefactorPanel } from './components/RefactorPanel';
 import { SideChatPanel } from './components/SideChatPanel';
 import { BrowserPanel } from './components/BrowserPanel';
 import { WorkDetailsPanel } from './components/WorkDetailsPanel';
+import { WorkspaceToolsPanel } from './components/WorkspaceToolsPanel';
 import { Rail } from './components/Rail';
+import { CommandPalette, buildCommands, type CommandEntry } from './components/CommandPalette';
+import { QuickOpen } from './components/QuickOpen';
+import { SearchPanel } from './components/SearchPanel';
+import { SnippetsPanel } from './components/SnippetsPanel';
+import { BookmarksPanel } from './components/BookmarksPanel';
+import { FileHistoryPanel } from './components/FileHistoryPanel';
+import { CodeStatsPanel } from './components/CodeStatsPanel';
+import { SessionNotesDrawer } from './components/SessionNotesDrawer';
 import { SettingsView, type SettingsNavId } from './components/Settings/SettingsView';
 import { TaskCard } from './components/TaskCard';
 import { Terminal } from './components/Terminal';
 import { TerminalFloat } from './components/TerminalFloat';
+import { ToastLayer } from './components/ToastLayer';
 import { Welcome } from './components/Welcome';
 import { desktop } from './lib/ipc';
 import { appReducer, initialState, languageForPath, sessionChangeTotals, activeTurnProgress, sessionToChat } from './lib/state';
 import { setLanguageWorkspaceRoot } from './lib/languageProviders';
+import { transcriptFileName, transcriptToMarkdown } from './lib/transcriptExport';
+import { loadRecent, rankRecent, touchRecent, type RecentFile } from './lib/recentFiles';
 import type { MentionItem } from './components/MentionPicker';
 import type { ApprovalMode, PreviewFileDescriptor, ProjectDescriptor, ReasoningEffort, SessionMeta, ThemeMode, ToolScope } from './types';
 
-type MainView = 'chat' | 'files' | 'git' | 'automation' | 'settings' | 'editor';
+type MainView = 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality';
+type QualityOverlay = 'review' | 'coverage' | 'performance' | 'refactor' | null;
 
 function applyTheme(theme: ThemeMode | undefined) {
   const resolved = theme === 'dark' || theme === 'light'
@@ -45,6 +65,12 @@ export default function App() {
   const [state, dispatch] = useReducer(appReducer, initialState);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [mainView, setMainView] = useState<MainView>('chat');
+  // Quality workspace: sub-panels open as overlays above the dashboard view.
+  const [qualityOverlay, setQualityOverlay] = useState<QualityOverlay>(null);
+  // Line-reveal request from quality panels into the Monaco editor.
+  const [pendingReveal, setPendingReveal] = useState<{ path: string; line: number } | null>(null);
+  // Versioned Help / What's New overlay (Rail help menu).
+  const [helpOverlay, setHelpOverlay] = useState<HelpOverlayTab | null>(null);
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const [booting, setBooting] = useState(true);
   const [settingsPage, setSettingsPage] = useState<SettingsNavId | undefined>(undefined);
@@ -54,8 +80,53 @@ export default function App() {
   const [terminalFloatOpen, setTerminalFloatOpen] = useState(false);
   // Info panel visibility
   const [infoPanelOpen, setInfoPanelOpen] = useState(false);
+  const [workspaceToolsOpen, setWorkspaceToolsOpen] = useState(false);
+  const [workspaceToolsWidth, setWorkspaceToolsWidth] = useState(420);
+  // Ctrl+O: Codex-style global expand/collapse of every tool step detail.
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  // Iteration 2: fuzzy command palette (Ctrl+Shift+P).
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Iteration 10: session notes drawer.
+  const [notesOpen, setNotesOpen] = useState(false);
+  // Iteration 13: recently-opened files (per workspace, localStorage-backed).
+  const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
+  // Iteration 17: Ctrl+P quick-open file palette.
+  const [quickOpen, setQuickOpen] = useState(false);
+  // Iteration 18: workspace session tags (sessionId -> tags[]).
+  const [sessionTags, setSessionTags] = useState<Record<string, string[]>>({});
+
+  // Reload tags when the workspace changes; they live in a workspace sidecar.
+  useEffect(() => {
+    if (!state.workspaceRoot) { setSessionTags({}); return; }
+    let cancelled = false;
+    desktop.tags.listAll().then((map) => { if (!cancelled) setSessionTags(map); }).catch(() => { /* sidecar unreadable: no tags */ });
+    return () => { cancelled = true; };
+  }, [state.workspaceRoot, sessions]);
+
+  async function handleSetTags(sessionId: string, tags: string[]) {
+    try {
+      const out = await desktop.tags.set(sessionId, tags);
+      if (!out.ok) {
+        dispatch({ type: 'agent/event', event: { type: 'error', message: `保存标签失败：${out.error ?? '未知错误'}` } });
+        return;
+      }
+      setSessionTags((prev) => {
+        const next = { ...prev };
+        if (tags.length === 0) delete next[sessionId];
+        else next[sessionId] = tags;
+        return next;
+      });
+    } catch (error) {
+      dispatch({ type: 'agent/event', event: { type: 'error', message: `保存标签失败：${cleanIpcError(error)}` } });
+    }
+  }
+
+  // Reload the recent list whenever the workspace changes (iteration 13).
+  useEffect(() => {
+    setRecentFiles(state.workspaceRoot ? rankRecent(loadRecent(state.workspaceRoot)) : []);
+  }, [state.workspaceRoot]);
   // Editor state
-  const [openFiles, setOpenFiles] = useState<Array<{ path: string; content: string; dirty: boolean; language: string }>>([]);
+  const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
   // Last-known on-disk mtime per open file, for external-change conflict checks.
   const diskMtimes = useRef<Map<string, number>>(new Map());
   // Deferred bridge restart: set when the user switches model mid-turn.
@@ -96,6 +167,16 @@ export default function App() {
         dispatch({ type: 'agent/status', status: 'starting' });
         try { await desktop.agent.restart(); } catch { /* next prompt retries */ }
       }
+      if (event.type === 'undo_done' && event.ok !== false && stateRef.current.workspaceRoot) {
+        // The reducer already flips the requesting turn to `undone`; now refresh
+        // the tree only after the CLI confirms the checkpoint restoration.
+        try {
+          const tree = await desktop.workspace.getTree('.');
+          dispatch({ type: 'tree/loaded', tree });
+        } catch {
+          // Undo state remains authoritative even when a best-effort tree reload fails.
+        }
+      }
       if (event.type === 'tool_result' && event.ok !== false) {
         // file-change events are reflected in the file tree only
         void event;
@@ -134,6 +215,9 @@ export default function App() {
   // UI scales. Falls back to the stylesheet defaults when unset.
   const uiFontSize = Number(state.settings?.preferences?.uiFontSize) || undefined;
   const codeFontSize = Number(state.settings?.preferences?.codeFontSize) || undefined;
+  const chineseFont = String(state.settings?.preferences?.uiChineseFont || 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif');
+  const englishFont = String(state.settings?.preferences?.uiEnglishFont || 'Inter, Segoe UI, system-ui, -apple-system, BlinkMacSystemFont, sans-serif');
+  const interfaceLanguage = String(state.settings?.preferences?.['gen.language'] || 'auto');
   useEffect(() => {
     const root = document.documentElement;
     if (uiFontSize) root.style.setProperty('--fs-base', `${uiFontSize}px`);
@@ -145,22 +229,98 @@ export default function App() {
     else root.style.removeProperty('--fs-code');
   }, [codeFontSize]);
 
+  // Apply the selected language-specific UI font stack immediately.
+  useEffect(() => {
+    const root = document.documentElement;
+    const systemIsChinese = /^zh/i.test(navigator.language);
+    const useChinese = interfaceLanguage === 'zh' || (interfaceLanguage === 'auto' && systemIsChinese);
+    root.style.setProperty('--font-ui-zh', chineseFont);
+    root.style.setProperty('--font-ui-en', englishFont);
+    root.style.setProperty('--font-ui', useChinese ? chineseFont : englishFont);
+    root.lang = useChinese ? 'zh-CN' : 'en';
+  }, [chineseFont, englishFont, interfaceLanguage]);
+
+  // 外观页 pointerCursor / reduceMotion 偏好 → <html data-*> 属性，驱动 CSS。
+  const pointerCursor = state.settings?.preferences?.['appearance.pointerCursor'] === true;
+  const reduceMotion = state.settings?.preferences?.['appearance.reduceMotion'];
+  useEffect(() => {
+    const root = document.documentElement;
+    if (pointerCursor) root.setAttribute('data-pointer-cursor', 'true');
+    else root.removeAttribute('data-pointer-cursor');
+    // 'on' 强制减动效；'system'/'off' 交给 OS prefers-reduced-motion。
+    if (reduceMotion === 'on') root.setAttribute('data-reduce-motion', 'on');
+    else root.removeAttribute('data-reduce-motion');
+  }, [pointerCursor, reduceMotion]);
+
   // Global keyboard shortcuts advertised by the launcher and shortcuts page.
+  const workspaceToolsRef = useRef({ open: false, browserOpen: false, sideChatOpen: false });
+  workspaceToolsRef.current = { open: workspaceToolsOpen, browserOpen: state.browserOpen, sideChatOpen: state.sideChatOpen };
+  const openWorkspaceTools = useCallback(() => {
+    const snapshot = workspaceToolsRef.current;
+    if (!snapshot.open) {
+      if (snapshot.browserOpen) dispatch({ type: 'browser/toggle' });
+      if (snapshot.sideChatOpen) dispatch({ type: 'sidechat/toggle' });
+      setWorkspaceToolsOpen(true);
+    }
+  }, [dispatch]);
+  // ── Global shortcuts (iteration 19: user-rebindable) ───────────────────
+  // Overrides load once at boot and refresh when the settings page writes
+  // new ones (zcode:keybindings-changed). matchAction resolves the owner
+  // action id; each case below mirrors what the old hardcoded chain did.
+  const [keybindOverrides, setKeybindOverrides] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    desktop.keybindings.get().then((map) => { if (alive) setKeybindOverrides(map); }).catch(() => { /* defaults stand */ });
+    function onChanged() {
+      desktop.keybindings.get().then((map) => setKeybindOverrides(map)).catch(() => undefined);
+    }
+    window.addEventListener('zcode:keybindings-changed', onChanged);
+    return () => { alive = false; window.removeEventListener('zcode:keybindings-changed', onChanged); };
+  }, []);
+  const keyBindings = useMemo(() => resolveBindings(keybindOverrides), [keybindOverrides]);
+  const keyBindingsRef = useRef(keyBindings);
+  keyBindingsRef.current = keyBindings;
+
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      const mod = event.ctrlKey || event.metaKey;
-      if (!mod) return;
-      const key = event.key.toLowerCase();
-      if (key === 'p' && !event.altKey) { event.preventDefault(); setMainView('files'); return; }
-      if (key === 't' && !event.altKey) { event.preventDefault(); dispatch({ type: 'bottom/toggle' }); return; }
-      if (key === 'n' && !event.altKey) { event.preventDefault(); dispatch({ type: 'chat/clear' }); setMainView('chat'); return; }
-      if (key === ',' && !event.altKey) { event.preventDefault(); setMainView('settings'); return; }
-      if (key === 's' && event.altKey) { event.preventDefault(); dispatch({ type: 'sidechat/toggle' }); return; }
-      if (key === 'b' && event.altKey) { event.preventDefault(); dispatch({ type: 'browser/toggle' }); return; }
+      if (!event.ctrlKey && !event.metaKey && !event.altKey) return;
+      const action = matchAction(event, keyBindingsRef.current);
+      if (!action) return;
+      // Ctrl+Alt+W keeps the old "not while typing" guard — it would eat
+      // AltGr dead-keys in editors otherwise.
+      if (action === 'workspace-tools') {
+        const target = event.target as HTMLElement | null;
+        const inEditable = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+        if (inEditable) return;
+      }
+      event.preventDefault();
+      switch (action) {
+        case 'palette': setPaletteOpen((v) => !v); return;
+        case 'quick-open':
+          // Iteration 17: quick-open when a workspace is loaded; with none
+          // open it falls back to the explorer view.
+          if (stateRef.current.workspaceRoot) setQuickOpen(true);
+          else setMainView('files');
+          return;
+        case 'search-workspace': setMainView('search'); return;
+        case 'bookmarks-view': setMainView('bookmarks'); return;
+        case 'settings': setMainView('settings'); return;
+        case 'toggle-terminal': dispatch({ type: 'bottom/toggle' }); return;
+        case 'new-chat': dispatch({ type: 'chat/clear' }); setMainView('chat'); return;
+        case 'toggle-details': setDetailsExpanded((v) => !v); return;
+        case 'side-chat': setWorkspaceToolsOpen(false); dispatch({ type: 'sidechat/toggle' }); return;
+        case 'browser': setWorkspaceToolsOpen(false); dispatch({ type: 'browser/toggle' }); return;
+        case 'workspace-tools': {
+          const snapshot = workspaceToolsRef.current;
+          if (snapshot.open) setWorkspaceToolsOpen(false);
+          else openWorkspaceTools();
+          return;
+        }
+      }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [openWorkspaceTools]);
 
   // Editor tabs belong to a workspace. On any workspace change, drop them all
   // (and their disk watchers) so saves/watch events can't touch the old tree.
@@ -174,6 +334,24 @@ export default function App() {
   }
 
   async function openWorkspace() {
+    // Unsaved edits die with the old workspace's tabs. Ask BEFORE the native
+    // dialog so declining never leaves main/renderer root state inconsistent.
+    const dirtyCount = openFilesRef.current.filter((file) => file.dirty).length;
+    if (dirtyCount > 0) {
+      const proceed = window.confirm(
+        `${dirtyCount} 个文件有未保存的修改。\n切换工作区将丢弃这些修改，是否继续？`,
+      );
+      if (!proceed) return;
+    }
+    // Switching workspaces while the agent is running would leave it writing to
+    // the old project tree. The CLI child must die with the old workspace.
+    if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
+      const proceed = window.confirm(
+        '智能体正在当前工作区执行任务。\n\n切换工作区将中断任务，已执行的部分会保留。\n\n是否继续？'
+      );
+      if (!proceed) return;
+      try { await desktop.agent.restart(); } catch { /* already dead */ }
+    }
     const result = await desktop.workspace.open();
     if (!result.canceled && result.root) {
       resetEditorTabs();
@@ -237,7 +415,8 @@ export default function App() {
   }
 
   async function saveActiveFile() {
-    // No-op: editor removed
+    const file = activeFile ? openFilesRef.current.find((candidate) => candidate.path === activeFile) : undefined;
+    if (file) await handleSaveFile(file.path, file.content);
   }
 
   // Editor handlers
@@ -281,43 +460,72 @@ export default function App() {
       language: detectLanguage(path),
     };
 
+    // Iteration 13: remember the file per workspace for the rail quick list.
+    setRecentFiles(rankRecent(touchRecent(stateRef.current.workspaceRoot, path, fileContent.length)));
+
     setOpenFiles(prev => [...prev, newFile]);
     setActiveFile(path);
     setMainView('editor');
   }
 
+  /** Open a file from a quality panel and reveal a 1-based line in Monaco. */
+  async function handleOpenFileAtLine(path: string, line?: number) {
+    await handleOpenFile(path);
+    if (line && Number.isFinite(line) && line >= 1) {
+      setPendingReveal({ path, line: Math.floor(line) });
+    }
+  }
+
   async function handleSaveFile(path: string, content: string) {
-    // Conflict guard: if the file changed on disk after we opened/last synced
-    // it (e.g. the agent rewrote it), refuse to silently clobber those edits.
-    const disk = await desktop.editor.stat(path);
-    const known = diskMtimes.current.get(path);
-    if (disk.ok && known && disk.mtimeMs !== known) {
-      const reload = window.confirm(
-        '文件在你编辑期间被外部修改（可能是 agent 写入）。\n' +
-        '确定 = 覆盖外部修改并保存我的版本\n取消 = 丢弃我的编辑，加载磁盘上的最新内容'
-      );
-      if (!reload) {
-        const fresh = await desktop.editor.readFile(path);
-        if (fresh.ok && fresh.content !== undefined) {
-          const newContent = fresh.content;
-          setOpenFiles(prev => prev.map(f => f.path === path ? { ...f, content: newContent, dirty: false } : f));
-          diskMtimes.current.set(path, disk.mtimeMs!);
-        }
+    try {
+      // Conflict guard: if the file changed on disk after we opened/last synced
+      // it (e.g. the agent rewrote it), refuse to silently clobber those edits.
+      const file = openFilesRef.current.find((candidate) => candidate.path === path);
+      const disk = await desktop.editor.stat(path);
+      const known = diskMtimes.current.get(path);
+      if (known !== undefined && (!disk.ok || disk.mtimeMs === undefined)) {
+        alert('无法确认文件是否被外部修改，已取消保存以保护你的本地编辑。');
         return;
       }
-    }
-    const result = await desktop.editor.saveFile(path, content);
-    if (!result.ok) {
-      alert(`保存失败: ${result.error || '未知错误'}`);
-      return;
-    }
-    const after = await desktop.editor.stat(path);
-    if (after.ok && after.mtimeMs !== undefined) diskMtimes.current.set(path, after.mtimeMs);
+      const changedOnDisk = disk.ok && known !== undefined && disk.mtimeMs !== known;
+      if (file?.stale || changedOnDisk) {
+        const reload = window.confirm(
+          '文件在你编辑期间被外部修改（可能是 agent 写入）。\n' +
+          '确定 = 覆盖外部修改并保存我的版本\n取消 = 丢弃我的编辑，加载磁盘上的最新内容'
+        );
+        if (!reload) {
+          const fresh = await desktop.editor.readFile(path);
+          if (fresh.ok && fresh.content !== undefined) {
+            const newContent = fresh.content;
+            setOpenFiles(prev => prev.map(f => f.path === path ? {
+              ...f,
+              content: newContent,
+              dirty: false,
+              external: undefined,
+              stale: false,
+            } : f));
+            if (disk.mtimeMs !== undefined) diskMtimes.current.set(path, disk.mtimeMs);
+          }
+          return;
+        }
+      }
+      const result = await desktop.editor.saveFile(path, content);
+      if (!result.ok) {
+        alert(`保存失败: ${result.error || '未知错误'}`);
+        return;
+      }
+      const after = await desktop.editor.stat(path);
+      if (after.ok && after.mtimeMs !== undefined) diskMtimes.current.set(path, after.mtimeMs);
 
-    // Mark as not dirty
-    setOpenFiles(prev => prev.map(f =>
-      f.path === path ? { ...f, content, dirty: false } : f
-    ));
+      // Mark as not dirty. Clear any stale snapshot only after the write succeeds.
+      setOpenFiles(prev => prev.map(f =>
+        f.path === path ? { ...f, content, dirty: false, external: undefined, stale: false } : f
+      ));
+    } catch (error) {
+      // Keep the tab dirty when IPC itself fails (rather than treating a
+      // rejected save as if the file had been written).
+      alert(`保存失败: ${cleanIpcError(error)}`);
+    }
   }
 
   function handleCloseFile(path: string) {
@@ -335,9 +543,9 @@ export default function App() {
     });
   }
 
-  // External file changes (agent writes, git checkout): auto-reload in the
-  // editor unless the user has unsaved edits in that tab — then mark stale and
-  // let them choose on save via the conflict guard.
+  // External file changes (agent writes, git checkout): reload clean tabs, but
+  // preserve dirty local content and keep the latest disk snapshot as stale
+  // metadata so a later save can make an explicit overwrite decision.
   const openFilesRef = useRef(openFiles);
   openFilesRef.current = openFiles;
   useEffect(() => {
@@ -347,20 +555,28 @@ export default function App() {
       const fresh = await desktop.editor.readFile(path);
       if (!fresh.ok || fresh.content === undefined) return;
       const stat = await desktop.editor.stat(path);
-      if (stat.ok && stat.mtimeMs !== undefined) diskMtimes.current.set(path, stat.mtimeMs);
+      const mtimeMs = stat.ok ? stat.mtimeMs : undefined;
+      if (mtimeMs !== undefined) diskMtimes.current.set(path, mtimeMs);
       const newContent = fresh.content;
-      setOpenFiles((prev) => prev.map((f) =>
-        f.path === path
-          ? { ...f, content: newContent, dirty: f.dirty && f.content !== newContent }
-          : f,
-      ));
+      setOpenFiles((prev) => prev.map((f) => {
+        if (f.path !== path) return f;
+        if (!f.dirty) {
+          return { ...f, content: newContent, external: undefined, stale: false };
+        }
+        // Do not replace the Monaco value while the user has local edits.
+        return {
+          ...f,
+          external: { content: newContent, mtimeMs },
+          stale: f.content !== newContent,
+        };
+      }));
     });
     return unsub;
   }, []);
 
   function handleContentChange(path: string, content: string) {
     setOpenFiles(prev => prev.map(f =>
-      f.path === path ? { ...f, content, dirty: true } : f
+      f.path === path ? { ...f, content, dirty: true, stale: f.stale } : f
     ));
   }
 
@@ -557,6 +773,59 @@ export default function App() {
     // where prompt() would throw "Agent bridge is not running".
   }
 
+  // ── Command palette (iteration 2) ────────────────────────────────────────
+  // Iteration 14: transcript export now flows through the shared Markdown
+  // serializer (lib/transcriptExport) instead of an ad-hoc loop. "Copy" sends
+  // the document to the clipboard; "Save" also writes it into the workspace
+  // under .aicode/exports/ so it survives the session.
+  async function exportChatMarkdown(saveToFile: boolean) {
+    try {
+      const title = stateRef.current.taskSummary?.title;
+      const markdown = transcriptToMarkdown(stateRef.current.chat, {
+        title,
+        workspaceRoot: stateRef.current.workspaceRoot,
+      });
+      if (!saveToFile) {
+        await desktop.clipboard.write(markdown);
+        return;
+      }
+      const name = transcriptFileName(title).replace(/[^A-Za-z0-9._-]/g, '');
+      await desktop.fs.write(`.aicode/exports/${name}`, markdown);
+      dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: `会话已导出到 \`.aicode/exports/${name}\`。` } });
+    } catch (error) {
+      dispatch({ type: 'agent/event', event: { type: 'error', message: `导出失败：${cleanIpcError(error)}` } });
+    }
+  }
+
+  function setThemeMode(mode: 'light' | 'dark' | 'system') {
+    const current = stateRef.current.settings;
+    if (!current) return;
+    const next = { ...current, preferences: { ...current.preferences, theme: mode } };
+    void saveSettings(next);
+    applyTheme(mode);
+  }
+
+  const paletteCommands: CommandEntry[] = buildCommands({
+    state,
+    go: (view) => setMainView(view as MainView),
+    newChat: () => { dispatch({ type: 'chat/clear' }); setMainView('chat'); },
+    toggleTerminal: () => dispatch({ type: 'bottom/toggle' }),
+    toggleDetails: () => setDetailsExpanded((v) => !v),
+    toggleSideChat: () => { setWorkspaceToolsOpen(false); dispatch({ type: 'sidechat/toggle' }); },
+    toggleBrowser: () => { setWorkspaceToolsOpen(false); dispatch({ type: 'browser/toggle' }); },
+    toggleWorkDetails: () => dispatch({ type: 'work/toggle' }),
+    togglePreview: () => dispatch({ type: 'preview/toggle' }),
+    toggleNotes: () => { setNotesOpen((v) => !v); setMainView('chat'); },
+    openSettings: (page) => { setSettingsPage(page as SettingsNavId | undefined); setMainView('settings'); },
+    openWorkspace: () => { void openWorkspace(); },
+    openQuickOpen: () => setQuickOpen(true),
+    openHelp: () => setHelpOverlay('help'),
+    cancelTurn: () => { void cancelTurn(); },
+    setTheme: setThemeMode,
+    exportChat: () => { void exportChatMarkdown(false); },
+    saveChatFile: () => { void exportChatMarkdown(true); },
+  });
+
   async function approve(requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') {
     const approval = stateRef.current.chat.find((item) => item.kind === 'approval' && item.requestId === requestId);
     if ((approval?.kind === 'approval' && approval.decided) || approvingRequests.current.has(requestId)) return;
@@ -581,15 +850,9 @@ export default function App() {
     if (checkpointIds.length === 0) return;
     dispatch({ type: 'turn/undo-state', turnId, undo: 'undoing' });
     try {
-      const result = await desktop.agent.undo(checkpointIds);
-      dispatch({ type: 'turn/undo-state', turnId, undo: result.ok ? 'undone' : 'failed' });
-      if (result.ok) {
-        // Refresh the file tree so reverted content shows.
-        if (stateRef.current.workspaceRoot) {
-          const tree = await desktop.workspace.getTree('.');
-          dispatch({ type: 'tree/loaded', tree });
-        }
-      }
+      // IPC 成功仅表示命令已送入 CLI。保留 undoing，等待 CLI 的
+      // `undo_done` 事件按同一个 turnId 写入真实的 undone/failed 结果。
+      await desktop.agent.undo(checkpointIds, turnId);
     } catch {
       dispatch({ type: 'turn/undo-state', turnId, undo: 'failed' });
     }
@@ -600,6 +863,10 @@ export default function App() {
     // writing files "in the background" with the UI showing an empty chat.
     // Restart the bridge so the old turn dies with its process.
     if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
+      const proceed = window.confirm(
+        '智能体正在工作中。\n\n切换到新对话将中断当前任务，已执行的部分会保留在历史记录中。\n\n是否继续？'
+      );
+      if (!proceed) return;
       void desktop.agent.restart();
     }
     // The CLI persists the live session to .aicode/sessions as it runs, so a
@@ -613,7 +880,11 @@ export default function App() {
     // Same guard as newChat: never leave a live bridge attached while the UI
     // swaps to a different session — events from the old turn would bleed in.
     if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
-      try { await desktop.agent.restart(); } catch { /* next prompt will retry start */ }
+      const proceed = window.confirm(
+        '智能体正在工作中。\n\n切换会话将中断当前任务，已执行的部分会保留在历史记录中。\n\n是否继续？'
+      );
+      if (!proceed) return;
+      try { await desktop.agent.restart(); } catch { /* old bridge already dead */ }
     }
     try {
       const record = await desktop.sessions.load(id);
@@ -630,13 +901,30 @@ export default function App() {
       case 'continue-chat':
         await openSession(sessionId);
         return;
+      case 'export-md': {
+        // Iteration 14: export any listed session — load its record through
+        // the same converter the open flow uses, then share the serializer.
+        try {
+          const record = await desktop.sessions.load(sessionId);
+          const markdown = transcriptToMarkdown(sessionToChat(record), {
+            title: meta?.title,
+            workspaceRoot: stateRef.current.workspaceRoot,
+          });
+          await desktop.clipboard.write(markdown);
+        } catch {
+          dispatch({ type: 'agent/event', event: { type: 'error', message: '导出失败：无法读取会话记录' } });
+        }
+        return;
+      }
       case 'remove':
         await desktop.sessions.delete(sessionId);
+        void desktop.tags.remove(sessionId).catch(() => undefined); // best-effort sidecar cleanup
         if (stateRef.current.activeSessionId === sessionId) dispatch({ type: 'chat/clear' });
         refreshSessions();
         return;
       case 'archive':
         await desktop.sessions.archive(sessionId, true);
+        void desktop.tags.remove(sessionId).catch(() => undefined); // archived sessions leave the visible list
         if (stateRef.current.activeSessionId === sessionId) dispatch({ type: 'chat/clear' });
         refreshSessions();
         return;
@@ -677,8 +965,12 @@ export default function App() {
     if (id === 'files') { setMainView('files'); return; }
     // terminal from ChatLauncher → floating window
     if (id === 'terminal') { setTerminalFloatOpen(true); return; }
-    if (id === 'side-chat') { dispatch({ type: 'sidechat/toggle' }); return; }
-    if (id === 'browser') { dispatch({ type: 'browser/toggle' }); return; }
+    if (id === 'side-chat') { setWorkspaceToolsOpen(false); dispatch({ type: 'sidechat/toggle' }); return; }
+    if (id === 'browser') { setWorkspaceToolsOpen(false); dispatch({ type: 'browser/toggle' }); return; }
+    if (id === 'workspace-tools') {
+      openWorkspaceTools();
+      return;
+    }
     dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: `未知操作：${id}` } });
   }
 
@@ -690,23 +982,40 @@ export default function App() {
 
   if (mainView === 'settings' && state.settings) {
     return (
-      <SettingsView
-        settings={state.settings}
-        onBack={() => setMainView('chat')}
-        onSave={saveSettings}
-        onSaveKey={saveApiKey}
-        initialPage={settingsPage}
-      />
+      <>
+        <SettingsView
+          settings={state.settings}
+          onBack={() => setMainView('chat')}
+          onSave={saveSettings}
+          onSaveKey={saveApiKey}
+          initialPage={settingsPage}
+        />
+        {paletteOpen && (
+          <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
+        )}
+        <QuickOpen
+          open={quickOpen}
+          workspaceRoot={state.workspaceRoot}
+          onClose={() => setQuickOpen(false)}
+          onPick={(path) => { void handleOpenFileAtLine(path); }}
+        />
+      </>
     );
   }
 
   const titleMap: Record<MainView, { icon: JSX.Element; label: string }> = {
     chat: { icon: <MessageSquare size={16} />, label: '对话' },
     files: { icon: <FilesIcon size={16} />, label: '文件' },
+    search: { icon: <Search size={16} />, label: '搜索' },
+    snippets: { icon: <Braces size={16} />, label: '片段库' },
+    bookmarks: { icon: <BookmarkCheck size={16} />, label: '书签' },
+    history: { icon: <History size={16} />, label: '历史' },
+    stats: { icon: <BarChart3 size={16} />, label: '代码普查' },
     git: { icon: <GitBranch size={16} />, label: 'Git' },
     automation: { icon: <CalendarClock size={16} />, label: '自动化' },
     settings: { icon: <SettingsIcon size={16} />, label: '设置' },
     editor: { icon: <FileCode size={16} />, label: '编辑器' },
+    quality: { icon: <Gauge size={16} />, label: '质量' },
   };
 
   return (
@@ -719,6 +1028,7 @@ export default function App() {
         gridTemplateColumns: `280px minmax(0,1fr) ${
           state.browserOpen ? `${state.browserWidth}px`
           : state.sideChatOpen ? `${state.sideChatWidth}px`
+          : workspaceToolsOpen ? `${workspaceToolsWidth}px`
           : 'auto'
         }`,
       } as React.CSSProperties}
@@ -726,19 +1036,20 @@ export default function App() {
       <Rail
         state={state}
         sessions={sessions}
+        sessionTags={sessionTags}
+        recentFiles={recentFiles}
         mainView={mainView}
         onNewChat={newChat}
         onOpenWorkspace={openWorkspace}
         onSelectView={setMainView}
+        onOpenRecent={(p) => { void handleOpenFile(p); }}
+        onSetTags={(id, tags) => { void handleSetTags(id, tags); }}
         onHelpAction={(action) => {
-          // UI-only for now: settings opens the settings view; others echo a note.
+          // 'extensions' jumps to settings; the rest open the versioned
+          // Help / What's New overlay; shortcuts land on the real page.
           if (action === 'extensions') { setMainView('settings'); return; }
-          const labels: Record<string, string> = {
-            'whats-new': '新功能',
-            shortcuts: '键盘快捷键：Enter 发送 · Shift+Enter 换行 · Esc 关闭菜单',
-            help: '帮助文档即将上线。',
-          };
-          dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: labels[action] ?? action } });
+          if (action === 'shortcuts') { setSettingsPage('shortcuts'); setMainView('settings'); return; }
+          if (action === 'whats-new' || action === 'help') { setHelpOverlay(action); return; }
         }}
         onConvoAction={handleConvoAction}
         onOpenSession={openSession}
@@ -758,6 +1069,9 @@ export default function App() {
             <button className={`main-tab ${mainView === 'chat' ? 'active' : ''}`} onClick={() => setMainView('chat')}>对话</button>
             <button className={`main-tab ${mainView === 'editor' ? 'active' : ''}`} onClick={() => setMainView('editor')}>编辑器</button>
             {openFiles.length > 0 && <span className="main-tab-badge">{openFiles.length}</span>}
+            <button className={`main-tab ${mainView === 'quality' ? 'active' : ''}`} onClick={() => setMainView('quality')}>
+              <Gauge size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />质量
+            </button>
           </div>
           <div className="window-controls">
             <button className="window-control" title="最小化" onClick={() => void desktop.window.minimize()}><Minimize2 size={15} /></button>
@@ -769,19 +1083,28 @@ export default function App() {
             >
               <LayoutDashboard size={15} />
             </button>
-            <button
-              className={`window-control ${state.bottomOpen ? 'active' : ''}`}
-              title="底部面板"
-              onClick={() => dispatch({ type: 'bottom/toggle' })}
-            >
-              <PanelBottom size={15} />
-            </button>
+            {state.settings?.preferences?.['gen.bottomPanel'] !== false && (
+              <button
+                className={`window-control ${state.bottomOpen ? 'active' : ''}`}
+                title="底部面板"
+                onClick={() => dispatch({ type: 'bottom/toggle' })}
+              >
+                <PanelBottom size={15} />
+              </button>
+            )}
             <button
               className={`window-control ${state.preview.open ? 'active' : ''}`}
               title="预览栏"
               onClick={() => dispatch({ type: 'preview/toggle' })}
             >
               <PanelRight size={15} />
+            </button>
+            <button
+              className={`window-control ${notesOpen ? 'active' : ''}`}
+              title="会话笔记"
+              onClick={() => setNotesOpen((v) => !v)}
+            >
+              <StickyNote size={15} />
             </button>
           </div>
         </div>
@@ -795,6 +1118,9 @@ export default function App() {
             onUndo={undoTurn}
             onOpenFile={handleOpenFile}
             dispatch={dispatch}
+            expandAll={detailsExpanded}
+            onPickCommand={(command) => setPrefill({ text: `${command} `, nonce: Date.now() })}
+            onCancel={cancelTurn}
           />
         )}
 
@@ -808,7 +1134,40 @@ export default function App() {
 
         {mainView === 'files' && (
           <div className="secondary">
-            <FileTree tree={state.tree} onOpenFile={handleOpenFile} />
+            <FileTree tree={state.tree} workspaceRoot={state.workspaceRoot} onOpenFile={handleOpenFile} />
+          </div>
+        )}
+
+        {mainView === 'search' && (
+          <div className="secondary">
+            <SearchPanel workspaceRoot={state.workspaceRoot} onOpenHit={(p, line) => { void handleOpenFileAtLine(p, line); }} onOpenSession={(id) => { void openSession(id); }} />
+          </div>
+        )}
+
+        {mainView === 'snippets' && (
+          <div className="secondary">
+            <SnippetsPanel onInsert={(bodyText) => {
+              setPrefill({ text: bodyText, nonce: Date.now() });
+              setMainView('chat');
+            }} />
+          </div>
+        )}
+
+        {mainView === 'bookmarks' && (
+          <div className="secondary">
+            <BookmarksPanel onJump={(p, line) => { void handleOpenFileAtLine(p, line); }} />
+          </div>
+        )}
+
+        {mainView === 'history' && (
+          <div className="secondary">
+            <FileHistoryPanel onOpenFile={(p) => { void handleOpenFile(p); }} />
+          </div>
+        )}
+
+        {mainView === 'stats' && (
+          <div className="secondary">
+            <CodeStatsPanel onOpenFile={(p, line) => { void handleOpenFileAtLine(p, line); }} />
           </div>
         )}
 
@@ -820,6 +1179,82 @@ export default function App() {
 
         {mainView === 'automation' && <AutomationPanel />}
 
+        {mainView === 'quality' && (
+          <div className="quality-view">
+            <div className="quality-launcher">
+              <button onClick={() => setQualityOverlay('review')}>代码审查</button>
+              <button onClick={() => setQualityOverlay('coverage')}>测试覆盖率</button>
+              <button onClick={() => setQualityOverlay('performance')}>性能分析</button>
+              <button onClick={() => setQualityOverlay('refactor')}>重构</button>
+            </div>
+            <QualityDashboard
+              visible
+              onClose={() => setMainView('chat')}
+              onOpenFile={handleOpenFileAtLine}
+            />
+          </div>
+        )}
+
+        {/* Quality sub-panels: overlay layers above any main view. */}
+        <CodeReviewPanel
+          visible={qualityOverlay === 'review'}
+          onClose={() => setQualityOverlay(null)}
+          file={activeFile ?? undefined}
+          code={activeFile ? openFiles.find(f => f.path === activeFile)?.content : undefined}
+        />
+        <CoveragePanel
+          visible={qualityOverlay === 'coverage'}
+          onClose={() => setQualityOverlay(null)}
+          onOpenFile={handleOpenFileAtLine}
+        />
+        <PerformancePanel
+          visible={qualityOverlay === 'performance'}
+          onClose={() => setQualityOverlay(null)}
+          file={activeFile ?? undefined}
+        />
+        <RefactorPanel
+          visible={qualityOverlay === 'refactor'}
+          onClose={() => setQualityOverlay(null)}
+          onApplied={() => {
+            // 重构由 CLI 直接写盘。重读所有打开的 tab，让编辑器与磁盘一致；
+            // 未打开的文件无需处理（下次打开时自然读到新内容）。
+            for (const file of openFilesRef.current) {
+              void (async () => {
+                try {
+                  const result = await desktop.editor.readFile(file.path);
+                  if (!result?.ok || typeof result.content !== 'string') return;
+                  const content = result.content;
+                  setOpenFiles((prev) => prev.map((f) => (f.path === file.path ? { ...f, content, dirty: false, stale: false } : f)));
+                  diskMtimes.current.delete(file.path);
+                } catch { /* 文件可能被重命名，忽略 */ }
+              })();
+            }
+          }}
+        />
+
+        {/* Versioned Help / What's New content (Rail help menu). */}
+        {helpOverlay && (
+          <HelpOverlay initialTab={helpOverlay} onClose={() => setHelpOverlay(null)} />
+        )}
+
+        {/* Command palette (Ctrl+Shift+P, iteration 2). */}
+        {paletteOpen && (
+          <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
+        )}
+
+        {/* Quick-open file palette (Ctrl+P, iteration 17). */}
+        <QuickOpen
+          open={quickOpen}
+          workspaceRoot={state.workspaceRoot}
+          onClose={() => setQuickOpen(false)}
+          onPick={(path) => { void handleOpenFileAtLine(path); }}
+        />
+
+        {/* Session notes drawer (iteration 10) — chat view only. */}
+        {notesOpen && mainView === 'chat' && (
+          <SessionNotesDrawer sessionId={state.activeSessionId} onClose={() => setNotesOpen(false)} />
+        )}
+
         {mainView === 'editor' && (
           <EditorView
             openFiles={openFiles}
@@ -829,6 +1264,15 @@ export default function App() {
             onCloseFile={handleCloseFile}
             onContentChange={handleContentChange}
             onSetActive={handleSetActiveFile}
+            editorOptions={{
+              fontSize: Number(state.settings?.preferences?.codeFontSize) || 13,
+              fontFamily: "'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', 'Noto Sans Mono CJK SC', Consolas, monospace",
+              tabSize: Number(state.settings?.preferences?.editorTabSize) || 2,
+              minimap: state.settings?.preferences?.editorMinimap !== false,
+              wordWrap: state.settings?.preferences?.editorWordWrap === true,
+            }}
+            pendingReveal={pendingReveal}
+            onRevealDone={() => setPendingReveal(null)}
           />
         )}
 
@@ -844,7 +1288,23 @@ export default function App() {
             }}
             terminalOutput={terminalOutput}
             onPickPlugin={(plugin) => {
-              dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: `已选择插件：${plugin.name} — ${plugin.desc}` } });
+              // Iteration 20: plugins with a route jump straight to their
+              // view; the rest just confirm selection in the transcript.
+              switch (plugin.route) {
+                case 'browser': setWorkspaceToolsOpen(false); if (!stateRef.current.browserOpen) dispatch({ type: 'browser/toggle' }); setMainView('chat'); return;
+                case 'snippets': setMainView('snippets'); return;
+                case 'bookmarks': setMainView('bookmarks'); return;
+                case 'history': setMainView('history'); return;
+                case 'stats': setMainView('stats'); return;
+                case 'search': setMainView('search'); return;
+                case 'automation': setMainView('automation'); return;
+                case 'git': setMainView('git'); return;
+                case 'quality': setMainView('quality'); return;
+                case 'notes': setNotesOpen(true); setMainView('chat'); return;
+                case 'terminal': dispatch({ type: 'bottom/toggle' }); return;
+                default:
+                  dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: `已选择插件：${plugin.name} — ${plugin.desc}` } });
+              }
             }}
             onPickModel={async (providerId, model) => {
               if (!state.settings) return;
@@ -890,10 +1350,28 @@ export default function App() {
       <SideChatPanel
         open={state.sideChatOpen}
         width={state.sideChatWidth}
-        mainAgentBusy={state.agentStatus === 'running' || state.agentStatus === 'starting'}
         onClose={() => dispatch({ type: 'sidechat/toggle' })}
         onWidthChange={(w) => dispatch({ type: 'sidechat/setWidth', width: w })}
         settings={state.settings}
+      />
+
+      <WorkspaceToolsPanel
+        open={workspaceToolsOpen}
+        width={workspaceToolsWidth}
+        workspaceRoot={state.workspaceRoot}
+        openFilesCount={openFiles.length}
+        previewOpen={state.preview.open}
+        previewTabCount={state.preview.tabs.length}
+        agentStatus={state.agentStatus}
+        pendingDiffCount={state.pendingDiffs.filter((d) => d.status === 'pending').length}
+        onClose={() => setWorkspaceToolsOpen(false)}
+        onWidthChange={setWorkspaceToolsWidth}
+        onOpenQuality={() => { setWorkspaceToolsOpen(false); setMainView('quality'); }}
+        onOpenGit={() => { setWorkspaceToolsOpen(false); setMainView('git'); }}
+        onOpenPreview={() => {
+          setWorkspaceToolsOpen(false);
+          if (!state.preview.open) dispatch({ type: 'preview/toggle' });
+        }}
       />
 
       <BrowserPanel
@@ -928,6 +1406,9 @@ export default function App() {
           onOpenTerminal={() => { dispatch({ type: 'bottom/toggle' }); }}
         />
       )}
+
+      {/* Key task-state reminders (approval needed / done / error / offline) */}
+      <ToastLayer onFocusChat={() => setMainView('chat')} />
     </div>
   );
 }

@@ -1,8 +1,9 @@
-const { dialog, ipcMain, shell, clipboard } = require('electron');
+const { dialog, ipcMain, shell, clipboard, app } = require('electron');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { describeFile, inspectProject } = require('./preview-policy.cjs');
+const { describeFile, inspectProject, resolveWorkspacePath } = require('./preview-policy.cjs');
+const { createQualityGateway } = require('./quality-gateway.cjs');
 const git = require('./git.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 
@@ -14,7 +15,7 @@ async function isDirectory(target) {
   }
 }
 
-function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer }) {
+function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings }) {
   async function materializePersona(root) {
     try {
       const config = await settings.get();
@@ -29,6 +30,7 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     if (result.canceled || result.filePaths.length === 0) return { canceled: true };
     const root = workspace.setRoot(result.filePaths[0]);
     await settings.addRecentWorkspace(root);
+    await activateWorkspace(root);
     await automation.setWorkspace(root);
     await materializePersona(root);
     return { canceled: false, root };
@@ -59,10 +61,37 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('workspace.setRoot', async (_event, root) => {
     const resolved = workspace.setRoot(root);
     await settings.addRecentWorkspace(resolved);
+    await activateWorkspace(resolved);
     await automation.setWorkspace(resolved);
     await materializePersona(resolved);
     return { root: resolved };
   });
+
+  /**
+   * Coordinate resources bound to the previous workspace before the new root
+   * takes over. Preview servers/tokens must die with their workspace (they
+   * only serve files under the old root), and the agent runtime is
+   * workspace-bound too (sessions, git safety, tool paths), so it restarts
+   * against the new root. The restart is not awaited: it takes seconds and
+   * the renderer picks the fresh bridge_ready/session up asynchronously.
+   */
+  async function activateWorkspace(root) {
+    void root;
+    try { await previewRuntime?.stopAll(); } catch { /* keep switching */ }
+    try { previewService?.revokeAllTokens?.(); } catch { /* keep switching */ }
+    try { previewService?.hide(); } catch { /* keep switching */ }
+    try { agentManager.cancel(); } catch { /* no live bridge */ }
+    try { agentManager.sideChatRestart(); } catch { /* no live side bridge */ }
+    void agentManager.start().catch((error) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('agent.event', {
+          type: 'log',
+          level: 'error',
+          text: `工作区切换后 Agent 重启失败: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+    });
+  }
 
   ipcMain.handle('workspace.getTree', async (_event, relativePath) => await workspace.tree(relativePath || '.'));
   ipcMain.handle('sessions.list', async () => await workspace.listSessions());
@@ -84,19 +113,24 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   // workspace is open yet.
   ipcMain.handle('fs.saveTempImage', async (_event, filename, base64Data) => {
     try {
+      if (typeof filename !== 'string' || path.basename(filename) !== filename || !/^[A-Za-z0-9._-]+\.(?:png|jpe?g|gif|webp)$/i.test(filename)) {
+        throw new Error('Invalid temporary image filename');
+      }
+      if (typeof base64Data !== 'string' || base64Data.length === 0 || base64Data.length > 32 * 1024 * 1024) {
+        throw new Error('Temporary image data exceeds the allowed size');
+      }
       const buffer = Buffer.from(base64Data, 'base64');
+      if (buffer.length > 24 * 1024 * 1024) throw new Error('Temporary image exceeds the allowed size');
       // Prefer workspace/.aicode/paste/ so the CLI can resolve it as a
       // workspace-relative path. Fall back to os.tmpdir() if no workspace.
       const wsRoot = workspace.getRoot ? workspace.getRoot() : null;
-      let dir;
-      if (wsRoot) {
-        dir = path.join(wsRoot, '.aicode', 'paste');
-      } else {
-        dir = path.join(os.tmpdir(), 'cc-desktop-paste');
-      }
+      const dir = wsRoot ? path.join(wsRoot, '.aicode', 'paste') : path.join(os.tmpdir(), 'cc-desktop-paste');
       await fs.mkdir(dir, { recursive: true });
       const imagePath = path.join(dir, filename);
-      await fs.writeFile(imagePath, buffer);
+      await fs.writeFile(imagePath, buffer, { flag: 'wx' }).catch(async (error) => {
+        if (error.code !== 'EEXIST') throw error;
+        await fs.writeFile(imagePath, buffer);
+      });
       return imagePath;
     } catch (error) {
       throw new Error(`Failed to save temp image: ${error.message}`);
@@ -140,18 +174,34 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     return { installed: found.length > 0, extensions: found };
   });
 
-  // Editor API - work with absolute paths for files that may be outside workspace
-  ipcMain.handle('editor.readFile', async (_event, absolutePath) => {
+  // Editor API uses workspace-relative paths; canonicalization prevents symlink/junction escapes.
+  async function resolveEditorPath(relativePath, options = {}) {
+    const root = workspace.getRoot();
+    return (await resolveWorkspacePath(relativePath, root, options)).path;
+  }
+
+  ipcMain.handle('editor.readFile', async (_event, relativePath) => {
     try {
-      const content = await fs.readFile(absolutePath, 'utf-8');
+      const target = await resolveEditorPath(relativePath);
+      const content = await fs.readFile(target, 'utf-8');
       return { ok: true, content };
     } catch (error) {
       return { ok: false, error: error.message };
     }
   });
-  ipcMain.handle('editor.saveFile', async (_event, absolutePath, content) => {
+  ipcMain.handle('editor.saveFile', async (_event, relativePath, content) => {
     try {
-      await fs.writeFile(absolutePath, content, 'utf-8');
+      if (typeof content !== 'string' || content.length > 20 * 1024 * 1024) throw new Error('File content exceeds the allowed size');
+      const target = await resolveEditorPath(relativePath, { mustExist: false });
+      // Iteration 7: capture the on-disk bytes *before* overwriting them so
+      // the timeline can step back through manual saves. Best-effort: a
+      // history failure must never block the save itself.
+      try {
+        const previous = await fs.readFile(target, 'utf-8').catch(() => null);
+        if (previous !== null) await fileHistory.recordSave(target, previous, content);
+      } catch { /* history is advisory */ }
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, content, 'utf-8');
       return { ok: true };
     } catch (error) {
       return { ok: false, error: error.message };
@@ -162,7 +212,9 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   // Polling mtime beats fs.watch here: one watcher per OPEN editor tab only,
   // no recursive native watcher spam, and it works identically on Windows.
   const fileWatchers = new Map();
-  ipcMain.handle('editor.watchFile', async (_event, absolutePath) => {
+  ipcMain.handle('editor.watchFile', async (_event, relativePath) => {
+    let absolutePath;
+    try { absolutePath = await resolveEditorPath(relativePath); } catch (error) { return { ok: false, error: error.message }; }
     if (fileWatchers.has(absolutePath)) return { ok: true, alreadyWatching: true };
     let lastMtime = 0;
     let lastSize = -1;
@@ -190,7 +242,9 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     return { ok: true };
   });
 
-  ipcMain.handle('editor.unwatchFile', async (_event, absolutePath) => {
+  ipcMain.handle('editor.unwatchFile', async (_event, relativePath) => {
+    let absolutePath;
+    try { absolutePath = await resolveEditorPath(relativePath); } catch { return { ok: true }; }
     const timer = fileWatchers.get(absolutePath);
     if (timer) { clearInterval(timer); fileWatchers.delete(absolutePath); }
     return { ok: true };
@@ -198,9 +252,10 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
 
   // Conflict guard: compare on-disk mtime with what the editor last saw, so a
   // save can refuse to clobber agent changes made after the file was opened.
-  ipcMain.handle('editor.stat', async (_event, absolutePath) => {
+  ipcMain.handle('editor.stat', async (_event, relativePath) => {
     try {
-      const stat = await fs.stat(absolutePath);
+      const target = await resolveEditorPath(relativePath);
+      const stat = await fs.stat(target);
       return { ok: true, mtimeMs: stat.mtimeMs, size: stat.size };
     } catch (error) {
       return { ok: false, error: error.message };
@@ -211,7 +266,14 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   // Persist settings, then re-materialize persona.md so Personalize/Git prefs
   // reach the agent on the next turn without requiring an agent restart.
   ipcMain.handle('settings.set', async (_event, next) => {
+    const previous = await settings.get();
     const merged = await settings.set(next);
+    // The approval mode is baked into the CLI child at spawn time; switching
+    // it mid-session must invalidate the live bridge so the next prompt
+    // re-starts with the new mode (otherwise "变更前确认" silently stays auto).
+    if (previous.approval !== merged.approval) {
+      try { agentManager.invalidate(); } catch { /* no live bridge */ }
+    }
     try {
       await syncPersonaFile(workspace.getRoot(), merged.preferences);
     } catch {
@@ -231,11 +293,19 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     const apiKey = providerConfig.type === 'mock' ? '' : await secrets.getApiKey(providerConfig.id);
     return await connectivity.test({ providerConfig, apiKey });
   });
-  // Real token-usage statistics aggregated from the CLI's usage ledger.
-  ipcMain.handle('usage.summary', async (_event, days) => usage.summary(days === 90 ? 90 : days === 30 ? 30 : 7));
-  ipcMain.handle('usage.hourly', async (_event, hours) => usage.hourly(hours === 48 ? 48 : hours === 36 ? 36 : 24));
-  ipcMain.handle('usage.records', async (_event, hours, offset, limit) => 
-    usage.records(
+  // Real token-usage statistics aggregated from the CLI's usage ledger. The
+  // store's async methods use mtime caching and fs/promises so a large ledger
+  // does not synchronously block the Electron main process. The sync fallback
+  // keeps this registration compatible with lightweight injected stores.
+  const usageCall = (asyncName, syncName, ...args) => typeof usage[asyncName] === 'function'
+    ? usage[asyncName](...args)
+    : Promise.resolve().then(() => usage[syncName](...args));
+  ipcMain.handle('usage.summary', async (_event, days) => usageCall('summaryAsync', 'summary', days === 90 ? 90 : days === 30 ? 30 : 7));
+  ipcMain.handle('usage.hourly', async (_event, hours) => usageCall('hourlyAsync', 'hourly', hours === 48 ? 48 : hours === 36 ? 36 : 24));
+  ipcMain.handle('usage.records', async (_event, hours, offset, limit) =>
+    usageCall(
+      'recordsAsync',
+      'records',
       hours === 48 ? 48 : hours === 36 ? 36 : 24,
       typeof offset === 'number' ? offset : 0,
       typeof limit === 'number' ? limit : 20
@@ -243,7 +313,16 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   );
   // Real prompt-cache hit-rate prediction from historical ledger data (same model).
   ipcMain.handle('usage.cachePrediction', async (_event, model) =>
-    usage.cachePrediction(typeof model === 'string' ? model : undefined));
+    usageCall('cachePredictionAsync', 'cachePrediction', typeof model === 'string' ? model : undefined));
+  // Full-window CSV export (iteration 21): pull every record in the window
+  // (single big page) and serialise RFC-4180 style with a UTF-8 BOM so Excel
+  // opens Chinese provider/model names correctly.
+  ipcMain.handle('usage.exportCsv', async (_event, hours) => {
+    const { usageToCsv } = require('./usage-csv.cjs');
+    const h = hours === 48 ? 48 : hours === 36 ? 36 : 24;
+    const all = await usageCall('recordsAsync', 'records', h, 0, 100000);
+    return { csv: usageToCsv(all.records ?? [], { bom: true }), count: all.records?.length ?? 0 };
+  });
   ipcMain.handle('agent.start', async (_event, resumeSessionId) => await agentManager.start(resumeSessionId));
   ipcMain.handle('agent.prompt', async (_event, text, files, toolScope) => agentManager.prompt(text, files, toolScope));
   ipcMain.handle('agent.taskBoardAction', async (_event, action, taskId) => agentManager.taskBoardAction(action, taskId));
@@ -252,10 +331,15 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('agent.cancel', async () => agentManager.cancel());
   ipcMain.handle('agent.restart', async () => await agentManager.restart());
   ipcMain.handle('agent.approve', async (_event, requestId, decision) => agentManager.approve(requestId, decision));
-  // preload sends: ipcRenderer.invoke('agent.undo', checkpointIds) — one arg only.
-  // The old handler had a spurious leading 'turnId' param that swallowed the array,
-  // leaving checkpointIds=undefined so the CLI always received an empty list.
-  ipcMain.handle('agent.undo', async (_event, checkpointIds) => agentManager.undo(Array.isArray(checkpointIds) ? checkpointIds : []));
+  // preload sends: ipcRenderer.invoke('agent.undo', checkpointIds, undoId).
+  // undoId lets the renderer match the CLI's authoritative undo_done event
+  // back to the turn card that requested the revert.
+  ipcMain.handle('agent.undo', async (_event, checkpointIds, undoId) => agentManager.undo(Array.isArray(checkpointIds) ? checkpointIds : [], undoId));
+
+  // ── Side chat: independent bridge/session, write-denied assistant ─────────
+  ipcMain.handle('sidechat.prompt', async (_event, text) => agentManager.sideChatPrompt(text));
+  ipcMain.handle('sidechat.cancel', async () => agentManager.sideChatCancel());
+  ipcMain.handle('sidechat.reset', async () => agentManager.sideChatReset());
 
   // AI code completion and editing
   ipcMain.handle('ai.complete', async (_event, request) => {
@@ -392,6 +476,23 @@ Edited code:`;
   ipcMain.handle('automation.history', async (_event, taskId, limit) => await automation.history(taskId, limit));
   ipcMain.handle('automation.active', async () => automation.active());
 
+  // ── Quality tool gateway (read-only CLI analysis tools) ────────────────────
+  const qualityGateway = createQualityGateway({ cliRoot: path.resolve(__dirname, '..', '..', 'cli') });
+  ipcMain.handle('quality.invoke', async (_event, toolName, input, revision) => {
+    // The gateway allowlists read-risk tools and the CLI re-checks the risk
+    // boundary; the workspace is always the one active in this window.
+    return qualityGateway.invoke(toolName, input, workspace.getRoot(), typeof revision === 'string' ? revision : undefined);
+  });
+  ipcMain.handle('quality.listTools', async () => ({ ok: true, tools: qualityGateway.listTools() }));
+  ipcMain.handle('quality.latest', async (_event, toolName) => qualityGateway.latest(toolName, workspace.getRoot()));
+  ipcMain.handle('quality.history', async (_event, toolName, limit) => ({
+    ok: true,
+    records: await qualityGateway.history(toolName, workspace.getRoot(), typeof limit === 'number' ? limit : 20),
+  }));
+
+  // Real packaged version for Help / What's New content selection.
+  ipcMain.handle('app.version', () => ({ version: app.getVersion() }));
+
   ipcMain.handle('terminal.create', async (_event, options) => terminalManager.create(options || {}));
   ipcMain.handle('terminal.write', async (_event, id, data) => terminalManager.write(id, data));
   ipcMain.handle('terminal.resize', async (_event, id, cols, rows) => terminalManager.resize(id, cols, rows));
@@ -413,7 +514,7 @@ Edited code:`;
   // ── Preview IPC ─────────────────────────────────────────────────────────────
   ipcMain.handle('preview.describe', async (_event, relativePath) => {
     const root = workspace.getRoot();
-    const abs  = path.resolve(root, relativePath);
+    const { path: abs } = await resolveWorkspacePath(relativePath, root);
     const desc = await describeFile(abs, root);
     // Register token so the custom protocol can validate requests
     if (previewService) {
@@ -424,7 +525,7 @@ Edited code:`;
 
   ipcMain.handle('preview.inspectProject', async (_event, relativePath) => {
     const root = workspace.getRoot();
-    const abs  = path.resolve(root, relativePath);
+    const { path: abs } = await resolveWorkspacePath(relativePath, root, { allowRoot: true });
     const info = await inspectProject(abs, root);
     if (info && previewService) {
       previewService.registerToken(info.token, { workspaceRoot: root, kind: 'web', absolutePath: info.absolutePath });
@@ -434,16 +535,26 @@ Edited code:`;
 
   ipcMain.handle('preview.startStatic', async (_event, relativePath, token) => {
     const root = workspace.getRoot();
-    const abs  = path.resolve(root, relativePath);
+    const { path: abs } = await resolveWorkspacePath(relativePath, root, { allowRoot: true });
     if (!previewRuntime) return { ok: false, error: 'Preview runtime unavailable' };
-    return previewRuntime.startStatic(abs, token);
+    if (!previewService?.validateToken?.(token, { workspaceRoot: root, kind: 'web', absolutePath: abs })) {
+      return { ok: false, error: 'Invalid preview token' };
+    }
+    const result = await previewRuntime.startStatic(abs, token);
+    if (result.ok && result.port) previewService?.registerRuntimeToken?.(result.port, token);
+    return result;
   });
 
   ipcMain.handle('preview.startDevServer', async (_event, relativePath, script, pkgManager, token) => {
     const root = workspace.getRoot();
-    const abs  = path.resolve(root, relativePath);
+    const { path: abs } = await resolveWorkspacePath(relativePath, root, { allowRoot: true });
     if (!previewRuntime) return { ok: false, error: 'Preview runtime unavailable' };
-    return previewRuntime.startDevServer(abs, script, pkgManager, token);
+    if (!previewService?.validateToken?.(token, { workspaceRoot: root, kind: 'web', absolutePath: abs })) {
+      return { ok: false, error: 'Invalid preview token' };
+    }
+    const result = await previewRuntime.startDevServer(abs, script, pkgManager, token);
+    if (result.ok && result.port) previewService?.registerRuntimeToken?.(result.port, token);
+    return result;
   });
 
   ipcMain.handle('preview.stopPreview', async (_event, token) => {
@@ -454,7 +565,7 @@ Edited code:`;
 
   ipcMain.handle('preview.installDeps', async (_event, relativePath, pkgManager) => {
     const root = workspace.getRoot();
-    const abs  = path.resolve(root, relativePath);
+    const { path: abs } = await resolveWorkspacePath(relativePath, root, { allowRoot: true });
     const pm   = ['npm', 'pnpm', 'yarn'].includes(pkgManager) ? pkgManager : 'npm';
     // Show native confirmation before running any install command
     const { response } = await dialog.showMessageBox(mainWindow, {
@@ -467,13 +578,21 @@ Edited code:`;
       cancelId:  1,
     });
     if (response !== 0) return { ok: false, canceled: true };
-    const { spawn: spawnSync } = require('node:child_process');
-    const child = spawnSync(pm, ['install'], { cwd: abs, shell: false, stdio: 'pipe', windowsHide: true });
+    const { spawn } = require('node:child_process');
+    const child = spawn(pm, ['install'], { cwd: abs, shell: false, stdio: 'pipe', windowsHide: true });
     const logs = [];
-    child.stdout?.on('data', (d) => { logs.push(d.toString()); mainWindow.webContents.send('preview.log', { token: 'install', line: d.toString().trim() }); });
-    child.stderr?.on('data', (d) => { logs.push(d.toString()); mainWindow.webContents.send('preview.log', { token: 'install', line: d.toString().trim() }); });
-    await new Promise((resolve) => child.on('exit', resolve));
-    return { ok: child.exitCode === 0, exitCode: child.exitCode };
+    const appendLog = (data) => {
+      logs.push(String(data));
+      if (logs.length > 200) logs.shift();
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('preview.log', { token: 'install', line: String(data).trim() });
+    };
+    child.stdout?.on('data', appendLog);
+    child.stderr?.on('data', appendLog);
+    const exitCode = await new Promise((resolveExit, rejectExit) => {
+      child.once('error', rejectExit);
+      child.once('exit', (code) => resolveExit(code));
+    });
+    return { ok: exitCode === 0, exitCode };
   });
 
   ipcMain.handle('preview.setBounds', (_event, bounds) => {
@@ -506,7 +625,17 @@ Edited code:`;
 
   ipcMain.handle('preview.readDocx', async (_event, relativePath, token) => {
     const root = workspace.getRoot();
-    const abs  = path.resolve(root, relativePath);
+    let abs;
+    try {
+      abs = (await resolveWorkspacePath(relativePath, root)).path;
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+    if (!previewService?.validateToken?.(token, {
+      workspaceRoot: root,
+      kind: 'docx',
+      absolutePath: abs,
+    })) return { ok: false, error: 'Invalid preview token' };
     // Re-use policy validation (token was registered on describe)
     const { assertInsideRoot } = require('./preview-policy.cjs');
     const fsSync = require('node:fs');
@@ -514,6 +643,7 @@ Edited code:`;
     try { real = fsSync.realpathSync(abs); } catch { return { ok: false, error: 'File not found' }; }
     try { assertInsideRoot(real, workspace.getRoot()); } catch (e) { return { ok: false, error: e.message }; }
     const stat = fsSync.statSync(real);
+    if (!stat.isFile() || path.extname(real).toLowerCase() !== '.docx') return { ok: false, error: 'Not a DOCX file' };
     if (stat.size > 20 * 1024 * 1024) return { ok: false, error: 'File too large for inline rendering' };
     const buf = fsSync.readFileSync(real);
     return { ok: true, buffer: buf.buffer, byteOffset: buf.byteOffset, byteLength: buf.byteLength };
@@ -579,6 +709,166 @@ Edited code:`;
       const end   = Math.min(lines.length, (line || 1) + 25);
       return { path: filePath, line, context: lines.slice(start, end).join('\n'), startLine: start + 1 };
     } catch { return null; }
+  });
+
+  // ── Workspace full-text search (iteration 3) ─────────────────────────────
+  ipcMain.handle('search.text', async (_event, query, options) => {
+    const root = workspace.getRoot();
+    if (!root) return { results: [], filesScanned: 0, truncated: false, elapsedMs: 0, error: '没有打开工作区' };
+    try {
+      const { searchWorkspaceText } = require('./workspace-search.cjs');
+      return await searchWorkspaceText(root, (rel) => workspace.resolveInside(rel), query, options || {});
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { results: [], filesScanned: 0, truncated: false, elapsedMs: 0, error: message };
+    }
+  });
+
+  // ── Quick-open file index (iteration 17) ─────────────────────────────────
+  // One lazily-built index per workspace root; cached in-process with a TTL so
+  // Ctrl+P can fuzzy over the whole tree without touching disk per keystroke.
+  let qopen = null; // { root, index }
+  ipcMain.handle('quickopen.index', async (_event, force) => {
+    const root = workspace.getRoot();
+    if (!root) return { files: [], truncated: false, elapsedMs: 0, cached: false, error: '没有打开工作区' };
+    try {
+      const { createQuickOpenIndex } = require('./quick-open.cjs');
+      if (!qopen || qopen.root !== root) qopen = { root, index: createQuickOpenIndex(root, (rel) => workspace.resolveInside(rel)) };
+      return await qopen.index.get(Boolean(force));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { files: [], truncated: false, elapsedMs: 0, cached: false, error: message };
+    }
+  });
+
+  // ── Code snippets library (iteration 4) ──────────────────────────────────  ipcMain.handle('snippets.list', async () => snippets.list());
+  ipcMain.handle('snippets.search', async (_event, query) => snippets.search(query));
+  ipcMain.handle('snippets.create', async (_event, input) => snippets.create(input));
+  ipcMain.handle('snippets.update', async (_event, id, patch) => snippets.update(id, patch));
+  ipcMain.handle('snippets.remove', async (_event, id) => snippets.remove(id));
+  ipcMain.handle('snippets.touch', async (_event, id) => snippets.touch(id));
+  ipcMain.handle('snippets.export', async () => snippets.exportAll());
+  ipcMain.handle('snippets.import', async (_event, rawJson) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(rawJson));
+    } catch {
+      throw new Error('导入失败：不是合法的 JSON');
+    }
+    return snippets.replaceAll(parsed);
+  });
+
+  // ── Line bookmarks (iteration 6) ─────────────────────────────────────────
+  ipcMain.handle('bookmarks.listAll', async () => bookmarks.listAll());
+  ipcMain.handle('bookmarks.listFor', async (_event, relPath) => bookmarks.listFor(relPath));
+  ipcMain.handle('bookmarks.toggle', async (_event, relPath, line, anchor) => bookmarks.toggle(relPath, line, anchor));
+  ipcMain.handle('bookmarks.annotate', async (_event, relPath, line, note) => bookmarks.annotate(relPath, line, note));
+  ipcMain.handle('bookmarks.move', async (_event, relPath, fromLine, toLine) => bookmarks.move(relPath, fromLine, toLine));
+  ipcMain.handle('bookmarks.remove', async (_event, relPath, line) => bookmarks.remove(relPath, line));
+  ipcMain.handle('bookmarks.clearFile', async (_event, relPath) => bookmarks.clearFile(relPath));
+
+  // ── Session tags (iteration 18) ──────────────────────────────────────────
+  ipcMain.handle('tags.listAll', async () => sessionTags.listAll());
+  ipcMain.handle('tags.set', async (_event, sessionId, tags) => sessionTags.setTags(sessionId, tags));
+  ipcMain.handle('tags.toggle', async (_event, sessionId, tag) => sessionTags.toggleTag(sessionId, tag));
+  ipcMain.handle('tags.remove', async (_event, sessionId) => sessionTags.remove(sessionId));
+
+  // ── User keybindings (iteration 19) ──────────────────────────────────────
+  ipcMain.handle('keybindings.get', async () => keybindings.getAll());
+  ipcMain.handle('keybindings.set', async (_event, actionId, chord) => keybindings.setOne(actionId, chord));
+
+  // ── Plugin registry (iteration 20) ───────────────────────────────────────
+  ipcMain.handle('plugins.catalog', async () => {
+    const { catalog } = require('./plugin-registry.cjs');
+    return catalog();
+  });
+  ipcMain.handle('plugins.status', async () => {
+    const { status } = require('./plugin-registry.cjs');
+    return status(workspace.getRoot());
+  });
+
+  // ── File save history timeline (iteration 7) ─────────────────────────────
+  ipcMain.handle('history.list', async (_event, relativePath) => {
+    try {
+      const target = await resolveEditorPath(relativePath);
+      return await fileHistory.list(target);
+    } catch {
+      return [];
+    }
+  });
+  ipcMain.handle('history.read', async (_event, relativePath, snapshotId) => {
+    try {
+      const target = await resolveEditorPath(relativePath);
+      const content = await fileHistory.read(target, snapshotId);
+      return content === null ? { ok: false, error: '快照不存在或已清理' } : { ok: true, content };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  ipcMain.handle('history.restore', async (_event, relativePath, snapshotId) => {
+    try {
+      const target = await resolveEditorPath(relativePath);
+      const content = await fileHistory.read(target, snapshotId);
+      if (content === null) return { ok: false, error: '快照不存在或已清理' };
+      // Restoring overwrites current bytes — snapshot them first (the same
+      // guarantee editor saves get), so undo-the-undo stays possible.
+      const current = await fs.readFile(target, 'utf-8').catch(() => null);
+      if (current !== null) await fileHistory.recordSave(target, current, content).catch(() => undefined);
+      await fs.writeFile(target, content, 'utf-8');
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  ipcMain.handle('history.remove', async (_event, relativePath, snapshotId) => {
+    try {
+      const target = await resolveEditorPath(relativePath);
+      await fileHistory.remove(target, snapshotId);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  ipcMain.handle('history.clear', async (_event, relativePath) => {
+    try {
+      const target = await resolveEditorPath(relativePath);
+      return await fileHistory.clear(target);
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  ipcMain.handle('history.tracked', async () => fileHistory.listTracked());
+
+  // ── Workspace code census (iteration 9) ──────────────────────────────────
+  ipcMain.handle('stats.census', async (_event, options) => {
+    const root = workspace.getRoot();
+    if (!root) return { error: '没有打开工作区', totalFiles: 0 };
+    try {
+      const { scanWorkspaceStats } = require('./workspace-stats.cjs');
+      return await scanWorkspaceStats(root, (rel) => workspace.resolveInside(rel), options || {});
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error), totalFiles: 0 };
+    }
+  });
+
+  // ── Session notes sidecar (iteration 10) ─────────────────────────────────
+  ipcMain.handle('notes.list', async (_event, sessionId) => notes.list(sessionId));
+  ipcMain.handle('notes.add', async (_event, sessionId, input) => notes.add(sessionId, input));
+  ipcMain.handle('notes.update', async (_event, sessionId, noteId, patch) => notes.update(sessionId, noteId, patch));
+  ipcMain.handle('notes.remove', async (_event, sessionId, noteId) => notes.remove(sessionId, noteId));
+  ipcMain.handle('notes.clear', async (_event, sessionId) => notes.clear(sessionId));
+  ipcMain.handle('notes.summary', async () => notes.summary());
+
+  // ── Cross-session transcript search (iteration 16) ───────────────────────
+  ipcMain.handle('search.sessions', async (_event, query, options) => {
+    const root = workspace.getRoot();
+    if (!root) return { results: [], sessionsScanned: 0, elapsedMs: 0, error: '没有打开工作区' };
+    try {
+      const { searchSessions } = require('./session-search.cjs');
+      return await searchSessions(workspace.resolveInside('.aicode/sessions'), query, options || {});
+    } catch (error) {
+      return { results: [], sessionsScanned: 0, elapsedMs: 0, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   // ── FIM / Tab autocomplete ─────────────────────────────────────────────────

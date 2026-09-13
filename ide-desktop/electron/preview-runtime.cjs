@@ -21,7 +21,7 @@ function getMime() {
 
 class StaticServer {
   constructor(rootDir, capabilityToken) {
-    this.rootDir = rootDir;
+    this.rootDir = fs.realpathSync(rootDir);
     this.token   = capabilityToken;
     this.server  = null;
     this.port    = null;
@@ -44,29 +44,41 @@ class StaticServer {
   }
 
   _handle(req, res) {
-    // Validate capability token from custom header (injected by guest session webRequest)
+    // Validate capability token from custom header (injected by guest session
+    // webRequest). Never accept the token from a query string or URL path.
     if (req.headers['x-preview-token'] !== this.token) { res.writeHead(403); res.end('Forbidden'); return; }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end('Method Not Allowed'); return; }
 
-    let urlPath = req.url.split('?')[0];
+    let urlPath = String(req.url || '/').split('?')[0];
     try { urlPath = decodeURIComponent(urlPath); } catch { res.writeHead(400); res.end(); return; }
+    if (!urlPath.startsWith('/')) { res.writeHead(400); res.end(); return; }
 
-    // Resolve and validate
-    const target = path.resolve(this.rootDir, urlPath.replace(/^\//, ''));
-    try { assertInsideRoot(target, this.rootDir); } catch { res.writeHead(403); res.end('Forbidden'); return; }
+    // Resolve and validate the lexical path first. This blocks traversal even
+    // when the requested resource does not exist and before SPA fallback.
+    const target = path.resolve(this.rootDir, urlPath.replace(/^[/\\]+/, ''));
+    try { assertInsideRoot(target, this.rootDir, { allowRoot: true }); } catch { res.writeHead(403); res.end('Forbidden'); return; }
 
     let realTarget = target;
     try { realTarget = fs.realpathSync(target); } catch { /* try index.html fallback */ }
+    try { assertInsideRoot(realTarget, this.rootDir, { allowRoot: true }); } catch { res.writeHead(403); res.end('Forbidden'); return; }
 
-    // SPA fallback: if file not found serve index.html
+    // SPA fallback must always map to this server's own root, not the process
+    // cwd or the URL's parent. Canonicalize it too to prevent symlink escape.
     let servePath = realTarget;
-    if (!fs.existsSync(servePath) || fs.statSync(servePath).isDirectory()) {
+    let stat;
+    try { stat = fs.statSync(servePath); } catch { stat = null; }
+    if (!stat || stat.isDirectory()) {
       const indexPath = path.join(this.rootDir, 'index.html');
-      if (fs.existsSync(indexPath)) servePath = indexPath;
-      else { res.writeHead(404); res.end('Not found'); return; }
+      try {
+        const realIndex = fs.realpathSync(indexPath);
+        assertInsideRoot(realIndex, this.rootDir);
+        servePath = realIndex;
+        stat = fs.statSync(servePath);
+      } catch {
+        res.writeHead(404); res.end('Not found'); return;
+      }
     }
 
-    const stat = fs.statSync(servePath);
     if (!stat.isFile()) { res.writeHead(403); res.end(); return; }
     if (stat.size > 50 * 1024 * 1024) { res.writeHead(413); res.end(); return; }
 

@@ -9,17 +9,17 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { desktop } from '../lib/ipc';
+import { useQualityRevision } from '../lib/qualityRevision';
 
 /**
- * 草案面板桥接：invokeTool 工具桥尚未在 preload 落地（ZCodeDesktopApi 无此方法），
- * 面板未挂载到 App。运行时若桥接缺失会抛出明确错误。
+ * 质量工具网关：read-only 分析工具经由主进程 allowlist 调用 CLI 无头模式。
+ * write 风险工具（生成测试、重构应用）会被网关与 CLI 双侧拒绝。
  */
-async function invokeTool(name: string, input: unknown): Promise<{ ok: boolean; data: any; output: any }> {
-  const api = (window as unknown as {
-    electronAPI?: { invokeTool(name: string, input: unknown): Promise<{ ok: boolean; data: unknown; output: string }> };
-  }).electronAPI;
-  if (!api) throw new Error('invokeTool 桥接未实现：preload 缺少 electronAPI（草案面板）');
-  return api.invokeTool(name, input) as Promise<{ ok: boolean; data: any; output: any }>;
+async function invokeTool(name: string, input: unknown, revision?: string): Promise<{ ok: boolean; data: any; output: any }> {
+  const result = await desktop.quality.invoke(name, (input ?? {}) as Record<string, unknown>, revision);
+  if (!result.ok && result.error) throw new Error(result.error);
+  return { ok: Boolean(result.ok), data: result.data, output: result.output };
 }
 
 interface CoveragePanelProps {
@@ -73,22 +73,25 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
   const [lcovFile, setLcovFile] = useState('');
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
   const [gateThresholds, setGateThresholds] = useState({ line: 80, branch: 70, func: 80 });
-  
+  // Workspace revision guard: flag results as stale once the workspace moves on.
+  const { capture, current, stale } = useQualityRevision(visible && !loading);
+
   const handleAnalyze = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       const response = await invokeTool('analyze_coverage', {
         pattern,
         lcovFile: lcovFile || undefined,
-      });
-      
+      }, current?.label);
+
       if (response.ok) {
         setCoverage(response.data);
       } else {
         setError(response.output);
       }
+      await capture();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -143,6 +146,12 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
           <h2>测试覆盖率</h2>
           <button onClick={onClose} className="close-btn">×</button>
         </div>
+        {stale && (
+          <div className="quality-stale-banner">
+            <span>工作区在分析后已变更，覆盖率结果可能过期。</span>
+            <button onClick={handleAnalyze} disabled={loading}>重新分析</button>
+          </div>
+        )}
         
         <div className="coverage-panel-content">
           {/* 分析选项 */}

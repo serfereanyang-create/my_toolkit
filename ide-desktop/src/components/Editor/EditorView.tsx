@@ -1,13 +1,22 @@
 import { useState, useCallback } from 'react';
-import { MonacoEditor } from './MonacoEditor';
+import { MonacoEditor, type MonacoEditorOptions } from './MonacoEditor';
 import { EditorTabs, type EditorTab } from './EditorTabs';
 import { FileText } from 'lucide-react';
+
+export interface ExternalFileSnapshot {
+  content: string;
+  mtimeMs?: number;
+}
 
 export interface OpenFile {
   path: string;
   content: string;
   dirty: boolean;
   language: string;
+  /** Latest disk content observed while local edits were still dirty. */
+  external?: ExternalFileSnapshot;
+  /** The disk content no longer matches the editor's local content. */
+  stale?: boolean;
 }
 
 export interface EditorViewProps {
@@ -18,6 +27,12 @@ export interface EditorViewProps {
   onCloseFile: (path: string) => void;
   onContentChange: (path: string, content: string) => void;
   onSetActive: (path: string) => void;
+  /** User editor preferences (settings → 外观); applied to Monaco live. */
+  editorOptions?: MonacoEditorOptions;
+  /** Request to reveal a 1-based line in a file (quality panel jump). */
+  pendingReveal?: { path: string; line: number } | null;
+  /** Called after the pending reveal was applied. */
+  onRevealDone?: () => void;
 }
 
 // Detect language from file extension
@@ -67,13 +82,16 @@ export function EditorView({
   onCloseFile,
   onContentChange,
   onSetActive,
+  editorOptions,
+  pendingReveal,
+  onRevealDone,
 }: EditorViewProps) {
-  const tabs: EditorTab[] = openFiles.map(f => ({ path: f.path, dirty: f.dirty }));
+  const tabs: EditorTab[] = openFiles.map(f => ({ path: f.path, dirty: f.dirty, stale: f.stale }));
 
   const handleTabClose = useCallback((path: string) => {
     const file = openFiles.find(f => f.path === path);
     if (file?.dirty) {
-      // TODO: Show confirmation dialog
+      // Dirty tab close asks for confirmation so local edits never vanish silently.
       const confirmed = confirm(`${path} 有未保存的更改。是否关闭？`);
       if (!confirmed) return;
     }
@@ -87,6 +105,7 @@ export function EditorView({
   }, [activeFile, onContentChange]);
 
   const activeFileData = openFiles.find(f => f.path === activeFile);
+  const prefersDark = typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark';
 
   if (openFiles.length === 0) {
     return (
@@ -113,7 +132,11 @@ export function EditorView({
           language={activeFileData.language}
           path={activeFileData.path}
           onChange={handleContentChange}
-          theme="vs-dark"
+          onSave={(content) => onSaveFile(activeFileData.path, content)}
+          theme={prefersDark ? 'vs-dark' : 'vs-light'}
+          editorOptions={{ ...editorOptions, fontFamily: editorOptions?.fontFamily ?? "'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', Consolas, monospace" }}
+          pendingReveal={pendingReveal}
+          onRevealDone={onRevealDone}
         />
       )}
     </div>

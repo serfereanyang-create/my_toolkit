@@ -1,52 +1,126 @@
-import { useState } from 'react';
-import { Search } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { RotateCcw, Search } from 'lucide-react';
+import { desktop } from '../../lib/ipc';
+import {
+  SHORTCUT_ACTIONS, serializeChord, chordFromEvent, validateChord,
+  parseChord, resolveBindings, findConflicts,
+} from '../../lib/keybindings';
 
-/* Keyboard shortcuts page. UI-only mock: the list is static and the keys are
-   display-only for now (no rebinding yet). A search box filters by label. */
-type Shortcut = { id: string; label: string; keys: string[] };
-type ShortcutGroup = { heading: string; items: Shortcut[] };
+/* Keyboard shortcuts page (iteration 19): every row is now REBINDABLE.
+   Click a chip, press a chord, it validates live and saves. The rows mirror
+   the same SHORTCUT_ACTIONS table App's dispatcher consumes, so the page can
+   never drift from real behaviour again. Editor-internal keys (Monaco) are
+   listed read-only at the bottom. */
 
-const MOD = navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl';
+type Group = { heading: string; items: typeof SHORTCUT_ACTIONS };
 
-const SHORTCUT_GROUPS: ShortcutGroup[] = [
-  {
-    heading: '常规',
-    items: [
-      { id: 'command-palette', label: '命令面板', keys: [MOD, 'K'] },
-      { id: 'settings', label: '打开设置', keys: [MOD, ','] },
-      { id: 'search', label: '全局搜索', keys: [MOD, 'Shift', 'F'] },
-      { id: 'toggle-theme', label: '切换主题', keys: [MOD, 'Shift', 'L'] },
-    ],
-  },
-  {
-    heading: '聊天',
-    items: [
-      { id: 'new-chat', label: '新建聊天', keys: [MOD, 'N'] },
-      { id: 'send', label: '发送消息', keys: ['Enter'] },
-      { id: 'newline', label: '换行', keys: ['Shift', 'Enter'] },
-      { id: 'stop', label: '停止生成', keys: ['Esc'] },
-    ],
-  },
-  {
-    heading: '编辑器',
-    items: [
-      { id: 'save', label: '保存文件', keys: [MOD, 'S'] },
-      { id: 'find', label: '查找', keys: [MOD, 'F'] },
-      { id: 'comment', label: '注释行', keys: [MOD, '/'] },
-      { id: 'format', label: '格式化文档', keys: [MOD, 'Shift', 'P'] },
-    ],
-  },
+const GROUPS: Group[] = (() => {
+  const order = ['常规', '聊天', '面板'] as const;
+  return order
+    .map((heading) => ({ heading, items: SHORTCUT_ACTIONS.filter((a) => a.group === heading) }))
+    .filter((g) => g.items.length > 0);
+})();
+
+const READONLY_EDITOR_ROWS: Array<{ label: string; keys: string[] }> = [
+  { label: '保存文件（自动入历史快照）', keys: ['Ctrl', 'S'] },
+  { label: 'AI 内联编辑', keys: ['Ctrl', 'K'] },
+  { label: '手动触发补全', keys: ['Ctrl', 'Space'] },
+  { label: '接受 AI 建议', keys: ['Tab'] },
+  { label: '取消 AI 建议', keys: ['Esc'] },
+  { label: '当前行加/去书签', keys: ['点击行号左侧装订线'] },
 ];
+
+const READONLY_CHAT_ROWS: Array<{ label: string; keys: string[] }> = [
+  { label: '发送消息', keys: ['Enter'] },
+  { label: '换行', keys: ['Shift', 'Enter'] },
+  { label: '停止生成', keys: ['Esc'] },
+  { label: '浏览输入历史', keys: ['↑', '↓'] },
+  { label: '审批：允许一次', keys: ['Y'] },
+  { label: '审批：本会话允许', keys: ['A'] },
+  { label: '审批：拒绝', keys: ['N'] },
+];
+
+const READONLY_PALETTE_ROWS: Array<{ label: string; keys: string[] }> = [
+  { label: '下一条 / 上一条命令', keys: ['↓', '↑'] },
+  { label: '跳到下一分组', keys: ['Tab'] },
+  { label: '执行选中命令', keys: ['Enter'] },
+  { label: '关闭面板', keys: ['Esc'] },
+];
+
+/** Split "Ctrl+Shift+P" into individual kbd chips for display. */
+function chordKeys(serialized: string): string[] {
+  const parsed = parseChord(serialized);
+  if (!parsed) return [serialized];
+  const mods: string[] = [];
+  if (parsed.ctrl) mods.push('Ctrl');
+  if (parsed.alt) mods.push('Alt');
+  if (parsed.shift) mods.push('Shift');
+  if (parsed.meta) mods.push('Meta');
+  const key = serialized.slice(serialized.lastIndexOf('+') + 1) || serialized;
+  return [...mods, key.length === 1 ? key.toUpperCase() : key];
+}
 
 export function ShortcutsSettings() {
   const [query, setQuery] = useState('');
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [capturing, setCapturing] = useState<string | null>(null);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const captureIdRef = useRef<string | null>(null);
+  captureIdRef.current = capturing;
 
-  const filtered = query.trim()
-    ? SHORTCUT_GROUPS.map((group) => ({
-        ...group,
-        items: group.items.filter((item) => item.label.toLowerCase().includes(query.trim().toLowerCase())),
-      })).filter((group) => group.items.length > 0)
-    : SHORTCUT_GROUPS;
+  const reload = useCallback(() => {
+    desktop.keybindings.get().then(setOverrides).catch(() => undefined);
+  }, []);
+  useEffect(() => { reload(); }, [reload]);
+
+  const bindings = useMemo(() => resolveBindings(overrides), [overrides]);
+  const conflicts = useMemo(() => findConflicts(bindings), [bindings]);
+  const conflictedIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const ids of conflicts.values()) for (const id of ids) set.add(id);
+    return set;
+  }, [conflicts]);
+
+  // Live capture: a document-level listener while a row is armed.
+  useEffect(() => {
+    if (!capturing) return;
+    function onDown(event: KeyboardEvent) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === 'Escape') { setCapturing(null); setCaptureError(null); return; }
+      const chord = chordFromEvent(event);
+      if (!chord) return; // modifier-only press: keep waiting
+      const err = validateChord(chord);
+      if (err) { setCaptureError(err); return; }
+      const serialized = serializeChord(chord);
+      const id = captureIdRef.current!;
+      void desktop.keybindings.set(id, serialized).then((r) => {
+        if (r?.ok) {
+          setCapturing(null);
+          setCaptureError(null);
+          reload();
+          window.dispatchEvent(new Event('zcode:keybindings-changed'));
+        } else {
+          setCaptureError(r?.error ?? '保存失败');
+        }
+      });
+    }
+    document.addEventListener('keydown', onDown, true);
+    return () => document.removeEventListener('keydown', onDown, true);
+  }, [capturing, reload]);
+
+  async function resetOne(id: string) {
+    await desktop.keybindings.set(id, null);
+    reload();
+    window.dispatchEvent(new Event('zcode:keybindings-changed'));
+  }
+
+  const filteredGroups = query.trim()
+    ? GROUPS.map((g) => ({
+        ...g,
+        items: g.items.filter((a) => a.label.toLowerCase().includes(query.trim().toLowerCase())),
+      })).filter((g) => g.items.length > 0)
+    : GROUPS;
 
   return (
     <div className="settings-page">
@@ -61,31 +135,111 @@ export function ShortcutsSettings() {
         />
       </div>
 
-      {filtered.map((group) => (
+      <div className="sc-hint">点击键位标签，按下新的组合键即可改绑；按 Esc 取消。带 ⚠ 的键位与其他命令冲突。</div>
+
+      {filteredGroups.map((group) => (
         <section key={group.heading} className="settings-group">
           <h3 className="settings-group-heading">{group.heading}</h3>
           <div className="settings-card">
-            {group.items.map((item) => (
-              <div key={item.id} className="setting-row">
-                <div className="setting-row-text">
-                  <span className="setting-row-title">{item.label}</span>
+            {group.items.map((item) => {
+              const serialized = serializeChord(bindings[item.id]);
+              const isCapturing = capturing === item.id;
+              const custom = Boolean(overrides[item.id]);
+              const conflict = conflictedIds.has(item.id);
+              return (
+                <div key={item.id} className="setting-row">
+                  <div className="setting-row-text">
+                    <span className="setting-row-title">{item.label}</span>
+                    {custom && <span className="sc-custom-badge">已自定义</span>}
+                    {conflict && <span className="sc-conflict-badge">⚠ 键位冲突</span>}
+                  </div>
+                  <div className="setting-row-control sc-keys-control">
+                    <button
+                      type="button"
+                      className={`sc-chip${isCapturing ? ' capturing' : ''}${conflict ? ' conflict' : ''}`}
+                      onClick={() => { setCapturing(isCapturing ? null : item.id); setCaptureError(isCapturing ? null : `按下 ${item.label} 的新键位…`); }}
+                      title={isCapturing ? '按 Esc 取消' : '点击改绑'}
+                    >
+                      {isCapturing
+                        ? <span className="sc-capture-text">{captureError ?? '按下新键位…（Esc 取消）'}</span>
+                        : chordKeys(serialized).map((k, i) => <kbd key={i} className="shortcut-key">{k}</kbd>)}
+                    </button>
+                    {custom && !isCapturing && (
+                      <button type="button" className="sc-reset" title="恢复默认" onClick={() => { void resetOne(item.id); }}>
+                        <RotateCcw size={12} />
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="setting-row-control">
-                  <span className="shortcut-keys">
-                    {item.keys.map((key, index) => (
-                      <kbd key={index} className="shortcut-key">{key}</kbd>
-                    ))}
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       ))}
 
-      {filtered.length === 0 && (
+      {filteredGroups.length === 0 && (
         <div className="settings-placeholder">没有匹配的快捷键。</div>
       )}
+
+      <section className="settings-group">
+        <h3 className="settings-group-heading">编辑器内（由 Monaco 固定，暂不可改绑）</h3>
+        <div className="settings-card">
+          {READONLY_EDITOR_ROWS.map((row) => (
+            <div key={row.label} className="setting-row">
+              <div className="setting-row-text">
+                <span className="setting-row-title">{row.label}</span>
+              </div>
+              <div className="setting-row-control">
+                <span className="shortcut-keys">
+                  {row.keys.map((key, index) => (
+                    <kbd key={index} className="shortcut-key">{key}</kbd>
+                  ))}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-group">
+        <h3 className="settings-group-heading">聊天输入与审批（固定键位）</h3>
+        <div className="settings-card">
+          {READONLY_CHAT_ROWS.map((row) => (
+            <div key={row.label} className="setting-row">
+              <div className="setting-row-text">
+                <span className="setting-row-title">{row.label}</span>
+              </div>
+              <div className="setting-row-control">
+                <span className="shortcut-keys">
+                  {row.keys.map((key, index) => (
+                    <kbd key={index} className="shortcut-key">{key}</kbd>
+                  ))}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-group">
+        <h3 className="settings-group-heading">命令面板与浮层（固定键位）</h3>
+        <div className="settings-card">
+          {READONLY_PALETTE_ROWS.map((row) => (
+            <div key={row.label} className="setting-row">
+              <div className="setting-row-text">
+                <span className="setting-row-title">{row.label}</span>
+              </div>
+              <div className="setting-row-control">
+                <span className="shortcut-keys">
+                  {row.keys.map((key, index) => (
+                    <kbd key={index} className="shortcut-key">{key}</kbd>
+                  ))}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

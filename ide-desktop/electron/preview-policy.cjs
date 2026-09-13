@@ -31,16 +31,73 @@ function kindForPath(filePath) {
   return EXT_TO_KIND[ext] || 'text';
 }
 
+function isBlockedSegment(segment) {
+  const normalized = String(segment).toLowerCase();
+  return BLOCKED_SEGMENTS.has(normalized) || BLOCKED_NAMES.has(normalized);
+}
+
 /** Throw if targetAbs is not safely inside rootAbs (synchronous). */
-function assertInsideRoot(targetAbs, rootAbs) {
+function assertInsideRoot(targetAbs, rootAbs, options = {}) {
   const rel = path.relative(rootAbs, targetAbs);
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+  const allowRoot = options.allowRoot === true;
+  if ((!allowRoot && !rel) || rel.startsWith('..') || path.isAbsolute(rel)) {
     throw new Error('Path is outside workspace root');
   }
-  for (const seg of rel.split(path.sep)) {
-    if (BLOCKED_SEGMENTS.has(seg)) throw new Error(`Blocked path segment: ${seg}`);
-    if (BLOCKED_NAMES.has(seg))    throw new Error(`Blocked filename: ${seg}`);
+  if (options.rejectBlocked !== false) {
+    for (const seg of rel ? rel.split(path.sep) : []) {
+      const normalized = String(seg).toLowerCase();
+      if (BLOCKED_SEGMENTS.has(normalized)) throw new Error(`Blocked path segment: ${seg}`);
+      if (BLOCKED_NAMES.has(normalized))    throw new Error(`Blocked filename: ${seg}`);
+    }
   }
+}
+
+/**
+ * Resolve a renderer-supplied path against a canonical workspace root.
+ * Existing symlinks are resolved before the containment check. For a write
+ * target that does not exist yet, every existing parent is canonicalized so a
+ * symlink cannot redirect the eventual file outside the workspace.
+ */
+async function resolveWorkspacePath(candidate, workspaceRoot, options = {}) {
+  if (typeof candidate !== 'string' || !candidate.trim()) {
+    throw new Error('Path is required');
+  }
+
+  const realRoot = await fs.realpath(workspaceRoot);
+  const rootStat = await fs.stat(realRoot);
+  if (!rootStat.isDirectory()) throw new Error('Workspace root is not a directory');
+
+  const lexicalTarget = path.resolve(realRoot, candidate);
+  let realTarget;
+  try {
+    realTarget = await fs.realpath(lexicalTarget);
+  } catch (error) {
+    if (options.mustExist !== false || error?.code !== 'ENOENT') throw error;
+
+    // Walk up to the nearest existing parent, then append the missing pieces
+    // to that canonical parent. This also handles a new file below a symlink.
+    const missing = [];
+    let cursor = lexicalTarget;
+    while (true) {
+      try {
+        const realParent = await fs.realpath(cursor);
+        realTarget = missing.reduce((current, segment) => path.join(current, segment), realParent);
+        break;
+      } catch (parentError) {
+        if (parentError?.code !== 'ENOENT') throw parentError;
+        const parent = path.dirname(cursor);
+        if (parent === cursor) throw error;
+        missing.unshift(path.basename(cursor));
+        cursor = parent;
+      }
+    }
+  }
+
+  assertInsideRoot(realTarget, realRoot, {
+    allowRoot: options.allowRoot === true,
+    rejectBlocked: options.rejectBlocked !== false,
+  });
+  return { root: realRoot, path: realTarget };
 }
 
 /**
@@ -48,22 +105,20 @@ function assertInsideRoot(targetAbs, rootAbs) {
  * Returns a PreviewDescriptor including a fresh random token.
  */
 async function describeFile(absolutePath, workspaceRoot) {
-  let real, realRoot;
-  try { real = await fs.realpath(absolutePath); } catch { throw new Error(`Cannot resolve: ${absolutePath}`); }
-  try { realRoot = await fs.realpath(workspaceRoot); } catch { realRoot = workspaceRoot; }
+  let resolved;
+  try { resolved = await resolveWorkspacePath(absolutePath, workspaceRoot); }
+  catch { throw new Error(`Cannot resolve: ${absolutePath}`); }
 
-  assertInsideRoot(real, realRoot);
-
-  const stat = await fs.stat(real);
+  const stat = await fs.stat(resolved.path);
   if (!stat.isFile()) throw new Error('Not a file');
 
-  const kind  = kindForPath(real);
+  const kind  = kindForPath(resolved.path);
   const token = crypto.randomBytes(20).toString('hex');
   return {
-    absolutePath: real,
-    relativePath: path.relative(realRoot, real),
-    name:  path.basename(real),
-    ext:   path.extname(real).toLowerCase(),
+    absolutePath: resolved.path,
+    relativePath: path.relative(resolved.root, resolved.path),
+    name:  path.basename(resolved.path),
+    ext:   path.extname(resolved.path).toLowerCase(),
     kind,
     size:  stat.size,
     token,
@@ -75,13 +130,19 @@ async function describeFile(absolutePath, workspaceRoot) {
  * Returns a ProjectDescriptor or null if nothing recognisable found.
  */
 async function inspectProject(dirPath, workspaceRoot) {
-  let real, realRoot;
-  try { real = await fs.realpath(dirPath); } catch { return null; }
-  try { realRoot = await fs.realpath(workspaceRoot); } catch { realRoot = workspaceRoot; }
+  let resolved;
+  try {
+    resolved = await resolveWorkspacePath(dirPath, workspaceRoot, { allowRoot: true });
+  } catch {
+    return null;
+  }
+  const real = resolved.path;
+  const realRoot = resolved.root;
+  let dirStat;
+  try { dirStat = await fs.stat(real); } catch { return null; }
+  if (!dirStat.isDirectory()) return null;
 
   const rel = path.relative(realRoot, real);
-  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
-
   const pkgPath = path.join(real, 'package.json');
   let pkg = null;
   try { pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8')); } catch { /* not a Node project */ }
@@ -121,12 +182,21 @@ async function inspectProject(dirPath, workspaceRoot) {
     else if (s.serve) recommendedScript = 'serve';
   }
 
-  // Static: already-built site
+  // Static: already-built site. Canonicalize the selected index as well so a
+  // symlinked build output cannot make the preview serve outside the workspace.
   let staticEntry = null;
-  if (!recommendedScript && hasIndexHtml) staticEntry = path.join(real, 'index.html');
-  if (!recommendedScript && hasDistIndex) {
-    for (const d of ['dist', 'build', 'out']) {
-      if (await has(`${d}/index.html`)) { staticEntry = path.join(real, d, 'index.html'); break; }
+  if (!recommendedScript) {
+    const candidates = hasIndexHtml
+      ? ['index.html']
+      : hasDistIndex
+        ? ['dist/index.html', 'build/index.html', 'out/index.html']
+        : [];
+    for (const candidate of candidates) {
+      try {
+        const entry = await resolveWorkspacePath(path.join(real, candidate), realRoot);
+        const entryStat = await fs.stat(entry.path);
+        if (entryStat.isFile()) { staticEntry = entry.path; break; }
+      } catch { /* broken or unsafe candidate */ }
     }
   }
 
@@ -146,4 +216,4 @@ async function inspectProject(dirPath, workspaceRoot) {
   };
 }
 
-module.exports = { kindForPath, assertInsideRoot, describeFile, inspectProject, BLOCKED_SEGMENTS };
+module.exports = { kindForPath, assertInsideRoot, resolveWorkspacePath, describeFile, inspectProject, BLOCKED_SEGMENTS };

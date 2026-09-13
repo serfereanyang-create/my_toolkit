@@ -9,6 +9,15 @@ type Props = {
   onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void;
 };
 
+// A file ending in "\n" splits into [..., ""] — drop the phantom trailing
+// empty line so line counts aren't inflated and the diff never renders a
+// bare "+" row.
+function splitLines(content: string): string[] {
+  const lines = content.split(/\r?\n/);
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
 export function DiffReview({ diffs, dispatch, onApprove }: Props) {
   const pending  = diffs.filter((d) => d.status === 'pending');
   const resolved = diffs.filter((d) => d.status !== 'pending');
@@ -73,8 +82,8 @@ function DiffCard({ diff, onAccept, onReject }: {
   const isAccepted = diff.status === 'accepted';
 
   // Compute simple line diff summary
-  const oldLines = diff.originalContent.split('\n');
-  const newLines  = diff.modifiedContent.split('\n');
+  const oldLines = splitLines(diff.originalContent);
+  const newLines  = splitLines(diff.modifiedContent);
   const added   = newLines.length - oldLines.length;
   const name = diff.path.split(/[\\/]/).pop() ?? diff.path;
 
@@ -114,8 +123,8 @@ function MonacoDiffView({ original, modified }: { original: string; modified: st
     const el = containerRef.current;
     if (!el) return;
 
-    const origLines = original.split('\n');
-    const modLines  = modified.split('\n');
+    const origLines = splitLines(original);
+    const modLines  = splitLines(modified);
     const maxLines  = Math.max(origLines.length, modLines.length);
 
     // Simple line-by-line diff: mark removed / added / unchanged rows.

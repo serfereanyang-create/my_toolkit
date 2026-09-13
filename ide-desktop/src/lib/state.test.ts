@@ -116,6 +116,47 @@ describe('appReducer', () => {
     expect(card.decided).toBe('allow_once');
   });
 
+  const statsEvent = (inputTokens: number, cacheRead: number, reported = true) => ({
+    type: 'context_stats', provider: 'p', model: 'm',
+    inputTokens, outputTokens: 800,
+    providerCacheReported: reported, cacheReadTokens: cacheRead, cacheCreationTokens: 0,
+    predictedPromptCacheRate: null,
+    categories: { messages: 1, systemTools: 1, mcpTools: 0, skills: 0, systemPrompt: 1, other: 0 },
+    localCache: { totalHits: 0, totalMisses: 0, totalLookups: 0, hitRate: null, buckets: [] },
+  });
+
+  it('stamps per-turn ctx/cache numbers onto the running turn (Codex footer)', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'tool_start', tool: 'read_file', input: { path: 'a.ts' } });
+    s = emit(s, statsEvent(14200, 13206));
+    const turn = s.chat.find((item) => item.kind === 'turn');
+    if (!turn || turn.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.ctxTokens).toBe(14200);
+    expect(turn.cacheRate).toBe(93);
+    expect(s.contextStats?.inputTokens).toBe(14200);
+  });
+
+  it('omits cache rate when the provider never reported cache metrics', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, statsEvent(900, 0, false));
+    const turn = s.chat.find((item) => item.kind === 'turn');
+    if (!turn || turn.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.ctxTokens).toBe(900);
+    expect(turn.cacheRate).toBeNull();
+  });
+
+  it('never stamps a finished turn with a later snapshot', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'tool_start', tool: 'read_file', input: { path: 'a.ts' } });
+    s = emit(s, statsEvent(1000, 900));
+    s = emit(s, { type: 'turn_done' });
+    s = emit(s, statsEvent(9999, 0));
+    const turn = s.chat.find((item) => item.kind === 'turn');
+    if (!turn || turn.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.ctxTokens).toBe(1000);
+    expect(s.contextStats?.inputTokens).toBe(9999);
+  });
+
   it('sums session-wide change totals across turns for the topbar badge', () => {
     let s = emit(initialState, { type: 'turn_start' });
     s = emit(s, { type: 'tool_start', tool: 'write_file', input: { path: 'a.ts' } });
@@ -233,5 +274,74 @@ describe('activeTurnProgress', () => {
     expect(progress?.added).toBe(8);
     expect(progress?.removed).toBe(3);
     expect(progress?.lastTool).toBe('edit_file');
+  });
+});
+
+// ─── P0 execution-overhaul: lifecycle reducer guarantees ─────────────────────
+
+describe('agent event lifecycle (P0)', () => {
+  it('duplicate turn_start for an open turn keeps the workLog', () => {
+    let s = appReducer(initialState, { type: 'agent/event', event: { type: 'turn_start' } });
+    s = appReducer(s, { type: 'agent/event', event: { type: 'info', message: 'step one happened' } });
+    const logLen = s.workLog.length;
+    expect(logLen).toBeGreaterThan(0);
+
+    // The CLI emits a second turn_start from inside runAgentTurn for the same
+    // bridge turn; it must not wipe the log the first one started filling.
+    s = appReducer(s, { type: 'agent/event', event: { type: 'turn_start' } });
+    expect(s.workLog.length).toBe(logLen);
+    expect(s.chat.filter((item) => item.kind === 'turn')).toHaveLength(1);
+  });
+
+  it('agent_offline closes the open turn, denies undecided approvals and clears pendingDiffs', () => {
+    let s = appReducer(initialState, { type: 'agent/event', event: { type: 'turn_start' } });
+    s = appReducer(s, { type: 'agent/event', event: { type: 'tool_start', tool: 'write_file', input: { path: 'a.ts' } } });
+    s = appReducer(s, {
+      type: 'agent/event',
+      event: { type: 'approval_needed', requestId: 'req-1', tool: 'write_file', message: 'allow?', diff: { path: 'a.ts', originalContent: '', modifiedContent: 'new' } },
+    });
+    expect(s.pendingDiffs).toHaveLength(1);
+
+    s = appReducer(s, { type: 'agent/event', event: { type: 'agent_offline', code: 1 } });
+    // The dead bridge can never answer approvals; undecided ones are denied.
+    const approvals = s.chat.filter((item) => item.kind === 'approval');
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].decided).toBe('deny');
+    expect(approvals[0].diff?.status).toBe('rejected');
+    expect(s.pendingDiffs).toHaveLength(0);
+    // Zombie turn closed, status offline.
+    expect(s.chat.filter((item) => item.kind === 'turn' && item.endedAt === undefined)).toHaveLength(0);
+    expect(s.agentStatus).toBe('offline');
+  });
+
+  it('undo_done flips the requesting turn card by undoId', () => {
+    let s = appReducer(initialState, { type: 'agent/event', event: { type: 'turn_start' } });
+    s = appReducer(s, { type: 'agent/event', event: { type: 'tool_result', tool: 'write_file', ok: true, data: { path: 'a.ts', added: 3, removed: 0, checkpointId: 'cp-1' } } });
+    s = appReducer(s, { type: 'agent/event', event: { type: 'turn_done', status: 'ok' } });
+    const turn = s.chat.find((item) => item.kind === 'turn');
+    expect(turn).toBeDefined();
+
+    s = appReducer(s, { type: 'turn/undo-state', turnId: turn!.id, undo: 'undoing' });
+    // IPC ack already said ok — but the authoritative undo_done says failed.
+    s = appReducer(s, { type: 'agent/event', event: { type: 'undo_done', undoId: turn!.id, ok: false, reverted: 0 } });
+    expect(s.chat.find((item) => item.kind === 'turn')?.undo).toBe('failed');
+
+    s = appReducer(s, { type: 'agent/event', event: { type: 'undo_done', undoId: 'does-not-match', ok: true } });
+    expect(s.chat.find((item) => item.kind === 'turn')?.undo).toBe('failed');
+  });
+
+  it('bridge_ready transitions a starting bridge to ready and records its session', () => {
+    let s = appReducer(initialState, { type: 'agent/status', status: 'starting' });
+    s = appReducer(s, { type: 'agent/event', event: { type: 'bridge_ready', sessionId: 'sess-1', provider: 'mock', model: 'm' } });
+    expect(s.agentStatus).toBe('ready');
+    expect(s.activeSessionId).toBe('sess-1');
+  });
+
+  it('error events do not force agentStatus back to ready', () => {
+    let s = appReducer(initialState, { type: 'agent/status', status: 'running' });
+    s = appReducer(s, { type: 'agent/event', event: { type: 'error', message: 'provider exploded' } });
+    // A mid-turn error must not claim the bridge is ready; the turn lifecycle
+    // (turn_done / agent_offline) owns the status transitions.
+    expect(s.agentStatus).toBe('running');
   });
 });

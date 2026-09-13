@@ -21,7 +21,7 @@ test('normalizeCliEvent keeps tool events intact', () => {
   assert.deepEqual(normalizeCliEvent(event), event);
 });
 
-test('AgentBridge sends automation tasks as structured JSON commands', () => {
+test('AgentBridge sends automation tasks as structured JSON commands', async () => {
   const bridge = new AgentBridge({
     cliRoot: 'C:/cli',
     workspaceRoot: 'C:/workspace',
@@ -37,11 +37,98 @@ test('AgentBridge sends automation tasks as structured JSON commands', () => {
     },
   };
 
-  bridge.automationTask('auto_123', 'Run tests and verify');
+  await bridge.automationTask('auto_123', 'Run tests and verify');
 
   assert.deepEqual(JSON.parse(written.trim()), {
     type: 'automation_task',
     taskId: 'auto_123',
     goal: 'Run tests and verify',
   });
+});
+
+// ─── P0 execution-overhaul: generation gating, cancel dedup, EOF flush ───────
+
+const { EventEmitter } = require('node:events');
+
+function fakeChild() {
+  const child = new EventEmitter();
+  child.stdin = { writable: true, write(value) { child.written = (child.written || '') + value; } };
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  child.kill = () => { child.killed = true; };
+  return child;
+}
+
+function newBridge() {
+  return new AgentBridge({
+    cliRoot: 'C:/cli',
+    workspaceRoot: 'C:/workspace',
+    sessionDir: 'C:/workspace/.aicode/sessions',
+    provider: 'mock',
+    model: 'mock',
+  });
+}
+
+test('cancel() emits turn_done+agent_offline exactly once; late exit is suppressed', () => {
+  const bridge = newBridge();
+  const events = [];
+  bridge.on('event', (event) => events.push(event));
+
+  const child = fakeChild();
+  bridge.attach(child);
+  bridge.cancel();
+
+  assert.deepEqual(events.map((e) => e.type), ['turn_done', 'agent_offline']);
+  assert.equal(events[0].status, 'cancelled');
+
+  // The real child dies right after the kill; its natural exit handler must
+  // NOT emit a second agent_offline (the original double-offline bug).
+  child.emit('exit', 0);
+  assert.equal(events.filter((e) => e.type === 'agent_offline').length, 1);
+});
+
+test('stale stdout after cancel is not forwarded to the renderer', () => {
+  const bridge = newBridge();
+  const events = [];
+  bridge.on('event', (event) => events.push(event));
+
+  const child = fakeChild();
+  bridge.attach(child);
+  child.stdout.emit('data', `${JSON.stringify({ type: 'info', message: 'live' })}\n`);
+  assert.equal(events.filter((e) => e.type === 'info').length, 1);
+
+  bridge.cancel();
+  child.stdout.emit('data', `${JSON.stringify({ type: 'info', message: 'stale' })}\n`);
+  child.stdout.emit('data', '{"type":"assistant_delta","content":"par');
+  assert.equal(events.filter((e) => e.type === 'info').length, 1, 'no stale info may pass');
+  assert.equal(events.filter((e) => e.type === 'assistant_delta').length, 0);
+});
+
+test('trailing stdout without newline is flushed when the child exits', () => {
+  const bridge = newBridge();
+  const events = [];
+  bridge.on('event', (event) => events.push(event));
+
+  const child = fakeChild();
+  bridge.attach(child);
+  // A final event that never got its newline before the process died.
+  child.stdout.emit('data', '{"type":"turn_done","status":"ok"}');
+  assert.equal(events.filter((e) => e.type === 'turn_done').length, 0);
+
+  child.emit('exit', 0);
+  const dones = events.filter((e) => e.type === 'turn_done');
+  assert.equal(dones.length, 1, 'exit must flush the trailing buffered event');
+  assert.equal(dones[0].status, 'ok');
+  assert.equal(events.filter((e) => e.type === 'agent_offline').length, 1);
+});
+
+test('undo() carries the undoId so the renderer can match undo_done', async () => {
+  const bridge = newBridge();
+  const child = fakeChild();
+  bridge.attach(child);
+
+  await bridge.undo(['cp-1', 'cp-2'], 'turn-9');
+  const command = JSON.parse(child.written.trim());
+  assert.deepEqual(command, { type: 'undo', undoId: 'turn-9', checkpointIds: ['cp-1', 'cp-2'] });
 });

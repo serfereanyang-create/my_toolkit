@@ -1,5 +1,8 @@
+import { useEffect, useState } from 'react';
 import { Wrench, ShieldAlert, CheckCircle2, XCircle, Loader, FileEdit, Terminal, Globe, Lock } from 'lucide-react';
 import type { ChatItem, PendingDiff } from '../types';
+import { JsonViewer } from './JsonViewer';
+import { tryParseJson } from '../lib/jsonTree';
 
 // Risk level → color + icon + label
 const RISK_META: Record<string, { color: string; Icon: React.ElementType; label: string }> = {
@@ -37,9 +40,17 @@ function formatInput(tool: string, input: unknown): string | null {
   return json.length > 200 ? json.slice(0, 200) + '\n…' : json;
 }
 
+function splitLines(content: string): string[] {
+  const lines = content.split(/\r?\n/);
+  // A file ending in "\n" splits into [..., ""] — drop that phantom line so
+  // the diff never renders a bare "+" row.
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
 function ApprovalDiffPreview({ diff }: { diff: PendingDiff }) {
-  const before = diff.originalContent.split(/\r?\n/);
-  const after = diff.modifiedContent.split(/\r?\n/);
+  const before = splitLines(diff.originalContent);
+  const after = splitLines(diff.modifiedContent);
   const rows: Array<{ prefix: string; text: string; kind: 'removed' | 'added' | 'context' }> = [];
   const max = Math.max(before.length, after.length);
   for (let index = 0; index < max && rows.length < 14; index += 1) {
@@ -48,8 +59,9 @@ function ApprovalDiffPreview({ diff }: { diff: PendingDiff }) {
     if (oldLine === newLine) {
       rows.push({ prefix: '  ', text: oldLine ?? '', kind: 'context' });
     } else {
-      if (oldLine !== undefined) rows.push({ prefix: '- ', text: oldLine, kind: 'removed' });
-      if (newLine !== undefined && rows.length < 14) rows.push({ prefix: '+ ', text: newLine, kind: 'added' });
+      // Skip empty changed lines — they'd render as a bare "+"/"−" marker.
+      if (oldLine !== undefined && oldLine !== '') rows.push({ prefix: '- ', text: oldLine, kind: 'removed' });
+      if (newLine !== undefined && newLine !== '' && rows.length < 14) rows.push({ prefix: '+ ', text: newLine, kind: 'added' });
     }
   }
   return (
@@ -64,6 +76,28 @@ export function ToolCard({ item, onApprove }: {
   item: Extract<ChatItem, { kind: 'tool' | 'approval' }>;
   onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void;
 }) {
+  const isPendingApproval = item.kind === 'approval' && !item.decided;
+  const pendingRequestId = item.kind === 'approval' ? item.requestId : '';
+  // Iteration 11: structured-vs-raw toggle state for tool output. Declared
+  // before any conditional return so hook order stays stable across renders.
+  const [rawMode, setRawMode] = useState(false);
+
+  // approval_overlay.rs single-key shortcuts: y = approve, a = allow session,
+  // n/esc = deny. Only while this card is the live pending approval.
+  useEffect(() => {
+    if (!isPendingApproval) return;
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      const key = event.key.toLowerCase();
+      if (key === 'y') { event.preventDefault(); onApprove(pendingRequestId, 'allow_once'); }
+      else if (key === 'a') { event.preventDefault(); onApprove(pendingRequestId, 'allow_session'); }
+      else if (key === 'n' || key === 'escape') { event.preventDefault(); onApprove(pendingRequestId, 'deny'); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isPendingApproval, pendingRequestId, onApprove]);
+
   if (item.kind === 'approval') {
     const decided = item.decided;
     const risk = item.risk ?? 'write';
@@ -76,6 +110,10 @@ export function ToolCard({ item, onApprove }: {
                        : null;
 
     const inputPreview = formatInput(item.tool, item.input);
+    // approval_overlay.rs headlines per request kind.
+    const headline = risk === 'shell' || risk === 'network'
+      ? 'Would you like to run the following command?'
+      : 'Would you like to make the following edits?';
 
     return (
       <section className={`tool-card approval-card ${decided ? 'decided' : ''}`}
@@ -90,6 +128,8 @@ export function ToolCard({ item, onApprove }: {
             {item.tool}
           </span>
         </div>
+
+        <div className="approval-headline">{headline}</div>
 
         {inputPreview && (
           <pre className="approval-input-preview">{inputPreview}</pre>
@@ -107,16 +147,19 @@ export function ToolCard({ item, onApprove }: {
         ) : (
           <div className="approval-actions">
             <button className="approval-btn allow-once"
+              title="快捷键 y"
               onClick={() => onApprove(item.requestId, 'allow_once')}>
-              允许一次
+              Yes, proceed <kbd>y</kbd>
             </button>
             <button className="approval-btn allow-session"
+              title="快捷键 a"
               onClick={() => onApprove(item.requestId, 'allow_session')}>
-              本次会话允许
+              Yes, and don't ask again this session <kbd>a</kbd>
             </button>
             <button className="approval-btn deny"
+              title="快捷键 n / Esc — 拒绝后可直接输入新的指示"
               onClick={() => onApprove(item.requestId, 'deny')}>
-              拒绝
+              No, and tell Codex what to do differently <kbd>n</kbd>
             </button>
           </div>
         )}
@@ -130,11 +173,34 @@ export function ToolCard({ item, onApprove }: {
       ? <XCircle size={15} />
       : <CheckCircle2 size={15} />;
 
+  const inputText = formatInput(item.tool, item.input)
+    ?? (item.input !== undefined ? JSON.stringify(item.input) : null);
+  const outputText = item.output && item.output.length > 4000
+    ? item.output.slice(0, 4000) + '\n…（已截断）'
+    : item.output;
+
+  // Iteration 11: structured tool output (CLI returns JSON envelopes) gets
+  // the collapsible tree; raw text keeps the plain <pre>.
+  const outputIsJson = Boolean(outputText) && tryParseJson(outputText!).ok;
+  const showRaw = rawMode || !outputIsJson;
+
   return (
-    <section className={`tool-card ${item.status}`}>
-      <div className="tool-title">{icon} {item.tool}</div>
-      {item.input !== undefined && <pre>{JSON.stringify(item.input, null, 2)}</pre>}
-      {item.output && <pre>{item.output}</pre>}
+    <section className={`tool-card tool-detail ${item.status}`}>
+      <div className="tool-title">
+        {icon} {item.tool}
+        {outputIsJson && (
+          <button
+            type="button"
+            className="tool-view-toggle"
+            title={rawMode ? '切换为结构化视图' : '切换为原始文本'}
+            onClick={() => setRawMode((v) => !v)}
+          >{rawMode ? '树视图' : '原文'}</button>
+        )}
+      </div>
+      {inputText && <pre>{inputText}</pre>}
+      {outputText && (showRaw
+        ? <pre>{outputText}</pre>
+        : <JsonViewer text={outputText!} height={280} />)}
     </section>
   );
 }

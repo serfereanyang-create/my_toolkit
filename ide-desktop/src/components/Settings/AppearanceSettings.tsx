@@ -1,5 +1,21 @@
-import { useState } from 'react';
 import { Toggle, Segmented, SelectPill, SettingsCard, SettingRow, ColorSwatch, Slider, NumberField, TextField } from './controls';
+import { prefBool, prefStr, type Prefs, type SavePref } from './prefs';
+
+const CHINESE_FONT_OPTIONS = [
+  { value: 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif', label: '微软雅黑 / 苹方 / Noto Sans CJK' },
+  { value: 'PingFang SC, Microsoft YaHei UI, Microsoft YaHei, Noto Sans CJK SC, sans-serif', label: '苹方优先' },
+  { value: 'Noto Sans CJK SC, Source Han Sans SC, Microsoft YaHei, sans-serif', label: 'Noto Sans CJK / 思源黑体' },
+  { value: 'SimSun, NSimSun, Songti SC, Noto Serif CJK SC, serif', label: '宋体 / Songti' },
+  { value: 'system-ui, sans-serif', label: '系统默认中文字体' },
+];
+
+const ENGLISH_FONT_OPTIONS = [
+  { value: 'Inter, Segoe UI, system-ui, -apple-system, BlinkMacSystemFont, sans-serif', label: 'Inter / Segoe UI' },
+  { value: 'Segoe UI, Inter, system-ui, sans-serif', label: 'Segoe UI' },
+  { value: 'SF Pro Display, SF Pro Text, -apple-system, BlinkMacSystemFont, sans-serif', label: 'SF Pro / Apple 系统字体' },
+  { value: 'Roboto, Arial, sans-serif', label: 'Roboto' },
+  { value: 'system-ui, sans-serif', label: 'System UI' },
+];
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -59,68 +75,32 @@ function ThemeDiffPreview() {
   );
 }
 
-/* One theme's editable color/font block (used for both light and dark). */
-function ThemeColorCard({ heading, accent, background, foreground, translucent, contrast }: {
-  heading: string;
-  accent: string;
-  background: string;
-  foreground: string;
-  translucent: boolean;
-  contrast?: number;
-}) {
-  const [acc, setAcc] = useState(accent);
-  const [bg, setBg] = useState(background);
-  const [fg, setFg] = useState(foreground);
-  const [uiFont, setUiFont] = useState('-apple-system, BlinkMacSystemFont');
-  const [codeFont, setCodeFont] = useState('ui-monospace, "SFMono-Regular"');
-  const [trans, setTrans] = useState(translucent);
-  const [ctr, setCtr] = useState(contrast ?? 60);
-
-  return (
-    <section className="settings-group">
-      <div className="settings-card">
-        <div className="theme-card-head">
-          <span className="theme-card-title">{heading}</span>
-          <div className="theme-card-actions">
-            <button type="button" className="settings-link-btn" disabled>导入</button>
-            <button type="button" className="settings-link-btn" disabled>复制主题</button>
-            <SelectPill
-              value="codex"
-              onChange={() => {}}
-              icon={<span className="theme-font-badge">Aa</span>}
-              options={[{ value: 'codex', label: 'Codex' }]}
-            />
-          </div>
-        </div>
-        <SettingRow title="强调色" control={<ColorSwatch value={acc} onChange={setAcc} />} />
-        <SettingRow title="背景" control={<ColorSwatch value={bg} onChange={setBg} />} />
-        <SettingRow title="前景" control={<ColorSwatch value={fg} onChange={setFg} />} />
-        <SettingRow title="UI 字体" control={<TextField value={uiFont} onChange={setUiFont} />} />
-        <SettingRow title="代码字体" control={<TextField value={codeFont} onChange={setCodeFont} />} />
-        <SettingRow title="半透明侧边栏" control={<Toggle checked={trans} onChange={setTrans} label="半透明侧边栏" />} />
-        {contrast !== undefined && (
-          <SettingRow title="对比度" control={<Slider value={ctr} min={0} max={100} onChange={setCtr} />} />
-        )}
-      </div>
-    </section>
-  );
-}
-
-/* Full "外观" page. The theme selector is real and persisted; the remaining
-   preference controls are still local UI state pending backing fields. */
-export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontSize, onFontSizeChange }: {
+/* Full "外观" page. Theme, font sizes, and the editor preferences below are
+   persisted and have real consumers (UI CSS variable, Monaco editor options). */
+export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontSize, chineseFont, englishFont, onFontSizeChange, onFontChange, editorTabSize, editorMinimap, editorWordWrap, onEditorPrefChange, prefs, savePref }: {
   theme: ThemeMode;
   onThemeChange: (next: ThemeMode) => void;
   uiFontSize: number;
   codeFontSize: number;
+  chineseFont: string;
+  englishFont: string;
   onFontSizeChange: (next: { uiFontSize?: number; codeFontSize?: number }) => void;
+  onFontChange: (next: { uiChineseFont?: string; uiEnglishFont?: string }) => void;
+  editorTabSize: number;
+  editorMinimap: boolean;
+  editorWordWrap: boolean;
+  onEditorPrefChange: (next: { editorTabSize?: number; editorMinimap?: boolean; editorWordWrap?: boolean }) => void;
+  prefs: Prefs;
+  savePref: SavePref;
 }) {
   const setTheme = onThemeChange;
 
-  // 偏好设置 — theme + font sizes are persisted; the rest are still local UI state.
-  const [pointerCursor, setPointerCursor] = useState(false);
-  const [reduceMotion, setReduceMotion] = useState<'system' | 'on' | 'off'>('system');
-  const [diffMarkers, setDiffMarkers] = useState<'color' | 'symbol'>('color');
+  // 偏好设置 — 全部持久化且有真实消费者：pointerCursor/reduceMotion 由 App.tsx
+  // 写成 <html data-*> 属性并驱动 CSS；diffMarkers 移除（无渲染消费者）。
+  const pointerCursor = prefBool(prefs, 'appearance.pointerCursor', false);
+  const reduceMotion = prefStr(prefs, 'appearance.reduceMotion', 'system') as 'system' | 'on' | 'off';
+  const setPointerCursor = (v: boolean) => savePref({ 'appearance.pointerCursor': v });
+  const setReduceMotion = (v: 'system' | 'on' | 'off') => savePref({ 'appearance.reduceMotion': v });
 
   return (
     <div className="settings-page">
@@ -135,9 +115,6 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
         </div>
         <ThemeDiffPreview />
       </section>
-
-      <ThemeColorCard heading="浅色主题" accent="#339CFF" background="#FFFFFF" foreground="#1A1C1F" translucent />
-      <ThemeColorCard heading="深色主题" accent="#339CFF" background="#181818" foreground="#FFFFFF" translucent contrast={60} />
 
       <SettingsCard heading="偏好设置">
         <SettingRow
@@ -160,17 +137,34 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
           control={<NumberField value={uiFontSize} onChange={(next) => onFontSizeChange({ uiFontSize: next })} suffix="px" min={10} max={24} />}
         />
         <SettingRow
+          title="中文字体"
+          description="简体中文界面优先使用的字体，系统未安装时自动回退"
+          control={<SelectPill value={chineseFont} onChange={(next) => onFontChange({ uiChineseFont: next })} options={CHINESE_FONT_OPTIONS} />}
+        />
+        <SettingRow
+          title="English font"
+          description="Font stack used when the interface language is English"
+          control={<SelectPill value={englishFont} onChange={(next) => onFontChange({ uiEnglishFont: next })} options={ENGLISH_FONT_OPTIONS} />}
+        />
+        <SettingRow
           title="代码字体大小"
-          description="调整聊天和差异视图中代码使用的基础字号"
+          description="调整编辑器、聊天和差异视图中代码使用的基础字号"
           control={<NumberField value={codeFontSize} onChange={(next) => onFontSizeChange({ codeFontSize: next })} suffix="px" min={8} max={24} />}
         />
         <SettingRow
-          title="差异标记"
-          description="使用颜色或 +/− 标记显示更改"
-          control={<Segmented value={diffMarkers} onChange={setDiffMarkers} options={[
-            { value: 'color', label: '颜色' },
-            { value: 'symbol', label: '+/-' },
-          ]} />}
+          title="缩进宽度"
+          description="编辑器中 Tab 缩进使用的空格数（立即生效）"
+          control={<NumberField value={editorTabSize} onChange={(next) => onEditorPrefChange({ editorTabSize: next })} suffix="格" min={2} max={8} />}
+        />
+        <SettingRow
+          title="显示小地图"
+          description="在编辑器右侧显示代码缩略导航图"
+          control={<Toggle checked={editorMinimap} onChange={(next) => onEditorPrefChange({ editorMinimap: next })} label="显示小地图" />}
+        />
+        <SettingRow
+          title="自动换行"
+          description="长行在编辑器宽度处折行，而不是横向滚动"
+          control={<Toggle checked={editorWordWrap} onChange={(next) => onEditorPrefChange({ editorWordWrap: next })} label="自动换行" />}
         />
       </SettingsCard>
     </div>

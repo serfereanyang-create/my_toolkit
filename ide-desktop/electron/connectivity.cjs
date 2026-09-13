@@ -48,7 +48,7 @@ async function testProviderConnection({ providerConfig, apiKey }, deps = {}) {
               'x-api-key': apiKey,
               'anthropic-version': '2023-06-01',
             },
-            body: JSON.stringify({ model, max_tokens: 16, messages: [{ role: 'user', content: 'ping' }] }),
+            body: JSON.stringify({ model, max_tokens: 64, messages: [{ role: 'user', content: 'ping' }] }),
             signal: controller.signal,
           },
         }
@@ -60,7 +60,7 @@ async function testProviderConnection({ providerConfig, apiKey }, deps = {}) {
               'content-type': 'application/json',
               authorization: `Bearer ${apiKey}`,
             },
-            body: JSON.stringify({ model, max_tokens: 16, stream: false, messages: [{ role: 'user', content: 'ping' }] }),
+            body: JSON.stringify({ model, max_tokens: 64, stream: false, messages: [{ role: 'user', content: 'ping' }] }),
             signal: controller.signal,
           },
         };
@@ -157,12 +157,34 @@ function describeHttpError(status, bodyText, wire, model) {
 function extractSample(bodyText, wire) {
   const json = safeJson(bodyText);
   if (!json) return '';
-  if (wire === 'anthropic') {
-    const block = Array.isArray(json.content) ? json.content.find((b) => b && b.type === 'text') : null;
-    return block && typeof block.text === 'string' ? block.text : '';
-  }
+
+  // A connectivity test must pass when the ENDPOINT and MODEL answer, not only
+  // when the reply carries visible text. Three real-world cases used to fail:
+  //  1. Thinking models (glm-5.3, kimi-k2-thinking, …) burn the whole
+  //     max_tokens budget on the thinking phase, so content holds only a
+  //     `thinking` block — that is a healthy response, not an error.
+  //  2. Relay gateways configured for one wire sometimes answer in the other
+  //     shape (anthropic-configured → OpenAI JSON and vice versa).
+  //  3. OpenAI-style reasoning models put text in `reasoning_content`.
+  const anthropicText = findBlock(json.content, 'text');
+  if (anthropicText) return anthropicText;
+  const anthropicThinking = findBlock(json.content, 'thinking');
+  if (anthropicThinking) return `[思考中] ${anthropicThinking}`;
+
   const message = json.choices && json.choices[0] && json.choices[0].message;
-  return message && typeof message.content === 'string' ? message.content : '';
+  if (message) {
+    if (typeof message.content === 'string' && message.content) return message.content;
+    if (typeof message.reasoning_content === 'string' && message.reasoning_content) {
+      return `[思考中] ${message.reasoning_content}`;
+    }
+  }
+  return '';
+}
+
+function findBlock(content, type) {
+  if (!Array.isArray(content)) return '';
+  const block = content.find((b) => b && b.type === type);
+  return block && typeof block.text === 'string' ? block.text : '';
 }
 
 function extractErrorSnippet(bodyText) {

@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import type { ReactNode } from 'react';
+import { slugifyHeading } from '../lib/markdownOutline';
 
 /*
  * Minimal, dependency-free markdown renderer for assistant messages.
@@ -7,6 +8,9 @@ import type { ReactNode } from 'react';
  * unordered/ordered lists, and paragraphs. All text is rendered through React
  * children (never dangerouslySetInnerHTML), so raw HTML in the model output is
  * shown as literal text rather than being injected into the DOM.
+ *
+ * Iteration 12: headings get GitHub-style anchor ids (deduplicated per
+ * document) so the outline panel's links can scroll to them.
  */
 
 type Block =
@@ -15,6 +19,17 @@ type Block =
   | { kind: 'ul'; items: string[] }
   | { kind: 'ol'; items: string[] }
   | { kind: 'p'; text: string };
+
+/** Assign unique anchor ids to a batch of heading texts, GitHub style. */
+export function headingAnchors(headings: string[]): string[] {
+  const used = new Map<string, number>();
+  return headings.map((raw, idx) => {
+    const base = slugifyHeading(raw) || `heading-${idx}`;
+    const seen = used.get(base) ?? 0;
+    used.set(base, seen + 1);
+    return seen === 0 ? base : `${base}-${seen}`;
+  });
+}
 
 export function parseBlocks(src: string): Block[] {
   const lines = src.replace(/\r\n/g, '\n').split('\n');
@@ -149,8 +164,13 @@ function renderEmphasis(text: string, keyPrefix: string): ReactNode[] {
   return nodes;
 }
 
-export function Markdown({ text }: { text: string }) {
+export function Markdown({ text, anchorPrefix }: { text: string; anchorPrefix?: string }) {
   const blocks = parseBlocks(text);
+  // Precompute stable anchor ids for headings (iteration 12) so the outline
+  // sidebar can deep-link into a rendered document. anchorPrefix keeps ids
+  // unique across multiple Markdown instances in one transcript.
+  const anchors = headingAnchors(blocks.filter((b): b is Extract<Block, { kind: 'heading' }> => b.kind === 'heading').map((b) => b.text));
+  let anchorAt = 0;
   return (
     <div className="md">
       {blocks.map((block, idx) => {
@@ -163,7 +183,9 @@ export function Markdown({ text }: { text: string }) {
             );
           case 'heading': {
             const Tag = (`h${Math.min(block.level + 2, 6)}`) as keyof JSX.IntrinsicElements;
-            return <Tag key={idx} className="md-heading">{renderInline(block.text, `h${idx}`)}</Tag>;
+            const base = anchors[anchorAt++] ?? `heading-${idx}`;
+            const id = anchorPrefix ? `${anchorPrefix}--${base}` : base;
+            return <Tag key={idx} id={id} className="md-heading">{renderInline(block.text, `h${idx}`)}</Tag>;
           }
           case 'ul':
             return (

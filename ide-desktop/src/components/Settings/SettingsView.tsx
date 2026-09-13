@@ -21,6 +21,10 @@ import { WorktreesSettings } from './WorktreesSettings';
 import { ArchivedSettings } from './ArchivedSettings';
 import { ModelSettings } from './ModelSettings';
 import { UsageSettings } from './UsageSettings';
+import { searchNavIds } from '../../lib/settingsSearch';
+
+const CHINESE_FONT_DEFAULT = 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif';
+const ENGLISH_FONT_DEFAULT = 'Inter, Segoe UI, system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
 
 export type SettingsNavId =
   | 'general' | 'appearance' | 'model' | 'usage' | 'personalize' | 'shortcuts'
@@ -87,10 +91,14 @@ export function SettingsView({ settings, onBack, onSave, onSaveKey, initialPage 
   const savePref = (patch: DesktopPreferences) =>
     onSave({ ...settings, preferences: { ...settings.preferences, ...patch } });
 
+  // Iteration 15: fuzzy + bilingual keyword nav search (lib/settingsSearch)
+  // instead of the old label-substring-only filter. Matched ids keep the
+  // group order; ranking determines membership only.
+  const matchedIds = searchNavIds(query, NAV_GROUPS.flatMap((group) => group.items.map((item) => ({ id: item.id, label: item.label, keywords: '' }))));
   const filteredGroups = query.trim()
     ? NAV_GROUPS.map((group) => ({
         ...group,
-        items: group.items.filter((item) => item.label.toLowerCase().includes(query.trim().toLowerCase())),
+        items: group.items.filter((item) => matchedIds.includes(item.id)),
       })).filter((group) => group.items.length > 0)
     : NAV_GROUPS;
 
@@ -131,14 +139,30 @@ export function SettingsView({ settings, onBack, onSave, onSaveKey, initialPage 
       </nav>
 
       <div className="settings-content">
-        {active === 'general' && <GeneralSettings prefs={prefs} savePref={savePref} />}
+        {active === 'general' && (
+          <GeneralSettings
+            prefs={prefs}
+            savePref={savePref}
+            approval={settings.approval}
+            onApprovalChange={(approval) => onSave({ ...settings, approval })}
+          />
+        )}
         {active === 'appearance' && (
           <AppearanceSettings
             theme={settings.preferences?.theme ?? 'system'}
             onThemeChange={(theme) => savePref({ theme })}
             uiFontSize={Number(settings.preferences?.uiFontSize) || 14}
             codeFontSize={Number(settings.preferences?.codeFontSize) || 12}
+            chineseFont={String(settings.preferences?.uiChineseFont || CHINESE_FONT_DEFAULT)}
+            englishFont={String(settings.preferences?.uiEnglishFont || ENGLISH_FONT_DEFAULT)}
             onFontSizeChange={(next) => savePref(next)}
+            onFontChange={(next) => savePref(next)}
+            editorTabSize={Number(settings.preferences?.editorTabSize) || 2}
+            editorMinimap={settings.preferences?.editorMinimap !== false}
+            editorWordWrap={settings.preferences?.editorWordWrap === true}
+            onEditorPrefChange={(next) => savePref(next)}
+            prefs={prefs}
+            savePref={savePref}
           />
         )}
         {active === 'model' && <ModelSettings settings={settings} onSave={onSave} onSaveKey={onSaveKey} />}

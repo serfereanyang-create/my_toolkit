@@ -7,12 +7,12 @@ import { desktop } from '../lib/ipc';
 /*
  * SideChatPanel — 独立侧边聊天面板。
  *
- * 架构：侧边聊天与主对话共用同一个 agent bridge 进程。每个侧边 tab
- * 是一个轻量级的消息列表；发送时调用 desktop.agent.start/prompt，
- * 接收时监听 desktop.agent.onEvent。
+ * 架构：侧边聊天拥有自己的 agent bridge 子进程和独立会话
+ * （desktop.sideChat.* 通道），与主对话并行运行，互不干扰。
+ * 侧边代理是只读助手：写操作会被主进程审批策略自动拒绝。
  *
- * 限制：bridge 是单进程、单会话的，所以侧边聊天和主对话不能同时运行。
- * 当主对话 agentStatus !== 'offline' 时，发送按钮 disable 并给出提示。
+ * 会话模型：所有 tab 共享当前侧边会话；"新建对话"会重置会话，
+ * 之后的消息进入新会话（旧 tab 的历史仅为本地展示）。
  */
 
 type SideAgentStatus = 'offline' | 'starting' | 'running';
@@ -33,15 +33,12 @@ type SideChat = {
 export function SideChatPanel({
   open,
   width,
-  mainAgentBusy,
   onClose,
   onWidthChange,
   settings,
 }: {
   open: boolean;
   width: number;
-  /** true when the main conversation agent is running/starting */
-  mainAgentBusy: boolean;
   onClose: () => void;
   onWidthChange: (width: number) => void;
   settings: DesktopSettings | null;
@@ -55,10 +52,11 @@ export function SideChatPanel({
 
   const activeChat = chats.find((c) => c.id === activeId);
 
-  // Subscribe to agent events so we can render assistant replies
+  // Subscribe to the dedicated side-chat event channel. Events never mix with
+  // the main conversation stream.
   useEffect(() => {
     if (!open) return;
-    const unsub = desktop.agent.onEvent((event: AgentEvent) => {
+    const unsub = desktop.sideChat.onEvent((event: AgentEvent) => {
       // Only act on events relevant to side chat (agent is running for us)
       if (agentStatus === 'offline') return;
 
@@ -128,6 +126,10 @@ export function SideChatPanel({
   }, [chats]);
 
   function createChat() {
+    // A new thread starts a fresh side session so replies never leak context
+    // from the previous thread.
+    void desktop.sideChat.reset();
+    setAgentStatus('offline');
     const id = `side-${Date.now()}`;
     setChats((prev) => [...prev, { id, title: '新对话', messages: [] }]);
     setActiveId(id);
@@ -145,7 +147,6 @@ export function SideChatPanel({
   async function sendMessage() {
     const text = input.trim();
     if (!text || !activeChat) return;
-    if (mainAgentBusy) return;
     setInput('');
 
     // Add user message immediately
@@ -164,9 +165,9 @@ export function SideChatPanel({
 
     try {
       setAgentStatus('starting');
-      await desktop.agent.start();
-      setAgentStatus('running');
-      await desktop.agent.prompt(text);
+      // The side bridge starts lazily on first use and runs independently of
+      // the main conversation agent.
+      await desktop.sideChat.prompt(text);
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
       setChats((prev) =>
@@ -205,7 +206,9 @@ export function SideChatPanel({
   if (!open) return null;
 
   const busy = agentStatus !== 'offline';
-  const disabled = busy || mainAgentBusy;
+  // The side agent runs on its own bridge: it no longer waits for the main
+  // conversation to finish.
+  const disabled = busy;
 
   return (
     <aside className="side-chat-panel" style={{ width }}>
@@ -276,10 +279,6 @@ export function SideChatPanel({
                 <div ref={messagesEndRef} />
               </div>
 
-              {mainAgentBusy && (
-                <div className="side-chat-notice">主对话进行中，完成后可继续</div>
-              )}
-
               <div className="side-chat-input">
                 <textarea
                   value={input}
@@ -287,15 +286,15 @@ export function SideChatPanel({
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendMessage(); }
                   }}
-                  placeholder={disabled ? '等待对话结束…' : '输入消息… Enter 发送'}
+                  placeholder={busy ? '回复生成中…' : '输入消息… Enter 发送'}
                   rows={3}
                   disabled={disabled}
                 />
                 <button
                   className="icon-button"
-                  onClick={() => void sendMessage()}
-                  disabled={disabled || !input.trim()}
-                  title="发送"
+                  onClick={() => { if (busy) { void desktop.sideChat.cancel(); } else { void sendMessage(); } }}
+                  disabled={!busy && !input.trim()}
+                  title={busy ? '停止' : '发送'}
                 >
                   {busy ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
                 </button>

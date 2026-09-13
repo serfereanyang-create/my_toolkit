@@ -1,29 +1,50 @@
-import { useEffect, useRef, useState } from 'react';
-import { FileText, FileType2, Sheet, Presentation, LayoutTemplate, Globe, Monitor, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { desktop } from '../lib/ipc';
+import {
+  CATEGORY_LABEL, DEFAULT_ENABLED_IDS, groupByCategory, pluginMeta, statusMap,
+  filterPlugins, type PluginDef, type PluginStatus,
+} from '../lib/plugins';
+import { prefStrArray } from './Settings/prefs';
+import type { Prefs } from './Settings/prefs';
 
+/**
+ * The composer "+" plugin menu (iteration 20). Now fed by the main-process
+ * registry instead of a second hardcoded list: only plugins the user enabled
+ * AND that are available in this environment show up, grouped by category,
+ * searchable, with the route (if any) carried through to App for navigation.
+ */
 export type PluginItem = {
   id: string;
   name: string;
   desc: string;
-  icon: JSX.Element;
+  icon: ReactNode;
   tint: string;
+  route: string | null;
 };
 
-// Static catalog for now; wiring to real capabilities comes later.
-const PLUGINS: PluginItem[] = [
-  { id: 'documents', name: 'Documents', desc: 'Create and edit document artifacts', icon: <FileText size={18} />, tint: '#4b83f0' },
-  { id: 'pdf', name: 'PDF', desc: 'Read, create, and verify PDF files', icon: <FileType2 size={18} />, tint: '#e05a4a' },
-  { id: 'spreadsheets', name: 'Spreadsheets', desc: 'Create and edit spreadsheet files', icon: <Sheet size={18} />, tint: '#3aa675' },
-  { id: 'presentations', name: 'Presentations', desc: 'Create and edit presentations', icon: <Presentation size={18} />, tint: '#e8a13a' },
-  { id: 'template', name: 'Template Creator', desc: 'Create or update reusable templates from reference content', icon: <LayoutTemplate size={18} />, tint: '#9b8cf0' },
-  { id: 'browser', name: '浏览器', desc: 'Control the in-app browser with YOYcode', icon: <Globe size={18} />, tint: '#4b9ff0' },
-  { id: 'computer', name: '电脑', desc: 'Control Windows apps from YOYcode', icon: <Monitor size={18} />, tint: '#4bb0e0' },
-  { id: 'visualize', name: 'Visualize', desc: 'Turn ideas and data into interactive visuals', icon: <Sparkles size={18} />, tint: '#4b83f0' },
-];
+function toMenuItem(def: PluginDef): PluginItem {
+  const meta = pluginMeta(def.id);
+  return { id: def.id, name: def.name, desc: def.desc, icon: meta.icon, tint: meta.tint, route: def.route };
+}
 
-export function PluginMenu({ onClose, onPick }: { onClose: () => void; onPick: (plugin: PluginItem) => void }) {
+export function PluginMenu({ prefs, onClose, onPick }: {
+  prefs?: Prefs;
+  onClose: () => void;
+  onPick: (plugin: PluginItem) => void;
+}) {
   const [query, setQuery] = useState('');
+  const [defs, setDefs] = useState<PluginDef[]>([]);
+  const [status, setStatus] = useState<PluginStatus | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([desktop.plugins.catalog(), desktop.plugins.status()])
+      .then(([c, s]) => { if (!cancelled) { setDefs(c); setStatus(s); } })
+      .catch(() => { /* registry unreachable: empty menu */ });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     function onDown(event: MouseEvent) {
@@ -40,29 +61,48 @@ export function PluginMenu({ onClose, onPick }: { onClose: () => void; onPick: (
     };
   }, [onClose]);
 
-  const filtered = query.trim()
-    ? PLUGINS.filter((p) => `${p.name} ${p.desc}`.toLowerCase().includes(query.trim().toLowerCase()))
-    : PLUGINS;
+  const visible = useMemo(() => {
+    const enabledIds = prefs ? prefStrArray(prefs, 'pluginsEnabled', DEFAULT_ENABLED_IDS) : null;
+    const availability = statusMap(status);
+    const usable = defs.filter((d) => {
+      const entry = availability.get(d.id);
+      if (entry && !entry.available) return false;
+      if (enabledIds && !enabledIds.includes(d.id)) return false;
+      return true;
+    });
+    return groupByCategory(filterPlugins(usable, query));
+  }, [defs, status, prefs, query]);
+
+  const isEmpty = visible.every((g) => g.plugins.length === 0);
 
   return (
     <div className="plugin-menu" ref={ref} role="menu">
       <div className="plugin-section">插件</div>
-      <div className="plugin-list">
-        {filtered.map((plugin) => (
-          <button key={plugin.id} className="plugin-row" onClick={() => onPick(plugin)}>
-            <span className="plugin-icon" style={{ color: plugin.tint }}>{plugin.icon}</span>
-            <span className="plugin-name">{plugin.name}</span>
-            <span className="plugin-desc">{plugin.desc}</span>
-          </button>
-        ))}
-      </div>
-      <div className="plugin-section">文件和聊天</div>
       <input
         className="plugin-search"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
-        placeholder="输入内容以搜索文件或聊天"
+        placeholder="搜索插件…"
+        autoFocus
       />
+      <div className="plugin-list">
+        {isEmpty && <div className="plugin-empty">没有可用插件（在 设置 → 插件 中启用）</div>}
+        {visible.map((group) => (
+          <div key={group.category}>
+            <div className="plugin-section">{CATEGORY_LABEL[group.category]}</div>
+            {group.plugins.map((def) => {
+              const item = toMenuItem(def);
+              return (
+                <button key={item.id} className="plugin-row" onClick={() => onPick(item)}>
+                  <span className="plugin-icon" style={{ color: item.tint }}>{item.icon}</span>
+                  <span className="plugin-name">{item.name}</span>
+                  <span className="plugin-desc">{item.desc}</span>
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

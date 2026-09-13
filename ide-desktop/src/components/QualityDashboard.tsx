@@ -9,17 +9,17 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { desktop } from '../lib/ipc';
+import { useQualityRevision } from '../lib/qualityRevision';
 
 /**
- * 草案面板桥接：invokeTool 工具桥尚未在 preload 落地（ZCodeDesktopApi 无此方法），
- * 面板未挂载到 App。运行时若桥接缺失会抛出明确错误。
+ * 质量工具网关：read-only 分析工具经由主进程 allowlist 调用 CLI 无头模式。
+ * write 风险工具（生成测试、重构应用）会被网关与 CLI 双侧拒绝。
  */
-async function invokeTool(name: string, input: unknown): Promise<{ ok: boolean; data: any; output: any }> {
-  const api = (window as unknown as {
-    electronAPI?: { invokeTool(name: string, input: unknown): Promise<{ ok: boolean; data: unknown; output: string }> };
-  }).electronAPI;
-  if (!api) throw new Error('invokeTool 桥接未实现：preload 缺少 electronAPI（草案面板）');
-  return api.invokeTool(name, input) as Promise<{ ok: boolean; data: any; output: any }>;
+async function invokeTool(name: string, input: unknown, revision?: string): Promise<{ ok: boolean; data: any; output: any }> {
+  const result = await desktop.quality.invoke(name, (input ?? {}) as Record<string, unknown>, revision);
+  if (!result.ok && result.error) throw new Error(result.error);
+  return { ok: Boolean(result.ok), data: result.data, output: result.output };
 }
 
 interface QualityDashboardProps {
@@ -74,6 +74,27 @@ interface DependencyData {
   isolatedModules: string[];
 }
 
+/** 综合质量评分（0-100）：从三项分析数据计算，供本次与上次记录对比复用。 */
+function computeOverallScore(
+  complexity: ComplexityData | null,
+  smells: SmellData | null,
+  dependencies: DependencyData | null,
+): number | null {
+  if (!complexity || !smells || !dependencies) return null;
+  let score = 100;
+  // 复杂度扣分
+  score -= complexity.distribution.critical * 5;
+  score -= complexity.distribution.high * 2;
+  // 异味扣分
+  score -= smells.bySeverity.critical * 4;
+  score -= smells.bySeverity.major * 2;
+  score -= smells.bySeverity.minor * 0.5;
+  // 依赖扣分
+  score -= dependencies.circularDependencies.length * 3;
+  score -= dependencies.godModules.length * 1;
+  return Math.max(0, Math.round(score));
+}
+
 export const QualityDashboard: React.FC<QualityDashboardProps> = ({
   visible,
   onClose,
@@ -86,26 +107,46 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
   const [dependencies, setDependencies] = useState<DependencyData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'complexity' | 'smells' | 'dependencies'>('overview');
-  
+  // 上一次持久化记录的综合评分与时间（.aicode/quality，gateway 自动写入）。
+  const [previous, setPrevious] = useState<{ score: number | null; capturedAt?: string } | null>(null);
+  // Workspace revision guard: results are stamped at analyze time and flagged
+  // as stale when branch/HEAD/dirty-state move on afterwards.
+  const { capture, current, stale } = useQualityRevision(visible && !loading);
+
   const handleAnalyze = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
+      // 运行前读取上一次持久化记录（gateway 在运行后写入，先读才能拿到"上次"）。
+      const [prevComplexity, prevSmells, prevDeps] = await Promise.all([
+        desktop.quality.latest('analyze_complexity'),
+        desktop.quality.latest('detect_code_smells'),
+        desktop.quality.latest('analyze_dependencies'),
+      ]);
+      const prevScore = computeOverallScore(
+        (prevComplexity?.result?.data as ComplexityData | undefined) ?? null,
+        (prevSmells?.result?.data as SmellData | undefined) ?? null,
+        (prevDeps?.result?.data as DependencyData | undefined) ?? null,
+      );
+      setPrevious({ score: prevScore, capturedAt: prevComplexity?.capturedAt });
+
+      const revisionLabel = current?.label;
       // 并行执行三项分析
       const [complexityRes, smellsRes, depsRes] = await Promise.all([
-        invokeTool('analyze_complexity', { pattern }),
-        invokeTool('detect_code_smells', { pattern }),
-        invokeTool('analyze_dependencies', { pattern }),
+        invokeTool('analyze_complexity', { pattern }, revisionLabel),
+        invokeTool('detect_code_smells', { pattern }, revisionLabel),
+        invokeTool('analyze_dependencies', { pattern }, revisionLabel),
       ]);
-      
+
       if (complexityRes.ok) setComplexity(complexityRes.data);
       if (smellsRes.ok) setSmells(smellsRes.data);
       if (depsRes.ok) setDependencies(depsRes.data);
-      
+
       if (!complexityRes.ok && !smellsRes.ok && !depsRes.ok) {
         setError('所有分析均失败，请检查文件模式');
       }
+      await capture();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -120,26 +161,10 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
   }, [visible]);
   
   // 综合质量评分（0-100）
-  const overallScore = useMemo(() => {
-    if (!complexity || !smells || !dependencies) return null;
-    
-    let score = 100;
-    
-    // 复杂度扣分
-    score -= complexity.distribution.critical * 5;
-    score -= complexity.distribution.high * 2;
-    
-    // 异味扣分
-    score -= smells.bySeverity.critical * 4;
-    score -= smells.bySeverity.major * 2;
-    score -= smells.bySeverity.minor * 0.5;
-    
-    // 依赖扣分
-    score -= dependencies.circularDependencies.length * 3;
-    score -= dependencies.godModules.length * 1;
-    
-    return Math.max(0, Math.round(score));
-  }, [complexity, smells, dependencies]);
+  const overallScore = useMemo(
+    () => computeOverallScore(complexity, smells, dependencies),
+    [complexity, smells, dependencies],
+  );
   
   const getRiskColor = (risk: string) => {
     switch (risk) {
@@ -194,6 +219,13 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
             </button>
           ))}
         </div>
+
+        {stale && (
+          <div className="quality-stale-banner">
+            <span>工作区在分析后已变更（分支 / 提交 / 文件状态），以下结果可能过期。</span>
+            <button onClick={handleAnalyze} disabled={loading}>重新分析</button>
+          </div>
+        )}
         
         <div className="dashboard-content">
           {error && (
@@ -214,6 +246,16 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
                   <div className="grade-text">
                     <h3>综合质量: {getScoreGrade(overallScore).text}</h3>
                     <p>基于复杂度、代码异味和依赖健康度综合评估</p>
+                    {previous?.score != null && previous.score !== overallScore && (
+                      <p className="score-compare">
+                        上次评分 {previous.score} 分
+                        {previous.capturedAt ? `（${new Date(previous.capturedAt).toLocaleString()}）` : ''}
+                        {' → '}
+                        {overallScore > previous.score
+                          ? `提升 ${overallScore - previous.score} 分`
+                          : `下降 ${previous.score - overallScore} 分`}
+                      </p>
+                    )}
                   </div>
                 </div>
               )}

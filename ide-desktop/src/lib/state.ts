@@ -205,31 +205,89 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
   if (event.type === 'task_board_updated') {
     return { ...addLog({ type: 'task', phase: 'info', title: '任务计划已更新', detail: String(event.title ?? '') , data: event.tasks }, state.workPhase), taskBoard: event as unknown as TaskBoard };
   }
-  if (event.type === 'bridge_ready') return addLog({ type: 'info', phase: 'info', title: '智能体已连接', detail: `${String(event.provider ?? '')} / ${String(event.model ?? '')}` }, 'idle');
+  if (event.type === 'bridge_ready') {
+    const sessionId = typeof event.sessionId === 'string' && event.sessionId ? event.sessionId : null;
+    return {
+      ...addLog({ type: 'info', phase: 'info', title: '智能体已连接', detail: `${String(event.provider ?? '')} / ${String(event.model ?? '')}` }, 'idle'),
+      agentStatus: 'ready',
+      ...(sessionId ? { activeSessionId: sessionId } : {}),
+    };
+  }
   if (event.type === 'model_start') return addLog({ type: 'model', phase: 'running', title: '思考中', detail: '模型正在分析当前任务' }, 'thinking');
   if (event.type === 'model_end') return addLog({ type: 'model', phase: 'done', title: '思考完成', detail: '模型已返回下一步行动' }, state.workPhase);
-  if (event.type === 'thinking_start') return addLog({ type: 'thinking', phase: 'running', title: '思考过程', detail: String(event.text || '') }, 'thinking');
+  if (event.type === 'thinking_start') {
+    // Surface thinking in the conversation stream itself (not just WorkDetails):
+    // a running `think` step inside the open turn, expandable like tool steps.
+    const withStep = addTurnStep(state, { id: `think-${crypto.randomUUID()}`, kind: 'tool', status: 'running', tool: 'think', startedAt: Date.now() });
+    return addLog({ type: 'thinking', phase: 'running', title: '思考过程', detail: String(event.text || '') }, 'thinking', withStep);
+  }
   if (event.type === 'thinking_delta') {
-    const previous = [...state.workLog].reverse().find((entry) => entry.type === 'thinking' && entry.phase === 'running');
-    if (!previous) return addLog({ type: 'thinking', phase: 'running', title: '思考过程', detail: String(event.text || '') }, 'thinking');
-    return { ...state, workLog: state.workLog.map((entry) => entry.id === previous.id ? { ...entry, detail: `${entry.detail ?? ''}${String(event.text || '')}` } : entry) };
+    const stepped = appendThinkingText(state, String(event.text || ''));
+    const previous = [...stepped.workLog].reverse().find((entry) => entry.type === 'thinking' && entry.phase === 'running');
+    if (!previous) return addLog({ type: 'thinking', phase: 'running', title: '思考过程', detail: String(event.text || '') }, 'thinking', stepped);
+    return { ...stepped, workLog: stepped.workLog.map((entry) => entry.id === previous.id ? { ...entry, detail: `${entry.detail ?? ''}${String(event.text || '')}` } : entry) };
   }
   if (event.type === 'thinking_end') {
-    const previous = [...state.workLog].reverse().find((entry) => entry.type === 'thinking' && entry.phase === 'running');
-    return previous ? { ...state, workLog: state.workLog.map((entry) => entry.id === previous.id ? { ...entry, phase: 'done', durationMs: typeof event.durationMs === 'number' ? event.durationMs : entry.durationMs } : entry) } : state;
+    const stepped = finishThinkingStep(state, typeof event.durationMs === 'number' ? event.durationMs : undefined);
+    const previous = [...stepped.workLog].reverse().find((entry) => entry.type === 'thinking' && entry.phase === 'running');
+    return previous ? { ...stepped, workLog: stepped.workLog.map((entry) => entry.id === previous.id ? { ...entry, phase: 'done', durationMs: typeof event.durationMs === 'number' ? event.durationMs : entry.durationMs } : entry) } : stepped;
   }
   if (event.type === 'info') return addLog({ type: 'info', phase: 'info', title: '过程提示', detail: String(event.content ?? event.message ?? '') }, state.workPhase);
-  if (event.type === 'bridge_ready') return { ...state, agentStatus: 'ready' };
-  if (event.type === 'turn_start') return { ...startTurn(state), workLog: [], workPhase: 'thinking' };
+  if (event.type === 'turn_start') {
+    // The CLI emits turn_start both from the bridge wrapper and from inside
+    // runAgentTurn. A duplicate for an already-open turn must not wipe the
+    // workLog the first one started filling.
+    if (openTurnIndex(state) !== -1) return startTurn(state);
+    return { ...startTurn(state), workLog: [], workPhase: 'thinking' };
+  }
   if (event.type === 'turn_done') return { ...endTurn(state), agentStatus: 'ready', workPhase: 'done' };
   if (event.type === 'agent_offline') {
     // Close any open turn that never received a turn_done (e.g. process crash).
     // Without this, subsequent tool_start events get appended to the zombie turn.
-    return { ...endTurn(state), agentStatus: 'offline' };
+    const closed = endTurn(state);
+    // Pending approvals belonged to the dead bridge: the CLI broker is gone, so
+    // clicking them would hit "Unknown approval request". Per the desktop spec,
+    // dismissed approvals are DENIED — mark their cards and diffs accordingly.
+    const chat = closed.chat.map((item) =>
+      item.kind === 'approval' && !item.decided
+        ? { ...item, decided: 'deny' as const, diff: item.diff ? { ...item.diff, status: 'rejected' as const } : undefined }
+        : item,
+    );
+    return { ...closed, chat, pendingDiffs: [], agentStatus: 'offline' };
+  }
+  if (event.type === 'undo_done') {
+    // Authoritative undo result from the CLI (the IPC reply only says the
+    // command was sent). Match the requesting turn card via undoId.
+    const turnId = String(event.undoId ?? '');
+    if (!turnId) return state;
+    const ok = event.ok !== false;
+    return {
+      ...state,
+      chat: state.chat.map((item) =>
+        item.kind === 'turn' && item.id === turnId ? { ...item, undo: ok ? 'undone' as const : 'failed' as const } : item,
+      ),
+    };
   }
   if (event.type === 'context_stats') {
     const contextStats = contextStatsFromEvent(event);
-    return contextStats ? { ...state, contextStats } : state;
+    if (!contextStats) return state;
+    // Codex-style per-turn footer: stamp the latest real snapshot onto the
+    // running turn card so every round keeps its own ctx/cache numbers.
+    const chat = [...state.chat];
+    for (let index = chat.length - 1; index >= 0; index -= 1) {
+      const item = chat[index];
+      if (item.kind === 'turn' && item.endedAt === undefined) {
+        chat[index] = {
+          ...item,
+          ctxTokens: contextStats.inputTokens,
+          cacheRate: contextStats.providerCacheReported && contextStats.inputTokens > 0
+            ? Math.min(100, Math.round((contextStats.cacheReadTokens / contextStats.inputTokens) * 100))
+            : null,
+        };
+        break;
+      }
+    }
+    return { ...state, contextStats, chat };
   }
   if (event.type === 'assistant_delta') return appendAssistantDelta(state, String(event.text || ''));
   if (event.type === 'assistant_message') return finalizeAssistant(state, String(event.text || ''));
@@ -260,7 +318,10 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
   if (event.type === 'error') {
     const next = appendChat(state, { id: `error-${crypto.randomUUID()}`, kind: 'error', text: String(event.message || 'Agent error') });
     const closed = endTurn(state);
-    return { ...addLog({ type: 'error', phase: 'failed', title: '执行失败', detail: String(event.message || 'Agent error') }, 'failed'), chat: [...closed.chat, ...next.chat.filter((item) => !closed.chat.some((existing) => existing.id === item.id))], agentStatus: 'ready' };
+    // Do NOT force agentStatus here: a mid-turn provider error leaves the turn
+    // running, and a dead bridge emits agent_offline right after. Forcing
+    // 'ready' used to let the UI prompt a bridge that was already gone.
+    return { ...addLog({ type: 'error', phase: 'failed', title: '执行失败', detail: String(event.message || 'Agent error') }, 'failed'), chat: [...closed.chat, ...next.chat.filter((item) => !closed.chat.some((existing) => existing.id === item.id))] };
   }
   return state;
 }
@@ -301,6 +362,33 @@ function addTurnStep(state: AppState, step: ToolChatItem): AppState {
   const turn = state.chat[index];
   if (turn.kind !== 'turn') return appendChat(state, step);
   return replaceChat(state, index, { ...turn, steps: [...turn.steps, step] });
+}
+
+/** Append streamed thinking text onto the open turn's running `think` step. */
+function appendThinkingText(state: AppState, text: string): AppState {
+  if (!text) return state;
+  return updateRunningThinkStep(state, (step) => ({ ...step, output: `${step.output ?? ''}${text}` }));
+}
+
+/** Mark the open turn's running `think` step as done with its duration. */
+function finishThinkingStep(state: AppState, durationMs?: number): AppState {
+  return updateRunningThinkStep(state, (step) => ({ ...step, status: 'done', ok: true, durationMs: durationMs ?? step.durationMs }));
+}
+
+function updateRunningThinkStep(state: AppState, mutate: (step: ToolChatItem) => ToolChatItem): AppState {
+  const index = openTurnIndex(state);
+  if (index === -1) return state;
+  const turn = state.chat[index];
+  if (turn.kind !== 'turn') return state;
+  const steps = [...turn.steps];
+  for (let i = steps.length - 1; i >= 0; i -= 1) {
+    const step = steps[i];
+    if (step.kind === 'tool' && step.tool === 'think' && step.status === 'running') {
+      steps[i] = mutate(step);
+      return replaceChat(state, index, { ...turn, steps });
+    }
+  }
+  return state;
 }
 
 function finishTurnStep(state: AppState, event: AgentEvent): AppState {
@@ -544,17 +632,47 @@ export function sessionToChat(record: {
   const messages = Array.isArray(record?.messages) ? record.messages : [];
   const items: ChatItem[] = [];
   let index = 0;
+
+  // Consecutive tool messages belong to one agent working round. Buffer them
+  // and flush as a `turn` card when the round is terminated by an assistant
+  // reply (or the next user prompt), so restored sessions render the same
+  // expandable step-by-step view the live stream produces.
+  let toolBuffer: ToolChatItem[] = [];
+  let toolBufferStartedAt: number | undefined;
+  const flushTurn = (endedAt?: number) => {
+    if (toolBuffer.length === 0) return;
+    items.push({
+      id: `load-turn-${index++}`,
+      kind: 'turn',
+      startedAt: toolBufferStartedAt ?? endedAt ?? Date.now(),
+      endedAt: endedAt ?? toolBufferStartedAt ?? Date.now(),
+      steps: toolBuffer,
+      files: [],
+      added: 0,
+      removed: 0,
+    });
+    toolBuffer = [];
+    toolBufferStartedAt = undefined;
+  };
+
   for (const message of messages) {
     if (!message || typeof message.content !== 'string') continue;
     const ts = message.createdAt ? Date.parse(message.createdAt) || undefined : undefined;
+    if (message.role === 'tool') {
+      if (toolBuffer.length === 0) toolBufferStartedAt = ts;
+      toolBuffer.push({ id: `load-tool-${index++}`, kind: 'tool', status: 'done', tool: message.name || 'tool', output: message.content, ok: true });
+      continue;
+    }
+    // A user or assistant message terminates the tool round above it.
+    flushTurn(ts);
     if (message.role === 'user') {
       items.push({ id: `load-user-${index++}`, kind: 'user', text: message.content, ts });
     } else if (message.role === 'assistant') {
       items.push({ id: `load-assistant-${index++}`, kind: 'assistant', text: message.content });
-    } else if (message.role === 'tool') {
-      items.push({ id: `load-tool-${index++}`, kind: 'tool', status: 'done', tool: message.name || 'tool', output: message.content, ok: true });
     }
     // 'system' messages are internal; skip them.
   }
+  // A session may end mid-round (tool calls with no final reply).
+  flushTurn();
   return items;
 }

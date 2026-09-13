@@ -9,17 +9,16 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { desktop } from '../lib/ipc';
 
 /**
- * 草案面板桥接：invokeTool 工具桥尚未在 preload 落地（ZCodeDesktopApi 无此方法），
- * 面板未挂载到 App。运行时若桥接缺失会抛出明确错误。
+ * 质量工具网关：read-only 分析工具经由主进程 allowlist 调用 CLI 无头模式。
+ * write 风险工具（生成测试、重构应用）会被网关与 CLI 双侧拒绝。
  */
 async function invokeTool(name: string, input: unknown): Promise<{ ok: boolean; data: any; output: any }> {
-  const api = (window as unknown as {
-    electronAPI?: { invokeTool(name: string, input: unknown): Promise<{ ok: boolean; data: unknown; output: string }> };
-  }).electronAPI;
-  if (!api) throw new Error('invokeTool 桥接未实现：preload 缺少 electronAPI（草案面板）');
-  return api.invokeTool(name, input) as Promise<{ ok: boolean; data: any; output: any }>;
+  const result = await desktop.quality.invoke(name, (input ?? {}) as Record<string, unknown>);
+  if (!result.ok && result.error) throw new Error(result.error);
+  return { ok: Boolean(result.ok), data: result.data, output: result.output };
 }
 
 interface CodeReviewPanelProps {

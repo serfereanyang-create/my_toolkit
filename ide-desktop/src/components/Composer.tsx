@@ -13,7 +13,9 @@ import { SlashCommandMenu } from './SlashCommandMenu';
 import { MentionPicker, type MentionItem } from './MentionPicker';
 import { categorizeFile, getMediaType, getCategoryIcon, generateSmartPrompt, validateFile, MAX_FILE_COUNT, type DetectedFile } from '../lib/fileDetection';
 import { sessionChangeTotals } from '../lib/state';
+import { loadInputHistory, pushInputHistory } from '../lib/inputHistory';
 import { modelReasoningCapability } from '../lib/modelCapabilities';
+import { contextBudget, estimateTokens, tokenBreakdown } from '../lib/tokenEstimate';
 
 // approvalLabel is imported from ApprovalMenu and used via approvalMenuLabel below.
 // No local duplicate needed.
@@ -48,6 +50,17 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   const [mentions, setMentions] = useState<MentionItem[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Codex-style input history: persisted via localStorage, recalled with ↑/↓.
+  const historyRef = useRef<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  useEffect(() => { historyRef.current = loadInputHistory(); }, []);
+
+  // 常规页开关的真实消费点：发送快捷键、上下文用量入口、插件入口。
+  const prefs = state.settings?.preferences ?? {};
+  const sendShortcut = typeof prefs['gen.sendShortcut'] === 'string' ? (prefs['gen.sendShortcut'] as string) : 'enter';
+  const showContextUsage = prefs['gen.showContextUsage'] !== false;
+  const pluginsEnabled = prefs['gen.plugins'] !== false;
+
   useEffect(() => {
     if (prefill) setText(prefill.text);
   }, [prefill?.nonce]);
@@ -62,6 +75,32 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   }, [attachedFiles]);
 
   const running = state.agentStatus === 'running' || state.agentStatus === 'starting';
+
+  // Live token output speed while the agent streams: sample the growing
+  // "assistant-live" chat item on a 5s sliding window. Tokens are estimated
+  // via the shared CJK-aware estimator (the API only reports real counts at
+  // turn end, too late for a live rate).
+  const liveAssistantText = (() => {
+    const last = state.chat[state.chat.length - 1];
+    return last?.kind === 'assistant' && last.id === 'assistant-live' ? last.text : '';
+  })();
+  const liveTextRef = useRef(liveAssistantText);
+  liveTextRef.current = liveAssistantText;
+  const [tokenRate, setTokenRate] = useState<number | null>(null);
+  useEffect(() => {
+    if (!running) { setTokenRate(null); return; }
+    let samples: Array<{ t: number; tokens: number }> = [];
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      samples = samples.filter((s) => now - s.t <= 5000);
+      samples.push({ t: now, tokens: estimateTokens(liveTextRef.current) });
+      const first = samples[0];
+      const latest = samples[samples.length - 1];
+      const dt = (latest.t - first.t) / 1000;
+      if (dt >= 1) setTokenRate(Math.max(0, Math.round((latest.tokens - first.tokens) / dt)));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [running]);
   const provider = state.settings?.providers.find((item) => item.id === state.settings?.activeProviderId);
   const model = provider?.model ?? 'mock-code-agent-v1';
   const modelLabel = provider && provider.type === 'custom' && provider.label
@@ -82,11 +121,35 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
     : '上下文与缓存（完成一次真实请求后显示）';
   const approval = state.settings?.approval ?? 'ask';
   const changeTotals = sessionChangeTotals(state.chat);
+  // Iteration 1: draft-token budget chip. Computed once per render; the
+  // estimator is cheap enough (linear scan) for keystroke-rate updates.
+  const draftTokens = estimateTokens(text);
+  const draftBudget = contextBudget(draftTokens, contextWindow);
+  const draftBreakdown = text.trim() ? tokenBreakdown(text) : null;
+
+  // Esc = stop the running turn (the shortcut page already advertises it).
+  // When any menu/picker is open, its own handler closes it — skip cancel so
+  // one keypress never both closes a menu and kills a turn. A pending approval
+  // card also wins: upstream approval_overlay consumes Esc as "deny".
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      if (menuOpen || modelMenuOpen || thinkingMenuOpen || toolScopeMenuOpen
+        || approvalMenuOpen || contextMenuOpen || slashMenuOpen || mentionOpen) return;
+      const hasPendingApproval = state.chat.some((item) => item.kind === 'approval' && !item.decided);
+      if (hasPendingApproval) return;
+      if (running) { event.preventDefault(); onCancel(); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen, modelMenuOpen, thinkingMenuOpen, toolScopeMenuOpen, approvalMenuOpen, contextMenuOpen, slashMenuOpen, mentionOpen, running, onCancel, state.chat]);
 
   function submit() {
     const value = text.trim();
     if (!value) return;
     setText('');
+    setHistoryIndex(-1);
+    historyRef.current = pushInputHistory(value);
     const files = attachedFiles.length > 0 ? attachedFiles : undefined;
     const currentMentions = mentions.length > 0 ? mentions : undefined;
     setAttachedFiles([]);
@@ -97,6 +160,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   function handleTextChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const newText = event.target.value;
     setText(newText);
+    setHistoryIndex(-1);
 
     // Slash command: open menu when input starts with '/' and has no space yet.
     // Bug-6 fix: the second branch `newText === '/'` was unreachable because the
@@ -225,7 +289,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
     <div className="composer-wrap">
       <div className="composer-stack">
         {menuOpen && (
-          <PluginMenu onClose={() => setMenuOpen(false)}
+          <PluginMenu prefs={prefs} onClose={() => setMenuOpen(false)}
             onPick={(plugin) => { setMenuOpen(false); onPickPlugin(plugin); }} />
         )}
         {modelMenuOpen && state.settings && (
@@ -268,16 +332,54 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
             </div>
           )}
           {attachedFiles.length > 0 && <FileAttachmentList files={attachedFiles} onRemove={removeFile} />}
-          <textarea ref={textareaRef} value={text} onChange={handleTextChange}
-            onPaste={handlePaste}
-            placeholder="随心输入，输入 @ 引用文件或符号，输入 / 使用指令" rows={1}
+          {/* chat_composer.rs: bold `›` prompt glyph at the input's left edge */}
+          <div className="composer-input-row">
+            <span className="composer-caret">›</span>
+            <textarea ref={textareaRef} value={text} onChange={handleTextChange}
+              onPaste={handlePaste}
+              placeholder="随心输入，输入 @ 引用文件或符号，输入 / 使用指令" rows={1}
             onKeyDown={(event) => {
               if (mentionOpen) return;
+              // ↑/↓ history recall (Codex CLI behavior): ↑ from an empty box or
+              // caret-at-start walks back; ↓ walks forward; manual edit resets.
+              if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !event.ctrlKey && !event.metaKey) {
+                const h = historyRef.current;
+                if (h.length > 0) {
+                  const el = event.currentTarget;
+                  const caretAtEdge = el.selectionStart === 0 && el.selectionEnd === 0;
+                  if (event.key === 'ArrowUp') {
+                    const target = historyIndex === -1
+                      ? (caretAtEdge || !text.trim() ? h.length - 1 : -1)
+                      : Math.max(0, historyIndex - 1);
+                    if (target >= 0) {
+                      event.preventDefault();
+                      setHistoryIndex(target);
+                      setText(h[target]!);
+                      return;
+                    }
+                  } else if (historyIndex !== -1) {
+                    event.preventDefault();
+                    const next = historyIndex + 1;
+                    if (next >= h.length) { setHistoryIndex(-1); setText(''); }
+                    else { setHistoryIndex(next); setText(h[next]!); }
+                    return;
+                  }
+                }
+              }
+              // gen.sendShortcut: 'enter' = Enter 发送 / Shift+Enter 换行；
+              // 'mod-enter' = Ctrl/Cmd+Enter 发送，Enter 换行。
+              if (sendShortcut === 'mod-enter') {
+                if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submit(); }
+                return;
+              }
               if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); }
             }} />
+          </div>
           <div className="composer-bar">
-            <button className={`icon-button ${menuOpen ? 'active' : ''}`} title="插件与文件"
-              onClick={() => setMenuOpen((o) => !o)}><Plus size={18} /></button>
+            {pluginsEnabled && (
+              <button className={`icon-button ${menuOpen ? 'active' : ''}`} title="插件与文件"
+                onClick={() => setMenuOpen((o) => !o)}><Plus size={18} /></button>
+            )}
             <button className={`icon-button ${mentionOpen ? 'active' : ''}`} title="引用文件/符号 (@)"
               onClick={() => { setText((t) => t + '@'); setMentionOpen(true); setMentionQuery(''); textareaRef.current?.focus(); }}>
               <AtSign size={15} /></button>
@@ -287,12 +389,14 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
               onClick={() => { setApprovalMenuOpen((o) => !o); setThinkingMenuOpen(false); setToolScopeMenuOpen(false); setModelMenuOpen(false); setContextMenuOpen(false); }}>
               <ShieldCheck size={15} />{approvalMenuLabel[approval] ?? approval}</button>
             <span className="composer-spacer" />
-            <button type="button"
-              className={`composer-context ${contextMenuOpen ? 'active' : ''} ${state.contextStats ? 'has-data' : ''}`}
-              title={contextTitle}
-              onClick={() => { setContextMenuOpen((o) => !o); setThinkingMenuOpen(false); setToolScopeMenuOpen(false); setModelMenuOpen(false); }}>
-              <span className="composer-context-ring" style={{ '--context-pct': `${contextRate ?? 0}%` } as CSSProperties} />
-            </button>
+            {showContextUsage && (
+              <button type="button"
+                className={`composer-context ${contextMenuOpen ? 'active' : ''} ${state.contextStats ? 'has-data' : ''}`}
+                title={contextTitle}
+                onClick={() => { setContextMenuOpen((o) => !o); setThinkingMenuOpen(false); setToolScopeMenuOpen(false); setModelMenuOpen(false); }}>
+                <span className="composer-context-ring" style={{ '--context-pct': `${contextRate ?? 0}%` } as CSSProperties} />
+              </button>
+            )}
             <button type="button" className={`composer-model ${modelMenuOpen ? 'active' : ''}`} title="选择模型"
               onClick={() => { setModelMenuOpen((o) => !o); setThinkingMenuOpen(false); setToolScopeMenuOpen(false); setContextMenuOpen(false); }}>
               <span className="composer-model-label">{modelLabel}</span></button>
@@ -308,10 +412,29 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
                 <span className="composer-changes-del">-{changeTotals.removed}</span>
               </span>
             )}
+            {text.trim() ? (
+              <span
+                className={`composer-budget composer-budget-${draftBudget.level}`}
+                title={draftBreakdown
+                  ? `草稿约 ${draftTokens} tokens / 可用 ${draftBudget.usable.toLocaleString()}（${(draftBudget.ratio * 100).toFixed(1)}%）\n`
+                    + `中文 ${draftBreakdown.cjk} · 拉丁 ${draftBreakdown.latin} · 数字 ${draftBreakdown.digit} · 路径 ${draftBreakdown.dense} · 符号 ${draftBreakdown.symbol}`
+                  : undefined}
+              >
+                {draftTokens.toLocaleString()} tk
+              </span>
+            ) : null}
             {running
               ? <button className="composer-send" title="停止" onClick={onCancel}><Square size={15} /></button>
               : <button className="composer-send" title="发送" onClick={submit} disabled={!text.trim()}><ArrowUp size={17} /></button>}
           </div>
+          {/* footer.rs: while streaming show the live token output speed
+              centered; idle state renders nothing (hints row removed). */}
+          {running && (
+            <div className="composer-hints composer-rate">
+              <span className="composer-rate-value">{tokenRate === null ? '…' : tokenRate}</span>
+              <span> tok/s</span>
+            </div>
+          )}
         </div>
       </div>
     </div>

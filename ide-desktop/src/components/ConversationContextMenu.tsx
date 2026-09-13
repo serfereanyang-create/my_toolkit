@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Pin, Trash2, Pencil, Archive,
-  FolderOpen, Copy, Hash, Link2, MessageSquarePlus,
+  FolderOpen, Copy, Hash, Link2, MessageSquarePlus, FileDown, Tag,
 } from 'lucide-react';
 
 export type ConvoAction =
   | 'pin' | 'remove' | 'rename' | 'archive'
   | 'reveal' | 'copy-cwd' | 'copy-id' | 'copy-deeplink'
-  | 'continue-chat';
+  | 'continue-chat' | 'export-md' | 'edit-tags';
 
 type Item =
   | { kind: 'item'; id: ConvoAction; name: string; icon: JSX.Element }
@@ -16,6 +16,7 @@ type Item =
 const ITEMS: Item[] = [
   { kind: 'item', id: 'pin',     name: '置顶聊天',       icon: <Pin size={15} /> },
   { kind: 'item', id: 'rename',  name: '重命名聊天',     icon: <Pencil size={15} /> },
+  { kind: 'item', id: 'edit-tags', name: '编辑标签…',    icon: <Tag size={15} /> },
   { kind: 'item', id: 'archive', name: '归档聊天',       icon: <Archive size={15} /> },
   { kind: 'item', id: 'remove',  name: '从列表中移除',   icon: <Trash2 size={15} /> },
   { kind: 'sep' },
@@ -23,6 +24,7 @@ const ITEMS: Item[] = [
   { kind: 'item', id: 'copy-cwd',     name: '复制工作目录',       icon: <Copy size={15} /> },
   { kind: 'item', id: 'copy-id',      name: '复制会话 ID',         icon: <Hash size={15} /> },
   { kind: 'item', id: 'copy-deeplink',name: '复制深度链接',        icon: <Link2 size={15} /> },
+  { kind: 'item', id: 'export-md',    name: '导出为 Markdown',     icon: <FileDown size={15} /> },
   { kind: 'sep' },
   { kind: 'item', id: 'continue-chat', name: '在新聊天中继续', icon: <MessageSquarePlus size={15} /> },
 ];
