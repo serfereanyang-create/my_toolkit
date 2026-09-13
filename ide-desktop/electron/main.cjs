@@ -32,6 +32,7 @@ const { createPreviewRuntime } = require('./preview-runtime.cjs');
 const { createFimServer } = require('./fim-server.cjs');
 const { createLanguageServer } = require('./language-server.cjs');
 const { CompletionService } = require('./completion-service.cjs');
+const sandbox = require('./sandbox.cjs');
 
 // Register custom scheme BEFORE app.ready (required by Electron)
 registerSchemePrivileges(protocol);
@@ -100,6 +101,41 @@ async function notifyKeyState(event, window, settingsStore) {
 
 function createAgentManager({ mainWindow, workspace, settings, secrets }) {
   let bridge;
+  // Request ids the sandbox already answered, so a late user click on the
+  // (now auto-decided) card can't send a second, conflicting decision.
+  const sandboxDecided = new Set();
+
+  /**
+   * Run one approval_needed event through the sandbox policy and, when the
+   * policy decides, answer the CLI broker directly. The renderer receives the
+   * same event annotated with `autoDecision`/`autoReason` so the card renders
+   * the outcome plus its cause instead of live buttons.
+   */
+  async function applySandboxPolicy(activeBridge, event) {
+    try {
+      const config = await settings.get();
+      const prefs = (config && config.preferences) || {};
+      const mode = sandbox.normalizeMode(prefs['gen.sandboxMode']);
+      if (mode === 'off') return;
+      const verdict = sandbox.evaluate(event, { mode, workspaceRoot: workspace.getRoot() });
+      if (verdict.decision === 'pass') return;
+      const requestId = String(event.requestId || '');
+      if (!requestId || sandboxDecided.has(requestId)) return;
+      sandboxDecided.add(requestId);
+      // Cap the memo so a very long-lived bridge can't grow it unbounded.
+      if (sandboxDecided.size > 500) sandboxDecided.clear();
+      const decision = verdict.decision === 'allow' ? 'allow_once' : 'deny';
+      event.autoDecision = decision;
+      event.autoReason = verdict.reason || '';
+      await activeBridge.approve(requestId, decision);
+      // The annotated approval_needed event (forwarded by the caller after
+      // this promise settles) carries the outcome to the renderer; the
+      // reducer folds it straight into the card's decided state.
+    } catch {
+      // Policy/bridge failures must never break the event stream; the CLI
+      // approval timeout path already denies unanswered requests.
+    }
+  }
 
   async function start(resumeSessionId) {
     const config = await settings.get();
@@ -137,7 +173,7 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
       confirmPlan: config.preferences?.taskExecutionMode === 'auto',
       resumeSessionId: resumeSessionId || undefined,
     });
-    bridge.on('event', (event) => {
+    const forward = (event) => {
       // The window may be closing while the child is still draining events.
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent.event', event);
       notifyKeyState(event, mainWindow, settings);
@@ -146,6 +182,18 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
         // so the handler in automation.cjs survives window recreation.
         automationBus.emit('automation.done', event);
       }
+    };
+    bridge.on('event', (event) => {
+      // Sandbox interception: before the user ever sees an approval prompt,
+      // the policy engine may answer it outright. The annotated event then
+      // flows to the renderer so the card shows WHY it was auto-decided.
+      // Forwarding must wait for the annotation, or the card would briefly
+      // render live buttons and never learn the outcome.
+      if (event && event.type === 'approval_needed') {
+        void applySandboxPolicy(bridge, event).finally(() => forward(event));
+        return;
+      }
+      forward(event);
     });
     // Do not report startup complete until the CLI has emitted bridge_ready;
     // otherwise the first prompt can race the child process initialization.

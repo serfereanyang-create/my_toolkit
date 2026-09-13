@@ -116,6 +116,33 @@ describe('appReducer', () => {
     expect(card.decided).toBe('allow_once');
   });
 
+  it('sandbox auto-decided approvals arrive already decided with their reason', () => {
+    const s = emit(initialState, {
+      type: 'approval_needed', requestId: 'auto-1', tool: 'write_file', risk: 'write',
+      message: 'allow?', input: { path: 'C:/Windows/x.dll' },
+      autoDecision: 'deny', autoReason: '沙箱拦截：写入目标在工作区之外',
+      diff: { path: 'C:/Windows/x.dll', originalContent: '', modifiedContent: 'x' },
+    });
+    const card = s.chat.find((item) => item.kind === 'approval');
+    if (card?.kind !== 'approval') throw new Error('expected approval card');
+    expect(card.decided).toBe('deny');
+    expect(card.autoReason).toBe('沙箱拦截：写入目标在工作区之外');
+    expect(card.diff?.status).toBe('rejected');
+    expect(s.pendingDiffs.find((d) => d.id === 'auto-1')?.status).toBe('rejected');
+  });
+
+  it('sandbox auto-allow folds without a diff and stays decided', () => {
+    const s = emit(initialState, {
+      type: 'approval_needed', requestId: 'auto-2', tool: 'read_file', risk: 'read',
+      message: 'allow?', input: { path: 'a.ts' },
+      autoDecision: 'allow_once', autoReason: '沙箱 strict 模式：自动批准只读操作',
+    });
+    const card = s.chat.find((item) => item.kind === 'approval');
+    if (card?.kind !== 'approval') throw new Error('expected approval card');
+    expect(card.decided).toBe('allow_once');
+    expect(card.diff).toBeUndefined();
+  });
+
   const statsEvent = (inputTokens: number, cacheRead: number, reported = true) => ({
     type: 'context_stats', provider: 'p', model: 'm',
     inputTokens, outputTokens: 800,

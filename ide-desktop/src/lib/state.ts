@@ -311,10 +311,33 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
   if (event.type === 'approval_needed') {
     const requestId = String(event.requestId || `approval-${crypto.randomUUID()}`);
     const diff = event.diff as { path: string; originalContent: string; modifiedContent: string } | undefined;
-    const next = appendChat(state, { id: requestId, kind: 'approval', requestId, tool: String(event.tool || 'tool'), message: String(event.message || 'Approval required'), input: event.input, risk: (event.risk as 'read' | 'write' | 'shell' | 'network' | undefined), diff: diff && typeof diff.path === 'string' ? { id: requestId, path: diff.path, originalContent: diff.originalContent, modifiedContent: diff.modifiedContent, status: 'pending' } : undefined });
+    // Sandbox interception: when the main process already answered the CLI
+    // broker, the event arrives annotated with autoDecision/autoReason. The
+    // card is born decided (with its cause) and never shows live buttons.
+    const autoDecision = event.autoDecision === 'allow_once' || event.autoDecision === 'deny'
+      ? event.autoDecision
+      : undefined;
+    const autoReason = typeof event.autoReason === 'string' ? event.autoReason : undefined;
+    const next = appendChat(state, { id: requestId, kind: 'approval', requestId, tool: String(event.tool || 'tool'), message: String(event.message || 'Approval required'), input: event.input, risk: (event.risk as 'read' | 'write' | 'shell' | 'network' | undefined), decided: autoDecision, autoReason, diff: diff && typeof diff.path === 'string' ? { id: requestId, path: diff.path, originalContent: diff.originalContent, modifiedContent: diff.modifiedContent, status: 'pending' } : undefined });
     const withDiff = diff && typeof diff.path === 'string'
       ? { ...next, pendingDiffs: [...next.pendingDiffs.filter((d) => d.id !== requestId), { id: requestId, path: diff.path, originalContent: diff.originalContent, modifiedContent: diff.modifiedContent, status: 'pending' as const }] }
       : next;
+    if (autoDecision) {
+      // Fold the diff state exactly like a user decision would, and log the
+      // sandbox verdict instead of "waiting for approval".
+      const folded = {
+        ...withDiff,
+        chat: withDiff.chat.map((item) =>
+          item.kind === 'approval' && item.requestId === requestId && item.diff
+            ? { ...item, diff: { ...item.diff, status: autoDecision === 'deny' ? 'rejected' as const : 'accepted' as const } }
+            : item,
+        ),
+        pendingDiffs: withDiff.pendingDiffs.map((d) => d.id === requestId
+          ? { ...d, status: autoDecision === 'deny' ? 'rejected' as const : 'accepted' as const }
+          : d),
+      };
+      return addLog({ type: 'approval', phase: autoDecision === 'deny' ? 'failed' : 'done', title: '沙箱自动处理', detail: `${autoReason || ''}（${autoDecision === 'deny' ? '已拒绝' : '已允许'}）` }, 'executing', folded);
+    }
     return { ...addLog({ type: 'approval', phase: 'running', title: '等待审批', detail: String(event.message || event.tool || '') }, 'executing'), chat: withDiff.chat, pendingDiffs: withDiff.pendingDiffs };
   }
   // UX-3 fix: errors from the bridge (API key missing, IPC failure, etc.) are

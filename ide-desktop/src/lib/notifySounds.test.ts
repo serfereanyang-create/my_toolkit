@@ -1,0 +1,47 @@
+import { describe, expect, it } from 'vitest';
+import { clampVolume, cueForEvent, soundVolume } from './notifySounds';
+
+describe('clampVolume', () => {
+  it('clamps into 0..1 and defaults non-numeric to 0.5', () => {
+    expect(clampVolume(0.3)).toBe(0.3);
+    expect(clampVolume(-2)).toBe(0);
+    expect(clampVolume(5)).toBe(1);
+    expect(clampVolume('0.8')).toBe(0.8);
+    expect(clampVolume('loud')).toBe(0.5);
+    expect(clampVolume(undefined)).toBe(0.5);
+    expect(clampVolume(Number.NaN)).toBe(0.5);
+  });
+});
+
+describe('soundVolume', () => {
+  it('returns 0 when sounds are disabled regardless of stored volume', () => {
+    expect(soundVolume({ 'gen.sounds': false, 'gen.soundVolume': 0.9 })).toBe(0);
+  });
+  it('defaults to 0.5 when unset', () => {
+    expect(soundVolume({})).toBe(0.5);
+    expect(soundVolume(null)).toBe(0.5);
+    expect(soundVolume(undefined)).toBe(0.5);
+  });
+  it('honours stored volume and clamps it', () => {
+    expect(soundVolume({ 'gen.soundVolume': 0.2 })).toBe(0.2);
+    expect(soundVolume({ 'gen.soundVolume': 3 })).toBe(1);
+  });
+});
+
+describe('cueForEvent', () => {
+  it('maps approval/turn/error events to cues', () => {
+    expect(cueForEvent({ type: 'approval_needed' })).toBe('approval');
+    expect(cueForEvent({ type: 'turn_done' })).toBe('done');
+    expect(cueForEvent({ type: 'error' })).toBe('error');
+  });
+  it('stays silent for sandbox auto-decided approvals', () => {
+    expect(cueForEvent({ type: 'approval_needed', autoDecision: 'deny' })).toBeNull();
+    expect(cueForEvent({ type: 'approval_needed', autoDecision: 'allow_once' })).toBeNull();
+    // An unexpected annotation value must not silence a real user prompt.
+    expect(cueForEvent({ type: 'approval_needed', autoDecision: 'maybe' })).toBe('approval');
+  });
+  it('ignores other events', () => {
+    expect(cueForEvent({ type: 'tool_start' })).toBeNull();
+    expect(cueForEvent({})).toBeNull();
+  });
+});

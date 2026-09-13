@@ -34,6 +34,8 @@ import { TaskCard } from './components/TaskCard';
 import { Terminal } from './components/Terminal';
 import { TerminalFloat } from './components/TerminalFloat';
 import { ToastLayer } from './components/ToastLayer';
+import { ApprovalModal } from './components/ApprovalModal';
+import { cueForEvent, playCue, soundVolume } from './lib/notifySounds';
 import { Welcome } from './components/Welcome';
 import { desktop } from './lib/ipc';
 import { appReducer, initialState, languageForPath, sessionChangeTotals, activeTurnProgress, sessionToChat } from './lib/state';
@@ -41,7 +43,7 @@ import { setLanguageWorkspaceRoot } from './lib/languageProviders';
 import { transcriptFileName, transcriptToMarkdown } from './lib/transcriptExport';
 import { loadRecent, rankRecent, touchRecent, type RecentFile } from './lib/recentFiles';
 import type { MentionItem } from './components/MentionPicker';
-import type { ApprovalMode, PreviewFileDescriptor, ProjectDescriptor, ReasoningEffort, SessionMeta, ThemeMode, ToolScope } from './types';
+import type { ApprovalMode, ChatItem, PreviewFileDescriptor, ProjectDescriptor, ReasoningEffort, SessionMeta, ThemeMode, ToolScope } from './types';
 
 type MainView = 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality';
 type QualityOverlay = 'review' | 'coverage' | 'performance' | 'refactor' | null;
@@ -160,6 +162,11 @@ export default function App() {
     });
     return desktop.agent.onEvent(async (event) => {
       dispatch({ type: 'agent/event', event });
+      // System notification cues (WebAudio): confirmation needed / task done
+      // / error. Volume 0 (sounds off) short-circuits; auto-decided approvals
+      // are silent by design. Never throws.
+      const cue = cueForEvent(event as { type?: unknown; autoDecision?: unknown });
+      if (cue) playCue(cue, soundVolume(stateRef.current.settings?.preferences));
       if (event.type === 'turn_done' && pendingRestartRef.current) {
         // Model was switched mid-turn; now that files are no longer being
         // written, it's safe to swap the bridge to the new provider/model.
@@ -1018,6 +1025,14 @@ export default function App() {
     quality: { icon: <Gauge size={16} />, label: '质量' },
   };
 
+  // Oldest live approval request drives the blocking modal; auto-decided
+  // (sandbox) approvals carry `decided` on arrival and never surface here.
+  const pendingApproval = useMemo(
+    () => state.chat.find((item): item is Extract<ChatItem, { kind: 'approval' }> =>
+      item.kind === 'approval' && !item.decided) ?? null,
+    [state.chat],
+  );
+
   return (
     <div
       className="chat-shell"
@@ -1409,6 +1424,13 @@ export default function App() {
 
       {/* Key task-state reminders (approval needed / done / error / offline) */}
       <ToastLayer onFocusChat={() => setMainView('chat')} />
+
+      {/* Blocking confirmation dialog for the oldest live approval request,
+          when enabled (gen.approvalModal). Auto-decided (sandbox) approvals
+          never appear here — the reducer marks them decided on arrival. */}
+      {(state.settings?.preferences?.['gen.approvalModal'] !== false) && (
+        <ApprovalModal item={pendingApproval} onApprove={approve} />
+      )}
     </div>
   );
 }

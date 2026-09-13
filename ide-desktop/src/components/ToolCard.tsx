@@ -143,6 +143,7 @@ export function ToolCard({ item, onApprove }: {
           <div className={`approval-outcome ${decided === 'deny' ? 'denied' : 'allowed'}`}>
             {decided === 'deny' ? <XCircle size={13} /> : <CheckCircle2 size={13} />}
             {outcomeLabel}
+            {item.autoReason && <span className="approval-auto-reason">· {item.autoReason}</span>}
           </div>
         ) : (
           <div className="approval-actions">
