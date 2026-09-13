@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { access, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { planLocalFallback } from '../src/agent/fallback.js';
+import { CheckpointStore } from '../src/session/checkpoint.js';
 import type { SessionRecord } from '../src/session/store.js';
 import { createDefaultToolRegistry } from '../src/tools/index.js';
 
@@ -22,6 +24,36 @@ test('rename_file renames a Desktop docx file', async () => {
   assert.equal(await readFile(to, 'utf8'), 'placeholder');
 
   await rm(to, { force: true });
+});
+
+test('rename_file reports path and checkpointId for the undo rollup', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-rename-cp-'));
+  const relativeFrom = 'notes/original.md';
+  const relativeTo = 'notes/renamed.md';
+  const from = join(workspace, relativeFrom);
+  const to = join(workspace, relativeTo);
+  await mkdir(join(workspace, 'notes'), { recursive: true });
+  await writeFile(from, 'hello');
+  const checkpoints = new CheckpointStore(workspace);
+  const registry = createDefaultToolRegistry();
+
+  const result = await registry.execute(
+    'rename_file',
+    { from: relativeFrom, to: relativeTo },
+    { workspaceRoot: workspace, approval: 'auto', checkpoints },
+  );
+
+  assert.equal(result.ok, true);
+  const data = result.data as { from: string; to: string; path: string; checkpointId?: string };
+  assert.equal(data.from, from);
+  assert.equal(data.to, to);
+  assert.equal(data.path, to, 'data.path should be the resulting (new) path');
+  assert.match(data.checkpointId ?? '', /^cp_/, 'checkpointId should reference the rename undo entry');
+
+  const entries = await checkpoints.list();
+  assert.ok(entries.some((entry) => entry.id === data.checkpointId && entry.action === 'rename' && entry.from === from && entry.to === to));
+
+  await rm(workspace, { recursive: true, force: true });
 });
 
 test('local fallback plans rename for the previously created document', () => {

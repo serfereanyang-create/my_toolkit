@@ -66,6 +66,11 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
       tasks,
     });
   };
+  // Context compaction divider (Codex "正在压缩上下文 / 上下文已自动压缩").
+  // The renderer keeps the 'started' row pending until completed/failed arrives.
+  runtime.compactEmit = (payload) => {
+    emitEvent({ type: 'context_compaction', sessionId: runtime.session.id, ...payload });
+  };
 
   emitEvent({
     type: 'bridge_ready',

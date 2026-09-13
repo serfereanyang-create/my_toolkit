@@ -11,6 +11,7 @@ import type { MessagePart } from '../providers/types.js';
 import { planBoardFromGoal, shouldUseTaskBoard } from '../tasks/planner.js';
 import { confirmBoard, formatBoard, runTaskBoardLoop } from '../tasks/runtime.js';
 import { TaskBoardStore } from '../tasks/store.js';
+import type { SessionRecord } from '../session/store.js';
 import { buildAttachmentContextLines, prepareUserContent, type Attachment } from './attachments.js';
 import { runCommandPalette } from './commandPalette.js';
 import { handleSlashCommand } from './commands.js';
@@ -23,6 +24,7 @@ import { chatPromptLabel } from '../ui/home.js';
 import { restoreConsoleSoftWrap } from '../ui/consoleWrap.js';
 
 type TurnExtras = { parts?: MessagePart[]; displayText?: string };
+type ReplayPayload = { prompt: string; parts?: MessagePart[]; displayText?: string };
 
 export type SubmittedUserTurn = {
   prompt: string;
@@ -32,6 +34,9 @@ export type SubmittedUserTurn = {
 };
 
 export async function runPromptMode(runtime: AgentRuntime, prompt: string): Promise<AgentTurnResult> {
+  if (prompt.trim() === '/retry') {
+    return retryLastUserTurn(runtime);
+  }
   if (prompt.startsWith('/')) {
     const result = await handleSlashCommand({ line: prompt, ...runtime });
     if (result !== '__EXIT__') runtime.ui.info(result);
@@ -77,6 +82,53 @@ export async function runGuardedAgentTurn(runtime: AgentRuntime, line: string, e
     return handleDevelopmentPrompt(runtime, guardResult.developmentPrompt ?? line, extras);
   }
   return handleDevelopmentPrompt(runtime, line, extras);
+}
+
+/**
+ * Replay the most recent real user turn as a fresh agent turn.
+ *
+ * Prefers the persisted `lastTurn` payload (exact prompt + parts + display
+ * text), falling back to the last real user message for sessions saved by
+ * older versions. The replayed prompt is submitted as a new user message, so
+ * the full history (including the previous answer) stays in context — writing
+ * tools may therefore run again and must pass approval as usual.
+ */
+export async function retryLastUserTurn(runtime: AgentRuntime): Promise<AgentTurnResult> {
+  const session = runtime.session;
+  const last = session.lastTurn;
+
+  const replay = last
+    ? { prompt: last.prompt, parts: last.parts, displayText: last.displayText }
+    : findLastUserMessage(session);
+
+  if (!replay) {
+    runtime.ui.info('No previous user message found. Nothing to retry.');
+    return { ok: true, session, reason: 'nothing-to-retry' };
+  }
+
+  // A retry is a brand-new user turn — never continue an old Responses chain.
+  if (session.providerContinuation) {
+    session.providerContinuation = undefined;
+    await sessionSaveSafe(runtime);
+  }
+
+  runtime.ui.info('Retrying last user message…');
+  return runGuardedAgentTurn(runtime, replay.prompt, {
+    parts: replay.parts,
+    displayText: replay.displayText,
+  });
+}
+
+function findLastUserMessage(session: SessionRecord): ReplayPayload | undefined {
+  const message = [...(session.messages ?? [])].reverse().find((m) => m.role === 'user');
+  if (!message) return undefined;
+  return { prompt: message.content, parts: message.parts, displayText: message.content };
+}
+
+async function sessionSaveSafe(runtime: AgentRuntime) {
+  try {
+    await runtime.sessions.save(runtime.session);
+  } catch { /* best-effort: continuation clearing must not block retry */ }
 }
 
 async function handleDevelopmentPrompt(runtime: AgentRuntime, prompt: string, extras?: TurnExtras): Promise<AgentTurnResult> {
@@ -285,6 +337,17 @@ export async function runRepl(runtime: AgentRuntime) {
 
       if (isSlashCommandLine(turn.text) && !turn.multiline) {
         const line = turn.text.trim();
+        if (line === '/retry') {
+          try {
+            await retryLastUserTurn(interactiveRuntime);
+          } catch (error) {
+            runtime.ui.error(error instanceof Error ? error.message : String(error));
+          }
+          if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
+            await continueTaskBoard(interactiveRuntime);
+          }
+          continue;
+        }
         if (line === '/help' || line === '/?' || line === '/commands') {
           rl.pause();
           try {

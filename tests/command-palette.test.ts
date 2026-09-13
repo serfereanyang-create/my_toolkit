@@ -4,7 +4,7 @@ import { commandPaletteItems, formatHelpText } from '../src/cli/commandPalette.j
 
 test('commandPaletteItems covers core slash commands', () => {
   const ids = commandPaletteItems().map((item) => item.id);
-  for (const need of ['/status', '/cache', '/actions', '/undo', '/exit', '/tools', '/sessions']) {
+  for (const need of ['/status', '/cache', '/actions', '/undo', '/exit', '/tools', '/sessions', '/retry']) {
     assert.ok(ids.includes(need), `missing ${need}`);
   }
   // No raw multi-line wall — each row is a selectable item with keyword + detail.

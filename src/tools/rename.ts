@@ -19,10 +19,13 @@ export const renameFileTool: ToolDefinition<{ from: string; to: string }> = {
   async execute(input, context) {
     const from = resolvePath(context.workspaceRoot, input.from);
     const to = resolvePath(context.workspaceRoot, input.to);
-    await context.checkpoints?.beforeRename(from, to);
+    const checkpoint = await context.checkpoints?.beforeRename(from, to);
     await mkdir(dirname(to), { recursive: true });
     await rename(from, to);
-    return { ok: true, output: `Renamed ${from} -> ${to}`, data: { from, to } };
+    // `path` = the resulting (new) path and `checkpointId` = the undo entry, so
+    // rename_file shows up in the "changed files / undo" rollup like the other
+    // write tools that already return { path, checkpointId }.
+    return { ok: true, output: `Renamed ${from} -> ${to}`, data: { from, to, path: to, checkpointId: checkpoint?.id } };
   },
 };
 

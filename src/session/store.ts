@@ -1,9 +1,11 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { AgentMessage, ProviderName, ResponsesContinuation } from '../providers/types.js';
+import type { AgentMessage, MessagePart, ProviderName, ResponsesContinuation } from '../providers/types.js';
 import type { LazyDevGuardState } from '../guard/types.js';
 import type { TaskRuntimeState } from '../tasks/types.js';
+
+const SESSION_ID = /^sess_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 export type ToolCallRecord = {
   id: string;
@@ -14,6 +16,19 @@ export type ToolCallRecord = {
   data?: unknown;
   providerCallId?: string;
   createdAt: string;
+};
+
+export type LastTurnRecord = {
+  /** The exact user prompt submitted to the agent (text-only, provider-safe). */
+  prompt: string;
+  /** Original display text shown in the UI/log, if different from prompt. */
+  displayText?: string;
+  /** Multimodal parts (e.g. images) so /retry can replay them. */
+  parts?: MessagePart[];
+  /** Lifecycle status: running while executing, done/failed after completion. */
+  status: 'running' | 'done' | 'failed';
+  /** ISO timestamp when this turn started. */
+  startedAt: string;
 };
 
 export type SessionRecord = {
@@ -33,6 +48,7 @@ export type SessionRecord = {
   /** Persistent session goal set via /goal */
   goal?: string;
   providerContinuation?: ResponsesContinuation;
+  lastTurn?: LastTurnRecord;
 };
 
 export class SessionStore {
@@ -85,9 +101,11 @@ export class SessionStore {
     const names = await readdir(this.sessionDir);
     const sessions: SessionRecord[] = [];
     for (const name of names.filter((item) => item.endsWith('.json'))) {
+      const id = name.slice(0, -'.json'.length);
+      if (!isSafeSessionId(id)) continue;
       const file = join(this.sessionDir, name);
       try {
-        sessions.push(JSON.parse(await readFile(file, 'utf8')) as SessionRecord);
+        sessions.push(parseSession(JSON.parse(await readFile(file, 'utf8')), id));
       } catch {
         // Ignore corrupt session files so one bad file does not break the CLI.
       }
@@ -96,21 +114,62 @@ export class SessionStore {
   }
 
   async load(id: string) {
-    const file = this.filePath(id);
-    return JSON.parse(await readFile(file, 'utf8')) as SessionRecord;
+    const safeId = assertSafeSessionId(id);
+    const file = this.filePath(safeId);
+    return parseSession(JSON.parse(await readFile(file, 'utf8')), safeId);
   }
 
   async save(session: SessionRecord) {
-    await mkdir(dirname(this.filePath(session.id)), { recursive: true });
-    await writeFile(this.filePath(session.id), `${JSON.stringify(session, null, 2)}\n`, 'utf8');
+    const file = this.filePath(session.id);
+    await mkdir(dirname(file), { recursive: true });
+    const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, `${JSON.stringify(session, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+      await rename(temporary, file);
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** Set/refresh the persisted replay payload for the current turn. */
+  async setLastTurn(session: SessionRecord, turn: LastTurnRecord) {
+    session.lastTurn = turn;
+    await this.touch(session);
+  }
+
+  /** Clear any persisted turn payload (used before replaying). */
+  async clearLastTurn(session: SessionRecord) {
+    if (session.lastTurn) {
+      delete session.lastTurn;
+      await this.touch(session);
+    }
   }
 
   filePath(id: string) {
-    return resolve(this.sessionDir, `${id}.json`);
+    return resolve(this.sessionDir, `${assertSafeSessionId(id)}.json`);
   }
 
   private async touch(session: SessionRecord) {
     session.updatedAt = new Date().toISOString();
     await this.save(session);
   }
+}
+
+function isSafeSessionId(id: string) {
+  return SESSION_ID.test(id);
+}
+
+function assertSafeSessionId(id: string) {
+  if (!isSafeSessionId(id)) throw new Error(`Invalid session ID: ${id}`);
+  return id;
+}
+
+function parseSession(value: unknown, expectedId: string): SessionRecord {
+  if (!isRecord(value) || value.id !== expectedId) throw new Error(`Invalid session record: ${expectedId}`);
+  return value as SessionRecord;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

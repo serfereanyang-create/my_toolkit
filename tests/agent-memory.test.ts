@@ -22,11 +22,13 @@ test('ordinary agent turn injects relevant project memory into the prompt', asyn
   await memory.add({ kind: 'convention', summary: 'Always use parameterized SQL queries for the database layer.', keywords: ['database', 'sql', 'query'], source: { type: 'user' } });
 
   let capturedContext: string | undefined;
+  let capturedMessages: ProviderRequest['messages'] = [];
   const provider: Provider = {
     name: 'mock',
     model: 'mock-code-agent-v1',
     async complete(request: ProviderRequest) {
       capturedContext = request.projectContext;
+      capturedMessages = request.messages;
       return { actions: [{ type: 'message', content: 'ok' }] };
     },
   };
@@ -37,7 +39,13 @@ test('ordinary agent turn injects relevant project memory into the prompt', asyn
   );
 
   assert.equal(result.ok, true);
-  assert.match(capturedContext ?? '', /parameterized SQL/);
+  // Cache-stable layout: the project context (system-side) must stay free of
+  // per-session memory, and relevant memory is injected as a message instead.
+  assert.doesNotMatch(capturedContext ?? '', /parameterized SQL/);
+  const memoryInjected = capturedMessages.some(
+    (message) => typeof message.content === 'string' && message.content.includes('parameterized SQL'),
+  );
+  assert.ok(memoryInjected, 'relevant project memory should be injected into the model messages');
 
   await rm(workspace, { recursive: true, force: true });
 });
@@ -63,10 +71,15 @@ test('successful agent turn auto-records a useful final answer into memory', asy
   );
   assert.equal(result.ok, true);
 
-  // Give the fire-and-forget recordTurnMemory a tick to settle.
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // recordTurnMemory is fire-and-forget; poll briefly instead of sleeping a
+  // fixed amount so the assertion is robust under parallel test load.
+  let entries = await memory.list();
+  const deadline = Date.now() + 2000;
+  while (entries.length === 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    entries = await memory.list();
+  }
 
-  const entries = await memory.list();
   assert.ok(entries.length >= 1, 'at least one memory entry should be recorded');
   assert.ok(entries.some((e) => e.summary.includes('parameterized queries')));
 

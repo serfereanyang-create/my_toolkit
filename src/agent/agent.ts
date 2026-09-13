@@ -8,6 +8,8 @@ import type { GitSafetyService } from '../git-safety/service.js';
 import type { GitUnitContext, GitUnitOutcome, GitUnitResult } from '../git-safety/types.js';
 import { askForApproval } from '../safety/policy.js';
 import type { AgentAction, Provider } from '../providers/types.js';
+import { withModelRetry } from '../providers/retry.js';
+import { maybeAutoCompact } from './autoCompact.js';
 import type { HookRegistry } from '../hooks/hooks.js';
 import type { CheckpointStore } from '../session/checkpoint.js';
 import type { SessionRecord, SessionStore } from '../session/store.js';
@@ -20,6 +22,7 @@ import { formatProjectContext, readProjectContext } from './context.js';
 import { formatMemories } from '../memory/format.js';
 import { selectRelevantMemories } from '../memory/select.js';
 import { compactMessagesForModel, resolveContextBudgetChars } from './contextBudget.js';
+import { globalToolHealth } from './toolHealth.js';
 import { buildToolSystemPrompt, buildToolSystemPromptParts } from '../providers/protocol.js';
 import { planLocalFallback } from './fallback.js';
 import { shouldUseTaskBoard } from '../tasks/planner.js';
@@ -32,6 +35,7 @@ import { buildLowCacheHint, collectCacheProbe } from '../probe/cacheProbe.js';
 import { MAX_SUBAGENT_DEPTH } from '../tools/subagent.js';
 import type { SubAgentOptions } from '../tools/types.js';
 import { getReasoningCapability, clampReasoningEffort } from '../providers/capabilities.js';
+import { analyzeTaskComplexity } from '../tasks/complexity.js';
 
 type PromptCacheBasis = {
   stablePrefix: string;
@@ -47,10 +51,19 @@ export type AgentRuntime = {
   checkpoints?: CheckpointStore;
   session: SessionRecord;
   ui: TerminalUI;
-  /** Last packed prompt signature used for local prompt-cache reuse prediction. */
   lastPromptCacheBasis?: PromptCacheBasis;
   hooks?: HookRegistry;
-  confirm?: (message: string) => Promise<boolean>;
+  /**
+   * Plain approval callback (REPL, git-safety, board-commit confirms). The
+   * optional second argument carries the structured ApprovalRequest (incl. a
+   * before/after diff) when the caller has one, so interactive UIs can render
+   * a real Codex-style diff instead of prose-only text. Return stays boolean
+   * for backward compatibility; desktop allow_session flows via toolConfirm.
+   */
+  confirm?: (
+    message: string,
+    request?: import('../tools/types.js').ApprovalRequest,
+  ) => Promise<boolean>;
   /**
    * Optional structured approval callback for tool execution.
    * When set, replaces the plain `confirm` shim inside ToolContext so UIs
@@ -67,8 +80,17 @@ export type AgentRuntime = {
   gitRepository?: GitRepository;
   mcp?: McpManager;
   reloadMcp?: () => Promise<McpManager>;
+  commandJobs?: import('../safety/commandJobs.js').CommandJobService;
   /** Project memory store (.aicode/memory) for cross-session recall. */
   memory?: import('../memory/store.js').ProjectMemoryStore;
+  /** Reflexion store (.aicode/reflections.json): terminal-failure lessons. */
+  reflections?: import('../reflection/store.js').ReflectionStore;
+  /**
+   * Automation manager shared across /automate slash commands in this session.
+   * Created lazily so watcher/git/cron resources live as long as the runtime
+   * and are released when the runtime is closed.
+   */
+  automationManager?: import('../automation/manager.js').AutomationManager;
   /** Files staged via /attach or /paste-image for the next user turn. */
   pendingAttachments?: import('../cli/attachments.js').Attachment[];
   /** Sticky UI language for approval prompts and gate messages. */
@@ -94,6 +116,29 @@ export type AgentRuntime = {
    */
   runSubAgentTurn?: (runtime: AgentRuntime, goal: string) => Promise<string>;
   taskBoardEmit?: (board: unknown) => void;
+  /**
+   * Injected by the desktop bridge to surface context compaction in the chat
+   * stream as a centered divider ("正在压缩上下文" → "上下文已自动压缩"),
+   * mirroring Codex. Emitted by autoCompact.maybeAutoCompact (auto) and the
+   * /compact slash command (manual). The terminal UI keeps using ui.info; this
+   * hook is embedding-layer only and optional, so the CLI runs unchanged
+   * without it.
+   */
+  compactEmit?: (payload: {
+    phase: 'started' | 'completed' | 'failed';
+    auto: boolean;
+    before?: number;
+    after?: number;
+    reason?: string;
+  }) => void;
+  /**
+   * Cooperative-cancel predicate. Set by the desktop bridge (or any embedding
+   * loop) on the `cancel` command; the agent loop polls it at safe boundaries
+   * (between steps, before a model call / tool execution) and aborts the turn
+   * with a CancelledError. A running tool call is never interrupted — the turn
+   * stops at the next checkpoint.
+   */
+  cancelRequested?: () => boolean;
 };
 
 export type AgentTurnOptions = {
@@ -113,6 +158,19 @@ export type AgentTurnResult = {
   outcome?: GitUnitOutcome;
   gitSafety?: GitUnitResult;
 };
+
+/** Thrown at a safe boundary when the user requested cancel via runtime.cancelRequested. */
+export class CancelledError extends Error {
+  constructor(message = 'cancelled by user') {
+    super(message);
+    this.name = 'AgentCancelledError';
+  }
+}
+
+/** Abort the turn at the current checkpoint when a cancel was requested. */
+export function throwIfCancelled(runtime: AgentRuntime): void {
+  if (runtime.cancelRequested?.()) throw new CancelledError();
+}
 
 export async function runAgentTurn(runtime: AgentRuntime, prompt: string, options: AgentTurnOptions = {}): Promise<AgentTurnResult> {
   runtime.ui.turnStart(options.displayText ?? prompt);
@@ -138,6 +196,18 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
   // persist one ledger line with the turn total. Written whether the turn
   // succeeds or fails, so genuine usage is never lost.
   const usageTotals: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number; localCachePredictedRate?: number } = { inputTokens: 0, outputTokens: 0 };
+  // Correlation fields for the usage ledger: turn identity, tool activity,
+  // and task-board linkage make per-session/per-task drill-down possible.
+  const turnId = `turn_${randomUUID().slice(0, 8)}`;
+  const turnStartedAt = Date.now();
+  const toolCallsBefore = runtime.session.toolCalls.length;
+  await runtime.sessions.setLastTurn(runtime.session, {
+    prompt,
+    ...(options.displayText !== undefined ? { displayText: options.displayText } : {}),
+    ...(options.parts !== undefined ? { parts: options.parts } : {}),
+    status: 'running',
+    startedAt: new Date(turnStartedAt).toISOString(),
+  });
 
   let coreResult: AgentTurnResult = { ok: true, session: runtime.session, outcome: 'done' };
   let thrown: unknown;
@@ -145,16 +215,49 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
     coreResult = await runAgentTurnCore(runtime, prompt, options, usageTotals);
   } catch (error) {
     thrown = error;
-    coreResult = {
-      ok: false,
-      session: runtime.session,
-      reason: error instanceof Error ? error.message : String(error),
-      outcome: 'failed',
-      hadTerminalFailure: true,
-    };
+    if (error instanceof CancelledError) {
+      // A user cancel is NOT a terminal failure: no fallback/recover, no
+      // "failed" record. Tools that already ran keep their results in the
+      // session; /retry replays the same prompt fresh. It also completes the
+      // turn normally (outcome 'cancelled') — do not rethrow to callers.
+      thrown = undefined;
+      coreResult = {
+        ok: false,
+        session: runtime.session,
+        reason: 'cancelled by user',
+        outcome: 'cancelled',
+        hadTerminalFailure: false,
+      };
+    } else {
+      coreResult = {
+        ok: false,
+        session: runtime.session,
+        reason: error instanceof Error ? error.message : String(error),
+        outcome: 'failed',
+        hadTerminalFailure: true,
+      };
+    }
   }
 
+  // Codex-style per-turn footer (real context/cache numbers from the last
+  // contextStats snapshot). Runs for ok/failed/cancelled turns alike.
+  runtime.ui.turnEnd();
+
+  // Persist the final lifecycle status of the replayed payload. The payload
+  // itself (prompt/parts) is kept so /retry can replay the same user turn.
+  try {
+    await runtime.sessions.setLastTurn(runtime.session, {
+      prompt,
+      ...(options.displayText !== undefined ? { displayText: options.displayText } : {}),
+      ...(options.parts !== undefined ? { parts: options.parts } : {}),
+      status: coreResult.ok ? 'done' : 'failed',
+      startedAt: new Date(turnStartedAt).toISOString(),
+    });
+  } catch { /* status persistence is best-effort */ }
+
   if (usageTotals.inputTokens > 0 || usageTotals.outputTokens > 0) {
+    const newToolCalls = runtime.session.toolCalls.slice(toolCallsBefore);
+    const toolsUsed = [...new Set(newToolCalls.map((call) => call.tool))].slice(0, 12);
     await appendUsage(resolveUsageLogPath(runtime.config.usageLog), {
       ts: new Date().toISOString(),
       sessionId: runtime.session.id,
@@ -174,6 +277,13 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
       reasoningEffort: runtime.reasoningEffort && runtime.reasoningEffort !== 'off'
         ? runtime.reasoningEffort
         : undefined,
+      turnId,
+      toolCalls: newToolCalls.length,
+      ...(toolsUsed.length > 0 ? { toolsUsed } : {}),
+      ...(options.gitSafetyUnit?.request.kind === 'task'
+        ? { boardId: options.gitSafetyUnit.request.boardId, taskId: options.gitSafetyUnit.request.taskId }
+        : {}),
+      durationMs: Date.now() - turnStartedAt,
     });
   }
 
@@ -181,6 +291,13 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
   // swallowed so a memory problem never breaks turn delivery.
   if (runtime.memory && coreResult.ok && coreResult.finalAnswer) {
     recordTurnMemory(runtime, coreResult.finalAnswer).catch(() => {});
+  }
+
+  // Reflexion: terminal failures (exception or max-steps exhaustion) become a
+  // structured lesson in .aicode/reflections.json so future similar tasks can
+  // avoid repeating the same mistake. User cancels are NOT failures — no lesson.
+  if (coreResult.hadTerminalFailure && coreResult.outcome === 'failed') {
+    recordTurnReflection(runtime, prompt, coreResult).catch(() => {});
   }
 
   // Proactive cache self-awareness: after a successful turn, if the local cache
@@ -219,6 +336,9 @@ async function runAgentTurnCore(
   options: AgentTurnOptions = {},
   usageTotals?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number; localCachePredictedRate?: number },
 ): Promise<AgentTurnResult> {
+  // codex turn.rs:1231-1260 — pre-turn auto-compact fires BEFORE the new user
+  // input enters history, when the conversation nears the context window.
+  await maybeAutoCompact(runtime);
   const recentTools = recentToolResultsFromSession(runtime.session);
   const locale = resolveSessionLocale({
     text: options.displayText ?? prompt,
@@ -235,6 +355,12 @@ async function runAgentTurnCore(
   // not just the task board — benefit from cross-session recall of conventions,
   // decisions, and pitfalls. Failures here must never break a turn.
   const memoryBlock = await loadMemoryBlock(runtime, prompt);
+  // Skills layer (.aicode/skills/<name>/SKILL.md): scan + trigger-match against
+  // the task prompt; matched instructions are injected alongside memories at
+  // step 0. Failures here must never break a turn.
+  const skillBlock = await loadSkillBlock(runtime, prompt);
+  // Reflexion: recall lessons from past terminal failures on similar tasks.
+  const reflectionBlock = await loadReflectionBlock(runtime, prompt);
   // Keep projectContext stable for cache hit — memory goes into messages, not system.
   const projectContext = baseContext;
   const extraction = extractCommand(prompt);
@@ -263,7 +389,9 @@ async function runAgentTurnCore(
     }));
   const requestedEffort = runtime.reasoningEffort ?? runtime.config.reasoningEffort ?? 'off';
   const capability = getReasoningCapability(runtime.provider.name, runtime.provider.model);
-  const effectiveEffort = clampReasoningEffort(requestedEffort, capability, prompt, shouldUseTaskBoard(prompt));
+  const taskComplexity = analyzeTaskComplexity(prompt);
+  const taskBoard = taskComplexity.complexity === 'large';
+  const effectiveEffort = clampReasoningEffort(requestedEffort, capability, prompt, taskBoard);
   if (requestedEffort !== effectiveEffort) {
     runtime.ui.info(locale === 'zh'
       ? `当前模型不支持 ${requestedEffort} 推理，已调整为 ${effectiveEffort}`
@@ -273,7 +401,7 @@ async function runAgentTurnCore(
     requested: runtime.toolScope ?? runtime.config.toolScope,
     reasoningEffort: effectiveEffort,
     prompt,
-    shouldUseTaskBoard: shouldUseTaskBoard(prompt),
+    shouldUseTaskBoard: taskBoard,
   });
   const activeTools = ToolRegistry.fromTools(selectScopedTools(runtime.allTools ?? runtime.tools, resolvedToolScope));
   runtime.tools = activeTools;
@@ -286,11 +414,18 @@ async function runAgentTurnCore(
     const { createSpawnSubagentTool } = await import('../subagent/tool.js');
     runtime.tools.register(createSpawnSubagentTool(runtime), { replace: true });
   }
+  // review_loop (executor→reviewer→revise supervisor loop) for the root agent only;
+  // sub-agents must not nest review loops.
+  if ((runtime.subAgentDepth ?? 0) === 0) {
+    const { createReviewLoopTool } = await import('../subagent/reviewLoopTool.js');
+    runtime.tools.register(createReviewLoopTool(runtime), { replace: true });
+  }
 
   let finalAnswer: string | undefined;
   let warnedAboutCompaction = false;
   let lastToolName: string | undefined;
   for (let step = 0; step < runtime.config.maxSteps; step += 1) {
+    throwIfCancelled(runtime);
     let response;
     try {
       runtime.ui.modelStart();
@@ -299,9 +434,23 @@ async function runAgentTurnCore(
       });
       // Inject memory block as first user message if available (step 0 only, to avoid re-injecting on loops).
       if (step === 0 && memoryBlock) {
-        packed.messages.unshift({ 
-          role: 'user', 
+        packed.messages.unshift({
+          role: 'user',
           content: `<relevant-project-memories>\n${memoryBlock}\n</relevant-project-memories>`,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      if (step === 0 && skillBlock) {
+        packed.messages.unshift({
+          role: 'user',
+          content: skillBlock,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      if (step === 0 && reflectionBlock) {
+        packed.messages.unshift({
+          role: 'user',
+          content: reflectionBlock,
           createdAt: new Date().toISOString(),
         });
       }
@@ -318,18 +467,28 @@ async function runAgentTurnCore(
       }
       const promptCacheBasis = buildPromptCacheBasis(packed.messages, runtime.tools.specs(), projectContext, toolStrategy);
       const predictedPromptCacheRate = predictPromptCacheReuse(runtime.lastPromptCacheBasis, promptCacheBasis);
-      response = await runtime.provider.complete({
-        messages: packed.messages,
-        tools: runtime.tools.specs(),
-        workspaceRoot: runtime.config.workspaceRoot,
-        projectContext,
-        toolStrategy,
-        onTextDelta: (delta) => runtime.ui.assistantDelta(delta),
-        reasoningEffort: effectiveEffort,
-        desktopBridge: runtime.config.desktopBridge,
-        customProvider: runtime.config.customProvider,
-        continuation: runtime.session.providerContinuation,
-      });
+      // codex-rs two-tier retry collapsed onto the single complete() entry:
+      // transport-class failures (5xx/network/timeout) back off exponentially
+      // and re-issue the whole request; 429/4xx and user cancels propagate.
+      response = await withModelRetry(
+        () => runtime.provider.complete({
+          messages: packed.messages,
+          tools: runtime.tools.specs(),
+          workspaceRoot: runtime.config.workspaceRoot,
+          projectContext,
+          toolStrategy,
+          onTextDelta: (delta) => runtime.ui.assistantDelta(delta),
+          reasoningEffort: effectiveEffort,
+          desktopBridge: runtime.config.desktopBridge,
+          customProvider: runtime.config.customProvider,
+          continuation: runtime.session.providerContinuation,
+        }),
+        {
+          onRetry: (attempt, maxRetries, delayMs, error) => {
+            runtime.ui.info(`Reconnecting… ${attempt}/${maxRetries} (${delayMs}ms) — ${error instanceof Error ? error.message : String(error)}`);
+          },
+        },
+      );
       // Accumulate the real token usage this step reported (if any).
       if (response.usage) {
         response.usage.localCachePredictedRate = predictedPromptCacheRate;
@@ -366,16 +525,17 @@ async function runAgentTurnCore(
             : `Model request failed: ${errorMessage(error)}. Falling back to local tool planning.`,
         );
         for (const action of fallbackActions) {
-          const toolResult = await executeToolAction(runtime, action, locale);
-          if (!toolResult.ok) {
-            const reason = toolResult.reason ?? 'tool failed';
+          const execution = await executeToolAction(runtime, action, locale);
+          await appendToolActionResult(runtime, execution);
+          if (!execution.ok) {
+            const reason = execution.reason ?? 'tool failed';
             return {
               ok: false,
               session: runtime.session,
               reason,
               finalAnswer: reason,
               hadTerminalFailure: true,
-              outcome: toolResult.outcome ?? 'failed',
+              outcome: execution.outcome ?? 'failed',
             };
           }
           lastToolName = action.tool;
@@ -413,7 +573,8 @@ async function runAgentTurnCore(
     let sawTool = false;
     const responseToolOutputs: Array<{ callId: string; output: string }> = [];
     let terminalCreateDone: { tool: string; output: string } | undefined;
-    for (const action of response.actions) {
+    for (let actionIndex = 0; actionIndex < response.actions.length; actionIndex += 1) {
+      const action = response.actions[actionIndex]!;
       if (action.type === 'message') {
         const card = maybeUpgradeMetaMessage(runtime, action.content, lastToolName, locale);
         const content = card ?? action.content;
@@ -439,25 +600,44 @@ async function runAgentTurnCore(
         continue;
       }
 
+      // Only an explicit parallelSafe marker opts a tool into a parallel read batch.
+      // In particular, risk=read alone is not sufficient because some read tools
+      // populate repository/navigation/semantic caches as part of execution.
+      const batch: Array<Extract<AgentAction, { type: 'tool' }>> = [action];
+      if (isParallelSafeAction(runtime, action)) {
+        while (actionIndex + batch.length < response.actions.length) {
+          const next = response.actions[actionIndex + batch.length];
+          if (!isParallelSafeAction(runtime, next) || isDuplicateSuccessfulTool(runtime, next.tool, next.input)) break;
+          batch.push(next);
+        }
+      }
+
       sawTool = true;
-      lastToolName = action.tool;
-      const toolResult = await executeToolAction(runtime, action, locale);
-      if (action.callId) responseToolOutputs.push({ callId: action.callId, output: toolResult.output ?? toolResult.reason ?? '' });
-      if (!toolResult.ok) {
-        const reason = toolResult.reason ?? 'tool failed';
-        return {
-          ok: false,
-          session: runtime.session,
-          reason,
-          finalAnswer: reason,
-          hadTerminalFailure: true,
-          outcome: toolResult.outcome ?? 'failed',
-        };
+      const executions = batch.length > 1
+        ? await Promise.all(batch.map((item) => executeToolAction(runtime, item, locale)))
+        : [await executeToolAction(runtime, action, locale)];
+      for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
+        const batchAction = batch[batchIndex]!;
+        const toolResult = await appendToolActionResult(runtime, executions[batchIndex]!);
+        lastToolName = batchAction.tool;
+        if (batchAction.callId) responseToolOutputs.push({ callId: batchAction.callId, output: toolResult.output ?? toolResult.reason ?? '' });
+        if (!toolResult.ok) {
+          const reason = toolResult.reason ?? 'tool failed';
+          return {
+            ok: false,
+            session: runtime.session,
+            reason,
+            finalAnswer: reason,
+            hadTerminalFailure: true,
+            outcome: toolResult.outcome ?? 'failed',
+          };
+        }
+        if (isTerminalCreateTool(batchAction.tool)) {
+          const prior = latestSuccessfulTool(runtime, batchAction.tool);
+          terminalCreateDone = { tool: batchAction.tool, output: prior?.output ?? '' };
+        }
       }
-      if (isTerminalCreateTool(action.tool)) {
-        const prior = latestSuccessfulTool(runtime, action.tool);
-        terminalCreateDone = { tool: action.tool, output: prior?.output ?? '' };
-      }
+      actionIndex += batch.length - 1;
     }
 
     if (response.continuation && responseToolOutputs.length > 0 && runtime.provider.name === 'openai-responses') {
@@ -522,11 +702,36 @@ async function runAgentTurnCore(
   };
 }
 
+type ToolActionExecution = {
+  ok: boolean;
+  output: string;
+  reason?: string;
+  outcome?: GitUnitOutcome;
+  terminal?: boolean;
+  record: {
+    tool: string;
+    input: unknown;
+    ok: boolean;
+    output: string;
+    data?: unknown;
+    providerCallId?: string;
+  };
+};
+
 async function executeToolAction(
   runtime: AgentRuntime,
   action: Extract<AgentAction, { type: 'tool' }>,
   locale: Locale = 'en',
-) {
+): Promise<ToolActionExecution> {
+  // Circuit breaker: a tool still cooling down from repeated failures is
+  // refused without execution, and the model is told to route around it.
+  if (globalToolHealth.inCooldown(action.tool)) {
+    const message = globalToolHealth.cooldownMessage(action.tool);
+    runtime.ui.toolStart(action.tool, action.input);
+    runtime.ui.toolResult(action.tool, { ok: false, output: message });
+    const record = { tool: action.tool, input: action.input, ok: false, output: message, providerCallId: action.callId };
+    return { ok: false, output: message, record };
+  }
   runtime.ui.toolStart(action.tool, action.input);
   const result = await runtime.tools.execute(action.tool, action.input, {
     workspaceRoot: runtime.config.workspaceRoot,
@@ -537,10 +742,32 @@ async function executeToolAction(
     beforeConfirm: () => runtime.ui.pauseSpinnerForPrompt(),
     afterConfirm: () => runtime.ui.resumeSpinnerAfterPrompt(),
     networkAllowlist: runtime.config.network?.enabled === false ? [] : runtime.config.network?.allowlist,
+    commandJobs: runtime.commandJobs,
     computerAnyApp: runtime.config.computerAnyApp === true,
     computerAllowedApps: runtime.config.allowedApps,
     locale,
+    // Only the root agent may launch workflow task nodes as sub-agents; a
+    // workflow running inside a sub-agent must not nest further.
+    subAgentRunner: (runtime.subAgentDepth ?? 0) === 0 && runtime.runSubAgentTurn
+      ? async (goal) => {
+          const { runSubAgent } = await import('../subagent/runner.js');
+          const result = await runSubAgent(
+            {
+              id: 'wf-' + randomUUID().slice(0, 6),
+              goal,
+              expert: 'code_edit',
+            },
+            runtime,
+            new Map(),
+          );
+          if (!result.ok) throw new Error(result.answer);
+          return result.answer;
+        }
+      : undefined,
   });
+  // Feed the circuit breaker with this attempt's outcome (success resets the
+  // consecutive-failure counter; failures accumulate toward a cooldown trip).
+  globalToolHealth.observe(action.tool, result.ok === true);
   runtime.ui.toolResult(action.tool, result);
   const recoveryHint = result.ok ? undefined : recoveryHintForToolFailure(action.tool, result.output);
   const successHint = result.ok ? nextStepHint(action.tool, result.output, result.output?.length ?? 0) : undefined;
@@ -548,33 +775,58 @@ async function executeToolAction(
   const output = hint
     ? `${result.output}\n${locale === 'zh' ? (result.ok ? '建议' : '恢复提示') : (result.ok ? 'Hint' : 'Recovery hint')}: ${hint}`
     : result.output;
-  await runtime.sessions.appendToolCall(runtime.session, {
+  const record = {
     tool: action.tool,
     input: action.input,
     ok: result.ok,
     output,
     data: result.data,
-  });
+    providerCallId: action.callId,
+  };
   if (!result.ok) {
     const reason = locale === 'zh'
       ? `在 ${action.tool} 失败后停止：${output}`
       : `Stopped after ${action.tool} failed: ${output}`;
     if (isTerminalToolFailure(result.output)) {
-      await runtime.sessions.appendFinalAnswer(runtime.session, reason);
       return {
         ok: false,
+        output,
         reason,
         outcome: classifyTerminalFailure(result.output),
-      } as const;
+        terminal: true,
+        record,
+      };
     }
     runtime.ui.info(
       recoveryHint
         ? (locale === 'zh' ? `工具失败；恢复提示：${recoveryHint}` : `tool failed; recovery hint: ${recoveryHint}`)
         : (locale === 'zh' ? `工具失败；请模型继续恢复：${action.tool}` : `tool failed; asking model to recover: ${action.tool}`),
     );
-    return { ok: true, output } as const;
+    return { ok: true, output, record };
   }
-  return { ok: true, output } as const;
+  return { ok: true, output, record };
+}
+
+async function appendToolActionResult(
+  runtime: AgentRuntime,
+  execution: ToolActionExecution,
+) {
+  await runtime.sessions.appendToolCall(runtime.session, execution.record);
+  if (!execution.ok && execution.terminal) {
+    await runtime.sessions.appendFinalAnswer(runtime.session, execution.reason ?? execution.output);
+  }
+  return execution;
+}
+
+function isParallelSafeAction(
+  runtime: AgentRuntime,
+  action: AgentAction | undefined,
+): action is Extract<AgentAction, { type: 'tool' }> {
+  if (!action || action.type !== 'tool') return false;
+  const tool = runtime.tools.get(action.tool);
+  // The marker is opt-in; retain an explicit read-risk check so write/shell/network
+  // tools remain serial even if a plugin is misconfigured with parallelSafe=true.
+  return tool?.risk === 'read' && tool.parallelSafe === true;
 }
 
 function resolveConfirm(runtime: AgentRuntime) {
@@ -584,8 +836,8 @@ function resolveConfirm(runtime: AgentRuntime) {
   // so this shim is only used for git-safety and task-board style confirms that
   // do not need structured approval requests.
   if (runtime.confirm) {
-    return async (message: string, _request?: import('../tools/types.js').ApprovalRequest) =>
-      runtime.confirm!(message);
+    return async (message: string, request?: import('../tools/types.js').ApprovalRequest) =>
+      runtime.confirm!(message, request);
   }
   if (runtime.config.noInput || runtime.config.prompt !== undefined || runtime.config.ci) return undefined;
   if (process.stdin.isTTY) {
@@ -700,6 +952,40 @@ async function loadMemoryBlock(runtime: AgentRuntime, prompt: string): Promise<s
   }
 }
 
+// Scan workspace skills and match them against the task prompt. Returns the
+// injectable skill block, or undefined when no skill matches / skills dir is
+// absent. Swallows all failures so a broken skill never breaks a turn.
+async function loadSkillBlock(runtime: AgentRuntime, prompt: string): Promise<string | undefined> {
+  try {
+    const { scanSkills, matchSkills, buildSkillBlock } = await import('../skills/index.js');
+    const { skills } = await scanSkills(runtime.config.workspaceRoot);
+    if (skills.length === 0) return undefined;
+    const matches = matchSkills(prompt, skills);
+    if (matches.length === 0) return undefined;
+    const block = buildSkillBlock(matches);
+    return block || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Recall past-failure lessons relevant to this prompt. Returns the injectable
+// <past-reflections> block (and bumps hit counters), or undefined when nothing
+// matches. Swallows all failures so a reflection problem never breaks a turn.
+async function loadReflectionBlock(runtime: AgentRuntime, prompt: string): Promise<string | undefined> {
+  if (!runtime.reflections) return undefined;
+  try {
+    const entries = await runtime.reflections.list();
+    if (entries.length === 0) return undefined;
+    const relevant = runtime.reflections.selectRelevant(entries, prompt);
+    if (relevant.length === 0) return undefined;
+    void runtime.reflections.touchHits(relevant.map((e) => e.id)).catch(() => {});
+    return runtime.reflections.buildBlock(relevant) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function buildPromptCacheBasis(
   messages: import('../providers/types.js').AgentMessage[],
   tools: import('../providers/types.js').ProviderToolSpec[],
@@ -762,6 +1048,31 @@ async function recordTurnMemory(runtime: AgentRuntime, finalAnswer: string): Pro
   await runtime.memory.add({ kind, summary, keywords: deriveKeywords(summary), source: { type: 'system' } });
 }
 
+// Reflexion: persist a terminal failure as a lesson entry. The topic is the
+// task prompt (truncated); the failure is the reason plus the last tool that
+// ran; the lesson is derived heuristically from the failure text.
+async function recordTurnReflection(
+  runtime: AgentRuntime,
+  prompt: string,
+  coreResult: { reason?: string; finalAnswer?: string },
+): Promise<void> {
+  if (!runtime.reflections) return;
+  const { deriveLesson } = await import('../reflection/types.js');
+  const lastCall = [...runtime.session.toolCalls].reverse().find((call) => !call.ok);
+  const reason = coreResult.reason ?? coreResult.finalAnswer ?? 'unknown failure';
+  const isMaxSteps = reason.includes('max steps');
+  const kind = isMaxSteps ? 'max_steps' : 'exception';
+  const failure = lastCall
+    ? `${reason}（最后失败工具: ${lastCall.tool} → ${lastCall.output.slice(0, 120)}）`
+    : reason;
+  await runtime.reflections.add({
+    topic: prompt.slice(0, 160),
+    failure,
+    lesson: deriveLesson(failure, kind),
+    kind,
+  });
+}
+
 function latestSuccessfulTool(runtime: AgentRuntime, lastToolName: string | undefined) {
   const preferred = lastToolName
     ?? [...runtime.session.toolCalls].reverse().find((call) => call.ok && call.output.trim())?.tool;
@@ -782,6 +1093,11 @@ function friendlyModelError(message: string) {
   if (lower.includes('401') || lower.includes('invalid api key') || lower.includes('invalid token')) {
     return '鉴权失败（API key / base URL 不匹配）';
   }
+  // API error bodies arrive as `… failed: 400 {"error":{"message":"…"}}` —
+  // collapse the JSON blob to `status + error.message` so chat output stays
+  // one readable line instead of a raw dump.
+  const statusAndMessage = message.match(/(\d{3})\b[\s\S]*?"message"\s*:\s*"([^"]{1,200})"/);
+  if (statusAndMessage) return `${statusAndMessage[1]} ${statusAndMessage[2]}`;
   return message;
 }
 
@@ -884,14 +1200,32 @@ function buildContextStats(
   // Base system instructions WITHOUT the tool list (tools counted separately),
   // so no component is double-counted.
   const systemPromptChars = buildToolSystemPrompt([], undefined, undefined).length;
+  // Skill instructions injected at step 0 live inside user messages wrapped in
+  // <relevant-skills>…</relevant-skills>; measure their real char footprint and
+  // exclude it from messageChars so the same bytes are not double-counted.
+  const SKILL_OPEN = '<relevant-skills>';
+  const SKILL_CLOSE = '</relevant-skills>';
+  const stripSkillBlock = (content: string): { text: string; block: string } => {
+    const open = content.indexOf(SKILL_OPEN);
+    if (open < 0) return { text: content, block: '' };
+    const close = content.indexOf(SKILL_CLOSE, open);
+    const block = close > open
+      ? content.slice(open, close + SKILL_CLOSE.length)
+      : content.slice(open);
+    return { text: content.replace(block, ''), block };
+  };
+  let skillsChars = 0;
   const messageChars = packed.messages.reduce((sum, message) => {
     const partsChars = (message.parts ?? []).reduce(
       (acc, part) => acc + (part.type === 'text' ? part.text.length : 0),
       0,
     );
-    return sum + message.content.length + (message.name?.length ?? 0) + message.role.length + 8 + partsChars;
+    const { text, block } = typeof message.content === 'string'
+      ? stripSkillBlock(message.content)
+      : { text: message.content, block: '' };
+    skillsChars += block.length;
+    return sum + text.length + (message.name?.length ?? 0) + message.role.length + 8 + partsChars;
   }, 0);
-  const skillsChars = 0;
   // Project instructions/persona and per-turn strategy are real prompt content
   // but do not fit a named screenshot category; account for them as "other".
   const otherChars = (projectContext?.length ?? 0) + (toolStrategy?.length ?? 0);

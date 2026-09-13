@@ -13,6 +13,8 @@ import type { GitRollbackService } from '../git-safety/rollback.js';
 import { formatGitSafetyStatus } from '../git-safety/format.js';
 import { commitBoardChanges, ensureBoardBranch, previewBoardCommit } from '../git-safety/workflow.js';
 import type { Provider } from '../providers/types.js';
+import type { AgentRuntime } from '../agent/agent.js';
+import type { AutomationManager } from '../automation/manager.js';
 import type { CheckpointStore } from '../session/checkpoint.js';
 import type { SessionRecord, SessionStore } from '../session/store.js';
 import {
@@ -38,6 +40,81 @@ import { formatGitConfirm } from '../i18n/messages.js';
 import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
 import { join, relative, resolve, extname } from 'node:path';
 import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+import { checkEnvContract } from '../config/envContract.js';
+import { ReflectionStore } from '../reflection/store.js';
+import { planVersionBump, renderBumpReport } from '../prreview/versionBump.js';
+
+/** /version — 基于最近提交的版本升级建议（conventional 分析）。 */
+async function handleVersionCommand(workspaceRoot: string): Promise<string> {
+  let current = 'unknown';
+  try {
+    const raw = await readFile(join(workspaceRoot, 'package.json'), 'utf-8');
+    const pkg = JSON.parse(raw) as { version?: unknown };
+    if (typeof pkg.version === 'string') current = pkg.version;
+  } catch { /* 无 package.json 时保持 unknown */ }
+  const titles = await readRecentCommitTitles(workspaceRoot);
+  if (titles.length === 0) {
+    return `当前版本: ${current}；没有可分析的提交历史。`;
+  }
+  return renderBumpReport(planVersionBump(current, titles));
+}
+
+/** 读取最近 50 条非 merge 提交标题；git 不可用时返回空。 */
+async function readRecentCommitTitles(workspaceRoot: string): Promise<string[]> {
+  try {
+    const { stdout } = await execFileAsync('git', ['log', '--max-count=50', '--no-merges', '--pretty=format:%s'], {
+      cwd: workspaceRoot,
+    });
+    const lines = stdout.split(/[\r\n]+/).map((line) => line.trim()).filter(Boolean);
+    return lines;
+  } catch {
+    return [];
+  }
+}
+
+/** /reflect — 查看最近沉淀的失败教训（按命中次数排序）。 */
+async function handleReflectCommand(workspaceRoot: string): Promise<string> {
+  const store = new ReflectionStore(workspaceRoot);
+  const entries = await store.list();
+  if (entries.length === 0) {
+    return '还没有失败教训。任务终态失败（异常或步数耗尽）时会自动沉淀到这里。';
+  }
+  const sorted = [...entries].sort((a, b) => b.hits - a.hits || b.at.localeCompare(a.at)).slice(0, 10);
+  const lines = [`失败教训（${entries.length} 条，显示最近高频 ${sorted.length} 条）:`];
+  for (const entry of sorted) {
+    lines.push(`- [${entry.kind}] ${entry.topic}`);
+    lines.push(`  失败: ${entry.failure.slice(0, 80)}`);
+    lines.push(`  教训: ${entry.lesson}`);
+  }
+  return lines.join('\n');
+}
+
+/** /env-check — .env.example / 源码读取 / 本地 .env 三方键对账（只报键名，不触碰值）。 */
+async function handleEnvCheckCommand(workspaceRoot: string): Promise<string> {
+  const report = await checkEnvContract(workspaceRoot);
+  const lines: string[] = [
+    `env.example: ${report.exampleFile ?? 'missing'} (${report.exampleKeys.length} keys)`,
+    `code reads: ${report.codeKeys.length} keys`,
+    `local .env: ${report.localKeys.length} keys`,
+  ];
+  if (report.issues.length === 0) {
+    lines.push('OK: env contract consistent.');
+    return lines.join('\n');
+  }
+  const byKind = new Map<string, string[]>();
+  for (const issue of report.issues) {
+    const bucket = byKind.get(issue.kind) ?? [];
+    bucket.push(issue.key);
+    byKind.set(issue.kind, bucket);
+  }
+  for (const [kind, keys] of byKind) {
+    lines.push(`${kind} (${keys.length}): ${keys.slice(0, 15).join(', ')}${keys.length > 15 ? ' ...' : ''}`);
+  }
+  return lines.join('\n');
+}
 
 export async function handleSlashCommand(options: {
   line: string;
@@ -55,6 +132,14 @@ export async function handleSlashCommand(options: {
   mcp?: McpManager;
   reloadMcp?: () => Promise<McpManager>;
   pendingAttachments?: Attachment[];
+  /** Desktop compaction divider hook (see AgentRuntime.compactEmit). */
+  compactEmit?: (payload: {
+    phase: 'started' | 'completed' | 'failed';
+    auto: boolean;
+    before?: number;
+    after?: number;
+    reason?: string;
+  }) => void;
 }) {
   const command = options.line.trim();
   if (command === '/不准偷懒开发' || command.startsWith('/不准偷懒开发 ')) {
@@ -85,8 +170,14 @@ export async function handleSlashCommand(options: {
     return `Context: ${chars.toLocaleString()} chars ≈ ${estTokens.toLocaleString()} tokens | Messages: ${options.session.messages.length}`;
   }
   if (command === '/retry') {
+    // Real replay lives in repl.ts (retryLastUserTurn) — the interactive loop
+    // special-cases /retry before reaching here. This branch only serves
+    // non-TTY/desktop callers that bypass runPromptMode and expect an explicit
+    // status instead of a silent no-op.
     const lastUser = [...options.session.messages].reverse().find((m) => m.role === 'user');
-    return lastUser ? `Retry with: ${lastUser.content.slice(0, 120)}` : 'No previous user message found.';
+    return lastUser
+      ? 'Retry is executed by the interactive loop (use /retry in the REPL or --prompt /retry).'
+      : 'No previous user message found.';
   }
   if (command === '/doctor') {
     return handleDoctorCommand(options);
@@ -223,6 +314,12 @@ export async function handleSlashCommand(options: {
       return 'Open Message Actions with /actions in interactive mode (floating menu).';
     case '/undo':
       return options.checkpoints ? options.checkpoints.undoLast() : 'No checkpoint store is available.';
+    case '/env-check':
+      return handleEnvCheckCommand(options.config.workspaceRoot);
+    case '/reflect':
+      return handleReflectCommand(options.config.workspaceRoot);
+    case '/version':
+      return handleVersionCommand(options.config.workspaceRoot);
     case '/exit':
       return '__EXIT__';
     default:
@@ -776,11 +873,8 @@ async function handleAutomateCommand(
     config: AppConfig;
     sessions: SessionStore;
     session: SessionRecord;
-  },
+  } & Partial<AgentRuntime>,
 ): Promise<string> {
-  const { AutomationManager } = await import('../automation/manager.js');
-  const manager = new AutomationManager(options.config.workspaceRoot);
-
   const parts = command.split(/\s+/);
   const subcommand = parts[1];
 
@@ -795,6 +889,25 @@ async function handleAutomateCommand(
       '  /automate status <task-id>        - Show task status and history',
       '  /automate run <task-id>           - Manually trigger task execution',
     ].join('\n');
+  }
+
+  // Read-only lookups work without a live runtime. Mutating operations (start/
+  // stop/delete/run) must reuse a runtime-scoped manager so watchers and git
+  // monitors are tracked and closed with the session instead of leaking.
+  const needsRuntime = ['start', 'stop', 'delete', 'run'].includes(subcommand);
+  const runtime = options as AgentRuntime;
+  let manager: AutomationManager | undefined = runtime.automationManager;
+  if (!manager) {
+    if (needsRuntime && !(runtime.provider && runtime.ui)) {
+      return `Automation "${subcommand}" requires an interactive session with a configured provider.`;
+    }
+    const { AutomationManager: Manager } = await import('../automation/manager.js');
+    if (runtime.provider && runtime.ui) {
+      manager = new Manager(runtime.config.workspaceRoot, runtime);
+      runtime.automationManager = manager;
+    } else {
+      manager = new Manager(runtime.config.workspaceRoot);
+    }
   }
 
   if (subcommand === 'list') {
@@ -879,10 +992,16 @@ async function handleAutomateCommand(
   if (subcommand === 'run') {
     const taskId = parts[2];
     if (!taskId) return 'Usage: /automate run <task-id>';
-    
-    // Note: This requires a full AgentRuntime which is not available in this context
-    // In real usage, this should be called from the REPL with proper runtime
-    return 'Manual task execution requires calling AutomationManager.runTask() with a valid runtime. This command is a placeholder - use the API directly for now.';
+
+    const task = await manager.getTask(taskId);
+    if (!task) return `Task not found: ${taskId}`;
+
+    runtime.ui.info(`Running automation task "${task.name}" (${taskId})…`);
+    const result = await manager.runTask(taskId, runtime);
+    const lines = [`Task ${taskId} finished: ${result.status} at ${result.executedAt}`];
+    if (result.boardId) lines.push(`Task board: ${result.boardId}`);
+    if (result.error) lines.push(`Error: ${result.error}`);
+    return lines.join('\n');
   }
 
   if (subcommand === 'create') {
@@ -944,7 +1063,11 @@ async function handleAutomateCommand(
 
 async function handleCompactCommand(
   command: string,
-  options: { session: SessionRecord; sessions: SessionStore },
+  options: {
+    session: SessionRecord;
+    sessions: SessionStore;
+    compactEmit?: (payload: { phase: 'started' | 'completed' | 'failed'; auto: boolean; before?: number; after?: number; reason?: string }) => void;
+  },
 ): Promise<string> {
   const arg = command.slice('/compact'.length).trim();
   const keepLast = arg ? Math.max(2, parseInt(arg, 10) || 20) : 20;
@@ -953,6 +1076,7 @@ async function handleCompactCommand(
   if (total <= keepLast) {
     return `Nothing to compact — session has ${total} message(s) (keep-last: ${keepLast}).`;
   }
+  options.compactEmit?.({ phase: 'started', auto: false, before: total });
   const dropped = total - keepLast;
   const summaryHint = session.finalAnswers.at(-1)?.slice(0, 200) ?? 'Earlier context has been compacted.';
   session.messages = [
@@ -964,6 +1088,7 @@ async function handleCompactCommand(
     ...session.messages.slice(-keepLast),
   ];
   await sessions.save(session);
+  options.compactEmit?.({ phase: 'completed', auto: false, before: total, after: session.messages.length });
   return `Compacted: kept last ${keepLast} of ${total} message(s) (${dropped} removed). Summary stub injected.`;
 }
 
