@@ -352,11 +352,10 @@ function createWindow() {
     show: false,
     title: 'YOYcode Desktop IDE',
     backgroundColor: '#f8fafc',
-    // Empty window icon: hides the title-bar glyph on Windows (the user asked
-    // for it gone) while the packaged app's taskbar identity stays driven by
-    // the AppUserModelID icon. Setting this after creation would flash the
-    // default Electron icon first.
-    icon: nativeImage.createEmpty(),
+    // Windows falls back to the exe's default (atom) icon when the window
+    // icon is EMPTY, so hand it a real 16x16 fully-transparent bitmap instead
+    // — a valid icon that simply renders nothing in the title bar.
+    icon: nativeImage.createFromBitmap(Buffer.alloc(16 * 16 * 4), { width: 16, height: 16 }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
