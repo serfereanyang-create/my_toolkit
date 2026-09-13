@@ -22,6 +22,8 @@ import type { ToolDefinition, ToolContext, ToolResult } from './types.js';
 const execFileAsync = promisify(execFile);
 
 export const COMPUTER_TOOL_NAMES = new Set([
+  'computer_elements',
+  'computer_press',
   'computer_screenshot',
   'computer_click',
   'computer_type',
@@ -52,6 +54,7 @@ export type ComputerImagePayload = { mediaType: string; data: string; path: stri
 
 export const COMPUTER_USE_STRATEGY =
   'Computer control is active. Work in an observe-act-verify loop: call computer_screenshot first to see the screen, plan exactly one action, execute it (computer_click / computer_type / computer_key / computer_scroll / computer_activate), then screenshot again to verify the effect before continuing. '
+  + 'Prefer the accessibility tree over pixels: computer_elements lists named/interactive controls with an index each; click them by index with computer_press instead of guessing screenshot coordinates when the target has a name (buttons, menus, title bars). Re-run computer_elements after the UI changes — indices only cover the latest snapshot. '
   + 'Screenshot coordinates are in the DISPLAYED image pixel space; the tool result reports the real screen size and a scale factor — multiply displayed coordinates by the factor to get real coordinates for computer_click/scroll. '
   + 'To type into an app, first make sure its window is focused (computer_activate or click its title bar). Use computer_key for shortcuts ({ENTER}, {ESC}, ^s, %{F4}). Launch apps that are not open with run_command. '
   + 'If a click misses, screenshot, recompute the coordinates, and retry once; if it still fails, report what is on screen instead of guessing repeatedly.';
@@ -104,6 +107,229 @@ const INPUT_TYPE_DEF = [
 function fail(message: string): ToolResult {
   return { ok: false, output: message };
 }
+
+// ── accessibility tree (UIA) shared script parts ───────────────────────────
+
+/**
+ * PowerShell preamble defining two reusable functions over System.Windows
+ * Automation (UIAutomationClient, ships with .NET Framework — no native deps):
+ *  YoyFindWindow <pid|0> <titleSubstring>  -> root AutomationElement or $null
+ *  YoyWalk <element>                        -> DFS list of interesting controls
+ * "Interesting" = has a Name or exposes Invoke/Toggle/ExpandCollapse/Value.
+ * The walk is deterministic depth-first in ControlView order, so a later pass
+ * over the same unchanged tree reproduces the exact same indexes.
+ */
+const UIA_TYPE_DEF = [
+  'Add-Type -AssemblyName UIAutomationClient',
+  'Add-Type -AssemblyName UIAutomationTypes',
+  '$script:AE = [System.Windows.Automation.AutomationElement]',
+  '$script:TW = [System.Windows.Automation.TreeWalker]::ControlViewWalker',
+  'function YoyHasPattern($el, $pattern) { try { $null = $el.GetCurrentPattern($pattern); return $true } catch { return $false } }',
+  'function YoyFindWindow($pid_, $title) {',
+  '  $wins = $script:AE::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)',
+  '  foreach ($w in $wins) {',
+  '    if ($pid_ -gt 0 -and $w.Current.ProcessId -ne [int]$pid_) { continue }',
+  '    if ($title -eq "" -or $w.Current.Name -like "*$title*") { return $w }',
+  '  }',
+  '  return $null',
+  '}',
+  'function YoyInteresting($el) {',
+  '  if ($el.Current.Name) { return $true }',
+  '  if (YoyHasPattern $el ([System.Windows.Automation.InvokePattern]::Pattern)) { return $true }',
+  '  if (YoyHasPattern $el ([System.Windows.Automation.TogglePattern]::Pattern)) { return $true }',
+  '  if (YoyHasPattern $el ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)) { return $true }',
+  '  return $false',
+  '}',
+  'function YoyWalk($root) {',
+  '  # Deterministic DFS over ControlView in FIRST-TO-LAST sibling order, so',
+  '  # the same unchanged tree reproduces the exact same index list. Stack',
+  '  # pops are LIFO: push siblings REVERSED so they come out in order.',
+  '  $out = New-Object System.Collections.ArrayList',
+  '  $stack = New-Object System.Collections.Stack',
+  '  $kids = @()',
+  '  $c = $script:TW.GetFirstChild($root)',
+  '  while ($c) { $kids += $c; $c = $script:TW.GetNextSibling($c) }',
+  '  [array]::Reverse($kids)',
+  '  foreach ($k in $kids) { $stack.Push($k) }',
+  '  while ($stack.Count -gt 0) {',
+  '    $el = $stack.Pop()',
+  '    $kids = @()',
+  '    $c = $script:TW.GetFirstChild($el)',
+  '    while ($c) { $kids += $c; $c = $script:TW.GetNextSibling($c) }',
+  '    [array]::Reverse($kids)',
+  '    foreach ($k in $kids) { $stack.Push($k) }',
+  '    if (YoyInteresting $el) { $null = $out.Add($el) }',
+  '  }',
+  '  return ,$out',
+  '}',
+].join('\n');
+
+function uiaWindowLocator(target: string): string {
+  const isPid = /^\d+$/.test(target);
+  const pid = isPid ? target : '0';
+  const title = isPid ? '' : escapePs(target);
+  return `$win = YoyFindWindow ${pid} '${title}'; if (-not $win) { Write-Output 'no-window'; exit }`;
+}
+
+// ── computer_elements ───────────────────────────────────────────────────────
+
+type ElementsInput = { window: string };
+
+export const computerElementsTool: ToolDefinition<ElementsInput> = {
+  name: 'computer_elements',
+  description: 'Read the accessibility (UIA) control tree of a window via PowerShell — names, control types and screen rects of buttons/menus/fields, with a stable index per element. Prefer this over screenshots for finding click targets: pass the returned index to computer_press. window accepts a pid ("12345") or a title substring ("记事本"). Re-run after the UI changes; indexes cover only the latest snapshot.',
+  inputHint: '{ "window": "12345" }  // pid or title substring',
+  risk: 'read',
+  parallelSafe: false,
+
+  validate(input: unknown): ElementsInput {
+    if (!input || typeof input !== 'object') throw new Error('computer_elements input must be an object');
+    const window = (input as Record<string, unknown>).window;
+    if (typeof window !== 'string' || !window.trim()) throw new Error('window is required (pid or title substring)');
+    if (window.length > 200) throw new Error('window is too long');
+    return { window: window.trim() };
+  },
+
+  async execute(input: ElementsInput, _context: ToolContext): Promise<ToolResult> {
+    if (!isWindows()) return fail(WINDOWS_ONLY);
+    const script = [
+      UIA_TYPE_DEF,
+      uiaWindowLocator(input.window),
+      '$els = YoyWalk $win',
+      'Write-Output "yoy:count=$($els.Count)"',
+      '$i = 0',
+      'foreach ($el in $els) {',
+      '  if ($i -ge 200) { Write-Output "yoy:truncated"; break }',
+      '  try {',
+      '    $r = $el.Current.BoundingRectangle',
+      '    $ct = $el.Current.ControlType.ProgrammaticName.Replace("ControlType.","")',
+      '    $name = ($el.Current.Name -replace "[\\r\\n|]", " ").Trim()',
+      '    $inv = YoyHasPattern $el ([System.Windows.Automation.InvokePattern]::Pattern)',
+      '    $tog = YoyHasPattern $el ([System.Windows.Automation.TogglePattern]::Pattern)',
+      '    $exp = YoyHasPattern $el ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)',
+      '    $act = if ($inv) { "invoke" } elseif ($tog) { "toggle" } elseif ($exp) { "expand" } else { "text" }',
+      '    Write-Output ("{0}|{1}|{2}|({3},{4} {5}x{6})|{7}" -f $i, $ct, $name, [int]$r.X, [int]$r.Y, [int]$r.Width, [int]$r.Height, $act)',
+      '  } catch { }',
+      '  $i++',
+      '}',
+      'Write-Output "yoy:window=$($win.Current.Name)"',
+    ].join('\n');
+    try {
+      const out = await runPs(script, 60_000);
+      const lines = out.split(/\r?\n/).filter((l) => l && !l.startsWith('yoy:'));
+      const meta = out.split(/\r?\n/).find((l) => l.startsWith('yoy:count='));
+      if (!out.includes('yoy:') || out.includes('no-window')) {
+        return fail(`computer_elements: no visible window matched "${input.window}". Run computer_list_windows for candidates.`);
+      }
+      const winName = out.split(/\r?\n/).find((l) => l.startsWith('yoy:window='))?.slice(11)?.trim() ?? input.window;
+      const total = meta ? meta.slice(10) : String(lines.length);
+      return {
+        ok: true,
+        output: `${lines.length} of ${total} element(s) in ${winName} — "index|type|name|(x,y WxH)|action". Pass an index to computer_press; re-run this tool after the UI changes.\n${lines.join('\n')}`,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return fail(`computer_elements failed: ${message.slice(0, 500)}`);
+    }
+  },
+};
+
+// ── computer_press ──────────────────────────────────────────────────────────
+
+type PressInput = { window: string; index: number; expected?: string; double: boolean };
+
+export const computerPressTool: ToolDefinition<PressInput> = {
+  name: 'computer_press',
+  description: 'Activate (Invoke/Toggle/Expand, falling back to a center click) the element at the given index from the LAST computer_elements snapshot of the same window. Always pass `expected` — the name column of that snapshot line — and the tool refuses with a stale-index error if the UI changed and index now points at a different control. Safer than coordinate clicks: no scale-factor math.',
+  inputHint: '{ "window": "12345", "index": 7, "expected": "加粗(Ctrl+B)" }',
+  risk: 'shell',
+
+  validate(input: unknown): PressInput {
+    if (!input || typeof input !== 'object') throw new Error('computer_press input must be an object');
+    const obj = input as Record<string, unknown>;
+    const window = obj.window;
+    if (typeof window !== 'string' || !window.trim()) throw new Error('window is required (pid or title substring)');
+    const expected = typeof obj.expected === 'string' && obj.expected.trim() ? obj.expected.trim().slice(0, 200) : undefined;
+    return {
+      window: window.trim(),
+      index: clampInt(obj.index, 0, 199, 'index'),
+      expected,
+      double: obj.double === true,
+    };
+  },
+
+  async execute(input: PressInput, _context: ToolContext): Promise<ToolResult> {
+    if (!isWindows()) return fail(WINDOWS_ONLY);
+    const expectedCheck = input.expected
+      ? [
+        `$snapName = ($el.Current.Name -replace '[\\r\\n|]', ' ').Trim()`,
+        `if ($snapName -notlike '*${escapePs(input.expected)}*') { Write-Output "name-mismatch=$snapName"; exit }`,
+      ]
+      : [];
+    const script = [
+      UIA_TYPE_DEF,
+      INPUT_TYPE_DEF,
+      uiaWindowLocator(input.window),
+      '$els = YoyWalk $win',
+      `if ($els.Count -le ${input.index}) { Write-Output 'stale-index'; exit }`,
+      `$el = $els[${input.index}]`,
+      ...expectedCheck,
+      '$r = $el.Current.BoundingRectangle',
+      '$cx = [int]($r.X + $r.Width / 2); $cy = [int]($r.Y + $r.Height / 2)',
+      'try {',
+      '  $p = $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)',
+      '  $p.Invoke()',
+      '  Write-Output "invoked"',
+      '} catch {',
+      '  try {',
+      '    $t = $el.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)',
+      '    $null = $t.Toggle()',
+      '    Write-Output "toggled"',
+      '  } catch {',
+      '    try {',
+      '      $e = $el.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)',
+      '      if ($e.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Expanded) { $e.Collapse() } else { $e.Expand() }',
+      '      Write-Output "expanded"',
+      '    } catch {',
+      `      if ($cx -le 0 -or $cy -le 0) { Write-Output 'no-center'; exit }`,
+      '      [YoyInput]::SetCursorPos($cx, $cy) | Out-Null; Start-Sleep -Milliseconds 60',
+      '      [YoyInput]::mouse_event([YoyInput]::LeftDown, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 40',
+      '      [YoyInput]::mouse_event([YoyInput]::LeftUp, 0, 0, 0, [UIntPtr]::Zero)',
+      input.double ? '      Start-Sleep -Milliseconds 80; [YoyInput]::mouse_event([YoyInput]::LeftDown, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 40; [YoyInput]::mouse_event([YoyInput]::LeftUp, 0, 0, 0, [UIntPtr]::Zero)' : '',
+      '      Write-Output "clicked-center"',
+      '    }',
+      '  }',
+      '}',
+      'Write-Output "name=$($el.Current.Name)"',
+    ].join('\n');
+    try {
+      const out = await runPs(script, 45_000);
+      const lines = out.split(/\r?\n/);
+      const first = lines[0]?.trim() ?? '';
+      if (first === 'no-window') {
+        return fail(`computer_press: no visible window matched "${input.window}".`);
+      }
+      if (first === 'stale-index') {
+        return fail(`computer_press: index ${input.index} is stale (the snapshot had fewer elements or the UI changed). Re-run computer_elements.`);
+      }
+      if (first.startsWith('name-mismatch=')) {
+        const actual = first.slice('name-mismatch='.length);
+        return fail(`computer_press: index ${input.index} is stale — expected "${input.expected}" but the UI now shows "${actual}". Re-run computer_elements.`);
+      }
+      if (first === 'no-center') {
+        return fail(`computer_press: element ${input.index} has no usable screen rect and no invoke/toggle/expand pattern; cannot click it.`);
+      }
+      const name = lines.find((l) => l.startsWith('name='))?.slice(5)?.trim();
+      return {
+        ok: true,
+        output: `${first === 'clicked-center' ? 'Center-clicked' : first} element ${input.index}${name ? ` (${name})` : ''} in "${input.window}". Screenshot to verify the effect.`,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return fail(`computer_press failed: ${message.slice(0, 500)}`);
+    }
+  },
+};
 
 // ── computer_screenshot ─────────────────────────────────────────────────────
 
@@ -389,6 +615,8 @@ export const computerActivateTool: ToolDefinition<ActivateInput> = {
 
 export function createComputerTools(): ToolDefinition[] {
   return [
+    computerElementsTool,
+    computerPressTool,
     computerScreenshotTool,
     computerClickTool,
     computerTypeTool,

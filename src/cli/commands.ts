@@ -1127,7 +1127,7 @@ async function handleComputerCommand(
     return [
       `Computer use: ${state}.`,
       'Usage: /computer use [goal]  |  /computer off  |  /computer status',
-      'When armed the agent can see the screen and drive mouse/keyboard: computer_screenshot, computer_click, computer_type, computer_key, computer_scroll, computer_list_windows, computer_activate.',
+      'When armed the agent can see the screen and drive mouse/keyboard: computer_elements (accessibility tree), computer_press (press by index), computer_screenshot, computer_click, computer_type, computer_key, computer_scroll, computer_list_windows, computer_activate.',
     ].join('\n');
   }
   if (sub === 'off') {

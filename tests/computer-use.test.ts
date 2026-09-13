@@ -176,6 +176,20 @@ test('computer tools validate inputs strictly', async () => {
     assert.deepEqual(fixture.tools.get('computer_click')!.validate({ x: 10.4, y: 20, button: 'right', double: true }), { x: 10, y: 20, button: 'right', double: true });
     assert.equal(fixture.tools.get('computer_click')?.risk, 'shell');
     assert.equal(fixture.tools.get('computer_screenshot')?.risk, 'read');
+    // Accessibility channel: computer_elements is a read-only snapshot tool;
+    // computer_press is a shell action (confirm per press) with strict input
+    // checks and an index bound matching the 200-line display cap.
+    assert.ok(fixture.tools.get('computer_elements'));
+    assert.equal(fixture.tools.get('computer_elements')?.risk, 'read');
+    assert.ok(fixture.tools.get('computer_press'));
+    assert.equal(fixture.tools.get('computer_press')?.risk, 'shell');
+    assert.throws(() => fixture.tools.get('computer_elements')!.validate({}), /window is required/);
+    assert.throws(() => fixture.tools.get('computer_press')!.validate({ window: '12' }), /index must be a number/);
+    assert.throws(() => fixture.tools.get('computer_press')!.validate({ window: '12', index: 500 }), /between 0 and 199/);
+    assert.deepEqual(fixture.tools.get('computer_press')!.validate({ window: '12', index: 3, expected: 'x'.repeat(300) }), { window: '12', index: 3, expected: 'x'.repeat(200), double: false });
+    assert.deepEqual(fixture.tools.get('computer_press')!.validate({ window: '记事本', index: 0 }), { window: '记事本', index: 0, expected: undefined, double: false });
+    // Wake injection registers the full nine-tool set.
+    assert.equal(COMPUTER_TOOL_NAMES.size, 9);
   } finally {
     await fixture.cleanup();
   }
