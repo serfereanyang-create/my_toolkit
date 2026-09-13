@@ -144,9 +144,24 @@ export default function App() {
       dispatch({ type: 'settings/loaded', settings });
       applyTheme(settings.preferences?.theme);
     });
-    // Auto-restore the last workspace (or fall back to home) so the app opens
-    // straight into a project instead of forcing a folder picker every launch.
+    // Auto-restore the last *project* workspace. Main never roots at the home
+    // directory anymore: when there is nothing usable it returns root:null and
+    // we pop the folder picker once, because a home-dir workspace silently
+    // breaks every git_*/workspace_* tool (fatal: not a git repository).
     desktop.workspace.restore().then(async ({ root }) => {
+      if (!root) {
+        const result = await desktop.workspace.open();
+        if (result.canceled || !result.root) return;
+        setLanguageWorkspaceRoot(result.root);
+        dispatch({ type: 'workspace/opened', root: result.root });
+        try {
+          const tree = await desktop.workspace.getTree('.');
+          dispatch({ type: 'tree/loaded', tree });
+        } catch {
+          // Unreadable folder shouldn't block startup.
+        }
+        return;
+      }
       setLanguageWorkspaceRoot(root);
       dispatch({ type: 'workspace/opened', root });
       try {

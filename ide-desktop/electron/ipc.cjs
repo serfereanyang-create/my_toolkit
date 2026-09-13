@@ -6,14 +6,7 @@ const { describeFile, inspectProject, resolveWorkspacePath } = require('./previe
 const { createQualityGateway } = require('./quality-gateway.cjs');
 const git = require('./git.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
-
-async function isDirectory(target) {
-  try {
-    return (await fs.stat(target)).isDirectory();
-  } catch {
-    return false;
-  }
-}
+const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
 function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings }) {
   async function materializePersona(root) {
@@ -36,26 +29,21 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     return { canceled: false, root };
   });
 
-  // Auto-restore on startup: reopen the most recent workspace that still exists
-  // so the app lands straight in a project instead of forcing a folder picker.
-  // Falls back to the user's home directory on first run or if history is stale.
+  // Auto-restore on startup: reopen the most recent *project* workspace that
+  // still exists (git repo or manifest) so the app lands straight into a
+  // project. A bare folder only wins if it is not the home directory; when
+  // nothing usable is found we return root:null and the renderer prompts the
+  // folder picker — rooting at the home directory silently crippled every
+  // git_*/workspace_* tool (audited 2026-09-13).
   ipcMain.handle('workspace.restore', async () => {
     const config = await settings.get();
     const recents = Array.isArray(config.recentWorkspaces) ? config.recentWorkspaces : [];
-    for (const candidate of recents) {
-      if (typeof candidate === 'string' && await isDirectory(candidate)) {
-        const root = workspace.setRoot(candidate);
-        await automation.setWorkspace(root);
-        await materializePersona(root);
-        return { root, restored: true };
-      }
-    }
-    const home = os.homedir();
-    const root = workspace.setRoot(home);
-    await settings.addRecentWorkspace(root);
+    const pick = await selectWorkspaceCandidate({ recents, home: os.homedir() });
+    if (!pick.root) return { root: null, restored: false, reason: pick.reason };
+    const root = workspace.setRoot(pick.root);
     await automation.setWorkspace(root);
     await materializePersona(root);
-    return { root, restored: false };
+    return { root, restored: true };
   });
 
   ipcMain.handle('workspace.setRoot', async (_event, root) => {

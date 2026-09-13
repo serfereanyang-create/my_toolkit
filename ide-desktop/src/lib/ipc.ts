@@ -44,7 +44,7 @@ type ZCodeDesktopApi = {
   workspace: {
     open(): Promise<{ canceled: boolean; root?: string }>;
     setRoot(root: string): Promise<{ root: string }>;
-    restore(): Promise<{ root: string; restored: boolean }>;
+    restore(): Promise<{ root: string | null; restored: boolean; reason?: string }>;
     getTree(relativePath?: string): Promise<TreeNode[]>;
   };
   fs: {
