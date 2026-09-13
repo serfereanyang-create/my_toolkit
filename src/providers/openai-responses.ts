@@ -1,6 +1,6 @@
 import type { AgentAction, Provider, ProviderRequest, ProviderResponse } from './types.js';
-import { fetchWithRetry, iterateSseDataLines, toOpenAIResponsesTools } from './protocol.js';
-import { openaiReasoningEffort } from './reasoning.js';
+import { fetchWithRetry, iterateSseDataLines, toOpenAIResponsesTools, buildToolSystemPromptParts } from './protocol.js';
+import { isReasoningParamRejection, openaiReasoningEffort } from './reasoning.js';
 
 export type OpenAIResponsesProviderOptions = { apiKey?: string; baseUrl?: string; model: string };
 
@@ -63,18 +63,68 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
     async complete(request: ProviderRequest): Promise<ProviderResponse> {
       if (!options.apiKey) throw new Error('OPENAI_API_KEY is required for provider openai-responses');
       const base = (options.baseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '');
-      const system = request.messages.find((message) => message.role === 'system')?.content;
-      const input = request.continuation?.toolOutputs?.length
+      // previous_response_id continuation is an OpenAI first-party feature:
+      // custom endpoints (proxy/relay gateways) reject it with 400. For those,
+      // replay the whole conversation from request.messages instead — tool
+      // results are already appended there, so context stays complete.
+      const officialOpenAI = !options.baseUrl || options.baseUrl.startsWith('https://api.openai.com');
+      const useServerContinuation = Boolean(request.continuation?.responseId)
+        && request.customProvider !== true
+        && officialOpenAI;
+      // Responses API: instructions 是独立于 input 的稳定前缀段（自动缓存）。
+      // 只放 stable 部分；每轮变化的 toolStrategy 尾置为最后一条 input 项，
+      // 否则 instructions 每轮字节变化 → 自动前缀缓存整体失效。
+      const systemParts = buildToolSystemPromptParts(request.tools, request.projectContext, request.toolStrategy, {
+        workspaceRoot: request.workspaceRoot,
+        desktopBridge: request.desktopBridge,
+      });
+      const input: unknown[] = useServerContinuation && request.continuation?.toolOutputs?.length
         ? request.continuation.toolOutputs.map((item) => ({ type: 'function_call_output', call_id: item.callId, output: item.output }))
-        : request.messages.filter((message) => message.role !== 'system').map((message) => ({ role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content }));
+        : request.messages.filter((message) => message.role !== 'system').flatMap((message) => {
+          const items: unknown[] = [{ role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content }];
+          // Computer-control screenshots ride on tool messages; the Responses
+          // API takes images as a separate user input_image item.
+          if (message.role === 'tool' && message.parts) {
+            for (const part of message.parts) {
+              if (part.type === 'image') {
+                items.push({ role: 'user', content: [{ type: 'input_image', image_url: `data:${part.mediaType};base64,${part.data}` }] });
+              }
+            }
+          }
+          return items;
+        });
+      if (systemParts.dynamic && systemParts.dynamic.trim()) {
+        input.push({ role: 'system', content: systemParts.dynamic });
+      }
       const body: Record<string, unknown> = { model: options.model, input, tools: toOpenAIResponsesTools(request.tools), tool_choice: 'auto' };
-      if (request.continuation?.responseId) body.previous_response_id = request.continuation.responseId;
-      if (system) body.instructions = system;
+      if (useServerContinuation) body.previous_response_id = request.continuation!.responseId;
+      // Caller-supplied system messages are session-stable instructions: keep
+      // them at the head of the stable prefix instead of silently dropping
+      // them, so custom deployments that pass a system message are honored.
+      const callerSystem = request.messages
+        .filter((message) => message.role === 'system')
+        .map((message) => (typeof message.content === 'string' ? message.content.trim() : ''))
+        .filter(Boolean)
+        .join('\n\n');
+      const instructions = [callerSystem, systemParts.stable].filter((part) => part && part.trim()).join('\n\n');
+      if (instructions) body.instructions = instructions;
       const effort = openaiReasoningEffort(request.reasoningEffort);
       if (effort) body.reasoning = { effort };
       body.stream = true;
-      const response = await fetchWithRetry(`${base}/responses`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${options.apiKey}` }, body: JSON.stringify(body) });
-      if (!response.ok) throw new Error(`OpenAI Responses request failed: ${response.status} ${await response.text()}`);
+      const postResponses = () => fetchWithRetry(`${base}/responses`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${options.apiKey}` }, body: JSON.stringify(body) });
+      let response = await postResponses();
+      if (!response.ok) {
+        const errorText = await response.text();
+        // 未知自定义端点可能不认 reasoning 参数：4xx 点名 reasoning 时降级一次
+        // （去掉档位重发），而不是让整轮失败。
+        if (isReasoningParamRejection(response.status, errorText) && body.reasoning) {
+          delete body.reasoning;
+          response = await postResponses();
+          if (!response.ok) throw new Error(`OpenAI Responses request failed: ${response.status} ${await response.text()}`);
+        } else {
+          throw new Error(`OpenAI Responses request failed: ${response.status} ${errorText}`);
+        }
+      }
 
       const contentType = response.headers.get('content-type') ?? '';
       if (!contentType.includes('text/event-stream')) {
@@ -102,7 +152,10 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
           const delta = typeof event.delta === 'string' ? event.delta : '';
           if (delta) { textParts.push(delta); request.onTextDelta?.(delta); }
         } else if (type === 'response.reasoning_summary_text.delta' || type === 'response.reasoning_text.delta') {
-          if (typeof event.delta === 'string') thinkingParts.push(event.delta);
+          if (typeof event.delta === 'string' && event.delta) {
+            thinkingParts.push(event.delta);
+            request.onThinkingDelta?.(event.delta);
+          }
         } else if (type === 'response.output_item.added' || type === 'response.output_item.done') {
           const item = event.item && typeof event.item === 'object' ? event.item as Record<string, unknown> : {};
           if (item.type === 'function_call' && typeof item.call_id === 'string' && typeof item.name === 'string') {

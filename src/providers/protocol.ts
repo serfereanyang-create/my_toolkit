@@ -1,4 +1,5 @@
 import type { AgentAction, AgentMessage, ProviderRequest, ProviderToolSpec } from './types.js';
+import { cacheControl } from './cacheStrategy.js';
 
 /**
  * Runtime facts the model would otherwise have to guess or discover via a tool
@@ -31,8 +32,10 @@ export function buildToolSystemPromptParts(
     'For spreadsheets use create_xlsx (rows as a 2D array or an array of objects; optional headers). For tabular text use read_csv / write_csv. For structured data use read_json (optional dot-path query). Prefer these dedicated tools over run_command.',
     'To find information online when you do not have a URL, use web_search first, then call fetch_url on a chosen result. To fetch a known URL use fetch_url (HTTP GET). Only hosts on the network allowlist are reachable; if fetch_url returns a redirect, call it again with the new URL.',
     'Write final answers as plain terminal text. Do not use Markdown decorations such as **bold**, ## headings, or bullet markdown when talking to the user.',
-    identity?.workspaceRoot ? `Workspace root: ${identity.workspaceRoot}. All relative paths in tool calls resolve against this root.` : undefined,
     `Runtime platform: ${process.platform}. Prefer dedicated tools over shell commands. For disk capacity/free-space questions, use disk_info. For disk growth/recent large files questions, use disk_growth. For recent activity/session/history questions, use recent_activity. For environment/container/system identity questions, use environment_info. For memory/process ranking questions, use process_memory instead of run_command. For cache hit-rate / cache health / cache efficiency questions, use cache_probe. If you must run a shell command on Windows, use Windows-compatible commands.`,
+    identity?.workspaceRoot
+      ? `Workspace root: ${identity.workspaceRoot}. All relative paths in tool calls resolve against this root.`
+      : undefined,
     projectContext ? `Project context and instructions:\n${projectContext}` : undefined,
     SUBAGENT_STRATEGY_HINT,
     'Text fallback tool call shape:',
@@ -83,7 +86,7 @@ export function toAnthropicTools(tools: ProviderToolSpec[]) {
     // Avoids splitting the cache into separate tools-only and system-only
     // entries that each miss independently.
     if (index === tools.length - 1) {
-      entry.cache_control = { type: 'ephemeral' };
+      entry.cache_control = cacheControl();
     }
     return entry;
   });
@@ -184,18 +187,21 @@ function parseToolArguments(value: string | undefined): unknown {
 export function toToolAwareMessages(messages: AgentMessage[]) {
   return messages.map((message) => {
     const role = message.role === 'tool' ? 'user' : message.role;
-    if (message.role === 'user' && message.parts && message.parts.length > 0) {
-      const content = message.parts.map((part) => {
+    // Tool messages carrying a screenshot (computer control) also render their
+    // image parts: OpenAI chat has no image content type under role 'tool',
+    // so they are folded into the user-role stream like the tool text itself.
+    if ((message.role === 'user' || message.role === 'tool') && message.parts && message.parts.length > 0) {
+      const content: Array<Record<string, unknown>> = [];
+      if (message.role === 'tool') {
+        content.push({ type: 'text', text: message.name ? `[tool:${message.name}] ${message.content}` : message.content });
+      }
+      for (const part of message.parts) {
         if (part.type === 'image') {
-          return {
-            type: 'image_url' as const,
-            image_url: {
-              url: `data:${part.mediaType};base64,${part.data}`,
-            },
-          };
+          content.push({ type: 'image_url', image_url: { url: `data:${part.mediaType};base64,${part.data}` } });
+        } else {
+          content.push({ type: 'text', text: part.text });
         }
-        return { type: 'text' as const, text: part.text };
-      });
+      }
       return { role, content };
     }
     return {
@@ -208,20 +214,28 @@ export function toToolAwareMessages(messages: AgentMessage[]) {
 export function toAnthropicAwareMessages(messages: AgentMessage[], options?: { slidingCacheBreakpoint?: boolean }) {
   const converted: Array<{ role: 'user' | 'assistant'; content: unknown }> = messages.map((message) => {
     const role = message.role === 'assistant' ? 'assistant' : 'user';
-    if (message.role === 'user' && message.parts && message.parts.some((part) => part.type === 'image')) {
-      const content = message.parts.map((part) => {
+    if ((message.role === 'user' || message.role === 'tool') && message.parts && message.parts.some((part) => part.type === 'image')) {
+      const content: Array<Record<string, unknown>> = [];
+      // Tool messages keep their text result; the screenshot follows as an
+      // image block so the model sees the screen (user parts are pure image
+      // attachments and need no extra text block).
+      if (message.role === 'tool') {
+        content.push({ type: 'text', text: message.name ? `[tool:${message.name}] ${message.content}` : message.content });
+      }
+      for (const part of message.parts) {
         if (part.type === 'image') {
-          return {
-            type: 'image' as const,
+          content.push({
+            type: 'image',
             source: {
-              type: 'base64' as const,
+              type: 'base64',
               media_type: part.mediaType,
               data: part.data,
             },
-          };
+          });
+        } else {
+          content.push({ type: 'text', text: part.text });
         }
-        return { type: 'text' as const, text: part.text };
-      });
+      }
       return { role, content };
     }
     return {
@@ -239,10 +253,10 @@ export function toAnthropicAwareMessages(messages: AgentMessage[], options?: { s
     // breakpoint + system + tools breakpoints stays within Anthropic's 4-limit.
     const last = result[result.length - 1]!;
     if (typeof last.content === 'string') {
-      last.content = [{ type: 'text', text: last.content, cache_control: { type: 'ephemeral' } }];
+      last.content = [{ type: 'text', text: last.content, cache_control: cacheControl() }];
     } else if (Array.isArray(last.content) && last.content.length > 0) {
       const lastBlock = last.content[last.content.length - 1] as Record<string, unknown>;
-      lastBlock.cache_control = { type: 'ephemeral' };
+      lastBlock.cache_control = cacheControl();
     }
   }
   return result;

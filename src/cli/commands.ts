@@ -152,6 +152,9 @@ export async function handleSlashCommand(options: {
   if (command === '/goal' || command.startsWith('/goal ')) {
     return handleGoalCommand(command, options);
   }
+  if (command === '/computer' || command.startsWith('/computer ')) {
+    return handleComputerCommand(command, options);
+  }
   if (command === '/init' || command.startsWith('/init ')) {
     return handleInitCommand(command, options);
   }
@@ -1110,6 +1113,39 @@ async function handleGoalCommand(
   options.session.goal = text;
   await options.sessions.save(options.session);
   return `Goal set: ${text}`;
+}
+
+async function handleComputerCommand(
+  command: string,
+  options: { session: SessionRecord; sessions: SessionStore; config: AppConfig },
+): Promise<string> {
+  const sub = command.slice('/computer'.length).trim();
+  const armed = options.session.computerUse === true;
+  const autoWake = options.config.approval === 'auto' && options.config.computerAnyApp === true;
+  if (!sub || sub === 'status') {
+    const state = armed ? 'armed (explicitly enabled for this session)' : autoWake ? 'auto-armed (full access + any-app)' : 'off';
+    return [
+      `Computer use: ${state}.`,
+      'Usage: /computer use [goal]  |  /computer off  |  /computer status',
+      'When armed the agent can see the screen and drive mouse/keyboard: computer_screenshot, computer_click, computer_type, computer_key, computer_scroll, computer_list_windows, computer_activate.',
+    ].join('\n');
+  }
+  if (sub === 'off') {
+    options.session.computerUse = false;
+    await options.sessions.save(options.session);
+    return autoWake
+      ? 'Computer use disarmed for this session. Note: full access + any-app will still auto-wake it on the next turn.'
+      : 'Computer use disarmed for this session.';
+  }
+  if (sub === 'use' || sub.startsWith('use ')) {
+    options.session.computerUse = true;
+    await options.sessions.save(options.session);
+    const goal = sub.slice(3).trim();
+    return goal
+      ? `Computer use armed. Working on: ${goal}`
+      : 'Computer use armed for this session. Describe the task in your next message.';
+  }
+  return `Unknown /computer subcommand "${sub}". Usage: /computer use [goal] | /computer off | /computer status`;
 }
 
 async function handleInitCommand(

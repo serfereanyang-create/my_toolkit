@@ -47,6 +47,8 @@ export type SessionRecord = {
   taskRuntime?: TaskRuntimeState;
   /** Persistent session goal set via /goal */
   goal?: string;
+  /** Set by /computer use: arms the desktop computer-control tools for this session. */
+  computerUse?: boolean;
   providerContinuation?: ResponsesContinuation;
   lastTurn?: LastTurnRecord;
 };
@@ -76,17 +78,37 @@ export class SessionStore {
     await this.touch(session);
   }
 
-  async appendToolCall(session: SessionRecord, call: Omit<ToolCallRecord, 'id' | 'createdAt'>) {
+  async appendToolCall(
+    session: SessionRecord,
+    call: Omit<ToolCallRecord, 'id' | 'createdAt'>,
+    options?: { parts?: MessagePart[] },
+  ) {
     const record: ToolCallRecord = {
       ...call,
       id: `tool_${session.toolCalls.length + 1}_${randomUUID().slice(0, 8)}`,
       createdAt: new Date().toISOString(),
     };
     session.toolCalls.push(record);
+    // Multimodal parts (e.g. a computer-control screenshot) ride on the tool
+    // MESSAGE so providers can show them to the model, but never on the
+    // persisted ToolCallRecord — base64 would bloat the session JSONL.
+    // Keep at most one screenshot in history: older image parts downgrade to
+    // text placeholders before the new one is appended.
+    if (options?.parts?.some((part) => part.type === 'image')) {
+      for (const message of session.messages) {
+        if (!message.parts?.some((part) => part.type === 'image')) continue;
+        message.parts = message.parts.map((part) =>
+          part.type === 'image'
+            ? { type: 'text', text: `[screenshot omitted: ${part.path ?? part.mediaType}]` }
+            : part,
+        );
+      }
+    }
     await this.appendMessage(session, {
       role: 'tool',
       name: call.tool,
       content: call.output,
+      ...(options?.parts?.length ? { parts: options.parts } : {}),
     });
     return record;
   }

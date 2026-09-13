@@ -3,6 +3,7 @@ import type { CheckpointStore } from '../session/checkpoint.js';
 import type { HookRegistry } from '../hooks/hooks.js';
 import type { ToolRisk } from '../safety/policy.js';
 import type { Locale } from '../i18n/locale.js';
+import type { CommandJobService } from '../safety/commandJobs.js';
 
 export type ApprovalRequest = {
   tool: string;
@@ -29,6 +30,8 @@ export type SubAgentOptions = {
   maxSteps?: number;
 };
 
+export type ParallelSafety = 'safe' | 'unsafe';
+
 export type ToolContext = {
   workspaceRoot: string;
   approval: ApprovalMode;
@@ -47,8 +50,19 @@ export type ToolContext = {
   networkAllowlist?: string[];
   /** Desktop "任意应用": auto mode may run any non-destructive shell command. */
   computerAnyApp?: boolean;
+  /**
+   * In-process background command service. It exposes job operations only;
+   * process handles and pids are intentionally unavailable to tools.
+   */
+  commandJobs?: CommandJobService;
   /** Desktop "始终允许的应用" list: commands launching these skip confirmation. */
   computerAllowedApps?: string[];
+  /**
+   * True for the current turn when computer-control tools are live (session
+   * armed via /computer use, or full access + any-app auto-wake). Lets
+   * command-less shell-risk GUI actions pass in auto mode even without anyApp.
+   */
+  computerUse?: boolean;
   /**
    * Runner injected by the agent to support the spawn_subagent tool.
    * When present, a sub-agent can be spawned in-process sharing the same
@@ -68,6 +82,8 @@ export type ToolDefinition<TInput = unknown> = {
   description: string;
   inputHint: string;
   risk: ToolRisk;
+  /** Only tools explicitly marked safe may run in a read-only batch. */
+  parallelSafe?: boolean;
   /**
    * When true, this tool is trusted to run without the auto-mode allowlist gate
    * (used by user-declared plugins). Destructive hard-blocks still apply.

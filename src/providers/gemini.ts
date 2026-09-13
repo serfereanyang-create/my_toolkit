@@ -3,7 +3,7 @@ import { buildToolSystemPrompt, iterateSseDataLines, parseToolActions, schemaFro
 
 export type GeminiProviderOptions = { apiKey?: string; baseUrl?: string; model: string };
 
-type GeminiPart = { text?: string; thought?: boolean; functionCall?: { name?: string; args?: unknown }; functionResponse?: unknown };
+type GeminiPart = { text?: string; thought?: boolean; functionCall?: { name?: string; args?: unknown }; functionResponse?: unknown; inlineData?: { mimeType: string; data: string } };
 type GeminiResponse = {
   candidates?: Array<{ content?: { role?: string; parts?: GeminiPart[] }; finishReason?: string }>;
   usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number };

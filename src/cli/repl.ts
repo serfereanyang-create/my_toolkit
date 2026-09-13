@@ -1,4 +1,6 @@
 import { createInterface } from 'node:readline/promises';
+import { emitKeypressEvents } from 'node:readline';
+import { execSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { runAgentTurn, type AgentRuntime, type AgentTurnResult } from '../agent/agent.js';
@@ -11,9 +13,11 @@ import type { MessagePart } from '../providers/types.js';
 import { planBoardFromGoal, shouldUseTaskBoard } from '../tasks/planner.js';
 import { confirmBoard, formatBoard, runTaskBoardLoop } from '../tasks/runtime.js';
 import { TaskBoardStore } from '../tasks/store.js';
+import type { TaskBoard } from '../tasks/types.js';
 import type { SessionRecord } from '../session/store.js';
 import { buildAttachmentContextLines, prepareUserContent, type Attachment } from './attachments.js';
-import { runCommandPalette } from './commandPalette.js';
+import { commandPaletteItems, runCommandPalette } from './commandPalette.js';
+import { appendCliHistory, loadCliHistory, toReadlineHistory } from './history.js';
 import { handleSlashCommand } from './commands.js';
 import { isSlashCommandLine, readMultilineContinuation, readUserTurn } from './input.js';
 import { assertUserTextWithinLimit, formatByteSize } from './limits.js';
@@ -26,6 +30,30 @@ import { restoreConsoleSoftWrap } from '../ui/consoleWrap.js';
 type TurnExtras = { parts?: MessagePart[]; displayText?: string };
 type ReplayPayload = { prompt: string; parts?: MessagePart[]; displayText?: string };
 
+/** keymap/chords.rs KEY_CHORD_TIMEOUT — multi-press window for esc-esc etc. */
+const KEY_CHORD_TIMEOUT_MS = 1000;
+
+/**
+ * app.copy (interaction.rs): copy the last agent reply. Upstream copies the
+ * markdown to the system clipboard; on Windows we pipe to clip.exe and fail
+ * soft elsewhere.
+ */
+function copyLastReplyToClipboard(source: AgentRuntime, ui: AgentRuntime): void {
+  const lastAssistant = [...(source.session.messages ?? [])]
+    .reverse()
+    .find((message) => message.role === 'assistant');
+  if (!lastAssistant?.content?.trim()) {
+    ui.ui.info('No agent reply to copy yet.');
+    return;
+  }
+  try {
+    execSync('clip', { input: lastAssistant.content, stdio: ['pipe', 'ignore', 'ignore'] });
+    ui.ui.info(`Copied last reply (${lastAssistant.content.length} chars) to the clipboard.`);
+  } catch {
+    ui.ui.info('Clipboard copy is not available on this platform.');
+  }
+}
+
 export type SubmittedUserTurn = {
   prompt: string;
   parts?: MessagePart[];
@@ -36,6 +64,15 @@ export type SubmittedUserTurn = {
 export async function runPromptMode(runtime: AgentRuntime, prompt: string): Promise<AgentTurnResult> {
   if (prompt.trim() === '/retry') {
     return retryLastUserTurn(runtime);
+  }
+  // `/computer use <goal>` arms the session AND immediately starts an agent
+  // turn on the goal, so one composer line is enough to delegate a GUI task.
+  if (prompt.startsWith('/computer use ') && prompt.slice('/computer use '.length).trim()) {
+    const goal = prompt.slice('/computer use '.length).trim();
+    runtime.session.computerUse = true;
+    await runtime.sessions.save(runtime.session);
+    runtime.ui.info(`Computer use armed. Working on: ${goal}`);
+    return runGuardedAgentTurn(runtime, goal);
   }
   if (prompt.startsWith('/')) {
     const result = await handleSlashCommand({ line: prompt, ...runtime });
@@ -231,7 +268,10 @@ async function continueTaskBoard(runtime: AgentRuntime): Promise<AgentTurnResult
       };
     },
     onInfo: (message) => runtime.ui.info(message),
-    onUpdate: (updatedBoard) => runtime.taskBoardEmit?.(updatedBoard),
+    onUpdate: (updatedBoard) => {
+      runtime.taskBoardEmit?.(updatedBoard);
+      runtime.ui.boardProgress(updatedBoard as TaskBoard);
+    },
     gitSafety: runtime.gitSafety,
     confirm: runtime.confirm,
   });
@@ -290,22 +330,159 @@ async function maybeCommitCompletedBoard(
   }
 }
 
+/** Slash-command Tab completer (Codex-style: type / then Tab to complete). */
+function slashCommandCompleter(line: string): [string[], string] {
+  const trimmed = line.replace(/^/, '');
+  if (!trimmed.startsWith('/')) return [[], line];
+  const items = commandPaletteItems();
+  if (trimmed === '/') {
+    return [items.map((i) => i.id), trimmed];
+  }
+  const matches = items
+    .map((i) => i.id)
+    .filter((id) => id !== '/' && id.startsWith(trimmed));
+  return [matches, trimmed];
+}
+
 export async function runRepl(runtime: AgentRuntime) {
-  const rl = createInterface({ input, output });
+  const rl = createInterface({ input, output, completer: slashCommandCompleter });
+  // Persistent input history: seed from disk, newest-first for readline.
+  const seeded = toReadlineHistory(await loadCliHistory(runtime.config.workspaceRoot));
+  if (seeded.length > 0) {
+    (rl as unknown as { history: string[] }).history = seeded;
+  }
   if (!runtime.pendingAttachments) runtime.pendingAttachments = [];
   if (!runtime.locale) runtime.locale = 'zh';
+
+  // Codex-style cooperative cancellation. A single flag drives both Esc
+  // (via keypress) and Ctrl+C (via SIGINT); the agent loop polls
+  // cancelRequested at safe boundaries. During a turn the first signal asks
+  // it to stop at the next checkpoint; a second one says we are still trying.
+  // While idle, Ctrl+C behaves like every normal CLI and exits.
+  let cancelRequested = false;
+  let turnActive = false;
+  let exiting = false;
+  // approval_overlay.rs "don't ask again": per (risk, tool, directory) cache
+  // for write tools, mirroring the desktop approval broker.
+  const sessionAllows = new Set<string>();
+  let pendingAllowKey: string | undefined;
+  // Codex interaction.rs on_ctrl_c with DOUBLE_PRESS_QUIT_SHORTCUT_ENABLED at
+  // its upstream default (false): a running turn is interrupted at the next
+  // safe boundary; an idle composer quits immediately.
+  const requestStop = () => {
+    if (turnActive) {
+      if (cancelRequested) {
+        runtime.ui.info('Already stopping at next safe point — wait for the current tool to finish.');
+        return;
+      }
+      cancelRequested = true;
+      runtime.ui.info('Stopping at next safe point…');
+      return;
+    }
+    if (exiting) return;
+    exiting = true;
+    output.write('\n');
+    rl.close();
+  };
   const interactiveRuntime: AgentRuntime = {
     ...runtime,
     pendingAttachments: runtime.pendingAttachments,
     locale: runtime.locale,
-    confirm: async (message) => {
+    cancelRequested: () => cancelRequested,
+    confirm: async (message, request) => {
+      runtime.ui.pauseSpinnerForPrompt();
+      // approval_overlay.rs `a` option: "don't ask again" caches per
+      // (risk, tool, directory) for write tools, mirroring the desktop broker.
+      if (request && request.risk === 'write') {
+        const rawPath = request.input && typeof request.input.path === 'string' ? request.input.path : '';
+        const normalized = rawPath.replace(/\\/g, '/');
+        const dir = normalized.includes('/') ? normalized.slice(0, normalized.lastIndexOf('/')) : '';
+        const allowKey = dir ? `${request.risk}:${request.tool}:${dir}` : `${request.risk}:${request.tool}`;
+        if (sessionAllows.has(allowKey)) {
+          runtime.ui.resumeSpinnerAfterPrompt();
+          return true;
+        }
+        pendingAllowKey = allowKey;
+      }
+      runtime.ui.approvalDiff(request);
+      // approval_overlay.rs wording: patch edits vs command execution get
+      // their own headline, followed by the y/n/a option list.
+      const writeTool = request?.tool === 'write_file' || request?.tool === 'apply_patch' || request?.tool === 'edit_lines';
+      runtime.ui.info(writeTool
+        ? 'Would you like to make the following edits?'
+        : 'Would you like to run the following command?');
+      runtime.ui.info(request?.risk === 'write'
+        ? '  y = Yes, proceed · a = Yes, and don\'t ask again this session · n = No, and tell Codex what to do differently'
+        : '  y = Yes, proceed · n = No, and tell Codex what to do differently');
       const locale = interactiveRuntime.locale ?? runtime.locale ?? 'zh';
       const suffix = locale === 'zh' ? ' [y是/N否] ' : ' [y/N] ';
       const prompt = /\[y\/N\]|\[y是\/N否\]/i.test(message) ? `${message} ` : `${message}${suffix}`;
       const answer = (await rl.question(prompt)).trim().toLowerCase();
+      runtime.ui.resumeSpinnerAfterPrompt();
+      if ((answer === 'a' || answer === 'all') && pendingAllowKey) {
+        sessionAllows.add(pendingAllowKey);
+        return true;
+      }
       return answer === 'y' || answer === 'yes' || answer === '是' || answer === '好' || answer === '确认';
     },
   };
+
+  // Codex reserved keymap (keymap.rs MAIN_RESERVED_BINDINGS + built_in_defaults):
+  // esc = interrupt the running turn (chat.interrupt_turn); idle `esc esc` =
+  // backtrack to edit the previous message; ctrl+o = copy the last agent reply
+  // (app.copy); ctrl+t = transcript (app.open_transcript). ctrl+r history
+  // search ships with readline's emacs mode; ctrl+c idle quits (see above).
+  if (input.isTTY) {
+    emitKeypressEvents(input);
+    let backtrackPrimedAt = 0;
+    const onKey = (_str: string, key?: { name?: string; ctrl?: boolean }) => {
+      if (!key) return;
+      if (key.name === 'escape') {
+        if (turnActive) { requestStop(); return; }
+        // app_backtrack.rs backtrack precondition: composer must be EMPTY —
+        // never clobber a draft the user is still typing.
+        const draftLine = (rl as unknown as { line?: string }).line ?? '';
+        if (draftLine.trim()) return;
+        const now = Date.now();
+        if (now - backtrackPrimedAt <= KEY_CHORD_TIMEOUT_MS) {
+          backtrackPrimedAt = 0;
+          const lastUser = [...(interactiveRuntime.session.messages ?? [])]
+            .reverse()
+            .find((message) => message.role === 'user');
+          if (lastUser?.content?.trim()) {
+            (rl as unknown as { write: (text: string) => void }).write(lastUser.content);
+            runtime.ui.info('Editing previous message — Enter resubmits it through the normal approval flow.');
+          }
+        } else {
+          backtrackPrimedAt = now;
+          runtime.ui.info('esc again to edit previous message');
+        }
+        return;
+      }
+      if (key.ctrl && key.name === 'o') {
+        copyLastReplyToClipboard(interactiveRuntime, runtime);
+        return;
+      }
+      if (key.ctrl && key.name === 't') {
+        runtime.ui.info(`Transcript: ${interactiveRuntime.sessions.filePath(interactiveRuntime.session.id)}`);
+        return;
+      }
+    };
+    input.on('keypress', onKey);
+    rl.on('SIGINT', () => requestStop());
+  }
+  // Board execution also runs agent turns — keep it cancellable the same way.
+  const runBoardLoop = async () => {
+    turnActive = true;
+    cancelRequested = false;
+    try {
+      await continueTaskBoard(interactiveRuntime);
+    } finally {
+      turnActive = false;
+      cancelRequested = false;
+    }
+  };
+
   try {
     while (true) {
       let turn;
@@ -317,6 +494,9 @@ export async function runRepl(runtime: AgentRuntime) {
           : 'aicode> ';
         turn = await readUserTurn(rl, prompt);
       } catch (error) {
+        // rl.close() from Ctrl+C rejects the pending question (AbortError).
+        // Treat that as a clean exit, not an error loop.
+        if (exiting || (error instanceof Error && error.name === 'AbortError')) break;
         runtime.ui.error(error instanceof Error ? error.message : String(error));
         continue;
       }
@@ -338,10 +518,15 @@ export async function runRepl(runtime: AgentRuntime) {
       if (isSlashCommandLine(turn.text) && !turn.multiline) {
         const line = turn.text.trim();
         if (line === '/retry') {
+          turnActive = true;
+          cancelRequested = false;
           try {
             await retryLastUserTurn(interactiveRuntime);
           } catch (error) {
             runtime.ui.error(error instanceof Error ? error.message : String(error));
+          } finally {
+            turnActive = false;
+            cancelRequested = false;
           }
           if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
             await continueTaskBoard(interactiveRuntime);
@@ -355,7 +540,7 @@ export async function runRepl(runtime: AgentRuntime) {
             if (palette.status === 'exit') break;
             if (palette.message) runtime.ui.info(palette.message);
             if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
-              await continueTaskBoard(interactiveRuntime);
+              await runBoardLoop();
             }
           } finally {
             rl.resume();
@@ -386,18 +571,26 @@ export async function runRepl(runtime: AgentRuntime) {
         if (result === '__EXIT__') break;
         runtime.ui.info(result);
         if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
-          await continueTaskBoard(interactiveRuntime);
+          await runBoardLoop();
         }
         continue;
       }
 
+      turnActive = true;
+      cancelRequested = false;
       try {
         await submitUserTurn(interactiveRuntime, turn.text);
+        if (turn.text.trim()) {
+          await appendCliHistory(runtime.config.workspaceRoot, turn.text);
+        }
       } catch (error) {
         runtime.ui.error(error instanceof Error ? error.message : String(error));
+      } finally {
+        turnActive = false;
+        cancelRequested = false;
       }
       if (interactiveRuntime.session.taskRuntime?.mode === 'executing') {
-        await continueTaskBoard(interactiveRuntime);
+        await runBoardLoop();
       }
     }
   } finally {

@@ -36,6 +36,7 @@ import { MAX_SUBAGENT_DEPTH } from '../tools/subagent.js';
 import type { SubAgentOptions } from '../tools/types.js';
 import { getReasoningCapability, clampReasoningEffort } from '../providers/capabilities.js';
 import { analyzeTaskComplexity } from '../tasks/complexity.js';
+import { COMPUTER_USE_STRATEGY, computerUseShouldWake } from '../tools/computer.js';
 
 type PromptCacheBasis = {
   stablePrefix: string;
@@ -103,6 +104,12 @@ export type AgentRuntime = {
   reasoningEffort?: import('../providers/types.js').ReasoningEffort;
   toolScope?: ToolScope;
   resolvedToolScope?: ResolvedToolScope;
+  /**
+   * True for the current turn when the computer-control tools are live:
+   * either the session armed them via `/computer use`, or full access
+   * (approval 'auto') + desktop "任意应用" lets the agent self-wake.
+   */
+  computerUseActive?: boolean;
   /**
    * Current sub-agent nesting depth. 0 = root agent, 1 = first-level sub-agent.
    * spawn_subagent refuses to run when depth >= MAX_SUBAGENT_DEPTH (3) to
@@ -381,12 +388,25 @@ async function runAgentTurnCore(
       );
     }
   }
-  const toolStrategy = formatCommandStrategy(commandPlan, extraction)
+  // Computer use: two wake paths, decided per turn.
+  // 1) Explicit: the user armed this session via `/computer use` (persisted on
+  //    the session record) — tools available under normal approval gating.
+  // 2) Auto: full access (approval 'auto') + desktop "任意应用" — the agent may
+  //    wake computer control on its own whenever a task needs the GUI.
+  runtime.computerUseActive = computerUseShouldWake({
+    approval: runtime.config.approval,
+    computerAnyApp: runtime.config.computerAnyApp === true,
+    sessionArmed: runtime.session.computerUse === true,
+  });
+  const baseToolStrategy = formatCommandStrategy(commandPlan, extraction)
     || formatToolStrategy(planToolStrategy({
       prompt,
       recentTools,
       workspaceRoot: runtime.config.workspaceRoot,
     }));
+  const toolStrategy = runtime.computerUseActive
+    ? [baseToolStrategy, COMPUTER_USE_STRATEGY].filter(Boolean).join('\n')
+    : baseToolStrategy;
   const requestedEffort = runtime.reasoningEffort ?? runtime.config.reasoningEffort ?? 'off';
   const capability = getReasoningCapability(runtime.provider.name, runtime.provider.model);
   const taskComplexity = analyzeTaskComplexity(prompt);
@@ -406,6 +426,13 @@ async function runAgentTurnCore(
   const activeTools = ToolRegistry.fromTools(selectScopedTools(runtime.allTools ?? runtime.tools, resolvedToolScope));
   runtime.tools = activeTools;
   runtime.resolvedToolScope = resolvedToolScope;
+
+  // Inject the computer-control tools post-scope so they exist regardless of
+  // tool scope, mirroring the spawn_subagent pattern below.
+  if (runtime.computerUseActive) {
+    const { createComputerTools } = await import('../tools/computer.js');
+    for (const tool of createComputerTools()) runtime.tools.register(tool, { replace: true });
+  }
 
   // Inject spawn_subagent tool so the main agent can delegate sub-tasks.
   // Done here (post-scope-selection) so it is always available regardless of scope,
@@ -478,6 +505,7 @@ async function runAgentTurnCore(
           projectContext,
           toolStrategy,
           onTextDelta: (delta) => runtime.ui.assistantDelta(delta),
+          onThinkingDelta: (delta) => runtime.ui.thinkingDelta(delta),
           reasoningEffort: effectiveEffort,
           desktopBridge: runtime.config.desktopBridge,
           customProvider: runtime.config.customProvider,
@@ -715,8 +743,27 @@ type ToolActionExecution = {
     output: string;
     data?: unknown;
     providerCallId?: string;
+    /** Multimodal parts (screenshots) attached to the tool message. */
+    parts?: import('../providers/types.js').MessagePart[];
   };
 };
+
+/**
+ * computer_screenshot returns the PNG as base64 in `data.computerImage`; turn
+ * it into an image part so the model actually sees the screen on the next
+ * step. Only the CURRENT turn's screenshot is kept — stripHistoricalImages
+ * removes older ones to bound token cost.
+ */
+function computerScreenshotImageParts(tool: string, result: { ok: boolean; data?: unknown }): import('../providers/types.js').MessagePart[] | undefined {
+  if (tool !== 'computer_screenshot' || result.ok !== true) return undefined;
+  const data = result.data as { computerImage?: { mediaType?: unknown; data?: unknown; path?: unknown } } | undefined;
+  const image = data?.computerImage;
+  if (!image || typeof image.mediaType !== 'string' || typeof image.data !== 'string' || !image.data) return undefined;
+  return [
+    { type: 'text', text: typeof image.path === 'string' ? `[screenshot ${image.path}]` : '[screenshot]' },
+    { type: 'image', mediaType: image.mediaType, data: image.data, path: typeof image.path === 'string' ? image.path : undefined },
+  ];
+}
 
 async function executeToolAction(
   runtime: AgentRuntime,
@@ -745,6 +792,7 @@ async function executeToolAction(
     commandJobs: runtime.commandJobs,
     computerAnyApp: runtime.config.computerAnyApp === true,
     computerAllowedApps: runtime.config.allowedApps,
+    computerUse: runtime.computerUseActive === true,
     locale,
     // Only the root agent may launch workflow task nodes as sub-agents; a
     // workflow running inside a sub-agent must not nest further.
@@ -775,6 +823,7 @@ async function executeToolAction(
   const output = hint
     ? `${result.output}\n${locale === 'zh' ? (result.ok ? '建议' : '恢复提示') : (result.ok ? 'Hint' : 'Recovery hint')}: ${hint}`
     : result.output;
+  const screenshotParts = computerScreenshotImageParts(action.tool, result);
   const record = {
     tool: action.tool,
     input: action.input,
@@ -782,6 +831,9 @@ async function executeToolAction(
     output,
     data: result.data,
     providerCallId: action.callId,
+    // A fresh screenshot rides to the model as a multimodal image part on the
+    // tool message (see appendToolActionResult → SessionStore.appendToolCall).
+    ...(screenshotParts ? { parts: screenshotParts } : {}),
   };
   if (!result.ok) {
     const reason = locale === 'zh'
@@ -811,7 +863,18 @@ async function appendToolActionResult(
   runtime: AgentRuntime,
   execution: ToolActionExecution,
 ) {
-  await runtime.sessions.appendToolCall(runtime.session, execution.record);
+  await runtime.sessions.appendToolCall(
+    runtime.session,
+    {
+      tool: execution.record.tool,
+      input: execution.record.input,
+      ok: execution.record.ok,
+      output: execution.record.output,
+      data: execution.record.data,
+      providerCallId: execution.record.providerCallId,
+    },
+    execution.record.parts?.length ? { parts: execution.record.parts } : undefined,
+  );
   if (!execution.ok && execution.terminal) {
     await runtime.sessions.appendFinalAnswer(runtime.session, execution.reason ?? execution.output);
   }

@@ -229,12 +229,12 @@ function hardPack(messages: AgentMessage[], cfg: ContextBudgetConfig): Omit<Comp
   };
 }
 
-/** Strip image parts from all but the latest user message (keeps vision on current turn only). */
+/** Strip image parts from all but the latest vision-carrying message (user or tool). */
 export function stripHistoricalImages(messages: AgentMessage[]): { messages: AgentMessage[]; imagesStripped: number } {
   let lastUserWithImage = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]!;
-    if (message.role === 'user' && message.parts?.some((part) => part.type === 'image')) {
+    if ((message.role === 'user' || message.role === 'tool') && message.parts?.some((part) => part.type === 'image')) {
       lastUserWithImage = index;
       break;
     }

@@ -17,6 +17,10 @@ export class ToolRegistry {
     return this.tools.get(name);
   }
 
+  unregister(name: string) {
+    return this.tools.delete(name);
+  }
+
   list() {
     return Array.from(this.tools.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -65,6 +69,7 @@ export class ToolRegistry {
       autoApprove: tool.autoApprove === true,
       computerAnyApp: context.computerAnyApp === true,
       allowedApps: context.computerAllowedApps,
+      computerUse: context.computerUse === true,
     });
 
     if (!decision.allowed) {

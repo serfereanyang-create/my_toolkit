@@ -20,6 +20,7 @@ export function commandPaletteItems(): OverlayItem[] {
     // ── Project setup ────────────────────────────────────────────────────────
     { id: '/init', keyword: '/init [desc]', detail: 'Create or update workspace AGENTS.md instructions', tags: ['init', 'agents', 'setup'] },
     { id: '/goal', keyword: '/goal [text]', detail: 'Set or show current session goal (/goal clear to reset)', tags: ['goal', 'objective'] },
+    { id: '/computer', keyword: '/computer use [goal]', detail: 'Arm desktop computer control (screenshot/mouse/keyboard) for this session', tags: ['computer', 'screenshot', 'mouse', 'keyboard', 'gui'] },
     { id: '/doctor', keyword: '/doctor', detail: 'Check workspace environment health (node/git/package.json)', tags: ['doctor', 'health', 'check'] },
     { id: '/env', keyword: '/env', detail: 'Show workspace environment variables (redacted)', tags: ['env', 'environment', 'vars'] },
 

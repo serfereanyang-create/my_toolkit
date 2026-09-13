@@ -287,12 +287,25 @@ export function decideApproval(options: {
   computerAnyApp?: boolean;
   /** Desktop "始终允许的应用" list: app names/paths exempt from confirmation. */
   allowedApps?: string[];
+  /**
+   * Computer-control tools are live this turn (session armed via /computer use,
+   * or auto-wake). Their shell-risk GUI actions carry no `command` string, so
+   * the command allowlists below never match — in auto mode they run directly;
+   * ask mode still confirms each click/keystroke via the prompt path below.
+   */
+  computerUse?: boolean;
   workspaceRoot: string;
 }): ApprovalDecision {
   if (options.risk === 'read') return { allowed: true, needsPrompt: false, reason: 'read-only tool' };
   if (options.mode === 'deny') return { allowed: false, needsPrompt: false, reason: 'approval mode denies write, shell, and network tools' };
   // plan mode: allow reads freely, prompt before every write/shell/network action
   if (options.mode === 'plan') return { allowed: true, needsPrompt: true, reason: 'plan mode requires confirmation before every change' };
+
+  if (options.computerUse && options.risk === 'shell' && !options.command) {
+    if (options.mode === 'auto') {
+      return { allowed: true, needsPrompt: false, reason: 'computer use armed: GUI action runs in auto mode' };
+    }
+  }
 
   if (options.risk === 'network') {
     const verdict = evaluateNetworkTarget(options.url ?? '', options.networkAllowlist ?? []);
