@@ -3,13 +3,25 @@ const http = require('node:http');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
+const cliRoot = path.resolve(root, '..', 'cli');
 const viteBin = path.join(root, 'node_modules', 'vite', 'bin', 'vite.js');
+const cliTscBin = path.join(cliRoot, 'node_modules', 'typescript', 'bin', 'tsc');
 const electronBin = resolveElectronBinary(root);
 
-const vite = spawn(process.execPath, [viteBin, '--host', '127.0.0.1', '--port', '5174'], {
-  cwd: root,
-  stdio: ['ignore', 'pipe', 'pipe'],
+const cliBuild = spawn(process.execPath, [cliTscBin, '-p', 'tsconfig.json'], {
+  cwd: cliRoot,
+  stdio: 'inherit',
 });
+cliBuild.once('exit', (code) => {
+  if (code !== 0) process.exit(code ?? 1);
+  startDevServer();
+});
+
+function startDevServer() {
+  const vite = spawn(process.execPath, [viteBin, '--host', '127.0.0.1', '--port', '5174'], {
+    cwd: root,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
 pipeOutput(vite.stdout, process.stdout);
 pipeOutput(vite.stderr, process.stderr);
@@ -30,10 +42,11 @@ waitForViteUrl(vite).then((url) => {
   process.exit(1);
 });
 
-process.on('SIGINT', () => {
-  vite.kill();
-  process.exit(130);
-});
+  process.on('SIGINT', () => {
+    vite.kill();
+    process.exit(130);
+  });
+}
 
 function resolveElectronBinary(projectRoot) {
   const distDir = path.join(projectRoot, 'node_modules', 'electron', 'dist');

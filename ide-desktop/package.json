@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run typecheck && vitest run --passWithNoTests && node --test tests/*.test.cjs",
     "preview": "vite preview --host 127.0.0.1 --port 5174",
-    "desktop:run": "npm run build && electron ."
+    "cli:build": "npm --prefix ../cli run build",
+    "desktop:run": "npm run build && npm run cli:build && electron ."
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
