@@ -79,12 +79,10 @@ export function toAnthropicTools(tools: ProviderToolSpec[]) {
       description: `${tool.description} Risk: ${tool.risk}.`,
       input_schema: schemaFromInputHint(tool.inputHint),
     };
-    // The final tool carries the cache_control breakpoint. Anthropic caches the
-    // prefix in evaluation order (tools → system → messages), so this single
-    // breakpoint covers the entire tools JSON plus the system prompt that
-    // follows it as one continuous cached segment (~33K tokens with 245 tools).
-    // Avoids splitting the cache into separate tools-only and system-only
-    // entries that each miss independently.
+    // Anthropic evaluates tools before system. This breakpoint caches the tool
+    // schema prefix independently; it cannot cover system content that follows.
+    // The stable system block owns its own breakpoint in anthropic.ts, while
+    // the final message breakpoint advances with conversation history.
     if (index === tools.length - 1) {
       entry.cache_control = cacheControl();
     }

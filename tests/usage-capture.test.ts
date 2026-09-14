@@ -40,6 +40,44 @@ test('Anthropic extracts real usage from message_start and message_delta', async
   }
 });
 
+test('Anthropic compatible relay usage aliases preserve explicit zero cache fields', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => sseResponse([
+    JSON.stringify({ type: 'message_start', message: { usage: { prompt_tokens: 100, completion_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 2048 } } }),
+    JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } }),
+  ]);
+  try {
+    const provider = createAnthropicProvider({ apiKey: 'k', baseUrl: 'https://relay.test/v1', model: 'm' });
+    const result = await provider.complete({
+      messages: [{ role: 'user', content: 'hi', createdAt: new Date().toISOString() }],
+      tools,
+      workspaceRoot: process.cwd(),
+    });
+    assert.deepEqual(result.usage, { inputTokens: 100, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 2048 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Anthropic compatible relay JSON response preserves usage and text', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    content: [{ type: 'text', text: 'json answer' }],
+    usage: { prompt_tokens: 50, completion_tokens: 7, prompt_tokens_details: { cached_tokens: 40 } },
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    const provider = createAnthropicProvider({ apiKey: 'k', baseUrl: 'https://relay.test/v1', model: 'm' });
+    const result = await provider.complete({
+      messages: [{ role: 'user', content: 'hi', createdAt: new Date().toISOString() }],
+      tools,
+      workspaceRoot: process.cwd(),
+    });
+    assert.deepEqual(result.usage, { inputTokens: 50, outputTokens: 7, cacheReadTokens: 40 });
+    assert.deepEqual(result.actions, [{ type: 'message', content: 'json answer' }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 test('Anthropic usage is undefined when the stream reports none', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => sseResponse([

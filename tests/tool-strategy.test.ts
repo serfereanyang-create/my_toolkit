@@ -396,10 +396,14 @@ test('OpenAI serializes tool strategy into the outbound system message', async (
 
   assert.ok(outboundBody);
   assert.ok(Array.isArray(outboundBody.messages));
-  const systemMessage = outboundBody.messages[0] as { role?: unknown; content?: unknown };
-  assert.equal(systemMessage.role, 'system');
-  assert.equal(typeof systemMessage.content, 'string');
-  assert.match(String(systemMessage.content), /provider-marker=openai/);
+  const messages = outboundBody.messages as Array<{ role?: unknown; content?: unknown }>;
+  // Auto-prefix cache layout: the stable system prompt leads, the per-turn
+  // tool strategy is appended as the LAST message so the byte prefix before
+  // it (system + full history) stays identical across turns and cache-hits.
+  const lastMessage = messages[messages.length - 1];
+  assert.equal(lastMessage.role, 'system');
+  assert.match(String(lastMessage.content), /provider-marker=openai/);
+  assert.doesNotMatch(String(messages[0].content), /provider-marker=openai/);
 });
 
 test('Anthropic serializes tool strategy into the outbound system prompt', async () => {
@@ -430,19 +434,55 @@ test('Anthropic serializes tool strategy into the outbound system prompt', async
   }
 
   assert.ok(outboundBody);
-  // System is a block array; the cache breakpoint sits on the LAST block so
-  // Anthropic caches tools + full system as one continuous prefix. When a
-  // dynamic strategy exists it becomes the final (breakpoint) block.
+  // System is an ordered block array. The stable block is the cache boundary;
+  // the dynamic strategy remains outside it so strategy changes do not reset the
+  // reusable prefix.
   assert.ok(Array.isArray(outboundBody.system));
   const blocks = outboundBody.system as Array<{ type: string; text: string; cache_control?: unknown }>;
   const stableBlock = blocks[0];
   const dynamicBlock = blocks.at(-1);
-  assert.equal(stableBlock.type, 'text');
-  assert.doesNotMatch(stableBlock.text, /provider-marker=anthropic/);
+  // The stable system block owns the cache breakpoint; the dynamic strategy is
+  // intentionally outside the cached prefix so it can change between turns.
+  assert.deepEqual(stableBlock.cache_control, { type: 'ephemeral' });
   assert.match(String(dynamicBlock?.text), /provider-marker=anthropic/);
-  assert.deepEqual(dynamicBlock?.cache_control, { type: 'ephemeral' });
+  assert.equal(dynamicBlock?.cache_control, undefined);
 });
 
+test('Anthropic keeps the stable cache prefix when strategy changes', async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response([
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+
+  try {
+    const provider = createAnthropicProvider({ apiKey: process.env.AICODE_TEST_API_KEY || `test-${Date.now()}`, baseUrl: 'https://anthropic.test/v1', model: 'test-model' });
+    const request = {
+      messages: [{ role: 'user' as const, content: 'test', createdAt: '2026-07-10T00:00:00.000Z' }],
+      tools: [],
+      workspaceRoot: process.cwd(),
+    };
+    await provider.complete({ ...request, toolStrategy: 'strategy-one' });
+    await provider.complete({ ...request, toolStrategy: 'strategy-two' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(bodies.length, 2);
+  const firstSystem = bodies[0].system as Array<Record<string, unknown>>;
+  const secondSystem = bodies[1].system as Array<Record<string, unknown>>;
+  assert.deepEqual(firstSystem[0], secondSystem[0]);
+  assert.deepEqual(firstSystem[0].cache_control, { type: 'ephemeral' });
+  assert.notEqual(firstSystem.at(-1)?.text, secondSystem.at(-1)?.text);
+  assert.equal(firstSystem.at(-1)?.cache_control, undefined);
+  assert.equal(secondSystem.at(-1)?.cache_control, undefined);
+});
 test('recovery hints explain path and edit failures', () => {
   assert.match(recoveryHintForToolFailure('read_file', 'ENOENT: no such file or directory') ?? '', /locate the correct path/);
   assert.match(recoveryHintForToolFailure('apply_patch', 'old text not found') ?? '', /retry with exact surrounding text/);

@@ -9,6 +9,7 @@ import {
   toAnthropicAwareMessages,
   toAnthropicTools,
 } from './protocol.js';
+import { cacheControl } from './cacheStrategy.js';
 
 export type AnthropicProviderOptions = {
   apiKey?: string;
@@ -37,20 +38,17 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
           temperature: thinking ? 1 : 0.2,
           stream: true,
           // Anthropic evaluates the prompt prefix in order: tools → system →
-          // messages. The tools block (21K+ tokens for 245 tools) is serialized
-          // before system, so its cache_control breakpoint covers tools + system
-          // stable prefix as one continuous cached segment. The system-level
-          // breakpoint would sit AFTER tools, splitting the cache into
-          // "tools-only" and "system-only" entries — the observed pattern of
-          // read=14.6K/system-hit + 16.8K/tools-repaid per turn. One breakpoint
-          // at the end of system keeps the whole 33K prefix in a single entry.
+          // messages. Keep the breakpoint on the stable system block. The
+          // current-turn strategy is deliberately outside the cached segment;
+          // changing it must not invalidate the reusable tools + stable-system
+          // prefix on the next request.
           system: systemParts.dynamic
             ? [
-                { type: 'text', text: systemParts.stable },
-                { type: 'text', text: systemParts.dynamic, cache_control: { type: 'ephemeral' } },
+                { type: 'text', text: systemParts.stable, cache_control: cacheControl() },
+                { type: 'text', text: systemParts.dynamic },
               ]
             : [
-                { type: 'text', text: systemParts.stable, cache_control: { type: 'ephemeral' } },
+                { type: 'text', text: systemParts.stable, cache_control: cacheControl() },
               ],
           // Sliding message breakpoint: cache the entire conversation prefix so
           // each turn only pays for the newest messages (Claude Code-style 97%+
@@ -97,15 +95,36 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
       if (!response.ok) throw new Error(`Anthropic request failed: ${response.status} ${await response.text()}`);
 
       const textParts: string[] = [];
+      const thinkingParts: string[] = [];
       const toolBlocks = new Map<number, { id?: string; name?: string; inputJson: string }>();
       const events: unknown[] = [];
-      // Real token usage: Anthropic reports input_tokens in message_start and the
-      // running output_tokens in message_delta. Capture both so the agent can
-      // persist genuine numbers (never estimated).
       let inputTokens = 0;
       let outputTokens = 0;
       let cacheReadTokens: number | undefined;
       let cacheCreationTokens: number | undefined;
+      const applyUsage = (value: unknown) => {
+        const usage = normalizeAnthropicUsage(value);
+        if (!usage) return;
+        if (usage.inputTokens !== undefined) inputTokens = usage.inputTokens;
+        if (usage.outputTokens !== undefined) outputTokens = usage.outputTokens;
+        if (usage.cacheReadTokens !== undefined) cacheReadTokens = usage.cacheReadTokens;
+        if (usage.cacheCreationTokens !== undefined) cacheCreationTokens = usage.cacheCreationTokens;
+      };
+
+      const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+      if (contentType.includes('application/json')) {
+        const json = await response.json() as Record<string, unknown>;
+        events.push(json);
+        applyUsage(json.usage);
+        const content = Array.isArray(json.content) ? json.content as Array<Record<string, unknown>> : [];
+        for (const block of content) {
+          if (block.type === 'text' && typeof block.text === 'string') textParts.push(block.text);
+          if (block.type === 'thinking' && typeof block.thinking === 'string') thinkingParts.push(block.thinking);
+        }
+        const actions = parseAnthropicContentBlocks(content);
+        const usage = buildProviderUsage(inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens);
+        return { actions, thinking: thinkingParts.join('') || undefined, usage, raw: { response: json, text: textParts.join('') } };
+      }
 
       for await (const data of iterateSseDataLines(response)) {
         if (!data || data === '[DONE]') continue;
@@ -118,19 +137,11 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
         events.push(json);
 
         if (json.type === 'message_start' && json.message?.usage) {
-          const u = json.message.usage;
-          if (typeof u.input_tokens === 'number') inputTokens = u.input_tokens;
-          if (typeof u.output_tokens === 'number') outputTokens = u.output_tokens;
-          if (typeof u.cache_read_input_tokens === 'number') cacheReadTokens = u.cache_read_input_tokens;
-          if (typeof u.cache_creation_input_tokens === 'number') cacheCreationTokens = u.cache_creation_input_tokens;
+          applyUsage(json.message?.usage);
           continue;
         }
         if (json.type === 'message_delta' && json.usage) {
-          const u = json.usage;
-          if (typeof u.input_tokens === 'number') inputTokens = u.input_tokens;
-          if (typeof u.output_tokens === 'number') outputTokens = u.output_tokens;
-          if (typeof u.cache_read_input_tokens === 'number') cacheReadTokens = u.cache_read_input_tokens;
-          if (typeof u.cache_creation_input_tokens === 'number') cacheCreationTokens = u.cache_creation_input_tokens;
+          applyUsage(json.usage);
           continue;
         }
 
@@ -151,6 +162,10 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
             textParts.push(json.delta.text);
             request.onTextDelta?.(json.delta.text);
           }
+          if (json.delta.type === 'thinking_delta' && typeof json.delta.thinking === 'string' && json.delta.thinking) {
+            thinkingParts.push(json.delta.thinking);
+            request.onThinkingDelta?.(json.delta.thinking);
+          }
           if (json.delta.type === 'input_json_delta' && typeof json.delta.partial_json === 'string') {
             const index = typeof json.index === 'number' ? json.index : 0;
             const current = toolBlocks.get(index) ?? { inputJson: '' };
@@ -160,14 +175,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
         }
       }
 
-      const usage = (inputTokens > 0 || outputTokens > 0)
-        ? {
-            inputTokens,
-            outputTokens,
-            ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
-            ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {}),
-          }
-        : undefined;
+      const usage = buildProviderUsage(inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens);
 
       if (toolBlocks.size > 0) {
         const actions: AgentAction[] = [...toolBlocks.entries()]
@@ -178,12 +186,12 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
             input: parseJsonObject(block.inputJson),
           }))
           .filter((action) => action.tool !== 'unknown_tool');
-        if (actions.length > 0) return { actions, usage, raw: { stream: events, text: textParts.join('') } };
+        if (actions.length > 0) return { actions, thinking: thinkingParts.join('') || undefined, usage, raw: { stream: events, text: textParts.join('') } };
       }
 
       const text = textParts.join('');
-      if (text) return { actions: parseToolActions(text), usage, raw: { stream: events, text } };
-      return { actions: parseAnthropicContentBlocks([]), usage, raw: { stream: events, text } };
+      if (text) return { actions: parseToolActions(text), thinking: thinkingParts.join('') || undefined, usage, raw: { stream: events, text } };
+      return { actions: parseAnthropicContentBlocks([]), thinking: thinkingParts.join('') || undefined, usage, raw: { stream: events, text } };
     },
   };
 }
@@ -202,7 +210,54 @@ type AnthropicUsage = {
   output_tokens?: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
+  input_tokens_details?: { cached_tokens?: number };
+  prompt_tokens_details?: { cached_tokens?: number };
 };
+
+function normalizeAnthropicUsage(value: unknown): {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+} | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const usage = value as AnthropicUsage;
+  const inputTokens = firstNumber(usage.input_tokens, usage.prompt_tokens);
+  const outputTokens = firstNumber(usage.output_tokens, usage.completion_tokens);
+  const details = usage.input_tokens_details ?? usage.prompt_tokens_details;
+  const cacheReadTokens = firstNumber(
+    usage.cache_read_input_tokens,
+    usage.cache_read_tokens,
+    details?.cached_tokens,
+  );
+  const cacheCreationTokens = firstNumber(usage.cache_creation_input_tokens, usage.cache_creation_tokens);
+  if (inputTokens === undefined && outputTokens === undefined && cacheReadTokens === undefined && cacheCreationTokens === undefined) return undefined;
+  return { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens };
+}
+
+function firstNumber(...values: unknown[]): number | undefined {
+  return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value));
+}
+
+function buildProviderUsage(
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadTokens?: number,
+  cacheCreationTokens?: number,
+) {
+  return (inputTokens > 0 || outputTokens > 0 || cacheReadTokens !== undefined || cacheCreationTokens !== undefined)
+    ? {
+        inputTokens,
+        outputTokens,
+        ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+        ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {}),
+      }
+    : undefined;
+}
 
 /**
  * Whether an error status likely means the endpoint rejected the `thinking`
@@ -229,6 +284,7 @@ type AnthropicStreamEvent = {
   delta?: {
     type?: string;
     text?: string;
+    thinking?: string;
     partial_json?: string;
   };
 };
