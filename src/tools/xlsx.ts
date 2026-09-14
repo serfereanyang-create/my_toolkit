@@ -113,7 +113,13 @@ export const createXlsxTool: ToolDefinition<{
     };
   },
   async execute(input, context) {
-    const workspaceRoot = context.workspaceRoot ?? process.cwd();
+    // A missing workspace root must fail loudly: silently falling back to
+    // process.cwd() (the CLI install dir) made writes and run_command resolve
+    // the same relative path against two different roots on Windows.
+    if (!context.workspaceRoot) {
+      return { ok: false, output: 'create_xlsx requires a workspace root in the tool context.' };
+    }
+    const workspaceRoot = context.workspaceRoot;
     const inputPath = input.path ?? 'data.xlsx';
     const targetPath = isAbsolute(inputPath) ? resolve(inputPath) : join(workspaceRoot, inputPath);
     const finalTarget = targetPath.toLowerCase().endsWith('.xlsx') ? targetPath : `${targetPath}.xlsx`;

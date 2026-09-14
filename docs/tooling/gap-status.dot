@@ -1,0 +1,57 @@
+// Gap-list status graph for the 2026-09-14 coding-agent audit.
+// Render: dot -Tsvg docs/tooling/gap-status.dot -o docs/tooling/gap-status.svg
+//        dot -Tpng -Gdpi=150 docs/tooling/gap-status.dot -o docs/tooling/gap-status.png
+// Colors: green=done, amber=partial, red=open.
+digraph gap_status {
+  rankdir=TB;
+  nodesep=0.28; ranksep=0.5;
+  graph [fontname="Microsoft YaHei", labelloc=t,
+         label="YOYcode 编码者可用性差距清单 · 2026-09-14 状态"];
+  node [fontname="Microsoft YaHei", shape=box, style="filled,rounded", fontsize=11,
+        margin="0.16,0.06", fillcolor="#e8eaf0", color="#5d6a7e"];
+  edge [arrowhead=vee, arrowsize=0.7, color="#8a93a3"];
+
+  subgraph cluster_p0 {
+    label="P0 工作区根目录"; style="rounded,filled"; fillcolor="#f7f9fc"; color="#aab4c3";
+    home_root   [label="启动回退挂到家目录\ngit_status fatal / index 顶穿", fillcolor="#ffffff", color="#ffffff", style=""];
+    picker      [label="workspace-picker 优先真项目\n否则弹选择器（桌面 2f8ff46）\n6 纯单测", fillcolor="#d7efdc", color="#2e7d46"];
+    home_root -> picker;
+  }
+
+  subgraph cluster_eng {
+    label="P1 工程门禁（cli 0cf758f）"; style="rounded,filled"; fillcolor="#f7f9fc"; color="#aab4c3";
+    lint   [label="eslint flat config\n0 error / 199 legacy warning", fillcolor="#d7efdc", color="#2e7d46"];
+    fmt    [label="prettier script 就位\n未全量格式化（另开 commit）", fillcolor="#fdf0cf", color="#b8860b"];
+    cover  [label="coverage script\nnode 原生 --experimental", fillcolor="#d7efdc", color="#2e7d46"];
+    ci     [label="ci.yml typecheck→test→audit\n无远程仓库，待 push 生效", fillcolor="#fdf0cf", color="#b8860b"];
+    agents [label="AGENTS.md：纪律/禁区/测试策略", fillcolor="#d7efdc", color="#2e7d46"];
+  }
+
+  subgraph cluster_win {
+    label="P1 Windows 执行层与外部工具"; style="rounded,filled"; fillcolor="#f7f9fc"; color="#aab4c3";
+    amp    [label="run_command &amp;修复+chcp 65001\n（前台，含真机中文测试）", fillcolor="#d7efdc", color="#2e7d46"];
+    jobs   [label="后台 commandJobs 同修\n被 Mimosa 拦截未改", fillcolor="#fadbd8", color="#b03a2e"];
+    rg     [label="ripgrep 已在 PATH", fillcolor="#d7efdc", color="#2e7d46"];
+    dot    [label="Graphviz 16.1 已装\n本图即 dot 渲染", fillcolor="#d7efdc", color="#2e7d46"];
+    soffice[label="LibreOffice 已装\nREADME→PDF 实测通过", fillcolor="#d7efdc", color="#2e7d46"];
+    headless[ label="无 headless 浏览器\nHTML→PNG 仍需自绘", fillcolor="#fadbd8", color="#b03a2e"];
+  }
+
+  subgraph cluster_p1b {
+    label="P1 缓存与配置"; style="rounded,filled"; fillcolor="#f7f9fc"; color="#aab4c3";
+    cache  [label="cache_health 按 provider@host 分组\n静默端点不再冒充健康", fillcolor="#d7efdc", color="#2e7d46"];
+    cfg    [label="项目级 config 落盘 + /doctor 分类\n未做", fillcolor="#fadbd8", color="#b03a2e"];
+  }
+
+  subgraph cluster_p2 {
+    label="P2 能力面（排队中）"; style="rounded,filled"; fillcolor="#f7f9fc"; color="#aab4c3";
+    cancel  [label="协作式取消\nAbortSignal 贯穿 provider→tools→jobs", fillcolor="#fadbd8", color="#b03a2e"];
+    mcphttp [label="MCP HTTP/SSE 远程 transport", fillcolor="#fadbd8", color="#b03a2e"];
+    sbx     [label="更强 OS 沙箱 +\ncomputer_* 最小权限降级", fillcolor="#fadbd8", color="#b03a2e"];
+    sign    [label="签名发布 / 更新通道", fillcolor="#fadbd8", color="#b03a2e"];
+    refactor[ label="更多重构动作 + watch 模式", fillcolor="#fadbd8", color="#b03a2e"];
+  }
+
+  picker -> lint [style=invis];
+  cache  -> amp [style=invis];
+}
