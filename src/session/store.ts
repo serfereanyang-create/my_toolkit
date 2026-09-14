@@ -6,6 +6,20 @@ import type { LazyDevGuardState } from '../guard/types.js';
 import type { TaskRuntimeState } from '../tasks/types.js';
 
 const SESSION_ID = /^sess_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const DEFAULT_RENAME_RETRIES = 8;
+const DEFAULT_RENAME_RETRY_DELAY_MS = 25;
+const MAX_RENAME_RETRY_DELAY_MS = 1000;
+
+export type SessionStoreOptions = {
+  /** Override the filesystem rename operation for fault-injection tests. */
+  rename?: typeof rename;
+  /** Override retry sleeping for deterministic fault-injection tests. */
+  sleep?: (milliseconds: number) => Promise<void>;
+  /** Number of retries after the first rename attempt. Defaults to Windows-only retries. */
+  renameRetries?: number;
+  /** Initial delay for transient rename retries. */
+  renameRetryDelayMs?: number;
+};
 
 export type ToolCallRecord = {
   id: string;
@@ -54,7 +68,12 @@ export type SessionRecord = {
 };
 
 export class SessionStore {
-  constructor(private readonly sessionDir: string) {}
+  private writeQueue: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly sessionDir: string,
+    private readonly options: SessionStoreOptions = {},
+  ) {}
 
   async create(options: { provider: ProviderName; model: string; workspaceRoot: string }) {
     const now = new Date().toISOString();
@@ -142,15 +161,48 @@ export class SessionStore {
   }
 
   async save(session: SessionRecord) {
-    const file = this.filePath(session.id);
+    // Freeze the payload before waiting behind an earlier save. Callers mutate
+    // the live session immediately before save(), so serializing later would
+    // let a newer mutation change the older queued write.
+    const payload = `${JSON.stringify(session, null, 2)}\n`;
+    const run = this.writeQueue.then(() => this.saveSnapshot(session.id, payload));
+    // A failed save must not poison the queue for future turns.
+    this.writeQueue = run.catch(() => undefined);
+    await run;
+  }
+
+  private async saveSnapshot(id: string, payload: string) {
+    const file = this.filePath(id);
     await mkdir(dirname(file), { recursive: true });
     const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
     try {
-      await writeFile(temporary, `${JSON.stringify(session, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
-      await rename(temporary, file);
+      await writeFile(temporary, payload, { encoding: 'utf8', flag: 'wx' });
+      await this.renameWithRetry(temporary, file);
     } catch (error) {
       await unlink(temporary).catch(() => undefined);
       throw error;
+    }
+  }
+
+  private async renameWithRetry(temporary: string, file: string) {
+    const renameOperation = this.options.rename ?? rename;
+    const sleep = this.options.sleep ?? sleepFor;
+    const retries = normalizeNonNegativeInteger(
+      this.options.renameRetries ?? (process.platform === 'win32' ? DEFAULT_RENAME_RETRIES : 0),
+    );
+    const initialDelay = normalizeNonNegativeInteger(
+      this.options.renameRetryDelayMs ?? DEFAULT_RENAME_RETRY_DELAY_MS,
+    );
+
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await renameOperation(temporary, file);
+        return;
+      } catch (error) {
+        if (attempt >= retries || !isTransientRenameError(error)) throw error;
+        const delay = Math.min(MAX_RENAME_RETRY_DELAY_MS, initialDelay * (2 ** attempt));
+        await sleep(delay);
+      }
     }
   }
 
@@ -176,6 +228,19 @@ export class SessionStore {
     session.updatedAt = new Date().toISOString();
     await this.save(session);
   }
+}
+
+function normalizeNonNegativeInteger(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function isTransientRenameError(error: unknown): boolean {
+  const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+  return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
+}
+
+function sleepFor(milliseconds: number): Promise<void> {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 }
 
 function isSafeSessionId(id: string) {
