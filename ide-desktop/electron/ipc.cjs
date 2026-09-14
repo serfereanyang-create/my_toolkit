@@ -8,6 +8,16 @@ const git = require('./git.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
+function withDeadline(promise, timeoutMs, message) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, deadline]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings }) {
   async function materializePersona(root) {
     try {
@@ -833,7 +843,10 @@ Edited code:`;
     if (!root) return { error: '没有打开工作区', totalFiles: 0 };
     try {
       const { scanWorkspaceStats } = require('./workspace-stats.cjs');
-      return await scanWorkspaceStats(root, (rel) => workspace.resolveInside(rel), options || {});
+      const scan = scanWorkspaceStats(root, (rel) => workspace.resolveInside(rel), {
+        path: typeof options?.path === 'string' ? options.path : undefined,
+      });
+      return await withDeadline(scan, 30_000, '代码普查超过 30 秒仍未完成，请缩小工作区后重试。');
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error), totalFiles: 0 };
     }

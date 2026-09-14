@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
-const { mkdtemp, mkdir, writeFile, rm } = require('node:fs/promises');
+const fs = require('node:fs/promises');
+const { mkdtemp, mkdir, writeFile, rm } = fs;
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
@@ -146,5 +147,38 @@ test('binary-ish or unknown-extension files are excluded from the census', async
   try {
     const stats = await scanWorkspaceStats(fx.root, fx.resolve);
     assert.equal(stats.totalFiles, 1);
+  } finally { await fx.cleanup(); }
+});
+
+test('scan stops at the file budget and reports a partial result', async () => {
+  const fx = await fixture({
+    'a.ts': 'a\n',
+    'b.ts': 'b\n',
+  });
+  try {
+    const stats = await scanWorkspaceStats(fx.root, fx.resolve, { maxFiles: 1 });
+    assert.equal(stats.totalFiles, 1);
+    assert.equal(stats.truncated, true);
+    assert.match(stats.scanWarning, /1.*文件上限/);
+  } finally { await fx.cleanup(); }
+});
+
+test('scan stops when a filesystem operation exceeds its deadline', async () => {
+  const fx = await fixture({ 'src/a.ts': 'a\n' });
+  try {
+    const hangingFs = {
+      ...fs,
+      readdir: async () => new Promise(() => {}),
+    };
+    const started = Date.now();
+    const stats = await scanWorkspaceStats(fx.root, fx.resolve, {
+      fs: hangingFs,
+      fileOperationTimeoutMs: 10,
+      scanTimeoutMs: 100,
+    });
+    assert.equal(stats.totalFiles, 0);
+    assert.equal(stats.truncated, true);
+    assert.match(stats.scanWarning, /读取目录.*超时/);
+    assert.ok(Date.now() - started < 500);
   } finally { await fx.cleanup(); }
 });

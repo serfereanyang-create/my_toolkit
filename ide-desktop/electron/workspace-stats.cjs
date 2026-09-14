@@ -12,6 +12,12 @@ const { SKIP_DIRS, TEXT_EXTS } = require('./workspace-search.cjs');
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const TOP_FILES = 12;
+const DEFAULT_SCAN_TIMEOUT_MS = 20_000;
+const DEFAULT_FILE_OPERATION_TIMEOUT_MS = 2_000;
+const DEFAULT_MAX_FILES = 10_000;
+const MAX_SCAN_TIMEOUT_MS = 120_000;
+const MAX_FILE_OPERATION_TIMEOUT_MS = 10_000;
+const MAX_CENSUS_FILES = 50_000;
 
 // Extension -> canonical language name for the census table.
 const LANG_BY_EXT = new Map(Object.entries({
@@ -85,38 +91,94 @@ const TODO_RE = /\b(TODO|FIXME|HACK|XXX)\b[:\s]/i;
 
 async function scanWorkspaceStats(root, resolveInside, options = {}) {
   const started = Date.now();
+  const scanTimeoutMs = clampInteger(options.timeoutMs, DEFAULT_SCAN_TIMEOUT_MS, 1, MAX_SCAN_TIMEOUT_MS);
+  const fileOperationTimeoutMs = clampInteger(options.fileOperationTimeoutMs, DEFAULT_FILE_OPERATION_TIMEOUT_MS, 1, MAX_FILE_OPERATION_TIMEOUT_MS);
+  const maxFiles = clampInteger(options.maxFiles, DEFAULT_MAX_FILES, 1, MAX_CENSUS_FILES);
+  const fileSystem = options.fs ?? fs;
   const scopeAbs = options.path ? resolveInside(options.path) : root;
   const languages = new Map(); // lang -> {files, lines, code, comment, blank}
   const dirs = new Map();      // top-level dir -> {files, bytes}
   let totalFiles = 0;
   let totalBytes = 0;
   let skippedLarge = 0;
+  let truncated = false;
+  let scanWarning = '';
   const todoHits = [];
   let largest = [];
 
+  function stopIfOverBudget() {
+    if (truncated) return true;
+    if (totalFiles >= maxFiles) {
+      truncated = true;
+      scanWarning = `扫描已达到 ${maxFiles.toLocaleString()} 个文件上限，以下为部分结果。`;
+      return true;
+    }
+    if (Date.now() - started >= scanTimeoutMs) {
+      truncated = true;
+      scanWarning = `扫描超过 ${scanTimeoutMs.toLocaleString()} ms 时间上限，以下为部分结果。`;
+      return true;
+    }
+    return false;
+  }
+
+  async function withTimeout(operation, label) {
+    let timer;
+    try {
+      return await Promise.race([
+        operation(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${label} 超时`)), fileOperationTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   async function walk(dir, depth) {
+    if (stopIfOverBudget()) return;
     let entries;
     try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
+      entries = await withTimeout(() => fileSystem.readdir(dir, { withFileTypes: true }), '读取目录');
+    } catch (error) {
+      if (error instanceof Error && /超时$/.test(error.message)) {
+        truncated = true;
+        scanWarning = `${error.message}，以下为部分结果。`;
+      }
       return;
     }
     for (const entry of entries) {
+      if (stopIfOverBudget()) return;
       const abs = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
         await walk(abs, depth + 1);
+        if (truncated) return;
         continue;
       }
       if (!entry.isFile()) continue;
       const ext = path.extname(entry.name).toLowerCase();
       if (!TEXT_EXTS.has(ext) && !entry.name.startsWith('.')) continue;
       let stat;
-      try { stat = await fs.stat(abs); } catch { continue; }
+      try { stat = await withTimeout(() => fileSystem.stat(abs), '读取文件信息'); } catch (error) {
+        if (error instanceof Error && /超时$/.test(error.message)) {
+          truncated = true;
+          scanWarning = `${error.message}，以下为部分结果。`;
+          return;
+        }
+        continue;
+      }
       if (stat.size > MAX_FILE_BYTES) { skippedLarge += 1; continue; }
       const rel = path.posix.normalize(path.relative(root, abs).split(path.sep).join('/'));
       let buffer;
-      try { buffer = await fs.readFile(abs); } catch { continue; }
+      try { buffer = await withTimeout(() => fileSystem.readFile(abs), '读取文件'); } catch (error) {
+        if (error instanceof Error && /超时$/.test(error.message)) {
+          truncated = true;
+          scanWarning = `${error.message}，以下为部分结果。`;
+          return;
+        }
+        continue;
+      }
 
       const language = LANG_BY_EXT.get(ext) ?? (entry.name.startsWith('.') ? 'Config' : ext.slice(1) || 'Unknown');
       const text = buffer.toString('utf8');
@@ -185,8 +247,15 @@ async function scanWorkspaceStats(root, resolveInside, options = {}) {
     todos: todoHits.slice(0, 300),
     todoCount: todoHits.length,
     skippedLarge,
+    truncated,
+    ...(scanWarning ? { scanWarning } : {}),
     elapsedMs: Date.now() - started,
   };
 }
 
-module.exports = { scanWorkspaceStats, commentFamily, classifyLine };
+function clampInteger(value, fallback, min, max) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
+module.exports = { scanWorkspaceStats, classifyLine, commentFamily };

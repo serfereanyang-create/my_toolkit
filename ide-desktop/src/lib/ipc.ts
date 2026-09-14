@@ -665,6 +665,8 @@ export type CodeCensus = {
   todos?: CensusTodo[];
   todoCount?: number;
   skippedLarge?: number;
+  truncated?: boolean;
+  scanWarning?: string;
   elapsedMs?: number;
 };
 

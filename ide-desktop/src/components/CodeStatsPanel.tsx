@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BarChart3, RefreshCw, FileCode2, AlertTriangle, FolderTree } from 'lucide-react';
 import { desktop, type CodeCensus } from '../lib/ipc';
 import { fuzzyRankItems } from '../lib/fuzzy';
@@ -24,6 +24,18 @@ const LANG_COLORS = [
   '#2f81f7', '#c0453c', '#5fae62', '#94a3b8', '#d0a132',
 ];
 
+const CENSUS_REQUEST_TIMEOUT_MS = 25_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('代码普查超时，请缩小工作区后重试。')), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 export function CodeStatsPanel({ onOpenFile }: { onOpenFile: (path: string, line?: number) => void }) {
   const [census, setCensus] = useState<CodeCensus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -31,20 +43,35 @@ export function CodeStatsPanel({ onOpenFile }: { onOpenFile: (path: string, line
   const [tab, setTab] = useState<'languages' | 'dirs' | 'largest' | 'todos'>('languages');
   const [filter, setFilter] = useState('');
   const [progress, setProgress] = useState('');
+  const requestSeq = useRef(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestSeq.current += 1;
+    };
+  }, []);
 
   const run = useCallback(async () => {
+    const mySeq = ++requestSeq.current;
     setLoading(true);
     setError(null);
     setProgress('扫描中…');
     try {
-      const result = await desktop.stats.census({});
+      const result = await withTimeout(desktop.stats.census({}), CENSUS_REQUEST_TIMEOUT_MS);
+      if (!mountedRef.current || mySeq !== requestSeq.current) return;
       if (result.error) setError(result.error);
       setCensus(result);
     } catch (err) {
+      if (!mountedRef.current || mySeq !== requestSeq.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
-      setProgress('');
+      if (mountedRef.current && mySeq === requestSeq.current) {
+        setLoading(false);
+        setProgress('');
+      }
     }
   }, []);
 
@@ -62,7 +89,7 @@ export function CodeStatsPanel({ onOpenFile }: { onOpenFile: (path: string, line
         <span><BarChart3 size={13} /> 代码普查</span>
         <span className="census-head-meta">
           {loading ? progress : census && !census.error ? `${census.totalFiles} 文件 · ${census.elapsedMs} ms` : ''}
-          <button className="icon-button" title="重新扫描" onClick={() => { void run(); }}><RefreshCw size={13} className={loading ? 'spin' : undefined} /></button>
+          <button className="icon-button" title="重新扫描" onClick={() => { void run(); }} disabled={loading}><RefreshCw size={13} className={loading ? 'spin' : undefined} /></button>
         </span>
       </div>
       {error && <div className="hist-error">{error}</div>}
@@ -131,6 +158,9 @@ export function CodeStatsPanel({ onOpenFile }: { onOpenFile: (path: string, line
             ))}
             {tab === 'todos' && (census.todos ?? []).length === 0 && <div className="hist-snap-empty">没有 TODO/FIXME 标记</div>}
           </div>
+          {(census.truncated || census.scanWarning) && (
+            <div className="census-note">{census.scanWarning ?? '扫描已截断，以上为部分结果。'}</div>
+          )}
           {(census.skippedLarge ?? 0) > 0 && (
             <div className="census-note">{census.skippedLarge} 个超过 2 MiB 的文件未统计</div>
           )}
