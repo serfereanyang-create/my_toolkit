@@ -111,6 +111,13 @@ async function notifyKeyState(event, window, settingsStore) {
 
 function createAgentManager({ mainWindow, workspace, settings, secrets }) {
   let bridge;
+  let lifecycleQueue = Promise.resolve();
+
+  function enqueueLifecycle(task) {
+    const run = lifecycleQueue.then(task);
+    lifecycleQueue = run.catch(() => undefined);
+    return run;
+  }
   // Request ids the sandbox already answered, so a late user click on the
   // (now auto-decided) card can't send a second, conflicting decision.
   const sandboxDecided = new Set();
@@ -147,12 +154,12 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
     }
   }
 
-  async function start(resumeSessionId) {
+  async function startNow(resumeSessionId) {
     const config = await settings.get();
     const providerConfig = config.providers.find((item) => item.id === config.activeProviderId) || config.providers[0];
     const apiKey = providerConfig.type === 'mock' ? '' : await secrets.getApiKey(providerConfig.id);
     if (providerConfig.type !== 'mock' && !apiKey) throw new Error(`API key is missing for ${providerConfig.label}`);
-    if (bridge) bridge.dispose();
+    if (bridge) await bridge.dispose();
     // The CLI only knows mock/openai/anthropic wire formats. A custom provider
     // declares which one via apiFormat. Base URL is forced to the official
     // OpenAI endpoint only for the built-in openai provider when empty (never
@@ -165,7 +172,7 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
     // Reasoning effort tier persists in preferences; default 'off' (no thinking).
     const reasoningEffort = normalizeEffort(config.preferences && config.preferences.reasoningEffort);
     const toolScope = normalizeToolScope(config.preferences && config.preferences.toolScope);
-    bridge = new AgentBridge({
+    const capturedBridge = bridge = new AgentBridge({
       cliRoot: path.resolve(__dirname, '..', '..', 'cli'),
       workspaceRoot: workspace.getRoot(),
       sessionDir: path.join(workspace.getRoot(), '.aicode', 'sessions'),
@@ -194,22 +201,26 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
         automationBus.emit('automation.done', event);
       }
     };
-    bridge.on('event', (event) => {
+    capturedBridge.on('event', (event) => {
       // Sandbox interception: before the user ever sees an approval prompt,
       // the policy engine may answer it outright. The annotated event then
       // flows to the renderer so the card shows WHY it was auto-decided.
       // Forwarding must wait for the annotation, or the card would briefly
       // render live buttons and never learn the outcome.
       if (event && event.type === 'approval_needed') {
-        void applySandboxPolicy(bridge, event).finally(() => forward(event));
+        void applySandboxPolicy(capturedBridge, event).finally(() => forward(event));
         return;
       }
       forward(event);
     });
     // Do not report startup complete until the CLI has emitted bridge_ready;
     // otherwise the first prompt can race the child process initialization.
-    await bridge.start();
+    await capturedBridge.start();
     return { ok: true };
+  }
+
+  function start(resumeSessionId) {
+    return enqueueLifecycle(() => startNow(resumeSessionId));
   }
 
   // ── Side chat: an independent bridge with its own session ──────────────────
@@ -318,10 +329,8 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
       if (bridge) bridge.cancel();
       return { ok: true };
     },
-    async restart() {
-      if (bridge) await bridge.restart();
-      else await start();
-      return { ok: true };
+    async restart(resumeSessionId) {
+      return start(resumeSessionId);
     },
     /**
      * Drop the live bridge without starting a new one. The approval mode is
@@ -336,9 +345,9 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
       }
       return { ok: true };
     },
-    dispose() {
-      if (bridge) bridge.dispose();
-      if (sideBridge) sideBridge.dispose();
+    async dispose() {
+      if (bridge) await bridge.dispose();
+      if (sideBridge) await sideBridge.dispose();
     },
   };
 }

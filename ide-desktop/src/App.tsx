@@ -133,6 +133,8 @@ export default function App() {
   const diskMtimes = useRef<Map<string, number>>(new Map());
   // Deferred bridge restart: set when the user switches model mid-turn.
   const pendingRestartRef = useRef(false);
+  const switchingSessionRef = useRef(false);
+  const switchSequenceRef = useRef(0);
   const approvingRequests = useRef(new Set<string>());
   const [activeFile, setActiveFile] = useState<string | null>(null);
 
@@ -182,7 +184,7 @@ export default function App() {
       // are silent by design. Never throws.
       const cue = cueForEvent(event as { type?: unknown; autoDecision?: unknown });
       if (cue) playCue(cue, soundVolume(stateRef.current.settings?.preferences));
-      if (event.type === 'turn_done' && pendingRestartRef.current) {
+      if (event.type === 'turn_done' && pendingRestartRef.current && !switchingSessionRef.current) {
         // Model was switched mid-turn; now that files are no longer being
         // written, it's safe to swap the bridge to the new provider/model.
         pendingRestartRef.current = false;
@@ -665,6 +667,10 @@ export default function App() {
   }
 
   async function submitPrompt(text: string, files?: Array<{ path: string; name: string; size: number; category: string; mediaType?: string; icon: string }>, mentions?: MentionItem[]) {
+    if (switchingSessionRef.current) {
+      dispatch({ type: 'agent/event', event: { type: 'info', message: '会话正在切换，请稍候再发送消息。' } });
+      return;
+    }
     setMainView('chat');
 
     // ── AI action slash commands ───────────────────────────────────────────────
@@ -880,40 +886,57 @@ export default function App() {
     }
   }
 
-  function newChat() {
-    // Detaching while the agent is still running would leave the CLI child
-    // writing files "in the background" with the UI showing an empty chat.
-    // Restart the bridge so the old turn dies with its process.
-    if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
-      const proceed = window.confirm(
-        '智能体正在工作中。\n\n切换到新对话将中断当前任务，已执行的部分会保留在历史记录中。\n\n是否继续？'
-      );
-      if (!proceed) return;
-      void desktop.agent.restart();
+  async function newChat() {
+    if (switchingSessionRef.current) return;
+    const seq = ++switchSequenceRef.current;
+    switchingSessionRef.current = true;
+    try {
+      if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
+        const proceed = window.confirm(
+          '智能体正在工作中。\n\n切换到新对话将中断当前任务，已执行的部分会保留在历史记录中。\n\n是否继续？'
+        );
+        if (!proceed || seq !== switchSequenceRef.current) return;
+      }
+      pendingRestartRef.current = false;
+      if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting' || stateRef.current.agentStatus === 'ready') {
+        try { await desktop.agent.restart(); } catch { /* next prompt retries */ }
+      }
+      if (seq !== switchSequenceRef.current) return;
+      dispatch({ type: 'chat/clear' });
+      setMainView('chat');
+      refreshSessions();
+    } finally {
+      if (seq === switchSequenceRef.current) switchingSessionRef.current = false;
     }
-    // The CLI persists the live session to .aicode/sessions as it runs, so a
-    // fresh chat just detaches from the current one; nothing is lost.
-    dispatch({ type: 'chat/clear' });
-    setMainView('chat');
-    refreshSessions();
   }
 
   async function openSession(id: string) {
-    // Same guard as newChat: never leave a live bridge attached while the UI
-    // swaps to a different session — events from the old turn would bleed in.
-    if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
-      const proceed = window.confirm(
-        '智能体正在工作中。\n\n切换会话将中断当前任务，已执行的部分会保留在历史记录中。\n\n是否继续？'
-      );
-      if (!proceed) return;
-      try { await desktop.agent.restart(); } catch { /* old bridge already dead */ }
-    }
+    if (switchingSessionRef.current) return;
+    const seq = ++switchSequenceRef.current;
+    switchingSessionRef.current = true;
     try {
+      if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
+        const proceed = window.confirm(
+          '智能体正在工作中。\n\n切换会话将中断当前任务，已执行的部分会保留在历史记录中。\n\n是否继续？'
+        );
+        if (!proceed || seq !== switchSequenceRef.current) return;
+      }
       const record = await desktop.sessions.load(id);
+      if (seq !== switchSequenceRef.current) return;
+      pendingRestartRef.current = false;
       dispatch({ type: 'chat/load', sessionId: id, chat: sessionToChat(record) });
       setMainView('chat');
+      try { await desktop.agent.restart(id); } catch (error) {
+        if (seq === switchSequenceRef.current) {
+          dispatch({ type: 'agent/event', event: { type: 'error', message: `会话桥接启动失败：${cleanIpcError(error)}` } });
+        }
+      }
     } catch {
-      dispatch({ type: 'agent/event', event: { type: 'error', message: `无法加载会话 ${id}` } });
+      if (seq === switchSequenceRef.current) {
+        dispatch({ type: 'agent/event', event: { type: 'error', message: `无法加载会话 ${id}` } });
+      }
+    } finally {
+      if (seq === switchSequenceRef.current) switchingSessionRef.current = false;
     }
   }
 

@@ -30,6 +30,8 @@ class AgentBridge extends EventEmitter {
     this.contextWindowTokens = Number.isFinite(options.contextWindowTokens) && options.contextWindowTokens > 0
       ? Math.floor(options.contextWindowTokens)
       : undefined;
+    this.spawnProcess = options.spawnProcess || spawn;
+    this.killProcessTree = options.killTree || killTree;
     this.child = null;
     this.buffer = '';
     // Every child process gets its own generation. A killed process can emit
@@ -42,6 +44,20 @@ class AgentBridge extends EventEmitter {
     this.readyResolve = null;
     this.readyReject = null;
     this.readyTimer = null;
+  }
+
+  async waitForExit(child, timeoutMs = 1500) {
+    if (!child || !child.pid || (child.exitCode !== null && child.exitCode !== undefined)) return;
+    await new Promise((resolve) => {
+      let timer = setTimeout(resolve, timeoutMs);
+      const done = () => { clearTimeout(timer); timer = null; resolve(); };
+      child.once?.('exit', done);
+      child.once?.('close', done);
+    });
+  }
+
+  setResumeSessionId(resumeSessionId) {
+    this.resumeSessionId = resumeSessionId || null;
   }
 
   start() {
@@ -108,7 +124,7 @@ class AgentBridge extends EventEmitter {
 
     let child;
     try {
-      child = spawn(process.execPath, args, {
+      child = this.spawnProcess(process.execPath, args, {
         cwd: this.cliRoot,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -280,19 +296,22 @@ class AgentBridge extends EventEmitter {
     this.child = null;
     this.ready = false;
     this.rejectReady(generation, new Error('Agent bridge cancelled'));
-    if (!child.killed) killTree(child);
+    if (!child.killed) this.killProcessTree(child);
     // Emit turn_done synchronously so the UI stops the spinner immediately,
     // then emit agent_offline so the next prompt correctly starts a new bridge.
     this.emit('event', { type: 'turn_done', status: 'cancelled' });
     this.emit('event', { type: 'agent_offline', code: -1 });
   }
 
-  async restart() {
+  async restart(resumeSessionId) {
+    if (resumeSessionId !== undefined) this.setResumeSessionId(resumeSessionId);
+    const child = this.child;
     this.cancel();
+    await this.waitForExit(child);
     return this.start();
   }
 
-  dispose() {
+  async dispose() {
     const child = this.child;
     if (!child) return;
     const generation = this.generation;
@@ -309,10 +328,11 @@ class AgentBridge extends EventEmitter {
       // stdin already closed; fall through to kill.
     }
     const killTimer = setTimeout(() => {
-      if (!child.killed) killTree(child);
+      if (!child.killed) this.killProcessTree(child);
     }, 1000);
     if (typeof killTimer.unref === 'function') killTimer.unref();
-    child.once('exit', () => clearTimeout(killTimer));
+    await this.waitForExit(child, 1500);
+    clearTimeout(killTimer);
   }
 
   handleStdout(chunk, generation = this.generation, child = this.child) {

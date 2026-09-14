@@ -123,6 +123,63 @@ test('trailing stdout without newline is flushed when the child exits', () => {
   assert.equal(events.filter((e) => e.type === 'agent_offline').length, 1);
 });
 
+test('restart accepts a target resume session and passes it to the replacement child', async () => {
+  const starts = [];
+  const bridge = new AgentBridge({
+    cliRoot: 'C:/cli',
+    workspaceRoot: 'C:/workspace',
+    sessionDir: 'C:/workspace/.aicode/sessions',
+    provider: 'mock',
+    model: 'mock',
+    spawnProcess: (_command, args) => {
+      starts.push(args);
+      const child = fakeChild();
+      queueMicrotask(() => child.stdout.emit('data', '{"type":"bridge_ready","sessionId":"sess_target"}\n'));
+      return child;
+    },
+  });
+
+  await bridge.start();
+  await bridge.restart('sess_target');
+
+  assert.equal(starts.length, 2);
+  const resumeIndex = starts[1].indexOf('--resume');
+  assert.ok(resumeIndex >= 0);
+  assert.equal(starts[1][resumeIndex + 1], 'sess_target');
+  await bridge.dispose();
+});
+
+test('restart waits for the previous child to exit before spawning replacement', async () => {
+  const starts = [];
+  const children = [];
+  const bridge = new AgentBridge({
+    cliRoot: 'C:/cli',
+    workspaceRoot: 'C:/workspace',
+    sessionDir: 'C:/workspace/.aicode/sessions',
+    provider: 'mock',
+    model: 'mock',
+    killTree: () => {},
+    spawnProcess: (_command, args) => {
+      starts.push(args);
+      const child = fakeChild();
+      child.pid = 100 + children.length;
+      child.exitCode = null;
+      children.push(child);
+      queueMicrotask(() => child.stdout.emit('data', '{"type":"bridge_ready","sessionId":"sess"}\n'));
+      return child;
+    },
+  });
+
+  await bridge.start();
+  const restart = bridge.restart('sess_target');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(starts.length, 1);
+  children[0].exitCode = 0;
+  children[0].emit('exit', 0);
+  await restart;
+  assert.equal(starts.length, 2);
+  await bridge.dispose();
+});
 test('undo() carries the undoId so the renderer can match undo_done', async () => {
   const bridge = newBridge();
   const child = fakeChild();

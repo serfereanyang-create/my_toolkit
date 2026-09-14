@@ -327,7 +327,7 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('agent.setEffort', async (_event, reasoningEffort) => agentManager.setEffort(reasoningEffort));
   ipcMain.handle('agent.setToolScope', async (_event, toolScope) => agentManager.setToolScope(toolScope));
   ipcMain.handle('agent.cancel', async () => agentManager.cancel());
-  ipcMain.handle('agent.restart', async () => await agentManager.restart());
+  ipcMain.handle('agent.restart', async (_event, resumeSessionId) => await agentManager.restart(resumeSessionId));
   ipcMain.handle('agent.approve', async (_event, requestId, decision) => agentManager.approve(requestId, decision));
   // preload sends: ipcRenderer.invoke('agent.undo', checkpointIds, undoId).
   // undoId lets the renderer match the CLI's authoritative undo_done event

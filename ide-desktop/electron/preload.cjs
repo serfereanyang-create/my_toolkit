@@ -85,7 +85,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     setEffort: (reasoningEffort) => ipcRenderer.invoke('agent.setEffort', reasoningEffort),
     setToolScope: (toolScope) => ipcRenderer.invoke('agent.setToolScope', toolScope),
     cancel: () => ipcRenderer.invoke('agent.cancel'),
-    restart: () => ipcRenderer.invoke('agent.restart'),
+    restart: (resumeSessionId) => ipcRenderer.invoke('agent.restart', resumeSessionId),
     approve: (requestId, decision) => ipcRenderer.invoke('agent.approve', requestId, decision),
     undo: (checkpointIds, undoId) => ipcRenderer.invoke('agent.undo', checkpointIds, undoId),
     onEvent: (handler) => {

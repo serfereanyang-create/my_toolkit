@@ -108,7 +108,7 @@ type ZCodeDesktopApi = {
     setEffort(reasoningEffort: ReasoningEffort): Promise<{ ok: boolean; reasoningEffort: ReasoningEffort }>;
     setToolScope(toolScope: ToolScope): Promise<{ ok: boolean; toolScope: ToolScope }>;
     cancel(): Promise<{ ok: boolean }>;
-    restart(): Promise<{ ok: boolean }>;
+    restart(resumeSessionId?: string): Promise<{ ok: boolean }>;
     approve(requestId: string, decision: 'allow_once' | 'allow_session' | 'deny'): Promise<{ ok: boolean }>;
     /** turnId 由 CLI 在 undo_done 事件中回显，是撤销结果归属的权威标识。 */
     undo(checkpointIds: string[], turnId?: string): Promise<{ ok: boolean }>;
