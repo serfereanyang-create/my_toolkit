@@ -64,7 +64,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'connections', label: '连接', icon: <Network size={17} /> },
       { id: 'git', label: 'Git', icon: <GitBranch size={17} /> },
       { id: 'environment', label: '环境', icon: <TerminalSquare size={17} /> },
-      { id: 'worktrees', label: 'Worktrees', icon: <GitFork size={17} /> },
+      { id: 'worktrees', label: '工作树', icon: <GitFork size={17} /> },
     ],
   },
   {

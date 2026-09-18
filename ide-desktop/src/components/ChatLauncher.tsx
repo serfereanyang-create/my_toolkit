@@ -35,9 +35,13 @@ const STARTER_COMMANDS: Array<[string, string]> = [
   ['/help', 'floating command palette'],
 ];
 
-export function ChatLauncher({ onPick, onPickCommand }: {
+export function ChatLauncher({ onPick, onPickCommand, model, workspaceRoot }: {
   onPick: (id: string) => void;
   onPickCommand?: (command: string) => void;
+  /** Active model id, e.g. "gpt-5.6-luna". Falls back to a neutral label. */
+  model?: string;
+  /** Absolute workspace root; only the last path segment is shown. */
+  workspaceRoot?: string;
 }) {
   const [version, setVersion] = useState<string>('');
   useEffect(() => {
@@ -48,13 +52,21 @@ export function ChatLauncher({ onPick, onPickCommand }: {
     return () => { cancelled = true; };
   }, []);
 
+  const workspaceLabel = workspaceRoot
+    ? workspaceRoot.split(/[\\/]/).filter(Boolean).pop() ?? workspaceRoot
+    : '未打开工作区';
+
   return (
     <div className="launcher">
       <div className="launcher-left">
         <div className="codex-header-box" aria-label="会话信息">
           <div className="codex-header-title">&gt;_ YOYcode{version ? ` (v${version})` : ''}</div>
-          <div className="codex-header-row"><span className="codex-header-label">model:</span> agent</div>
-          <div className="codex-header-row"><span className="codex-header-label">workspace:</span> local project</div>
+          <div className="codex-header-row" title={model || undefined}>
+            <span className="codex-header-label">model:</span> {model || '未选择模型'}
+          </div>
+          <div className="codex-header-row" title={workspaceRoot || undefined}>
+            <span className="codex-header-label">workspace:</span> {workspaceLabel}
+          </div>
         </div>
         <div className="codex-welcome">
           <p className="codex-welcome-intro">To get started, describe a task or try one of these commands:</p>

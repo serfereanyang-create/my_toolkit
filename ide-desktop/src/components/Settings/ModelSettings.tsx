@@ -63,6 +63,26 @@ function isCustom(p: ProviderConfig) {
   return p.type === 'custom';
 }
 
+/**
+ * One-line identity for the provider rail. Providers frequently share the
+ * default "新供应商" label, so the endpoint host (or the model when no URL is
+ * configured yet) is the only reliable way to tell two entries apart.
+ */
+function providerSubtitle(provider: ProviderConfig): string {
+  const model = provider.model?.trim();
+  const host = (() => {
+    const raw = provider.baseUrl?.trim();
+    if (!raw) return '';
+    try {
+      return new URL(raw).host;
+    } catch {
+      return raw.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    }
+  })();
+  if (host && model) return `${host} · ${model}`;
+  return host || model || '未配置端点';
+}
+
 export function ModelSettings({ settings, onSave, onSaveKey }: {
   settings: DesktopSettings;
   onSave: (settings: DesktopSettings) => void;
@@ -125,10 +145,15 @@ export function ModelSettings({ settings, onSave, onSaveKey }: {
                 key={provider.id}
                 className={`model-provider-item ${provider.id === activeId ? 'active' : ''}`}
                 onClick={() => setActiveId(provider.id)}
-                title={provider.label}
+                title={provider.baseUrl ? `${provider.label || '未命名'} — ${provider.model || '未指定模型'} @ ${provider.baseUrl}` : provider.label}
               >
                 <Boxes size={16} className="model-provider-icon" />
-                <span className="model-provider-name">{provider.label || '未命名'}</span>
+                <span className="model-provider-text">
+                  <span className="model-provider-name">{provider.label || '未命名'}</span>
+                  {/* Several providers may share the default "新供应商" name; the
+                      endpoint host + model is what actually tells them apart. */}
+                  <span className="model-provider-meta">{providerSubtitle(provider)}</span>
+                </span>
                 <span className={`model-provider-dot ${provider.baseUrl ? 'on' : 'off'}`} />
               </button>
             ))}

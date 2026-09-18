@@ -15,12 +15,12 @@ export function WorktreesSettings({ prefs, savePref }: { prefs: Prefs; savePref:
 
   return (
     <div className="settings-page">
-      <h1 className="settings-page-title">Worktrees</h1>
+      <h1 className="settings-page-title">工作树</h1>
 
       <SettingsCard>
         <SettingRow
           title="工作树根目录"
-          description="ChatGPT 创建托管工作树的目录；留空则使用默认位置"
+          description="YOYcode 创建托管工作树的目录；留空则使用默认位置"
           control={<TextField value={root} onChange={setRoot} placeholder="默认" />}
         />
         <SettingRow
@@ -30,7 +30,7 @@ export function WorktreesSettings({ prefs, savePref }: { prefs: Prefs; savePref:
         />
         <SettingRow
           title="自动删除限制"
-          description={<>要保留的托管工作树数量；超过后，较旧的工作树会自动被清理。<br />ChatGPT 会在删除工作树前创建快照，因此被清理的工作树应始终可以恢复。</>}
+          description={<>要保留的托管工作树数量；超过后，较旧的工作树会自动被清理。<br />YOYcode 会在删除工作树前创建快照，因此被清理的工作树应始终可以恢复。</>}
           control={<NumberField value={keepLimit} onChange={setKeepLimit} min={1} max={100} />}
         />
       </SettingsCard>
@@ -40,7 +40,7 @@ export function WorktreesSettings({ prefs, savePref }: { prefs: Prefs; savePref:
           title="尚无工作树"
           action={<button type="button" className="settings-icon-btn" aria-label="刷新"><RefreshCw size={16} /></button>}
         />
-        <EmptyState title="ChatGPT 创建的工作树将显示在此处" />
+        <EmptyState title="YOYcode 创建的工作树将显示在此处" />
       </section>
     </div>
   );

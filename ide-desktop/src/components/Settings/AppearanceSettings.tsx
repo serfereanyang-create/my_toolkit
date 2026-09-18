@@ -133,7 +133,7 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
         />
         <SettingRow
           title="UI 字号"
-          description="调整 ChatGPT 界面使用的基准字号"
+          description="调整 YOYcode 界面使用的基准字号"
           control={<NumberField value={uiFontSize} onChange={(next) => onFontSizeChange({ uiFontSize: next })} suffix="px" min={10} max={24} />}
         />
         <SettingRow

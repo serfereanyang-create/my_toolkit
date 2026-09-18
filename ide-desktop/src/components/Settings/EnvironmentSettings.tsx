@@ -9,7 +9,7 @@ export function EnvironmentSettings() {
     <div className="settings-page">
       <h1 className="settings-page-title">环境</h1>
       <p className="settings-page-lead">
-        本地环境会告诉 ChatGPT 如何为项目设置工作树。
+        本地环境会告诉 YOYcode 如何为项目设置工作树。
         <a href="#" className="settings-link">了解更多</a>。
       </p>
 

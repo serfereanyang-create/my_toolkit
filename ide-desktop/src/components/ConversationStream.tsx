@@ -69,9 +69,15 @@ export function ConversationStream({ state, onApprove, onEditUser, onLaunch, onU
   const progress = activeTurnProgress(state);
 
   if (state.chat.length === 0) {
+    const activeProvider = state.settings?.providers.find((item) => item.id === state.settings?.activeProviderId);
     return (
       <div className="stream" ref={streamRef}>
-        <ChatLauncher onPick={onLaunch} onPickCommand={onPickCommand} />
+        <ChatLauncher
+          onPick={onLaunch}
+          onPickCommand={onPickCommand}
+          model={activeProvider?.model}
+          workspaceRoot={state.workspaceRoot}
+        />
       </div>
     );
   }

@@ -5556,7 +5556,7 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
   align-items: center;
   gap: var(--sp-2);
   width: 100%;
-  height: 38px;
+  height: 46px;
   padding: 0 var(--sp-2);
   border: 0;
   border-radius: var(--r-sm);
@@ -5570,7 +5570,17 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 .model-provider-item:hover { background: var(--bg-hover); }
 .model-provider-item.active { background: var(--bg-sel); }
 .model-provider-icon { color: var(--fg-muted); flex: 0 0 auto; }
-.model-provider-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-provider-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.model-provider-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Endpoint + model line: the only way to tell apart providers that share a
+   default label. Kept at caption size so the rail stays scannable. */
+.model-provider-meta {
+  font-size: var(--fs-xs);
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .model-provider-dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex: 0 0 auto; }
 .model-provider-dot.on { background: var(--ok); }
 .model-provider-dot.off { background: var(--border-strong); }
