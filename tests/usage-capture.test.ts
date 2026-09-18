@@ -42,18 +42,48 @@ test('Anthropic extracts real usage from message_start and message_delta', async
 
 test('Anthropic compatible relay usage aliases preserve explicit zero cache fields', async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => sseResponse([
-    JSON.stringify({ type: 'message_start', message: { usage: { prompt_tokens: 100, completion_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 2048 } } }),
-    JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } }),
-  ]);
+  let sentHeaders: Record<string, string> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    sentHeaders = init?.headers as Record<string, string> | undefined;
+    return sseResponse([
+      JSON.stringify({ type: 'message_start', message: { usage: { prompt_tokens: 100, completion_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 2048 } } }),
+      JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } }),
+    ]);
+  };
   try {
-    const provider = createAnthropicProvider({ apiKey: 'k', baseUrl: 'https://relay.test/v1', model: 'm' });
+    const provider = createAnthropicProvider({ apiKey: process.env.AICODE_TEST_API_KEY || `test-${Date.now()}`, baseUrl: 'https://relay.test/v1', model: 'm' });
     const result = await provider.complete({
       messages: [{ role: 'user', content: 'hi', createdAt: new Date().toISOString() }],
       tools,
       workspaceRoot: process.cwd(),
+      customProvider: true,
     });
     assert.deepEqual(result.usage, { inputTokens: 100, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 2048 });
+    assert.equal(new Headers(sentHeaders as Record<string, string>).get('anthropic-beta'), 'prompt-caching-2024-07-31');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Anthropic compatible relay reads vendor cache-hit aliases from nested usage details', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => sseResponse([
+    JSON.stringify({ type: 'message_start', message: { usage: {
+      prompt_tokens: 100,
+      completion_tokens: 4,
+      prompt_tokens_details: { cache_hit_tokens: 72, cache_creation_tokens: 28 },
+    } } }),
+    JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } }),
+  ]);
+  try {
+    const provider = createAnthropicProvider({ apiKey: process.env.AICODE_TEST_API_KEY || `test-${Date.now()}`, baseUrl: 'https://relay.test/v1', model: 'm' });
+    const result = await provider.complete({
+      messages: [{ role: 'user', content: 'hi', createdAt: new Date().toISOString() }],
+      tools,
+      workspaceRoot: process.cwd(),
+      customProvider: true,
+    });
+    assert.deepEqual(result.usage, { inputTokens: 100, outputTokens: 4, cacheReadTokens: 72, cacheCreationTokens: 28 });
   } finally {
     globalThis.fetch = originalFetch;
   }

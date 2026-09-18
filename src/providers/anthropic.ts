@@ -72,23 +72,13 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
       const thinking = anthropicThinking(request.reasoningEffort);
       let response = await fetchWithRetry(`${baseUrl}/messages`, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': options.apiKey,
-          'anthropic-version': '2023-06-01',
-          accept: 'text/event-stream',
-        },
+        headers: buildAnthropicHeaders(options.apiKey, request.customProvider),
         body: JSON.stringify(buildBody(thinking)),
       });
       if (!response.ok && thinking && isThinkingRejection(response.status)) {
         response = await fetchWithRetry(`${baseUrl}/messages`, {
           method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-api-key': options.apiKey,
-            'anthropic-version': '2023-06-01',
-            accept: 'text/event-stream',
-          },
+          headers: buildAnthropicHeaders(options.apiKey, request.customProvider),
           body: JSON.stringify(buildBody(undefined)),
         });
       }
@@ -115,8 +105,9 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
       if (contentType.includes('application/json')) {
         const json = await response.json() as Record<string, unknown>;
         events.push(json);
-        applyUsage(json.usage);
+        applyUsage(json.usage ?? (json.message as Record<string, unknown> | undefined)?.usage);
         const content = Array.isArray(json.content) ? json.content as Array<Record<string, unknown>> : [];
+
         for (const block of content) {
           if (block.type === 'text' && typeof block.text === 'string') textParts.push(block.text);
           if (block.type === 'thinking' && typeof block.thinking === 'string') thinkingParts.push(block.thinking);
@@ -196,6 +187,16 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
   };
 }
 
+function buildAnthropicHeaders(apiKey: string, customProvider?: boolean): Record<string, string> {
+  return {
+    'content-type': 'application/json',
+    'x-api-key': apiKey,
+    'anthropic-version': '2023-06-01',
+    ...(customProvider ? { 'anthropic-beta': 'prompt-caching-2024-07-31' } : {}),
+    accept: 'text/event-stream',
+  };
+}
+
 function parseJsonObject(value: string): unknown {
   if (!value.trim()) return {};
   try {
@@ -214,8 +215,21 @@ type AnthropicUsage = {
   completion_tokens?: number;
   cache_read_tokens?: number;
   cache_creation_tokens?: number;
-  input_tokens_details?: { cached_tokens?: number };
-  prompt_tokens_details?: { cached_tokens?: number };
+  cache_hit_tokens?: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
+  input_tokens_details?: {
+    cached_tokens?: number;
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
+    cache_hit_tokens?: number;
+  };
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
+    cache_hit_tokens?: number;
+  };
 };
 
 function normalizeAnthropicUsage(value: unknown): {
@@ -232,9 +246,17 @@ function normalizeAnthropicUsage(value: unknown): {
   const cacheReadTokens = firstNumber(
     usage.cache_read_input_tokens,
     usage.cache_read_tokens,
+    usage.cache_hit_tokens,
+    usage.prompt_cache_hit_tokens,
     details?.cached_tokens,
+    details?.cache_read_tokens,
+    details?.cache_hit_tokens,
   );
-  const cacheCreationTokens = firstNumber(usage.cache_creation_input_tokens, usage.cache_creation_tokens);
+  const cacheCreationTokens = firstNumber(
+    usage.cache_creation_input_tokens,
+    usage.cache_creation_tokens,
+    details?.cache_creation_tokens,
+  );
   if (inputTokens === undefined && outputTokens === undefined && cacheReadTokens === undefined && cacheCreationTokens === undefined) return undefined;
   return { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens };
 }
