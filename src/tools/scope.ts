@@ -1,4 +1,5 @@
 import type { ReasoningEffort } from '../providers/types.js';
+import { analyzeTaskComplexity } from '../tasks/complexity.js';
 import type { ToolRegistry } from './registry.js';
 import type { ToolDefinition } from './types.js';
 
@@ -27,6 +28,7 @@ const STANDARD_EXTRA_ALLOW = new Set([
   'git_fetch', 'git_pull', 'git_merge', 'git_cherry_pick', 'git_tag',
   'git_reset', 'git_restore',
   'run_command',
+  'poll_command',
   'apply_patch',
 ]);
 
@@ -37,9 +39,14 @@ export function resolveToolScope(options: {
   shouldUseTaskBoard: boolean;
 }): ResolvedToolScope {
   if (options.requested && options.requested !== 'auto') return options.requested;
-  if (options.shouldUseTaskBoard) return 'full';
+
+  const complexity = analyzeTaskComplexity(options.prompt).complexity;
+  if (options.shouldUseTaskBoard || complexity === 'large') return 'full';
+
+  // Preserve the existing explicit high/max expansion, including for a small
+  // prompt whose caller deliberately requested stronger reasoning.
   if (options.reasoningEffort === 'high' || options.reasoningEffort === 'max') return 'full';
-  if (options.reasoningEffort === 'off' || options.reasoningEffort === 'low') return looksSmallReadAsk(options.prompt) ? 'compact' : 'standard';
+  if (complexity === 'small') return 'compact';
   return 'standard';
 }
 
@@ -59,10 +66,51 @@ export function selectScopedTools(registry: ToolRegistry, scope: ResolvedToolSco
   });
 }
 
-function looksSmallReadAsk(prompt: string) {
-  const normalized = prompt.trim().toLowerCase();
-  if (!normalized) return true;
-  const readNeedles = ['read ', 'open ', 'show ', 'find ', 'search ', 'look at', 'what is', '查看', '读取', '打开', '搜索', '查找', '看看', '是什么'];
-  const heavyNeedles = ['write', 'create', 'implement', 'build', 'refactor', 'add a feature', 'task board', 'multi-step', 'end-to-end', '写', '创建', '生成', '实现', '开发', '重构', '任务板', '分步', '并测试'];
-  return readNeedles.some((needle) => normalized.includes(needle)) && !heavyNeedles.some((needle) => normalized.includes(needle));
+/**
+ * Hard ceiling on the number of tools sent in one request. Anthropic and
+ * several Anthropic-compatible relays reject an oversized tool array outright
+ * ("400 Maximum tools limit reached ... the maximum is 350"), which fails EVERY
+ * turn instead of degrading. Stay a margin under the common 350 ceiling.
+ */
+export const MAX_PROVIDER_TOOLS = 340;
+
+/**
+ * Built-ins a coding agent reaches for constantly that are not part of the
+ * read/write allowlists (they are gates and lookups rather than file access).
+ * Promoted so the cap never trades them away for rarely used utilities.
+ */
+const HIGH_VALUE_EXTRA = new Set([
+  'typecheck', 'lint', 'run_tests', 'web_search', 'fetch_url', 'todo_report',
+]);
+
+/**
+ * Trim a tool list to the provider ceiling without dropping what an agent
+ * actually needs. Plain alphabetical truncation would cut `write_file` and
+ * `search_text` (late letters) while keeping dozens of numeric utilities, so
+ * rank by usefulness first:
+ *   0. mutating/execution core (write, edit, run, git) — without these the agent cannot work
+ *   1. read/inspection allowlist + high-value gates
+ *   2. other built-in tools
+ *   3. plugin_/mcp_ bridge tools (largest, most replaceable block)
+ */
+export function limitProviderTools(
+  tools: ToolDefinition[],
+  max: number = MAX_PROVIDER_TOOLS,
+): { tools: ToolDefinition[]; dropped: string[] } {
+  if (tools.length <= max) return { tools, dropped: [] };
+  const rank = (tool: ToolDefinition): number => {
+    if (STANDARD_EXTRA_ALLOW.has(tool.name)) return 0;
+    if (COMPACT_ALLOW.has(tool.name) || HIGH_VALUE_EXTRA.has(tool.name)) return 1;
+    if (tool.name.startsWith('plugin_') || tool.name.startsWith('mcp_')) return 3;
+    return 2;
+  };
+  const ranked = [...tools].sort((a, b) => {
+    const byRank = rank(a) - rank(b);
+    return byRank !== 0 ? byRank : a.name.localeCompare(b.name);
+  });
+  const kept = ranked.slice(0, max);
+  const dropped = ranked.slice(max).map((tool) => tool.name);
+  // Restore deterministic alphabetical order for the provider payload.
+  kept.sort((a, b) => a.name.localeCompare(b.name));
+  return { tools: kept, dropped };
 }

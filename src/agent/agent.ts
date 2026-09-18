@@ -15,7 +15,7 @@ import type { CheckpointStore } from '../session/checkpoint.js';
 import type { SessionRecord, SessionStore } from '../session/store.js';
 import type { McpManager } from '../mcp/manager.js';
 import { ToolRegistry } from '../tools/registry.js';
-import { resolveToolScope, selectScopedTools, type ToolScope, type ResolvedToolScope } from '../tools/scope.js';
+import { limitProviderTools, resolveToolScope, selectScopedTools, type ToolScope, type ResolvedToolScope } from '../tools/scope.js';
 import type { TerminalUI } from '../ui/terminal.js';
 import { executeCommandPlan, extractCommand, formatCommandStrategy, planCommand } from './commandExtract/index.js';
 import { formatProjectContext, readProjectContext } from './context.js';
@@ -423,7 +423,16 @@ async function runAgentTurnCore(
     prompt,
     shouldUseTaskBoard: taskBoard,
   });
-  const activeTools = ToolRegistry.fromTools(selectScopedTools(runtime.allTools ?? runtime.tools, resolvedToolScope));
+  const scopedTools = selectScopedTools(runtime.allTools ?? runtime.tools, resolvedToolScope);
+  // Provider hard limits (e.g. "maximum is 350") reject the whole request rather
+  // than degrading, so cap the array before it is ever serialized.
+  const limited = limitProviderTools(scopedTools);
+  if (limited.dropped.length > 0) {
+    runtime.ui.info(locale === 'zh'
+      ? `工具数 ${scopedTools.length} 超过端点上限，本轮发送 ${limited.tools.length} 个（省略 ${limited.dropped.length} 个插件/MCP 工具）`
+      : `Tool count ${scopedTools.length} exceeds the endpoint limit; sending ${limited.tools.length} this turn (${limited.dropped.length} plugin/MCP tools omitted)`);
+  }
+  const activeTools = ToolRegistry.fromTools(limited.tools);
   runtime.tools = activeTools;
   runtime.resolvedToolScope = resolvedToolScope;
 
