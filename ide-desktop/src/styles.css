@@ -2120,6 +2120,10 @@ h1 {
   align-items: center;
   gap: var(--sp-2);
   margin-top: var(--sp-3);
+  /* A single row that never wraps: side panels narrow the main column, and a
+     wrapping control row would push the send button onto a second line. */
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .composer-bar .icon-button { color: var(--fg-muted); }
@@ -2138,6 +2142,10 @@ h1 {
   font-weight: 500;
   cursor: pointer;
   transition: background var(--dur) var(--ease);
+  /* The approval label ("完全访问") must stay on one line; it is the control the
+     user reads before every write, so never let a narrow column break it. */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .composer-access:hover { background: var(--bg-hover); }
