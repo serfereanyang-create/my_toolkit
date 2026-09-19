@@ -36,7 +36,10 @@ import { formatByteSize, MAX_USER_TEXT_BYTES_HARD } from './limits.js';
 import { formatHelpText } from './commandPalette.js';
 import { formatCacheProbe } from '../probe/cacheProbe.js';
 import { detectLocale } from '../i18n/locale.js';
-import { formatGitConfirm } from '../i18n/messages.js';
+import { formatApprovalOutcome, formatApprovalPrompt, formatGitConfirm } from '../i18n/messages.js';
+import { decideApproval } from '../safety/policy.js';
+import { formatSandboxResult, runSandboxedCommand } from '../safety/sandbox.js';
+import type { ApprovalDecision, ApprovalRequest } from '../tools/types.js';
 import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
 import { join, relative, resolve, extname } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -1425,17 +1428,51 @@ async function handleGrepCommand(
 
 async function handleRunCommand(
   command: string,
-  options: { config: AppConfig },
+  options: {
+    config: AppConfig;
+    confirm?: (message: string, request?: ApprovalRequest) => Promise<ApprovalDecision>;
+  },
 ): Promise<string> {
   const cmd = command.slice('/run'.length).trim();
   if (!cmd) return 'Usage: /run <shell command>';
-  return new Promise((res) => {
-    const [bin, ...rest] = cmd.split(/\s+/);
-    execFile(bin!, rest, { cwd: options.config.workspaceRoot, timeout: 30_000, shell: true }, (err, stdout, stderr) => {
-      const out = ((stdout || '') + (stderr || '')).trim().slice(0, 3000);
-      res(err?.code !== 0 ? `[exit ${err?.code ?? 1}]\n${out}` : out || '(no output)');
-    });
+  // `/run` used to call execFile directly, with `shell: true` and no policy
+  // check at all: it bypassed the destructive-command blocklist, the auto-mode
+  // allowlist, secret scrubbing, and the approval prompt — so a slash command
+  // could do what `run_command` refuses. Route it through the same policy and
+  // sandbox as the tool so the two paths cannot disagree.
+  const locale = detectLocale(cmd);
+  const decision = decideApproval({
+    mode: options.config.approval,
+    risk: 'shell',
+    command: cmd,
+    workspaceRoot: options.config.workspaceRoot,
+    computerAnyApp: options.config.computerAnyApp === true,
+    allowedApps: options.config.allowedApps,
   });
+  if (!decision.allowed) {
+    return formatApprovalOutcome({ locale, kind: 'blocked', tool: 'run_command', reason: decision.reason });
+  }
+  if (decision.needsPrompt) {
+    if (!options.confirm) {
+      return formatApprovalOutcome({ locale, kind: 'no_confirm', tool: 'run_command', reason: decision.reason });
+    }
+    const message = formatApprovalPrompt({ locale, tool: 'run_command', risk: 'shell', command: cmd });
+    if (!(await options.confirm(message))) {
+      return formatApprovalOutcome({ locale, kind: 'cancelled', tool: 'run_command' });
+    }
+  }
+
+  try {
+    const result = await runSandboxedCommand({
+      command: cmd,
+      cwd: options.config.workspaceRoot,
+      timeoutMs: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return formatSandboxResult(result, cmd).output.trim().slice(0, 3000) || '(no output)';
+  } catch (error) {
+    return `Command failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 async function handleLsCommand(
