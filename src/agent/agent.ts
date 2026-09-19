@@ -28,7 +28,7 @@ import { planLocalFallback } from './fallback.js';
 import { shouldUseTaskBoard } from '../tasks/planner.js';
 import { formatToolStrategy, planToolStrategy, recentToolResultsFromSession, recoveryHintForToolFailure, nextStepHint } from './toolStrategy.js';
 import { detectLocale, resolveSessionLocale, type Locale } from '../i18n/locale.js';
-import { isBlockedOutput, isCancelledOutput } from '../i18n/messages.js';
+import { isBlockedOutput } from '../i18n/messages.js';
 import { formatResultCard, isMetaTranslatedDone } from '../ui/resultCard.js';
 import { appendUsage, resolveUsageLogPath } from '../usage/ledger.js';
 import { buildLowCacheHint, collectCacheProbe } from '../probe/cacheProbe.js';
@@ -1259,12 +1259,21 @@ function formatTerminalCreateDone(done: { tool: string; output: string }, locale
   return detail ? `Done: ${done.tool} succeeded.\n${detail}` : `Done: ${done.tool} succeeded.`;
 }
 
+/**
+ * Whether a failed tool call must end the turn.
+ *
+ * A user DENYING one approval renders as `cancelled by user`, and that is NOT
+ * terminal: denying a tool means "not that way", so the model must get another
+ * step to propose an alternative. Cancelling the whole TURN is a different
+ * signal, which travels as CancelledError from a safe-boundary poll rather
+ * than as a tool output string. Only a policy block is terminal, because
+ * retrying a blocked action cannot help.
+ */
 function isTerminalToolFailure(output: string) {
-  return isCancelledOutput(output) || isBlockedOutput(output);
+  return isBlockedOutput(output);
 }
 
 function classifyTerminalFailure(output: string): GitUnitOutcome {
-  if (isCancelledOutput(output)) return 'cancelled';
   if (isBlockedOutput(output)) return 'blocked';
   return 'failed';
 }

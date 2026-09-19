@@ -1,7 +1,7 @@
 import type { AgentRuntime, AgentTurnResult } from '../agent.js';
 import { recoveryHintForToolFailure } from '../toolStrategy.js';
 import type { Locale } from '../../i18n/locale.js';
-import { isBlockedOutput, isCancelledOutput } from '../../i18n/messages.js';
+import { isBlockedOutput } from '../../i18n/messages.js';
 import { formatResultCard } from '../../ui/resultCard.js';
 import type { CommandPlan, PlannedToolStep } from './types.js';
 
@@ -129,12 +129,19 @@ async function executeStep(runtime: AgentRuntime, step: PlannedToolStep, locale:
   return { ok: false as const, terminal: false as const, reason };
 }
 
+/**
+ * Whether a failed tool call must end the direct chain.
+ *
+ * Mirrors `agent.ts`: a user DENYING one approval renders as
+ * `cancelled by user` and is NOT terminal, so the chain falls back to the
+ * model, which gets a chance to propose an alternative. Only a policy block
+ * ends the chain, since retrying a blocked action cannot help.
+ */
 function isTerminalToolFailure(output: string) {
-  return isCancelledOutput(output) || isBlockedOutput(output);
+  return isBlockedOutput(output);
 }
 
 function classifyTerminalFailure(output: string) {
-  if (isCancelledOutput(output)) return 'cancelled' as const;
   if (isBlockedOutput(output)) return 'blocked' as const;
   return 'failed' as const;
 }

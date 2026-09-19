@@ -52,6 +52,14 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
   const emitEvent = options.emit ?? emit;
   const broker = new DesktopApprovalBroker(runtime.session.id, { emit: emitEvent, timeoutMs: options.approvalTimeoutMs });
   runtime.toolConfirm = broker.confirm.bind(broker);
+  // Cooperative cancel. A denied approval is NOT a terminal failure (the model
+  // may propose another way), so a turn cannot be stopped by the deny itself.
+  // Turn-level aborts — an explicit `cancel`, or EOF while a turn is in flight —
+  // set this flag instead, and the agent loop honors it at the next safe
+  // boundary. Without it, denying pending approvals on shutdown would let the
+  // turn keep running (and keep prompting) after nobody is left to answer.
+  let cancelRequested = false;
+  runtime.cancelRequested = () => cancelRequested;
   runtime.taskBoardEmit = (board: any) => {
     const tasks = Array.isArray(board.tasks) ? board.tasks : [];
     emitEvent({
@@ -139,6 +147,7 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
           : command.action === 'skip' ? `/plan skip ${command.taskId ?? ''}`
           : `/plan reopen ${command.taskId ?? ''}`;
         if (busy) { emitEvent({ type: 'error', sessionId: runtime.session.id, message: 'Agent turn already running' }); continue; }
+        cancelRequested = false;
         busy = true;
         activeTurn = (async () => {
           try {
@@ -161,11 +170,11 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
         continue;
       }
       if (command.type === 'cancel') {
-        // Cooperative cancel is not yet supported by the agent loop; the desktop
-        // should terminate and respawn the child to interrupt an in-flight turn.
-        // Denying pending approvals here keeps the turn from hanging on an
-        // approval that can never be answered once the shell tears the bridge
-        // down (belt-and-braces alongside the desktop-side kill).
+        // Stop the in-flight turn at its next safe boundary, then deny pending
+        // approvals so nothing is left waiting on an answer that can no longer
+        // arrive. The desktop may still kill the child; this makes the cancel
+        // itself take effect even when it does not.
+        cancelRequested = true;
         broker.denyAll('已取消当前执行');
         emitEvent({
           type: 'cancel_ack',
@@ -200,6 +209,7 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
           emitEvent({ type: 'automation_done', sessionId: runtime.session.id, taskId: command.taskId, status: 'busy', reason: 'Agent turn already running' });
           continue;
         }
+        cancelRequested = false;
         busy = true;
         emitEvent({ type: 'automation_start', sessionId: runtime.session.id, taskId: command.taskId, goal: command.goal });
         activeTurn = (async () => {
@@ -229,6 +239,8 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
           emitEvent({ type: 'error', sessionId: runtime.session.id, message: 'Agent turn already running' });
           continue;
         }
+        // A fresh turn clears any cancel left over from a previous one.
+        cancelRequested = false;
         busy = true;
         const filePaths = (command.files ?? []).map((file) => file.path).filter((value): value is string => Boolean(value && value.trim()));
         activeTurn = handleUserMessage(command, runtime, filePaths, emitEvent).finally(() => { busy = false; });
@@ -238,6 +250,7 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
     // BEFORE awaiting the turn — otherwise a turn blocked on an approval that
     // can never be answered would keep `await activeTurn` (and this process)
     // alive forever.
+    cancelRequested = true;
     broker.denyAll('桥接正在关闭');
     // Let any in-flight turn settle before tearing down stdin on EOF/shutdown.
     await activeTurn;
