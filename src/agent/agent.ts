@@ -124,6 +124,24 @@ export type AgentRuntime = {
   runSubAgentTurn?: (runtime: AgentRuntime, goal: string) => Promise<string>;
   taskBoardEmit?: (board: unknown) => void;
   /**
+   * Injected by the desktop bridge to surface subagent runs in the 子智能体
+   * directory (running / finished). Emitted by runSubAgent at start and at
+   * completion; the terminal UI is unaffected because the hook is optional and
+   * embedding-layer only.
+   */
+  subagentEmit?: (payload: {
+    phase: 'started' | 'done';
+    id: string;
+    goal: string;
+    expert: string;
+    ok?: boolean;
+    answer?: string;
+    /** The subagent's own session id (distinct from the parent session). */
+    subSessionId?: string;
+    durationMs?: number;
+    steps?: number;
+  }) => void;
+  /**
    * Injected by the desktop bridge to surface context compaction in the chat
    * stream as a centered divider ("正在压缩上下文" → "上下文已自动压缩"),
    * mirroring Codex. Emitted by autoCompact.maybeAutoCompact (auto) and the

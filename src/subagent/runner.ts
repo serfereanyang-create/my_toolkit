@@ -64,6 +64,8 @@ export async function runSubAgent(
     // 子 agent 使用简单的自动批准确认（headless 模式）
     confirm: () => Promise.resolve(true),
     toolConfirm: () => Promise.resolve(true),
+    // 深度递增：子 agent 再派生时 spawn_subagent 会检查该值（root=0，子=+1）
+    subAgentDepth: (parentRuntime.subAgentDepth ?? 0) + 1,
   };
 
   // ── 5. 构建增强 prompt ───────────────────────────────────────────────────────
@@ -96,6 +98,18 @@ export async function runSubAgent(
   let answer = '';
   let steps = 0;
 
+  // Surface the run in the desktop 子智能体目录. The parent runtime owns the
+  // hook; the sub-runtime inherits it via the spread above, so nested spawns
+  // report too. Emitting before the turn is what makes a run visible while it
+  // is still in flight.
+  parentRuntime.subagentEmit?.({
+    phase: 'started',
+    id: spec.id,
+    goal: spec.goal,
+    expert: profile.id,
+    subSessionId: subSession.id,
+  });
+
   try {
     const result = await runAgentTurn(subRuntime, enrichedGoal, {
       displayText: `[subagent:${spec.id}] ${spec.goal.slice(0, 80)}`,
@@ -107,6 +121,18 @@ export async function runSubAgent(
     ok = false;
     answer = err instanceof Error ? err.message : String(err);
   }
+
+  parentRuntime.subagentEmit?.({
+    phase: 'done',
+    id: spec.id,
+    goal: spec.goal,
+    expert: profile.id,
+    ok,
+    answer,
+    subSessionId: subSession.id,
+    durationMs: Date.now() - t0,
+    steps,
+  });
 
   return {
     id: spec.id,

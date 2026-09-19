@@ -75,6 +75,52 @@ async function readRecentCommitTitles(workspaceRoot: string): Promise<string[]> 
   }
 }
 
+/**
+ * /subagents — list this session's spawn_subagent runs.
+ *
+ * There is no dedicated subagent index: each run is recorded as a
+ * `spawn_subagent` tool call on the parent session, whose `data` holds the
+ * SubAgentResult[] (id, expert, ok, answer, sub-session id, duration, steps).
+ * Reading those back is what makes the command possible without a new store.
+ */
+function formatSubagentRuns(session: SessionRecord): string {
+  const runs: Array<{
+    id: string; expert: string; ok: boolean; answer: string;
+    sessionId?: string; durationMs?: number; steps?: number;
+  }> = [];
+  for (const call of session.toolCalls) {
+    if (call.tool !== 'spawn_subagent' || !Array.isArray(call.data)) continue;
+    for (const item of call.data as Array<Record<string, unknown>>) {
+      if (!item || typeof item !== 'object') continue;
+      runs.push({
+        id: String(item.id ?? '?'),
+        expert: String(item.expert ?? 'general'),
+        ok: item.ok !== false,
+        answer: String(item.answer ?? ''),
+        sessionId: typeof item.sessionId === 'string' ? item.sessionId : undefined,
+        durationMs: typeof item.durationMs === 'number' ? item.durationMs : undefined,
+        steps: typeof item.steps === 'number' ? item.steps : undefined,
+      });
+    }
+  }
+  if (runs.length === 0) {
+    return '本次会话还没有子智能体运行记录。主智能体通过 spawn_subagent 派发子任务后会出现在这里。';
+  }
+  const lines = [`子智能体运行记录（${runs.length} 条）:`];
+  for (const run of runs) {
+    const status = run.ok ? '✔ 完成' : '✘ 失败';
+    const meta = [
+      run.expert,
+      run.steps != null ? `${run.steps} 步` : '',
+      run.durationMs != null ? `${(run.durationMs / 1000).toFixed(1)}s` : '',
+      run.sessionId ? `会话 ${run.sessionId}` : '',
+    ].filter(Boolean).join(' · ');
+    lines.push(`- [${run.id}] ${status} ${meta}`);
+    if (run.answer) lines.push(`  ${run.answer.replace(/\s+/g, ' ').slice(0, 160)}`);
+  }
+  return lines.join('\n');
+}
+
 /** /reflect — 查看最近沉淀的失败教训（按命中次数排序）。 */
 async function handleReflectCommand(workspaceRoot: string): Promise<string> {
   const store = new ReflectionStore(workspaceRoot);
@@ -319,6 +365,8 @@ export async function handleSlashCommand(options: {
       return options.checkpoints ? options.checkpoints.undoLast() : 'No checkpoint store is available.';
     case '/env-check':
       return handleEnvCheckCommand(options.config.workspaceRoot);
+    case '/subagents':
+      return formatSubagentRuns(options.session);
     case '/reflect':
       return handleReflectCommand(options.config.workspaceRoot);
     case '/version':

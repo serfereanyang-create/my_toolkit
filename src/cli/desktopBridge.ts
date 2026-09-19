@@ -71,6 +71,16 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
   runtime.compactEmit = (payload) => {
     emitEvent({ type: 'context_compaction', sessionId: runtime.session.id, ...payload });
   };
+  // Subagent runs feed the desktop 子智能体目录. `sessionId` here is the PARENT
+  // session — the subagent's own session id travels as `subSessionId` — so the
+  // directory can group runs per conversation.
+  runtime.subagentEmit = (payload) => {
+    emitEvent({
+      type: payload.phase === 'done' ? 'subagent_done' : 'subagent_started',
+      sessionId: runtime.session.id,
+      ...payload,
+    });
+  };
 
   emitEvent({
     type: 'bridge_ready',
