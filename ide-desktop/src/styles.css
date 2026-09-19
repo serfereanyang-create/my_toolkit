@@ -55,8 +55,11 @@
 .workspace-tools-action-card:focus-visible,
 .workspace-tools-primary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .workspace-tools-root { margin: 14px 20px 4px 24px; padding: 9px 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border-subtle); border-radius: var(--r-sm); color: var(--fg-muted); background: var(--bg-side); font: 12px var(--font-mono); }
-.workspace-tools-tabs { display: flex; gap: 4px; padding: 12px 20px 0 24px; border-bottom: 1px solid var(--border-subtle); }
-.workspace-tools-tab { display: inline-flex; align-items: center; gap: 6px; padding: 9px 11px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: var(--r-sm) var(--r-sm) 0 0; color: var(--fg-muted); background: transparent; cursor: pointer; font-size: 12px; }
+.workspace-tools-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 12px 20px 0 24px; border-bottom: 1px solid var(--border-subtle); }
+/* Seven CJK tabs in a narrow side panel used to squeeze each label into one
+   character per line ("概/览"). Let the strip wrap instead, and never break a
+   label internally. */
+.workspace-tools-tab { display: inline-flex; align-items: center; gap: 6px; padding: 9px 11px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: var(--r-sm) var(--r-sm) 0 0; color: var(--fg-muted); background: transparent; cursor: pointer; font-size: 12px; flex: 0 0 auto; white-space: nowrap; }
 .workspace-tools-tab:hover { color: var(--fg); background: var(--bg-hover); }
 .workspace-tools-tab.active { color: var(--accent); border-bottom-color: var(--blue); background: var(--bg-sel); font-weight: 650; }
 .workspace-tools-tab-badge { min-width: 17px; padding: 1px 5px; border-radius: var(--r-pill); color: #ffffff; background: var(--blue); font-size: 10px; font-weight: 700; line-height: 14px; }
@@ -2764,6 +2767,9 @@ h1 {
   font-size: var(--fs-sm);
   cursor: pointer;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  /* Short CJK labels ("系统/开启/关闭") must stay on one line in narrow rows. */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .segmented-item:hover { color: var(--fg); }
 .segmented-item.active { background: var(--bg-elevated); color: var(--fg); box-shadow: 0 1px 2px rgba(31, 30, 29, 0.1); }
