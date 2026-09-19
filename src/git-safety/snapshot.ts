@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import {
   assertObjectId,
   assertSafeCheckpointRef,
+  topAnchoredPathspec,
   type GitProcess,
 } from './git.js';
 import type { GitRepositoryInfo, GitSnapshot, GitSnapshotPhase } from './types.js';
@@ -36,15 +37,20 @@ export class GitSnapshotStore {
         await this.git.text(['read-tree', '--empty'], { env });
       }
 
-      const pathspec = repository.workspacePathspec;
-      const excludeBase = pathspec === '.' ? '.aicode' : `${pathspec}/.aicode`;
+      // Anchor every pathspec to the repository root. Without `:(top)` these
+      // resolve against the GitProcess CWD, which is the WORKSPACE — so when
+      // the workspace is a subdirectory of the repository the pathspec becomes
+      // `<sub>/<sub>` and `add` fails outright ("pathspec did not match any
+      // files"), silently disabling the recovery snapshot.
+      const workspacePathspec = repository.workspacePathspec;
+      const excludeBase = workspacePathspec === '.' ? '.aicode' : `${workspacePathspec}/.aicode`;
       await this.git.text([
         'add',
         '-A',
         '--',
-        pathspec,
-        `:(exclude)${excludeBase}`,
-        `:(exclude)${excludeBase}/**`,
+        topAnchoredPathspec(workspacePathspec),
+        `:(exclude,top)${excludeBase}`,
+        `:(exclude,top)${excludeBase}/**`,
       ], { env });
 
       const tree = assertObjectId((await this.git.text(['write-tree'], { env })).trim());

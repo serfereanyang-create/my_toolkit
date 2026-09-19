@@ -189,8 +189,35 @@ export function assertSafeWorkspacePathspec(value: string): string {
   return value === '.' ? value : assertSafeRelativePath(value);
 }
 
-export function literalPathspec(value: string): string {
-  return `:(literal)${assertSafeRelativePath(value)}`;
+/**
+ * Anchor a repository-relative pathspec to the REPOSITORY ROOT.
+ *
+ * Git resolves a bare pathspec against the process CWD, but the workspace
+ * pathspec from `GitRepository` is relative to the repository root. When the
+ * workspace is a subdirectory of the repository (a normal monorepo layout:
+ * opening `repo/pkg`), an unanchored pathspec resolves against `repo/pkg` and
+ * becomes `pkg/pkg` — either failing with "pathspec did not match any files",
+ * or, worse for `diff`, matching nothing and silently reporting "no changes".
+ * The `:(top)` magic prefix makes Git read the path from the repository root
+ * no matter what the CWD is.
+ *
+ * A bare `:(top).` is NOT equivalent to `.` — it matches nothing — so the
+ * root case must emit `:(top)` with no trailing path.
+ */
+export function topAnchoredPathspec(workspacePathspec: string): string {
+  if (workspacePathspec === '.') return ':(top)';
+  return `:(top)${assertSafeRelativePath(workspacePathspec)}`;
+}
+
+/**
+ * Anchored + literal pathspec for a single repository-relative file.
+ *
+ * Both magics are required: `top` so the path is read from the repository root
+ * (see {@link topAnchoredPathspec}), and `literal` so a path containing glob
+ * characters matches itself instead of being expanded.
+ */
+export function topAnchoredLiteralPathspec(value: string): string {
+  return `:(top,literal)${assertSafeRelativePath(value)}`;
 }
 
 export function sanitizeRemote(remote: string): string {

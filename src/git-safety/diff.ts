@@ -3,7 +3,8 @@ import { dirname, resolve } from 'node:path';
 import {
   assertObjectId,
   assertSafeRelativePath,
-  literalPathspec,
+  topAnchoredLiteralPathspec,
+  topAnchoredPathspec,
   type GitProcess,
 } from './git.js';
 import type {
@@ -27,7 +28,7 @@ export class GitSnapshotDiff {
       baseline.commit,
       result.commit,
       '--',
-      repository.workspacePathspec,
+      topAnchoredPathspec(repository.workspacePathspec),
     ]);
     const entries = parseNameStatus(output);
     const changes: GitPathChange[] = [];
@@ -72,7 +73,10 @@ export class GitSnapshotDiff {
 
   async indexState(repository: GitRepositoryInfo, path: string): Promise<GitIndexEntry[]> {
     const safePath = assertSafeRelativePath(path);
-    const output = await this.git.buffer(['ls-files', '--stage', '-z', '--', literalPathspec(safePath)]);
+    // `--full-name` makes the OUTPUT paths repository-root-relative, matching
+    // the caller's `path`; without it Git prints CWD-relative paths and the
+    // comparison below silently finds nothing when the workspace is nested.
+    const output = await this.git.buffer(['ls-files', '--stage', '--full-name', '-z', '--', topAnchoredLiteralPathspec(safePath)]);
     return parseIndexEntries(output).filter((entry) => entry.path === safePath);
   }
 
@@ -82,7 +86,7 @@ export class GitSnapshotDiff {
 
   private async treeState(commit: string, path: string): Promise<GitPathState | undefined> {
     const safePath = assertSafeRelativePath(path);
-    const output = await this.git.buffer(['ls-tree', '-z', commit, '--', literalPathspec(safePath)]);
+    const output = await this.git.buffer(['ls-tree', '--full-name', '-z', commit, '--', topAnchoredLiteralPathspec(safePath)]);
     const entries = parseTreeEntries(output);
     const entry = entries.find((item) => item.path === safePath);
     if (!entry) return undefined;

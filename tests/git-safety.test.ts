@@ -13,10 +13,11 @@ import {
   assertSafeRelativePath,
   assertSafeWorkspacePathspec,
   buildGitEnvironment,
-  literalPathspec,
   sanitizeError,
   sanitizeRemote,
   stripGitNoise,
+  topAnchoredLiteralPathspec,
+  topAnchoredPathspec,
 } from '../src/git-safety/git.js';
 import { GitRepository } from '../src/git-safety/repository.js';
 import { GitSafetyService } from '../src/git-safety/service.js';
@@ -110,10 +111,28 @@ test('checkpoint refs pathspecs and literal pathspecs enforce their distinct dom
 
   assert.equal(assertSafeWorkspacePathspec('.'), '.');
   assert.equal(assertSafeWorkspacePathspec('packages/app'), 'packages/app');
-  assert.equal(literalPathspec('src/space name.ts'), ':(literal)src/space name.ts');
-  assert.equal(literalPathspec('src/你好.ts'), ':(literal)src/你好.ts');
-  assert.throws(() => literalPathspec('.'));
+  assert.equal(topAnchoredLiteralPathspec('src/space name.ts'), ':(top,literal)src/space name.ts');
+  assert.equal(topAnchoredLiteralPathspec('src/你好.ts'), ':(top,literal)src/你好.ts');
+  assert.throws(() => topAnchoredLiteralPathspec('.'));
   assert.throws(() => assertSafeWorkspacePathspec('src\\app'));
+});
+
+/*
+ * Regression: a workspace nested inside the repository (the normal monorepo
+ * layout, e.g. opening `repo/pkg`) must still snapshot correctly.
+ *
+ * `GitRepository.workspacePathspec` is relative to the REPOSITORY ROOT, but
+ * `GitProcess` runs with the WORKSPACE as its CWD. An unanchored pathspec is
+ * therefore resolved against the workspace and becomes `<sub>/<sub>`, which
+ * made `git add` fail with "pathspec did not match any files" and silently
+ * disabled recovery snapshots for every nested workspace.
+ */
+test('workspacePathspec is anchored to the repository root, not the workspace CWD', () => {
+  // The root case must NOT become `:(top).`, which git treats as matching
+  // nothing — an empty pathspec is the silent-failure shape we are removing.
+  assert.equal(topAnchoredPathspec('.'), ':(top)');
+  assert.equal(topAnchoredPathspec('packages/app'), ':(top)packages/app');
+  assert.throws(() => topAnchoredPathspec('..'));
 });
 
 test('sanitizeRemote strips URL credentials query and fragment but preserves remote names', () => {
@@ -679,6 +698,53 @@ test('GitSnapshotStore supports an unborn HEAD', async () => {
   }
 });
 
+/*
+ * Regression: a workspace nested inside the repository must snapshot and diff
+ * the workspace SUBTREE, not `<sub>/<sub>`.
+ *
+ * Before the `:(top)` anchoring, `store.create` threw
+ * "fatal: pathspec 'pkg' did not match any files" for every nested workspace,
+ * and `diff.manifest` returned an empty change list instead of failing.
+ */
+test('nested workspace snapshots and diffs its own subtree', async () => {
+  const fixture = await makeGitRepository('snapshot-nested', { workspaceSubdir: 'pkg' });
+  try {
+    await writeText(fixture.root, 'pkg/tracked.txt', 'v1\n');
+    await fixture.git(['add', 'pkg/tracked.txt']);
+    await fixture.git(['commit', '-m', 'seed']);
+    await writeText(fixture.root, 'pkg/untracked.txt', 'u1\n');
+
+    const gitProcess = new GitProcess(fixture.workspace);
+    const repository = await new GitRepository(fixture.workspace, gitProcess).discover();
+    assert.ok(repository);
+    assert.equal(repository.root, fixture.root);
+    assert.equal(repository.workspacePathspec, 'pkg');
+
+    const store = new GitSnapshotStore(gitProcess, fixture.workspace);
+    const baseline = await store.create(repository, 'unit_nested_1', 'baseline');
+    await writeText(fixture.root, 'pkg/tracked.txt', 'v2\n');
+    await writeText(fixture.root, 'pkg/untracked.txt', 'u2\n');
+    const result = await store.create(repository, 'unit_nested_1', 'result');
+
+    // The snapshot is layered on HEAD, so it also carries the untouched
+    // repository-root files; the workspace changes must be present on top.
+    const tree = String((await fixture.git(['ls-tree', '-r', '--name-only', result.tree])).stdout);
+    assert.match(tree, /pkg\/tracked\.txt/);
+    assert.match(tree, /pkg\/untracked\.txt/);
+
+    const changes = await new GitSnapshotDiff(gitProcess).manifest(repository, baseline, result);
+    const byPath = new Map(changes.map((change) => [change.path, change]));
+    assert.ok(byPath.has('pkg/tracked.txt'));
+    assert.ok(byPath.has('pkg/untracked.txt'));
+    // `indexState`/`treeState` must report repository-root-relative paths, or
+    // the caller's lookup silently yields nothing.
+    assert.equal(byPath.get('pkg/tracked.txt')?.resultIndex.length, 1);
+    assert.equal(byPath.get('pkg/tracked.txt')?.result?.path, 'pkg/tracked.txt');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('GitSnapshotStore excludes aicode runtime artifacts', async () => {
   const fixture = await makeGitRepository('snapshot-exclude-aicode');
   try {
@@ -896,4 +962,3 @@ test('GitSafetyService finishes a unit at most once', async () => {
     await fixture.cleanup();
   }
 });
-
