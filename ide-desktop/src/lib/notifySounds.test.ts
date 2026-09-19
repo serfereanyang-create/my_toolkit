@@ -34,6 +34,14 @@ describe('cueForEvent', () => {
     expect(cueForEvent({ type: 'turn_done' })).toBe('done');
     expect(cueForEvent({ type: 'error' })).toBe('error');
   });
+  it('cues error rather than done when the turn failed', () => {
+    // The CLI reports failure on turn_done itself (status: 'error'), so keying
+    // the success chime off the event type alone announced success on failure.
+    expect(cueForEvent({ type: 'turn_done', status: 'error' })).toBe('error');
+    expect(cueForEvent({ type: 'turn_done', status: 'ok' })).toBe('done');
+    // A missing status (older bridge) must keep the previous behaviour.
+    expect(cueForEvent({ type: 'turn_done', status: undefined })).toBe('done');
+  });
   it('stays silent for sandbox auto-decided approvals', () => {
     expect(cueForEvent({ type: 'approval_needed', autoDecision: 'deny' })).toBeNull();
     expect(cueForEvent({ type: 'approval_needed', autoDecision: 'allow_once' })).toBeNull();

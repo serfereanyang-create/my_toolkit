@@ -114,14 +114,16 @@ export function soundVolume(prefs: Record<string, unknown> | undefined | null): 
 /**
  * Map an agent event to its notification cue, or null for silent events.
  * Auto-decided approvals (sandbox answered for the user) stay silent — no
- * cue for a prompt the user never sees.
+ * cue for a prompt the user never sees. A turn that ended in failure cues
+ * `error`, not `done`: the CLI reports this via turn_done.status, and playing
+ * the success chime on a failed turn tells the user the opposite of the truth.
  */
-export function cueForEvent(event: { type?: unknown; autoDecision?: unknown }): Cue | null {
+export function cueForEvent(event: { type?: unknown; autoDecision?: unknown; status?: unknown }): Cue | null {
   switch (event.type) {
     case 'approval_needed':
       return event.autoDecision === 'allow_once' || event.autoDecision === 'deny' ? null : 'approval';
     case 'turn_done':
-      return 'done';
+      return event.status === 'error' ? 'error' : 'done';
     case 'error':
       return 'error';
     default:

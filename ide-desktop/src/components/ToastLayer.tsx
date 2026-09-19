@@ -42,7 +42,11 @@ export function ToastLayer({ onFocusChat }: { onFocusChat: () => void }) {
       if (event.type === 'approval_needed') {
         toast = { kind: 'approval', title: '需要确认执行', body: `工具 ${String(event.tool || '')} 等待你的批准` };
       } else if (event.type === 'turn_done') {
-        toast = { kind: 'success', title: '任务完成', body: '智能体已完成本轮工作' };
+        // turn_done carries status 'ok' | 'error'; a failed turn must not be
+        // announced as 任务完成 — the toast would contradict the transcript.
+        toast = event.status === 'error'
+          ? { kind: 'error', title: '本轮执行失败', body: '智能体未能完成本轮工作' }
+          : { kind: 'success', title: '任务完成', body: '智能体已完成本轮工作' };
       } else if (event.type === 'error') {
         toast = { kind: 'error', title: '执行出错', body: String(event.message || '').slice(0, 120) };
       } else if (event.type === 'agent_offline') {
