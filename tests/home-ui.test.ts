@@ -65,6 +65,6 @@ test('renderHomeScreen can still paint a static Ask card when logoOnly is false'
   }
 });
 
-test('chatPromptLabel uses left accent bar', () => {
-  assert.match(chatPromptLabel({ noColor: true }), /│/);
+test('chatPromptLabel uses the codex › glyph', () => {
+  assert.match(chatPromptLabel({ noColor: true }), /›/);
 });

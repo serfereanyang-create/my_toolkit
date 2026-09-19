@@ -1,4 +1,4 @@
-export type ProviderName = 'mock' | 'openai' | 'openai-responses' | 'anthropic' | 'gemini';
+export type ProviderName = 'mock' | 'openai' | 'openai-responses' | 'anthropic' | 'gemini' | 'grok' | 'glm' | 'kimi' | 'deepseek';
 
 export type ApprovalMode = 'ask' | 'auto' | 'deny' | 'plan';
 
@@ -45,6 +45,8 @@ export type ProviderRequest = {
   toolStrategy?: string;
   /** Optional streaming callback for assistant text deltas. */
   onTextDelta?: (delta: string) => void;
+  /** Streaming callback for reasoning/thinking deltas (separate from the answer). */
+  onThinkingDelta?: (delta: string) => void;
   /** Requested reasoning effort tier; provider maps it to its native param. */
   reasoningEffort?: ReasoningEffort;
   /** True when this CLI process is running as the agent backend for the desktop IDE. */

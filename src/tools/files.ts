@@ -21,6 +21,7 @@ export const projectStatusTool: ToolDefinition<Record<string, never>> = {
   description: 'Show workspace, platform, runtime, and key project files.',
   inputHint: '{}',
   risk: 'read',
+  parallelSafe: true,
   validate(input) {
     if (input === undefined || input === null) return {};
     if (typeof input === 'object' && !Array.isArray(input)) return {};
@@ -42,6 +43,7 @@ export const listFilesTool: ToolDefinition<{ path: string; maxFiles: number }> =
   description: 'List text-project files under a workspace-relative path.',
   inputHint: '{ "path": ".", "maxFiles": 100 }',
   risk: 'read',
+  parallelSafe: true,
   validate(input) {
     const record = expectRecord(input);
     return {
@@ -63,6 +65,7 @@ export const readFileTool: ToolDefinition<{ path: string; maxBytes: number }> = 
     'Read a UTF-8 text file. Supports workspace paths, desktop/... aliases, and absolute paths under Desktop/Documents/Downloads/home. .docx files return extracted plain text.',
   inputHint: '{ "path": "desktop/测试.docx", "maxBytes": 20000 }',
   risk: 'read',
+  parallelSafe: true,
   validate(input) {
     const record = expectRecord(input);
     if (typeof record.path !== 'string' || record.path.length === 0) throw new Error('path is required');

@@ -154,6 +154,16 @@ export async function runTaskBoardLoop(options: {
   let executed = 0;
   const memoryStore = new ProjectMemoryStore(options.session.workspaceRoot);
 
+  // 运行租约：让崩溃恢复能区分"本进程仍在执行"与"进程崩溃遗留"。
+  // 租约在每个任务开始时刷新（pid + 时间戳），循环退出时清除。
+  await options.store.writeLease(options.board.id, options.board.tasks.find((task) => task.status === 'in_progress')?.id ?? 'startup');
+  try {
+    return await runLoop();
+  } finally {
+    await options.store.clearLease(options.board.id);
+  }
+
+  async function runLoop(): Promise<{ ok: boolean; status: string; reason?: string }> {
   while (executed < maxTasks) {
     if (options.session.taskRuntime?.mode === 'paused') {
       options.onInfo?.('Task board auto-run paused.');
@@ -182,6 +192,7 @@ export async function runTaskBoardLoop(options: {
       mode: 'executing',
       lastSyncAt: nowIso,
     };
+    await options.store.writeLease(options.board.id, task.id);
     await options.store.save(options.board);
     await options.sessions.save(options.session);
     options.onUpdate?.(options.board);
@@ -341,6 +352,7 @@ export async function runTaskBoardLoop(options: {
   }
 
   return { ok: false, status: options.board.status, reason: 'Task board max task iterations reached' };
+  }
 }
 
 async function completeWithVerification(options: {

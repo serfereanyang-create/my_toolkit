@@ -19,10 +19,11 @@ function captureStdout(run: () => void) {
   }
 }
 
+// Codex TUI layout: `› ` user prefix, `• ` assistant/exec bullets,
+// `  └ ` output block, no emoji, no OpenCode section headers.
+
 test('TerminalUI lays out task assistant and tool output with clean no-color spacing', () => {
   const ui = new TerminalUI({ noColor: true, verbose: true });
-  // modelHint used by Build status row
-  (ui as unknown as { modelHint: string }).modelHint = 'gpt-5.5';
   const output = captureStdout(() => {
     ui.turnStart('帮我检查最近的大文件');
     ui.assistant('先看磁盘增长。');
@@ -30,28 +31,23 @@ test('TerminalUI lays out task assistant and tool output with clean no-color spa
     ui.toolResult('disk_growth', { ok: true, output: 'sizeMB\tpath\n120.4\tout/cache.bin' });
   });
 
-  // OpenCode-like user bubble + Build status
-  assert.match(output, /│ 帮我检查最近的大文件/);
-  assert.match(output, /Build · gpt-5\.5|Build.*gpt-5\.5/);
-  assert.match(output, /\n\* Assistant\n先看磁盘增长。\n/);
-  assert.match(output, /\n\* Tool 1 disk_growth\n  input: \{"path":"\.","hours":48\}\n  status: running\n  result: ✓ ok \d+ms\n  output:\n    sizeMB\tpath\n    120\.4\tout\/cache\.bin\n/);
+  assert.match(output, /\n› 帮我检查最近的大文件\n/);
+  assert.match(output, /\n• 先看磁盘增长。\n/);
+  assert.match(output, /\n  • Tool 1 disk_growth \.\n/, 'exec row: bullet + indexed title + primary arg');
+  assert.match(output, /\n  result: ✓ ok \d+ms\n  output:\n    sizeMB\tpath\n    120\.4\tout\/cache\.bin\n/);
   assert.doesNotMatch(output, /waiting for tool result/);
-  assert.doesNotMatch(output, /\* You\n/);
+  assert.doesNotMatch(output, /Task|You ran/);
 });
 
-test('TerminalUI request chrome uses user bubble not Task header', () => {
+test('TerminalUI request chrome uses the › user prefix not a box', () => {
   const ui = new TerminalUI({ noColor: true });
-  (ui as unknown as { modelHint: string }).modelHint = 'grok-4.5';
   const output = captureStdout(() => ui.turnStart('哈哈哈哈'));
-  assert.match(output, /┌/);
-  assert.match(output, /│ 哈哈哈哈/);
-  assert.match(output, /└/);
-  assert.match(output, /Build/);
-  assert.match(output, /grok-4\.5/);
+  assert.match(output, /\n› 哈哈哈哈\n/);
+  assert.doesNotMatch(output, /┌|└/);
   assert.doesNotMatch(output, /\* Task|\* You/);
 });
 
-test('TerminalUI folds tool process into one summary line by default', () => {
+test('TerminalUI folds tool process into bullet rows by default', () => {
   const ui = new TerminalUI({ noColor: true });
   const output = captureStdout(() => {
     ui.toolStart('disk_info', { drive: 'C' });
@@ -61,23 +57,31 @@ test('TerminalUI folds tool process into one summary line by default', () => {
       data: { disks: [{ name: 'C:', path: 'C:/', usedGb: 224.77, freeGb: 188.01, totalGb: 412.79 }] },
     });
   });
-  // New format: ▸ Tool 1 disk_info … (emoji when noColor=true becomes ▸)
-  assert.match(output, /▸ Tool 1 disk_info …/);
-  // New format: ✓ disk_info ok (with checkmark)
-  assert.match(output, /✓ disk_info ok \d+ms · /);
+  assert.match(output, /  • Running disk_info\n/);
+  assert.match(output, /  • Ran disk_info/);
+  assert.match(output, /\n  └ name\tpath\tusedGB\tfreeGB\ttotalGB\n/);
   assert.doesNotMatch(output, /\n  input:/);
-  assert.doesNotMatch(output, /\n  output:\n/);
 });
 
-test('TerminalUI omits empty tool output blocks', () => {
+test('TerminalUI caps tool output with the transcript hint', () => {
+  const ui = new TerminalUI({ noColor: true });
+  const lines = Array.from({ length: 9 }, (_, index) => `row ${index}`).join('\n');
+  const output = captureStdout(() => {
+    ui.toolResult('list_dir', { ok: true, output: lines });
+  });
+  const outputRows = output.split('\n').filter((line) => line.startsWith('  └ row'));
+  assert.equal(outputRows.length, 5, 'exec_cell TOOL_CALL_MAX_LINES');
+  assert.match(output, /└ … \+4 lines \(ctrl \+ t to view transcript\)/);
+});
+
+test('TerminalUI omits empty tool output blocks (verbose keeps result line)', () => {
   const ui = new TerminalUI({ noColor: true, verbose: true });
   const output = captureStdout(() => {
     ui.toolStart('git_status', {});
     ui.toolResult('git_status', { ok: true, output: '' });
   });
 
-  assert.match(output, /\n\* Tool 1 git_status\n/);
-  // New format includes ✓ checkmark
+  assert.match(output, /  • Tool 1 git_status\n/);
   assert.match(output, /  result: ✓ ok \d+ms\n/);
   assert.doesNotMatch(output, /\n  output:\n/);
 });
@@ -89,28 +93,73 @@ test('TerminalUI does not column-reflow long assistant lines', () => {
     const ui = new TerminalUI({ noColor: true });
     const long = 'abcdefghijklmnopqrstuvwxyz0123456789中文中文';
     const output = captureStdout(() => ui.assistant(long));
-    // Assistant body has no left indent and stays one logical line.
-    assert.match(output, new RegExp(`\\n\\* Assistant\\n${long}\\n`));
-    const bodyLines = output.split(/\r?\n/).filter((line) => line === long);
+    // Assistant body keeps one logical line behind the dim bullet prefix.
+    assert.match(output, new RegExp(`• ${long}\\n`));
+    const bodyLines = output.split(/\r?\n/).filter((line) => line === `• ${long}`);
     assert.equal(bodyLines.length, 1);
   } finally {
     process.stdout.columns = originalColumns;
   }
 });
 
-test('TerminalUI assistant body has no indent padding', () => {
+test('TerminalUI assistant body has no indent padding on the first row', () => {
   const ui = new TerminalUI({ noColor: true });
   const output = captureStdout(() => ui.assistant('先看磁盘增长。'));
-  assert.match(output, /\n\* Assistant\n先看磁盘增长。\n/);
+  assert.match(output, /• 先看磁盘增长。\n/);
   assert.doesNotMatch(output, /\n  先看磁盘增长。/);
 });
 
-test('TerminalUI colored mode uses section markers without painting whole assistant body green', () => {
+test('TerminalUI colored mode uses the dim bullet without painting the body', () => {
   const ui = new TerminalUI({ noColor: false });
   const output = captureStdout(() => {
     ui.assistant('hello body');
   });
-  // Title is green/bold; body should not be wrapped entirely as green stream for non-stream path.
-  assert.match(output, /Assistant/);
+  // messages.rs AgentMarkdownCell: dim `• ` prefix, body uncolored.
+  assert.match(output, /\u001b\[2m• \u001b\[0mhello body/);
   assert.match(output, /hello body/);
+});
+
+test('TerminalUI welcome block lists starter commands with dim descriptions', () => {
+  const ui = new TerminalUI({ noColor: true });
+  const output = captureStdout(() => ui.welcomeCommands());
+  assert.match(output, /To get started, describe a task or try one of these commands:/);
+  assert.match(output, /\n  \/init - create AGENTS\.md workspace instructions\n/);
+  assert.match(output, /\n  \/help - floating command palette\n/);
+});
+
+test('TerminalUI json mode streams thinking deltas with open/close lifecycle', () => {
+  const ui = new TerminalUI({ json: true });
+  const output = captureStdout(() => {
+    ui.modelStart();
+    ui.thinkingDelta('第一段思考');
+    ui.thinkingDelta('，继续思考');
+    ui.assistantDelta('回答');
+    ui.modelEnd();
+  });
+  const events = output.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+  const types = events.map((event) => event.type);
+  assert.deepEqual(types, ['model_start', 'thinking_start', 'thinking_delta', 'thinking_delta', 'assistant_delta', 'thinking_end', 'model_end']);
+  assert.equal(events[2].text, '第一段思考');
+  assert.equal(events[3].text, '，继续思考');
+  assert.equal(typeof (events[5] as { durationMs?: unknown }).durationMs, 'number');
+});
+
+test('TerminalUI json mode emits no thinking lifecycle when nothing was streamed', () => {
+  const ui = new TerminalUI({ json: true });
+  const output = captureStdout(() => {
+    ui.modelStart();
+    ui.assistantDelta('直接回答');
+    ui.modelEnd();
+  });
+  const types = output.trim().split('\n').map((line) => JSON.parse(line) as { type: string }).map((event) => event.type);
+  assert.deepEqual(types, ['model_start', 'assistant_delta', 'model_end']);
+});
+
+test('TerminalUI non-json mode ignores thinking deltas entirely', () => {
+  const ui = new TerminalUI({ noColor: true });
+  const output = captureStdout(() => {
+    ui.thinkingDelta('思考');
+    ui.modelEnd();
+  });
+  assert.equal(output, '');
 });

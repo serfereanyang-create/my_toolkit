@@ -16,10 +16,14 @@ import { loadPluginTools } from '../plugins/loader.js';
 import { createProvider } from '../providers/index.js';
 import { CheckpointStore } from '../session/checkpoint.js';
 import { ProjectMemoryStore } from '../memory/store.js';
+import { ReflectionStore } from '../reflection/store.js';
 import { SessionStore } from '../session/store.js';
+import { TaskBoardStore } from '../tasks/store.js';
 import { createDefaultToolRegistry } from '../tools/index.js';
 import { type ToolScope } from '../tools/scope.js';
 import { TerminalUI } from '../ui/terminal.js';
+import { CommandJobManager } from '../safety/commandJobs.js';
+import type { AgentRuntime } from '../agent/agent.js';
 
 export async function createAgentRuntime(config: AppConfig) {
   const provider = createProvider(config);
@@ -41,13 +45,13 @@ export async function createAgentRuntime(config: AppConfig) {
     json: config.json,
     noColor: config.noColor,
     verbose: config.verbose,
-    homeScreen: !config.prompt && !config.ci && !config.json && !config.desktopBridge,
     version,
   });
 
   const sessions = new SessionStore(config.sessionDir);
   const checkpoints = new CheckpointStore(config.workspaceRoot);
   const memory = new ProjectMemoryStore(config.workspaceRoot);
+  const reflections = new ReflectionStore(config.workspaceRoot);
   const gitProcess = new GitProcess(config.workspaceRoot);
   const gitAudit = new GitAuditLog(config.workspaceRoot);
   const gitRepository = new GitRepository(config.workspaceRoot, gitProcess);
@@ -61,16 +65,32 @@ export async function createAgentRuntime(config: AppConfig) {
     : await sessions.create({ provider: provider.name, model: provider.model, workspaceRoot: config.workspaceRoot });
 
   const hooks = createNoopHooks();
-  const runtime = {
+  const commandJobs = new CommandJobManager();
+
+  // Crash recovery (D4): tasks left in_progress by a previous process are
+  // marked blocked with the reason, so a fresh start never silently resumes
+  // half-executed work. Best-effort — never blocks startup.
+  try {
+    const recoveredBoards = await new TaskBoardStore(config.workspaceRoot).recoverInterrupted();
+    if (recoveredBoards.length > 0) {
+      const taskWord = recoveredBoards.length === 1 ? 'task board' : 'task boards';
+      ui.info(`Recovered ${recoveredBoards.length} interrupted ${taskWord}: in-progress tasks were marked blocked.`);
+    }
+  } catch { /* recovery is best-effort */ }
+
+  const runtime: AgentRuntime = {
     config,
     provider,
     tools: allTools,
+    allTools,
     sessions,
     checkpoints,
     memory,
+    reflections,
     session,
     ui,
     hooks,
+    commandJobs,
     toolScope: (config.toolScope ?? 'auto') as ToolScope,
     gitSafety,
     gitRollback,
@@ -82,9 +102,11 @@ export async function createAgentRuntime(config: AppConfig) {
     },
     async reloadMcp() {
       await mcp.close();
-      const existingToolNames = new Set(
-        allTools.list().filter((tool) => !tool.name.startsWith('mcp_')).map((tool) => tool.name),
-      );
+      // Remove exactly the MCP tools owned by the old manager. Keeping a broad
+      // startsWith('mcp_') filter could delete plugin/core tools with a similar
+      // name and still leave colliding old names in edge cases.
+      for (const name of mcp.toolNames) allTools.unregister(name);
+      const existingToolNames = new Set(allTools.list().map((tool) => tool.name));
       const next = await loadMcpManager({ workspaceRoot: config.workspaceRoot, existingNames: existingToolNames });
       for (const tool of next.tools) allTools.register(tool, { replace: true });
       mcp = next;
@@ -100,7 +122,21 @@ export async function createAgentRuntime(config: AppConfig) {
     runtime,
     mcpStatuses: mcp.statuses,
     async close() {
-      await mcp.close();
+      const closeErrors: string[] = [];
+      // The automation manager is created lazily by /automate commands; stop
+      // its watchers/monitors/cron registrations if it was ever created.
+      if (runtime.automationManager) {
+        try { await runtime.automationManager.close(); } catch (error) {
+          closeErrors.push(`automation: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      try { await commandJobs.close(); } catch (error) {
+        closeErrors.push(`commandJobs: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      try { await mcp.close(); } catch (error) {
+        closeErrors.push(`mcp: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (closeErrors.length > 0) throw new Error(`Runtime close failures: ${closeErrors.join('; ')}`);
     },
   };
 }

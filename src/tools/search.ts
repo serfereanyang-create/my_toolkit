@@ -10,6 +10,7 @@ export const searchTextTool: ToolDefinition<{ query: string; path: string; maxMa
   description: 'Search text files under the workspace for a literal query.',
   inputHint: '{ "query": "needle", "path": ".", "maxMatches": 20 }',
   risk: 'read',
+  parallelSafe: true,
   validate(input) {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new Error('expected an object');
     const record = input as Record<string, unknown>;

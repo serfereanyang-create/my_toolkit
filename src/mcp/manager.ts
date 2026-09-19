@@ -10,6 +10,8 @@ export type McpManager = {
   statuses: McpServerStatus[];
   close(): Promise<void>;
   reload(): Promise<McpManager>;
+  /** Remove this manager's bridged tools from a registry before replacement. */
+  toolNames: string[];
 };
 
 export type LoadMcpOptions = {
@@ -33,17 +35,20 @@ export async function loadMcpManager(options: LoadMcpOptions): Promise<McpManage
     return {
       clients: [],
       tools: [],
+      toolNames: [],
       statuses: [{ name: '*', enabled: true, connected: false, toolCount: 0, error: message, command: '' }],
       async close() {},
       async reload() {
-        return loadMcpManager(options);
+        return loadMcpManager({ ...options, existingNames: new Set(baseExistingNames) });
       },
     };
   }
 
-  const existingNames = options.existingNames ?? new Set<string>();
+  const baseExistingNames = new Set(options.existingNames ?? []);
+  const existingNames = new Set(baseExistingNames);
   const clients: McpClient[] = [];
   const tools: ToolDefinition[] = [];
+  const toolNames: string[] = [];
   const statuses: McpServerStatus[] = [];
 
   for (const server of config.servers) {
@@ -73,6 +78,7 @@ export async function loadMcpManager(options: LoadMcpOptions): Promise<McpManage
           continue;
         }
         existingNames.add(tool.name);
+        toolNames.push(tool.name);
         tools.push(tool);
         registered += 1;
       }
@@ -104,13 +110,14 @@ export async function loadMcpManager(options: LoadMcpOptions): Promise<McpManage
   return {
     clients,
     tools,
+    toolNames,
     statuses,
     async close() {
       await Promise.all(clients.map((client) => client.close().catch(() => undefined)));
     },
     async reload() {
       await Promise.all(clients.map((client) => client.close().catch(() => undefined)));
-      return loadMcpManager(options);
+      return loadMcpManager({ ...options, existingNames: new Set(baseExistingNames) });
     },
   };
 }
@@ -134,10 +141,11 @@ function emptyManager(options: LoadMcpOptions): McpManager {
   return {
     clients: [],
     tools: [],
+    toolNames: [],
     statuses: [],
     async close() {},
     async reload() {
-      return loadMcpManager(options);
+      return loadMcpManager({ ...options, existingNames: new Set(options.existingNames ?? []) });
     },
   };
 }

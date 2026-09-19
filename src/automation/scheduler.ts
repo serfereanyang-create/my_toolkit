@@ -1,48 +1,109 @@
 import type { AutomationTask, CronTrigger } from './types.js';
 
 /**
- * Cron 调度器
- * 使用系统提供的 CronCreate/CronList/CronDelete 工具管理定时任务
+ * Host integration used by the scheduler. The CLI does not expose CronCreate
+ * as a local API, so callers must inject a real provider before cron tasks can
+ * be started. This prevents a schedule from being reported as enabled when no
+ * scheduler exists.
  */
+export type CronAutomationProvider = {
+  create: (input: { title: string; cron: string; prompt: string }) => Promise<string>;
+  delete: (id: string) => Promise<void>;
+  list: () => Promise<Array<{ id: string; title: string; cron: string }>>;
+};
+
+export type AutomationSchedulerOptions = {
+  cronProvider?: CronAutomationProvider;
+};
+
+/** Cron scheduler with an explicit host integration boundary. */
 export class AutomationScheduler {
-  /**
-   * 启动自动化任务（注册到 Cron 系统）
-   */
+  private readonly cronProvider?: CronAutomationProvider;
+  private readonly cronIds = new Map<string, string>();
+
+  constructor(options: AutomationSchedulerOptions = {}) {
+    this.cronProvider = options.cronProvider;
+  }
+
+  /** Register a cron task and return the host scheduler's ID. */
   async startTask(task: AutomationTask): Promise<string> {
     if (task.trigger.type !== 'cron') {
       throw new Error(`Task ${task.id} is not a cron task`);
     }
-    
+
+    const existing = this.cronIds.get(task.id);
+    if (existing) return existing;
+
     const trigger = task.trigger as CronTrigger;
-    const prompt = this.buildExecutionPrompt(task);
-    
-    // 使用系统 CronCreate 工具创建定时任务
-    // 注意：这里假设 CronCreate 是通过全局注入的工具调用
-    // 实际实现中，需要通过 runtime 或其他方式访问
-    const cronId = await this.createCronAutomation(task.name, trigger.expression, prompt);
-    
+    const expression = trigger.expression.trim();
+    if (!expression) {
+      throw new Error(`Cannot start cron task ${task.id}: cron expression is empty`);
+    }
+    if (!this.cronProvider) {
+      throw new Error(
+        `Cannot start cron task ${task.id}: no CronCreate integration is available. ` +
+        'Run it manually with /automate run <task-id> or provide a cron scheduler integration.',
+      );
+    }
+
+    const cronId = (await this.cronProvider.create({
+      title: task.name,
+      cron: expression,
+      prompt: this.buildExecutionPrompt(task),
+    })).trim();
+    if (!cronId) {
+      throw new Error(`CronCreate returned no automation ID for task ${task.id}`);
+    }
+
+    this.cronIds.set(task.id, cronId);
     return cronId;
   }
-  
-  /**
-   * 停止自动化任务（从 Cron 系统中删除）
-   */
+
+  /** Remove a cron task from the host scheduler. */
   async stopTask(cronAutomationId: string): Promise<void> {
-    // 使用系统 CronDelete 工具删除定时任务
-    await this.deleteCronAutomation(cronAutomationId);
+    if (!cronAutomationId) return;
+    if (!this.cronProvider) {
+      throw new Error(
+        `Cannot stop cron automation ${cronAutomationId}: no CronDelete integration is available. ` +
+        'Provide the scheduler integration before stopping this task.',
+      );
+    }
+    await this.cronProvider.delete(cronAutomationId);
+    for (const [taskId, id] of this.cronIds) {
+      if (id === cronAutomationId) this.cronIds.delete(taskId);
+    }
   }
-  
-  /**
-   * 列出所有 Cron 自动化任务
-   */
+
+  /** List host cron tasks. */
   async listCronAutomations(): Promise<Array<{ id: string; title: string; cron: string }>> {
-    // 使用系统 CronList 工具列出所有定时任务
-    return await this.getCronAutomations();
+    if (!this.cronProvider) {
+      throw new Error(
+        'Cannot list cron automations: no CronList integration is available. ' +
+        'Provide the scheduler integration before listing scheduled tasks.',
+      );
+    }
+    return this.cronProvider.list();
   }
-  
-  /**
-   * 构建执行 prompt（会被 Cron 系统在触发时调用）
-   */
+
+  /** Stop all schedules owned by this scheduler instance. */
+  async close(): Promise<void> {
+    const ids = [...this.cronIds.values()];
+    if (ids.length === 0) return;
+    if (!this.cronProvider) {
+      this.cronIds.clear();
+      throw new Error('Cannot close cron scheduler: no CronDelete integration is available.');
+    }
+
+    const results = await Promise.allSettled(ids.map((id) => this.cronProvider!.delete(id)));
+    this.cronIds.clear();
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+    if (failures.length > 0) {
+      throw new Error(`Failed to stop ${failures.length} cron automation(s): ${failures.join('; ')}`);
+    }
+  }
+
   private buildExecutionPrompt(task: AutomationTask): string {
     return `Execute automation task: ${task.name}
 
@@ -51,31 +112,5 @@ Goal: ${task.action.goal}
 Auto-confirm plan: ${task.action.confirmPlan}
 
 This is an automated task execution. Create and execute a task board for the goal above.`;
-  }
-  
-  /**
-   * 调用系统 CronCreate 工具
-   * 注意：此方法需要在运行时环境中实现，这里仅作占位
-   */
-  private async createCronAutomation(title: string, cron: string, prompt: string): Promise<string> {
-    // TODO: 实际实现需要调用系统的 CronCreate 工具
-    // 这里先返回模拟ID，实际使用时需要集成到 CLI runtime 中
-    throw new Error('CronCreate integration not yet implemented in this context. Use CLI command /automate with CronCreate tool.');
-  }
-  
-  /**
-   * 调用系统 CronDelete 工具
-   */
-  private async deleteCronAutomation(id: string): Promise<void> {
-    // TODO: 实际实现需要调用系统的 CronDelete 工具
-    throw new Error('CronDelete integration not yet implemented in this context. Use CLI command /automate with CronDelete tool.');
-  }
-  
-  /**
-   * 调用系统 CronList 工具
-   */
-  private async getCronAutomations(): Promise<Array<{ id: string; title: string; cron: string }>> {
-    // TODO: 实际实现需要调用系统的 CronList 工具
-    throw new Error('CronList integration not yet implemented in this context. Use CLI command /automate with CronList tool.');
   }
 }

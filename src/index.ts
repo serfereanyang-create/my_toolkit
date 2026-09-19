@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { completionScript } from './cli/completion.js';
 import { formatDoctor, runDoctor } from './cli/doctor.js';
 import { parseArgs } from './cli/args.js';
+import { runHeadlessTool } from './cli/headlessTool.js';
 import { runDesktopBridge } from './cli/desktopBridge.js';
 import { runPromptMode, runRepl } from './cli/repl.js';
 import { confirmProviderStart } from './cli/startupConfirm.js';
@@ -46,7 +47,21 @@ async function main() {
     return;
   }
 
+  // Headless single-tool invocation for host integrations. Runs before the
+  // banner so stdout carries exactly one JSON result line.
+  if (config.invokeTool) {
+    const result = await runHeadlessTool(config, tools);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (!result.ok) process.exitCode = 1;
+    await created.close();
+    return;
+  }
+
   ui.banner(config, provider);
+  // session.rs first-run copy: only for a fresh interactive session.
+  if (!config.prompt && !config.desktopBridge && !config.ci && (runtime.session.messages?.length ?? 0) === 0) {
+    ui.welcomeCommands();
+  }
   if (config.resumeSessionId) ui.info(`resumed session: ${runtime.session.id}`);
   if (mcpStatuses.some((status) => status.enabled)) ui.info(formatMcpStatus(mcpStatuses));
 

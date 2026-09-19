@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFile as execFileCallback, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { promisify } from 'node:util';
 import { resolveWorkspacePath } from '../safety/policy.js';
 import { encodeMcpMessage, McpFrameReader, type McpMessage } from './framing.js';
 import type {
@@ -11,6 +12,14 @@ import type {
 } from './types.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
+const execFile = promisify(execFileCallback);
+
+/** Environment inherited by MCP servers. Secrets and application credentials are intentionally excluded. */
+const SAFE_MCP_ENV_KEYS = [
+  'PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'ComSpec', 'COMSPEC',
+  'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+  'LANG', 'LC_ALL', 'LC_CTYPE',
+] as const;
 
 export type McpClientOptions = {
   workspaceRoot: string;
@@ -82,16 +91,24 @@ export class McpClient {
 
     this.child = this.spawnImpl(this.server.command, this.server.args, {
       cwd,
-      env: { ...process.env, ...this.server.env },
+      // MCP servers receive only execution/runtime basics by default. Values in
+      // the server's explicit env block are intentional per-server overrides.
+      env: buildMcpEnv(this.server.env),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       shell: false,
+      // A detached POSIX process group lets close() terminate descendants too.
+      detached: process.platform !== 'win32',
     }) as ChildProcessWithoutNullStreams;
 
     this.child.stdout.on('data', (chunk: Buffer) => this.onStdout(chunk));
     this.child.stderr.on('data', (chunk: Buffer) => {
       const text = chunk.toString('utf8');
       this.stderrTail = `${this.stderrTail}${text}`.slice(-4000);
+    });
+    this.child.stdin.on('error', (error) => {
+      this.lastError = error.message;
+      this.failAll(error);
     });
     this.child.on('error', (error) => {
       this.lastError = error.message;
@@ -122,36 +139,29 @@ export class McpClient {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
+    const child = this.child;
     this.closed = true;
     this.failAll(new Error(`MCP server ${this.name} closed`));
-    if (!this.child) return;
+    if (!child) return;
+
     try {
-      this.child.stdin.end();
+      child.stdin.end();
     } catch {
       // ignore
     }
-    const child = this.child;
-    await new Promise<void>((resolveClose) => {
-      const timer = setTimeout(() => {
-        try {
-          child.kill();
-        } catch {
-          // ignore
-        }
-        resolveClose();
-      }, 1000);
-      child.once('exit', () => {
-        clearTimeout(timer);
-        resolveClose();
-      });
+
+    // Give a cooperative server a short opportunity to exit, then kill its
+    // process group/tree. A direct child.kill() does not remove grandchildren.
+    await waitForExit(child, 250);
+    if (!hasExited(child)) await terminateProcessTree(child);
+    await waitForExit(child, 750);
+    if (!hasExited(child)) {
       try {
-        child.kill();
+        child.kill('SIGKILL');
       } catch {
-        clearTimeout(timer);
-        resolveClose();
+        // ignore
       }
-    });
+    }
     this.child = undefined;
   }
 
@@ -195,7 +205,13 @@ export class McpClient {
         rejectPromise(new Error(`MCP ${this.name} ${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       this.pending.set(id, { resolve: resolvePromise, reject: rejectPromise, timer });
-      this.write(message);
+      try {
+        this.write(message);
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        rejectPromise(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -214,7 +230,12 @@ export class McpClient {
     try {
       messages = this.reader.push(chunk);
     } catch (error) {
-      this.lastError = error instanceof Error ? error.message : String(error);
+      const protocolError = error instanceof Error ? error : new Error(String(error));
+      this.lastError = protocolError.message;
+      // A malformed stream cannot be resynchronized safely. Reject every
+      // operation before tearing down the server so no request can hang.
+      this.failAll(protocolError);
+      void this.close();
       return;
     }
     for (const message of messages) this.handleMessage(message);
@@ -248,6 +269,55 @@ export class McpClient {
 
 export function createMcpClient(options: McpClientOptions) {
   return new McpClient(options);
+}
+
+function buildMcpEnv(explicit: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of SAFE_MCP_ENV_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return { ...env, ...explicit };
+}
+
+function hasExited(child: ChildProcessWithoutNullStreams) {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+async function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number) {
+  if (hasExited(child)) return;
+  await new Promise<void>((resolveWait) => {
+    const timer = setTimeout(resolveWait, timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolveWait();
+    });
+  });
+}
+
+async function terminateProcessTree(child: ChildProcessWithoutNullStreams) {
+  const pid = child.pid;
+  if (!pid) {
+    try { child.kill('SIGKILL'); } catch { /* ignore */ }
+    return;
+  }
+
+  if (process.platform === 'win32') {
+    try {
+      await execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 1_000 });
+      return;
+    } catch {
+      // Fall back for test doubles and systems without taskkill.
+    }
+  } else {
+    try {
+      process.kill(-pid, 'SIGKILL');
+      return;
+    } catch {
+      // A non-detached/test child has no process group; kill it directly.
+    }
+  }
+  try { child.kill('SIGKILL'); } catch { /* ignore */ }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

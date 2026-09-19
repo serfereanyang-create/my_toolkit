@@ -9,6 +9,12 @@ const VALID_EXPERTS = new Set([
   'doc_generation', 'shell_runtime', 'data_processing', 'general',
 ]);
 
+/**
+ * 子智能体嵌套深度上限：root agent 为 0 层，其派生的子 agent 为 1 层，以此类推。
+ * 子 agent 自身携带 spawn_subagent 时深度递增，达到上限即拒绝，防止无限递归。
+ */
+export const MAX_SUBAGENT_DEPTH = 3;
+
 function validateBatchInput(raw: unknown): SubAgentBatchInput {
   if (!raw || typeof raw !== 'object') {
     throw new Error('spawn_subagent: input must be an object');
@@ -137,6 +143,14 @@ export function createSpawnSubagentTool(parentRuntime: AgentRuntime): ToolDefini
     },
     async execute(input: SubAgentBatchInput): Promise<ToolResult> {
       try {
+        // 深度防护：runtime.subAgentDepth 由 runSubAgent 递增（root=0）。
+        const currentDepth = parentRuntime.subAgentDepth ?? 0;
+        if (currentDepth >= MAX_SUBAGENT_DEPTH) {
+          return {
+            ok: false,
+            output: `spawn_subagent 已达嵌套深度上限（${MAX_SUBAGENT_DEPTH} 层，当前 ${currentDepth} 层）。请直接完成任务，不要再派生子智能体。`,
+          };
+        }
         const results = await runSubAgentBatch(input, parentRuntime);
         return { ok: true, output: formatResults(results), data: results };
       } catch (err) {

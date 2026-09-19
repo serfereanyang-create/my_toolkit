@@ -1,6 +1,9 @@
-import { mkdir, readFile, rm, writeFile, rename } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+
+const CHECKPOINT_ID = /^cp_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 export type CheckpointEntry = {
   id: string;
@@ -23,23 +26,34 @@ export class CheckpointStore {
   }
 
   async beforeWrite(path: string) {
+    const safePath = this.assertWorkspacePath(path);
     const id = makeId();
     const backupPath = join(this.backupDir, `${id}.bak`);
     let existed = true;
+    let content: Buffer;
     try {
-      const content = await readFile(path);
-      await mkdir(dirname(backupPath), { recursive: true });
-      await writeFile(backupPath, content);
-    } catch {
-      existed = false;
+      content = await readFile(safePath);
+    } catch (error) {
+      if (isMissing(error)) {
+        existed = false;
+        content = Buffer.alloc(0);
+      } else {
+        throw error;
+      }
     }
-    const entry: CheckpointEntry = { id, action: 'write', createdAt: new Date().toISOString(), path, backupPath, existed };
+    if (existed) {
+      await mkdir(dirname(backupPath), { recursive: true });
+      await writeFile(backupPath, content, { encoding: undefined, flag: 'wx' });
+    }
+    const entry: CheckpointEntry = { id, action: 'write', createdAt: new Date().toISOString(), path: safePath, backupPath, existed };
     await this.push(entry);
     return entry;
   }
 
   async beforeRename(from: string, to: string) {
-    const entry: CheckpointEntry = { id: makeId(), action: 'rename', createdAt: new Date().toISOString(), from, to };
+    const safeFrom = this.assertWorkspacePath(from);
+    const safeTo = this.assertWorkspacePath(to);
+    const entry: CheckpointEntry = { id: makeId(), action: 'rename', createdAt: new Date().toISOString(), from: safeFrom, to: safeTo };
     await this.push(entry);
     return entry;
   }
@@ -86,27 +100,35 @@ export class CheckpointStore {
 
   /** Restore a single checkpoint entry's file to its pre-write/rename state. */
   private async revert(entry: CheckpointEntry) {
+    assertCheckpointId(entry.id);
     if (entry.action === 'write' && entry.path) {
+      const safePath = this.assertWorkspacePath(entry.path);
       if (entry.existed && entry.backupPath) {
-        const content = await readFile(entry.backupPath);
-        await mkdir(dirname(entry.path), { recursive: true });
-        await writeFile(entry.path, content);
+        const backupPath = this.assertBackupPath(entry.backupPath, entry.id);
+        const content = await readFile(backupPath);
+        await mkdir(dirname(safePath), { recursive: true });
+        await writeFile(safePath, content);
       } else {
-        await rm(entry.path, { force: true });
+        await rm(safePath, { force: true });
       }
     }
 
     if (entry.action === 'rename' && entry.from && entry.to) {
-      await mkdir(dirname(entry.from), { recursive: true });
-      await rename(entry.to, entry.from);
+      const from = this.assertWorkspacePath(entry.from);
+      const to = this.assertWorkspacePath(entry.to);
+      await mkdir(dirname(from), { recursive: true });
+      await rename(to, from);
     }
   }
 
   async list() {
     try {
-      return JSON.parse(await readFile(this.indexPath, 'utf8')) as CheckpointEntry[];
-    } catch {
-      return [];
+      const value = JSON.parse(await readFile(this.indexPath, 'utf8')) as unknown;
+      if (!Array.isArray(value)) return [];
+      return value.filter(isCheckpointEntry);
+    } catch (error) {
+      if (isMissing(error)) return [];
+      throw error;
     }
   }
 
@@ -118,10 +140,57 @@ export class CheckpointStore {
 
   private async save(entries: CheckpointEntry[]) {
     await mkdir(dirname(this.indexPath), { recursive: true });
-    await writeFile(this.indexPath, `${JSON.stringify(entries, null, 2)}\n`, 'utf8');
+    const temporary = `${this.indexPath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, `${JSON.stringify(entries, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+      await rename(temporary, this.indexPath);
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private assertWorkspacePath(path: string) {
+    if (!path || path.includes('\0')) throw new Error('Invalid checkpoint path');
+    const candidate = resolve(path);
+    const workspace = resolve(this.root);
+    const desktop = resolve(join(homedir(), 'Desktop'));
+    const allowed = [workspace, desktop];
+    if (!allowed.some((root) => isPathInside(root, candidate))) {
+      throw new Error(`Checkpoint path is outside allowed roots: ${path}`);
+    }
+    return candidate;
+  }
+
+  private assertBackupPath(path: string, id: string) {
+    const candidate = resolve(path);
+    const rel = relative(this.backupDir, candidate);
+    if (rel !== `${id}.bak`) throw new Error(`Invalid checkpoint backup path: ${path}`);
+    return candidate;
   }
 }
 
 function makeId() {
   return `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
+}
+
+function assertCheckpointId(id: string) {
+  if (!CHECKPOINT_ID.test(id)) throw new Error(`Invalid checkpoint ID: ${id}`);
+}
+
+function isMissing(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
+function isCheckpointEntry(value: unknown): value is CheckpointEntry {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const entry = value as Partial<CheckpointEntry>;
+  return typeof entry.id === 'string' && CHECKPOINT_ID.test(entry.id)
+    && (entry.action === 'write' || entry.action === 'rename')
+    && typeof entry.createdAt === 'string';
+}
+
+function isPathInside(root: string, target: string) {
+  const rel = relative(resolve(root), resolve(target));
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }

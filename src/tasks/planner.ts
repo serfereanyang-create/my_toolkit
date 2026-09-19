@@ -1,20 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { classifyTaskComplexity } from './complexity.js';
 import type { TaskBoard, TaskItem } from './types.js';
 
+/** Keep the task-board decision on the shared prompt-level complexity result. */
 export function shouldUseTaskBoard(prompt: string): boolean {
-  const normalized = normalizePlannerPrompt(prompt);
-  if (!normalized) return false;
-
-  const smallAsk = hasAny(normalized, [
-    '读取', '打开', '查看', '搜索', '查找', '磁盘', '剩余空间', '多大', '你好', 'help',
-    'read ', 'open ', 'show ', 'search ', 'find ', 'disk', 'free space', 'hello', 'hi',
-  ]) && !hasAny(normalized, ['实现', '开发', '重构', '分步', '任务板', '并补', '并添加', 'implement', 'build', 'refactor', 'multi-step', 'task board']);
-  if (smallAsk) return false;
-
-  return hasAny(normalized, [
-    '实现', '开发', '重构', '分步', '任务板', '完整', '并测试', '并补测试', '跨模块', '端到端',
-    'implement', 'build', 'create a', 'add a feature', 'refactor', 'multi-step', 'end-to-end', 'task board', 'plan and',
-  ]) || countSteps(normalized) >= 3;
+  return classifyTaskComplexity(prompt) === 'large';
 }
 
 export function planBoardFromGoal(goal: string, now = new Date()): TaskBoard {

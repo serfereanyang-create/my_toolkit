@@ -35,13 +35,12 @@ const c = {
   reset: '\u001b[0m',
   dim: '\u001b[2m',
   bold: '\u001b[1m',
+  italic: '\u001b[3m',
   white: '\u001b[37m',
   gray: '\u001b[90m',
   black: '\u001b[30m',
-  // OpenCode highlight is peach/orange.
-  orangeBg: '\u001b[48;2;232;165;122m',
-  orangeFg: '\u001b[38;2;232;165;122m',
-  darkFg: '\u001b[38;2;20;20;20m',
+  // style.rs accent_style: cyan on dark/unknown terminals.
+  cyan: '\u001b[36m',
 };
 
 /**
@@ -187,22 +186,25 @@ export function renderOverlayFrame(options: {
   lines.push('');
   lines.push(`  ${paint(c.white + c.bold, options.title)}${' '.repeat(Math.max(1, width - options.title.length - 6))}${paint(c.gray, 'esc')}`);
   lines.push('');
-  // Search row with orange caret block when empty focus visual
+  // Composer-style prompt row: bold `›` caret, dim italic placeholder (upstream
+  // popups filter inline from the composer rather than owning a search box).
   const searchLabel = options.query.length > 0 ? options.query : 'Search';
-  const searchColor = options.query.length > 0 ? c.white : c.orangeFg;
-  lines.push(`  ${paint(options.color ? `${c.orangeBg}${c.darkFg}` : '', ' ')}${paint(c.reset, '')}${paint(searchColor, ` ${searchLabel}`)}`);
+  const caret = paint(c.bold, '›');
+  const labelText = options.query.length > 0 ? paint(c.white, ` ${searchLabel}`) : paint(c.dim + c.italic, ` ${searchLabel}`);
+  lines.push(`  ${caret}${labelText}`);
   lines.push('');
 
   if (options.items.length === 0) {
-    lines.push(`  ${paint(c.dim, '(no matches)')}`);
+    // Upstream selection_popup_common: dim + italic "no matches".
+    lines.push(`  ${paint(c.dim + c.italic, '(no matches)')}`);
   } else {
     for (const [i, item] of options.items.entries()) {
       const selected = i === options.selected;
       const row = formatActionRow(item, width - 2);
       if (selected) {
-        // Full peach highlight bar like the screenshot.
+        // style.rs accent_style: cyan + bold on dark/unknown terminals.
         if (options.color) {
-          lines.push(`  ${c.orangeBg}${c.darkFg}${c.bold}${padRow(row, width - 2)}${c.reset}`);
+          lines.push(`  ${c.cyan}${c.bold}${row}${c.reset}`);
         } else {
           lines.push(`  > ${row}`);
         }

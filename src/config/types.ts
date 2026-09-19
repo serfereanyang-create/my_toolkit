@@ -27,6 +27,10 @@ export type CliArgs = {
   configPath?: string;
   profile?: string;
   doctor?: boolean;
+  /** Headless single-tool invocation: tool name (read-risk tools only). */
+  invokeTool?: string;
+  /** JSON input for --invoke-tool; '-' reads the payload from stdin. */
+  toolInput?: string;
   completionShell?: 'bash' | 'zsh' | 'fish' | 'powershell';
   confirmPlan?: boolean;
   desktopBridge?: boolean;
@@ -44,6 +48,7 @@ export type FileProfileConfig = {
   sessionDir?: string;
   maxSteps?: number;
   reasoningEffort?: ReasoningEffort;
+  toolScope?: ToolScope;
   /** Network egress policy for the fetch_url tool. */
   network?: { enabled?: boolean; allowlist?: string[] };
 };
@@ -81,6 +86,10 @@ export type AppConfig = {
   configPath?: string;
   profile?: string;
   doctor?: boolean;
+  /** Headless single-tool invocation: tool name (read-risk tools only). */
+  invokeTool?: string;
+  /** JSON input for --invoke-tool; '-' reads the payload from stdin. */
+  toolInput?: string;
   completionShell?: 'bash' | 'zsh' | 'fish' | 'powershell';
   confirmPlan?: boolean;
   desktopBridge?: boolean;

@@ -189,3 +189,45 @@ test('OpenAI captures real cached_tokens from prompt_tokens_details', async () =
     globalThis.fetch = originalFetch;
   }
 });
+
+test('openai-responses capability is recognized (thinking tiers not stripped to off)', async () => {
+  const { getReasoningCapability, clampReasoningEffort } = await import('../src/providers/capabilities.js');
+  // gpt-5.x over the Responses wire format used to fall into the catch-all OFF
+  // capability, silently stripping the desktop thinking tier.
+  const capability = getReasoningCapability('openai-responses', 'gpt-5.5');
+  assert.equal(capability.support, 'supported');
+  assert.equal(clampReasoningEffort('high', capability), 'high');
+  // Unknown custom models stay optimistic ('unknown' keeps the tier).
+  const unknown = getReasoningCapability('openai-responses', 'my-relay-model');
+  assert.equal(clampReasoningEffort('high', unknown), 'high');
+  // Known non-reasoning models over Responses stay off.
+  assert.equal(clampReasoningEffort('high', getReasoningCapability('openai-responses', 'gpt-4o')), 'off');
+});
+
+test('openai-responses retries once without reasoning when endpoint rejects the param', async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies: Array<Record<string, unknown>> = [];
+  let calls = 0;
+  globalThis.fetch = async (_input, init) => {
+    calls += 1;
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    if (calls === 1) {
+      return new Response(JSON.stringify({ error: { message: 'Unknown parameter: reasoning' } }), { status: 400, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ output_text: 'ok', output: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const { createOpenAIResponsesProvider } = await import('../src/providers/openai-responses.js');
+    const provider = createOpenAIResponsesProvider({ apiKey: 'k', baseUrl: 'https://relay.example.test/v1', model: 'my-relay-model' });
+    const result = await provider.complete({
+      messages: [{ role: 'user', content: 'hi', createdAt: new Date().toISOString() }],
+      tools: [], workspaceRoot: 'C:/work', reasoningEffort: 'high',
+    });
+    assert.equal(calls, 2);
+    assert.deepEqual(bodies[0]?.reasoning, { effort: 'high' });
+    assert.equal('reasoning' in bodies[1]!, false);
+    assert.equal(result.actions[0]?.type, 'message');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

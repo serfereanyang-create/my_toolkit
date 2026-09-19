@@ -1,10 +1,21 @@
 import type { AppConfig } from '../config/types.js';
 import type { Provider } from '../providers/types.js';
 import type { ToolResult } from '../tools/index.js';
+import type { ApprovalRequest } from '../tools/types.js';
+import type { TaskBoard } from '../tasks/types.js';
+import { renderApprovalDiff } from './diffView.js';
+import {
+  contextWindowLine,
+  fmtElapsedCompact,
+  formatDoneClock,
+  formatTokensCompact,
+  paint,
+  statusIndicatorLine,
+  TOOL_CALL_MAX_LINES,
+  TRANSCRIPT_HINT,
+} from './codexTheme.js';
 import { disableConsoleSoftWrap } from './consoleWrap.js';
-import { clearScreen, renderHomeScreen } from './home.js';
 import { MarkdownStreamCleaner, stripMarkdownDecorations } from './markdown.js';
-import { summarizeToolLine } from './resultCard.js';
 
 /**
  * Palette roles (when color is enabled):
@@ -28,25 +39,7 @@ const colors = {
   white: '\u001b[37m',
 };
 
-// Multiple spinner styles for variety
-const spinnerStyles = {
-  dots: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-  line: ['—', '\\', '|', '/'],
-  arrow: ['←', '↖', '↑', '↗', '→', '↘', '↓', '↙'],
-  bounce: ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'],
-  pulse: ['◐', '◓', '◑', '◒'],
-  dots2: ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'],
-};
-
-const spinnerFrames = spinnerStyles.dots; // Default spinner
 const defaultBlockMaxLines = 80;
-
-// Progress bar characters
-const progressChars = {
-  filled: '█',
-  partial: ['▏', '▎', '▍', '▌', '▋', '▊', '▉'],
-  empty: '░',
-};
 
 type TerminalUIOptions = {
   quiet?: boolean;
@@ -55,25 +48,85 @@ type TerminalUIOptions = {
   /** When true, show full tool input/output. Default folds process details. */
   verbose?: boolean;
   /** OpenCode-like home screen for interactive REPL (not prompt/json/ci). */
-  homeScreen?: boolean;
   version?: string;
 };
+
+type ContextSnapshot = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheReported: boolean;
+  categories: Record<string, number> | null;
+};
+
+/**
+ * Pure Codex-style usage segments from real numbers (footer.rs
+ * `context_window_line` token variant + cache extension). No leading
+ * separator — callers join segments with ` · ` (footer.rs convention).
+ * Cache segment is omitted when the provider never reported cache metrics
+ * (never render absent data as 0%).
+ */
+export function formatContextFooter(
+  ctx: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheReported: boolean },
+  turnOutputTokens = ctx.outputTokens,
+): string {
+  if (!ctx.inputTokens) return '';
+  const parts = [contextWindowLine(ctx.inputTokens, null)];
+  if (turnOutputTokens > 0) parts.push(`out ${formatTokensCompact(turnOutputTokens)}`);
+  if (ctx.cacheReported && ctx.inputTokens > 0) {
+    parts.push(`cache ${Math.min(100, Math.round((ctx.cacheReadTokens / ctx.inputTokens) * 100))}%`);
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * Pure compact task-board progress line (Codex plan-panel style).
+ * Example: `board 3/8 ✓ · ▶ integrate auth · ○2 pending`.
+ */
+export function formatBoardProgressLine(board: TaskBoard): string {
+  const tasks = board.tasks ?? [];
+  if (tasks.length === 0) return '';
+  const done = tasks.filter((t) => t.status === 'done').length;
+  const pending = tasks.filter((t) => t.status === 'pending').length;
+  const blocked = tasks.filter((t) => t.status === 'blocked').length;
+  const current = tasks.find((t) => t.status === 'in_progress');
+  const parts = [`board ${done}/${tasks.length}`];
+  if (current) parts.push(`▶ ${current.title}`);
+  if (pending > 0) parts.push(`○${pending} pending`);
+  if (blocked > 0) parts.push(`✗${blocked} blocked`);
+  if (board.status === 'completed') parts.push('✔ completed');
+  return `▦ ${parts.join(' · ')}`;
+}
+
+function formatTokenCount(value: number): string {
+  return formatTokensCompact(value);
+}
 
 export class TerminalUI {
   private toolIndex = 0;
   private activeSpinner?: NodeJS.Timeout;
   private activeSpinnerText = '';
   private activeSpinnerFrame = 0;
-  private activeSpinnerStyle: keyof typeof spinnerStyles = 'dots';
   private streamingAssistant = false;
   private streamCleaner = new MarkdownStreamCleaner();
   private readonly runningTools = new Map<string, number>();
   private readonly toolInputs = new Map<string, unknown>();
-  private readonly options: TerminalUIOptions;
-  private homeActive = false;
+  private options: TerminalUIOptions;
   private modelHint = 'aicode';
-  private pulseDirection = 1; // For pulsing effects
-  private lastToolOutput = ''; // For animated transitions
+  // Codex-style contextual footer: latest per-turn context/cache snapshot plus
+  // running totals for the current turn, so the busy row and turn-end footer
+  // can surface genuine context occupancy without a separate command.
+  private lastContext: ContextSnapshot | null = null;
+  private turnOutputTokens = 0;
+  private busyHint = '';
+  private turnStartedAt = Date.now();
+  private spinnerStartedAt = Date.now();
+  // Live reasoning stream (JSON/bridge mode): the first thinking delta of a
+  // model call opens a thinking segment, modelEnd closes it. The desktop
+  // renders these as a running `think` step and feeds its token growth into
+  // the composer's live tok/s meter.
+  private thinkingOpen = false;
+  private thinkingStartedAt = 0;
 
   constructor(options: TerminalUIOptions | boolean = {}) {
     this.options = typeof options === 'boolean' ? { quiet: options } : options;
@@ -87,46 +140,64 @@ export class TerminalUI {
     return Boolean(this.options.verbose);
   }
 
+  /** Toggle verbose detail folding at runtime (Ctrl+O in the REPL). */
+  setVerbose(verbose: boolean) {
+    this.options = { ...this.options, verbose };
+  }
+
+  toggleVerbose(): boolean {
+    this.setVerbose(!this.options.verbose);
+    return this.options.verbose ?? false;
+  }
+
+  /** Keyboard hint shown on the busy spinner row, e.g. "esc stop · ctrl+o detail". */
+  setBusyHint(hint: string) {
+    this.busyHint = hint;
+  }
+
   banner(config: AppConfig, provider: Provider) {
     if (this.options.quiet || this.options.json || config.noBanner) return;
     this.modelHint = provider.model || provider.name;
-    if (this.options.homeScreen && process.stdout.isTTY) {
-      // Paint welcome ONCE. Input is normal readline below — no per-keystroke redraw.
-      clearScreen();
-      process.stdout.write(`${renderHomeScreen(config, provider, {
-        noColor: this.options.noColor,
-        version: this.options.version,
-        logoOnly: false,
-      })}\n`);
-      this.homeActive = true;
-      return;
-    }
-    this.writeBox([
-      `${this.style('aicode', 'bold', 'cyan')} ${this.color('dim')}cli mvp${this.color('reset')}`,
-      `${this.label('provider')} ${this.color('white')}${provider.name}${this.color('reset')}`,
-      `${this.label('model')} ${this.color('white')}${provider.model}${this.color('reset')}`,
-      `${this.label('workspace')} ${this.color('dim')}${config.workspaceRoot}${this.color('reset')}`,
-      `${this.label('approval')} ${this.color('dim')}${config.approval}${this.color('reset')}`,
-    ]);
+    // Upstream codex has no splash logo: interactive starts paint the session
+    // header box directly (session.rs) — the old OpenCode full-screen logo is
+    // retired so the codex design is what users actually see first.
+    this.writeSessionHeader(config, provider);
   }
 
   turnStart(prompt: string) {
     this.stopSpinner();
     this.toolIndex = 0;
     this.runningTools.clear();
+    this.turnOutputTokens = 0;
+    this.turnStartedAt = Date.now();
     if (this.options.json) return this.jsonEvent('turn_start', { prompt });
     if (this.options.quiet) return;
-    this.homeActive = false;
     // Append only — never clear screen (preserves scrollback / 往前翻).
     this.writeUserBubble(prompt);
-    this.writeBuildStatus();
   }
 
   modelStart() {
     this.streamingAssistant = false;
     this.streamCleaner = new MarkdownStreamCleaner();
     if (this.options.json) return this.jsonEvent('model_start', { status: 'running' });
-    this.startSpinner('Build');
+    this.startSpinner('Working');
+  }
+
+  /**
+   * Stream a reasoning/thinking delta (JSON/bridge mode only). The first delta
+   * of a model call opens the segment (`thinking_start`); every delta forwards
+   * its text (`thinking_delta`); modelEnd closes it with the measured duration
+   * (`thinking_end`). The desktop reducer renders this as a running `think`
+   * step and counts its growth toward the live tok/s meter.
+   */
+  thinkingDelta(delta: string) {
+    if (!delta || !this.options.json) return;
+    if (!this.thinkingOpen) {
+      this.thinkingOpen = true;
+      this.thinkingStartedAt = Date.now();
+      this.jsonEvent('thinking_start', { text: '' });
+    }
+    this.jsonEvent('thinking_delta', { text: delta });
   }
 
   modelEnd() {
@@ -137,17 +208,71 @@ export class TerminalUI {
     }
     this.streamingAssistant = false;
     this.streamCleaner = new MarkdownStreamCleaner();
-    if (this.options.json) return this.jsonEvent('model_end', { status: 'done' });
+    if (this.options.json) {
+      if (this.thinkingOpen) {
+        this.thinkingOpen = false;
+        this.jsonEvent('thinking_end', { durationMs: Date.now() - this.thinkingStartedAt });
+      }
+      return this.jsonEvent('model_end', { status: 'done' });
+    }
     this.stopSpinner();
   }
 
   /**
-   * Emit a real per-turn context/cache snapshot (JSON mode only). Carries the
-   * genuine token breakdown and cache-hit numbers so the desktop can render the
-   * 上下文容量 / 缓存命中率 panel without any estimation. No-op in TTY mode.
+   * Emit a real per-turn context/cache snapshot (JSON mode only) and cache it
+   * for the TTY footer. Carries the genuine token breakdown and cache-hit
+   * numbers so the desktop can render the 上下文容量 / 缓存命中率 panel — and
+   * the terminal can show a Codex-style context footer — without any estimation.
    */
   contextStats(stats: Record<string, unknown>) {
+    const categories = stats.categories && typeof stats.categories === 'object'
+      ? stats.categories as Record<string, number>
+      : null;
+    this.lastContext = {
+      inputTokens: typeof stats.inputTokens === 'number' ? stats.inputTokens : 0,
+      outputTokens: typeof stats.outputTokens === 'number' ? stats.outputTokens : 0,
+      cacheReadTokens: typeof stats.cacheReadTokens === 'number' ? stats.cacheReadTokens : 0,
+      cacheReported: stats.providerCacheReported === true,
+      categories,
+    };
+    this.turnOutputTokens += this.lastContext.outputTokens;
     if (this.options.json) return this.jsonEvent('context_stats', stats);
+  }
+
+  /** Codex turn end (separators.rs): one dim row `Worked for … · done … ·
+   *  <usage segments>` for turns over a minute; usage-only row otherwise. */
+  turnEnd() {
+    if (this.options.json || this.options.quiet || !process.stdout.isTTY) return;
+    const usage = this.lastContext && this.lastContext.inputTokens > 0
+      ? formatContextFooter(this.lastContext, this.turnOutputTokens)
+      : '';
+    const elapsed = Date.now() - this.turnStartedAt;
+    if (elapsed > 60_000) {
+      const segments = ['Worked for ' + fmtElapsedCompact(elapsed), `done ${formatDoneClock(new Date())}`];
+      if (usage) segments.push(usage);
+      this.write(`${this.color('dim')}${segments.join(' · ')}${this.color('reset')}`);
+      return;
+    }
+    if (usage) this.write(`${this.color('dim')}· ${usage}${this.color('reset')}`);
+  }
+
+  /**
+   * Render the structured before/after diff of an approval request (Codex
+   * style). No-op when the request carries no diff or output is piped/quiet.
+   * Printed before the y/N prompt so the user approves real changes, not prose.
+   */
+  approvalDiff(request?: ApprovalRequest) {
+    if (!request?.diff || this.options.quiet) return;
+    if (this.options.json) return; // desktop renders its own diff card from the event
+    const block = renderApprovalDiff(request.diff, { noColor: this.options.noColor });
+    if (block) process.stdout.write(`${block}\n`);
+  }
+
+  /** Compact task-board progress row (Codex plan-panel style, append-only safe). */
+  boardProgress(board: TaskBoard) {
+    if (this.options.json || this.options.quiet) return;
+    const line = formatBoardProgressLine(board);
+    if (line) this.write(`${this.color('dim')}${line}${this.color('reset')}`);
   }
 
   assistantDelta(delta: string) {
@@ -157,8 +282,9 @@ export class TerminalUI {
     if (!this.streamingAssistant) {
       this.streamingAssistant = true;
       if (!this.options.quiet) {
-        this.writeSectionTitle('Assistant', 'green');
-        // Stream body starts at column 0 (no indent) so soft-wrap is less "terminal-indented".
+        // Streamed rows carry the same dim `• ` prefix as finalized cells;
+        // continuation deltas continue at column 0 without an indent.
+        process.stdout.write(`${this.color('dim')}• ${this.color('reset')}`);
       }
     }
     const cleaned = this.streamCleaner.push(delta);
@@ -180,9 +306,17 @@ export class TerminalUI {
     }
     if (this.options.json) return this.jsonEvent('assistant', { content: plain });
     if (this.options.quiet) return;
-    this.writeSectionTitle('Assistant', 'green');
-    // No left indent, no column reflow — only real newlines.
-    this.writeBlock(plain, this.color('reset'), { indent: '', noWrap: true });
+    // AgentMarkdownCell (history_cell/messages.rs): dim `• ` prefix on the
+    // first row, two-space indent on continuation rows.
+    const lines = plain.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    const shown = lines.slice(0, defaultBlockMaxLines);
+    this.write(`${this.color('dim')}• ${this.color('reset')}${shown[0] ?? ''}`.trimEnd());
+    for (const line of shown.slice(1)) this.write(`  ${line}`.trimEnd());
+    if (lines.length > shown.length) {
+      const bytes = Buffer.byteLength(plain, 'utf8');
+      const size = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+      this.write(`${this.color('dim')}  … ${lines.length - shown.length} more line(s), total ${size}${this.color('reset')}`);
+    }
   }
 
   toolStart(tool: string, input: unknown) {
@@ -190,33 +324,17 @@ export class TerminalUI {
     this.toolIndex += 1;
     this.runningTools.set(tool, Date.now());
     this.toolInputs.set(tool, input);
-    
-    // Choose spinner style based on tool type for variety
-    if (tool.includes('search') || tool.includes('find')) {
-      this.activeSpinnerStyle = 'dots2';
-    } else if (tool.includes('git') || tool.includes('read')) {
-      this.activeSpinnerStyle = 'pulse';
-    } else if (tool.includes('run') || tool.includes('execute')) {
-      this.activeSpinnerStyle = 'arrow';
-    } else if (tool.includes('write') || tool.includes('create')) {
-      this.activeSpinnerStyle = 'bounce';
-    } else {
-      this.activeSpinnerStyle = 'dots';
-    }
-    
+
     if (this.options.json) return this.jsonEvent('tool_start', { index: this.toolIndex, tool, input, status: 'running' });
     if (this.options.quiet) return;
-    if (this.options.verbose) {
-      this.writeSectionTitle(`Tool ${this.toolIndex}`, 'cyan', tool);
-      this.writeKeyValue('input', formatInput(input, this.options.noColor ?? false));
-      this.writeKeyValue('status', `${this.color('dim')}running${this.color('reset')}`);
-    } else {
-      // Animated running line with gradient effect
-      const emoji = this.getToolEmoji(tool);
-      this.write(`${this.color('cyan')}${emoji} ${this.color('reset')}${this.color('dim')}Tool ${this.toolIndex}${this.color('reset')} ${this.style(tool, 'bold')} ${this.color('dim')}…${this.color('reset')}`);
-      this.lastToolOutput = tool;
-    }
-    this.startSpinner(`${tool}`);
+    // exec_cell/render.rs running row: `[•] Running <title>` — the bullet is
+    // the activity indicator (static dim fallback without truecolor), the
+    // title is bold, detail dim.
+    const title = execTitle(tool, input);
+    const runningLabel = this.options.verbose ? `Tool ${this.toolIndex}` : 'Running';
+    this.write(
+      `  ${this.style('•', 'dim')} ${this.style(runningLabel, 'bold')}${title ? ` ${this.color('dim')}${title}${this.color('reset')}` : ''}`,
+    );
   }
 
   toolResult(tool: string, result: ToolResult) {
@@ -238,21 +356,23 @@ export class TerminalUI {
     if (this.options.quiet) return;
 
     if (!this.options.verbose) {
-      const line = summarizeToolLine({
-        tool,
-        ok: result.ok,
-        duration,
-        output: plainOutput,
-        data: result.data,
-      });
-      // Animated completion with emoji and color gradient
-      const emoji = result.ok ? '✓' : '✗';
-      const color = result.ok ? this.color('green') : this.color('red');
-      const dimColor = this.color('dim');
-      this.write(`${color}${emoji}${this.color('reset')} ${dimColor}${line}${this.color('reset')}`);
-      // On failure, still show a short body so the user can recover without --verbose.
-      if (!result.ok && plainOutput.trim()) {
-        this.writeBlock(plainOutput, this.color('red'), { indent: '    ', maxLines: 12, noWrap: true });
+      // exec_cell/render.rs completed row: green/red bold bullet + bold "Ran"
+      // + title, then a dim `  └ ` output block capped at TOOL_CALL_MAX_LINES
+      // with the ui_consts.rs transcript hint on overflow.
+      const bullet = this.style('•', result.ok ? 'green' : 'red');
+      const title = execTitle(tool, undefined, plainOutput);
+      this.write(`  ${bullet} ${this.style('Ran', 'bold')}${title ? ` ${this.color('dim')}${title}${this.color('reset')}` : ''}`);
+      if (plainOutput.trim()) {
+        const lines = plainOutput.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+        const shown = lines.slice(0, TOOL_CALL_MAX_LINES);
+        for (const line of shown) {
+          this.write(`${this.color('dim')}  └ ${line}${this.color('reset')}`.trimEnd());
+        }
+        if (lines.length > shown.length) {
+          this.write(`${this.color('dim')}  └ … +${lines.length - shown.length} lines ${TRANSCRIPT_HINT}${this.color('reset')}`);
+        }
+      } else if (!result.ok) {
+        this.write(`${this.color('dim')}  └ (no output)${this.color('reset')}`);
       }
       return;
     }
@@ -304,109 +424,111 @@ export class TerminalUI {
     this.stopSpinner();
     this.activeSpinnerText = text;
     this.activeSpinnerFrame = 0;
+    this.spinnerStartedAt = Date.now();
     this.renderSpinner();
-    // Faster refresh (60ms) for smoother animation
-    this.activeSpinner = setInterval(() => this.renderSpinner(), 60);
+    // Upstream status_indicator_widget.rs animates at 32ms per frame.
+    this.activeSpinner = setInterval(() => this.renderSpinner(), 32);
   }
 
   private stopSpinner() {
     if (!this.activeSpinner) return;
     clearInterval(this.activeSpinner);
     this.activeSpinner = undefined;
-    process.stdout.write(`\r${' '.repeat(displayWidth(this.activeSpinnerText) + 32)}\r`);
-  }
-
-  private renderSpinner() {
-    const frames = spinnerStyles[this.activeSpinnerStyle];
-    const frame = frames[this.activeSpinnerFrame % frames.length];
-    this.activeSpinnerFrame += 1;
-    const model = shortenModelLabel(this.modelHint);
-    
-    // Create pulsing effect with color intensity
-    const pulseIntensity = Math.abs((this.activeSpinnerFrame % 20) - 10) / 10;
-    const pulseColor = pulseIntensity > 0.5 ? this.color('cyan') : this.color('blue');
-    
-    // Animated dots that grow
-    const dots = '.'.repeat((this.activeSpinnerFrame % 4));
-    const spaces = ' '.repeat(3 - dots.length);
-    
-    // Dynamic status with progress indicator
-    const elapsed = Math.floor(this.activeSpinnerFrame * 60 / 1000);
-    const elapsedStr = elapsed > 0 ? `${elapsed}s` : '';
-    
-    // OpenCode-ish busy row with more visual feedback
-    process.stdout.write(
-      `\r  ${pulseColor}${frame}${this.color('reset')} ${this.style('Build', 'bold', 'cyan')} ${this.color('dim')}· ${model}${dots}${spaces}${elapsedStr ? ` ${elapsedStr}` : ''}${this.color('reset')}   `,
-    );
-  }
-
-  private writeBox(lines: string[]) {
-    const plainLengths = lines.map((line) => displayWidth(stripAnsi(line)));
-    const width = Math.max(...plainLengths, 16);
-    const edge = this.color('cyan');
-    const reset = this.color('reset');
-    this.write(`${edge}┌${'─'.repeat(width + 2)}┐${reset}`);
-    for (const line of lines) {
-      const padding = ' '.repeat(Math.max(0, width - displayWidth(stripAnsi(line))));
-      this.write(`${edge}│${reset} ${line}${padding} ${edge}│${reset}`);
-    }
-    this.write(`${edge}└${'─'.repeat(width + 2)}┘${reset}`);
-  }
-
-  private writeSectionTitle(title: string, color: keyof typeof colors, detail?: string) {
-    // ASCII marker avoids Windows code-page mojibake for ● in some consoles.
-    const bar = `${this.color(color)}*${this.color('reset')}`;
-    const head = this.style(title, 'bold', color);
-    const suffix = detail ? ` ${this.color('dim')}${detail}${this.color('reset')}` : '';
-    this.write(`\n${bar} ${head}${suffix}`);
+    process.stdout.write(`\r\u001b[K\r`);
   }
 
   /**
-   * OpenCode-like user request card:
-   *   │  user text...
-   * with a blue left accent (full-width dark panel simulation).
+   * status_indicator_widget.rs status row: `• Working (12s • esc to interrupt)`
+   * with the motion.rs bullet blink (600ms half-period) and optional inline
+   * detail, all above the LIVE_PREFIX_COLS=2 baseline.
+   */
+  private renderSpinner() {
+    const frame = this.activeSpinnerFrame;
+    this.activeSpinnerFrame += 1;
+    const elapsed = Date.now() - this.spinnerStartedAt;
+    const line = statusIndicatorLine({
+      frame,
+      title: this.activeSpinnerText || 'Working',
+      elapsedMs: elapsed,
+      interruptHint: 'esc',
+      detail: shortenModelLabel(this.modelHint),
+      noColor: this.options.noColor ?? false,
+    });
+    process.stdout.write(`\r  ${line}\u001b[K   `);
+  }
+
+  /**
+   * Session header banner (history_cell/session.rs): dim `╭─╮` box, inner
+   * width capped at 56, `">_ " + bold name + dim "(v…)"`, then model and
+   * directory rows.
+   */
+  private writeSessionHeader(config: AppConfig, provider: Provider) {
+    const noColor = this.options.noColor ?? false;
+    const dim = (value: string) => paint(value, ['dim'], noColor);
+    const nameLine = `${dim('>_ ')}${this.style('aicode', 'bold')}${this.options.version ? dim(` (v${this.options.version})`) : ''}`;
+    const modelRow = `${dim('model: ')}${provider.model || provider.name}`;
+    const dirRow = `${dim('directory: ')}${config.workspaceRoot}`;
+    const inner = Math.min(Math.max(
+      displayWidth(stripAnsi(nameLine)),
+      displayWidth(stripAnsi(modelRow)),
+      displayWidth(stripAnsi(dirRow)),
+    ) + 2, 56);
+    this.write(dim(`╭${'─'.repeat(inner)}╮`));
+    for (const row of [nameLine, '', modelRow, dirRow]) {
+      const pad = ' '.repeat(Math.max(0, inner - 2 - displayWidth(stripAnsi(row))));
+      this.write(`${dim('│ ')}${row}${pad}${dim(' │')}`);
+    }
+    this.write(dim(`╰${'─'.repeat(inner)}╯`));
+  }
+
+  /**
+   * Codex user message (history_cell/messages.rs): `› ` bold+dim prefix with a
+   * two-space continuation indent, no box. Upstream also tints the whole block
+   * with the user-message background, but only when the terminal palette is
+   * known — style.rs falls back to unstyled when it is not, and we cannot read
+   * the palette from Node, so we take that fallback.
    */
   private writeUserBubble(prompt: string) {
-    const cols = Math.max(process.stdout.columns || 88, 48);
-    // Leave a little margin so it doesn't feel edge-glued.
-    const width = Math.min(cols - 2, Math.max(40, cols - 4));
-    const inner = Math.max(8, width - 4);
-    const bodyColor = this.color('white');
-    const accent = this.color('blue');
-    const panel = this.color('gray');
-    const reset = this.color('reset');
     const lines = prompt
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
       .split('\n')
       .slice(0, 12);
-    // Top / bottom: blue left corner accent; body rows keep left blue bar + right edge.
-    this.write(`\n${accent}┌${panel}${'─'.repeat(width - 2)}${panel}┐${reset}`);
-    for (const line of lines) {
-      const clipped = takeByDisplayWidth(line, inner);
-      const pad = Math.max(0, inner - displayWidth(clipped));
-      this.write(`${accent}│${reset} ${bodyColor}${clipped}${' '.repeat(pad)}${reset} ${panel}│${reset}`);
+    this.write('');
+    this.write(`${this.style('›', 'bold', 'dim')} ${this.color('white')}${lines[0] ?? ''}${this.color('reset')}`.trimEnd());
+    for (const line of lines.slice(1)) {
+      this.write(`  ${line}`.trimEnd());
     }
-    if (prompt.split(/\r?\n/).length > lines.length) {
-      const more = `… ${prompt.split(/\r?\n/).length - lines.length} more line(s)`;
-      const clipped = takeByDisplayWidth(more, inner);
-      const pad = Math.max(0, inner - displayWidth(clipped));
-      this.write(`${accent}│${reset} ${this.color('dim')}${clipped}${' '.repeat(pad)}${reset} ${panel}│${reset}`);
+    const total = prompt.split(/\r?\n/).length;
+    if (total > lines.length) {
+      this.write(`${this.color('dim')}  … ${total - lines.length} more line(s)${this.color('reset')}`);
     }
-    this.write(`${accent}└${panel}${'─'.repeat(width - 2)}${panel}┘${reset}`);
-  }
-
-  /** Build · model status row under the user bubble (OpenCode style). */
-  private writeBuildStatus() {
-    const model = shortenModelLabel(this.modelHint);
-    const diamond = this.options.noColor ? '◆' : `${this.color('blue')}◆${this.color('reset')}`;
-    this.write(
-      `${diamond} ${this.style('Build', 'bold', 'blue')} ${this.color('dim')}·${this.color('reset')} ${this.color('white')}${model}${this.color('reset')}`,
-    );
   }
 
   private writeKeyValue(key: string, value: string) {
     this.write(`  ${this.label(key)} ${value}`.trimEnd());
+  }
+
+  /**
+   * First-session command list (session.rs first-run copy): dim intro line,
+   * command names in normal color, dim descriptions, two-space indent.
+   */
+  welcomeCommands() {
+    if (this.options.json || this.options.quiet) return;
+    const noColor = this.options.noColor ?? false;
+    const dim = (value: string) => paint(value, ['dim'], noColor);
+    const rows: Array<[string, string]> = [
+      ['/init', 'create AGENTS.md workspace instructions'],
+      ['/model', 'show or switch the active model'],
+      ['/plan', 'task board (confirm|pause|continue)'],
+      ['/review', 'review the current changes'],
+      ['/help', 'floating command palette'],
+    ];
+    this.write(dim('  To get started, describe a task or try one of these commands:'));
+    this.write('');
+    for (const [command, description] of rows) {
+      this.write(`  ${command}${dim(` - ${description}`)}`);
+    }
   }
 
   private writeBlock(content: string, color: string, options: { indent?: string; maxLines?: number; noWrap?: boolean } = {}) {
@@ -448,32 +570,25 @@ export class TerminalUI {
   private color(name: keyof typeof colors) {
     return this.options.noColor ? '' : colors[name];
   }
-
-  private getToolEmoji(tool: string): string {
-    if (this.options.noColor) return '▸';
-    // Tool-specific emoji for visual variety
-    if (tool.includes('search') || tool.includes('find')) return '🔍';
-    if (tool.includes('git')) return '📦';
-    if (tool.includes('read') || tool.includes('list')) return '📖';
-    if (tool.includes('write') || tool.includes('create')) return '✍️';
-    if (tool.includes('run') || tool.includes('execute') || tool.includes('command')) return '⚡';
-    if (tool.includes('test')) return '🧪';
-    if (tool.includes('build') || tool.includes('compile')) return '🔨';
-    if (tool.includes('fetch') || tool.includes('web')) return '🌐';
-    if (tool.includes('image') || tool.includes('img')) return '🖼️';
-    if (tool.includes('docx') || tool.includes('doc')) return '📝';
-    if (tool.includes('xlsx') || tool.includes('csv')) return '📊';
-    if (tool.includes('pdf')) return '📄';
-    if (tool.includes('zip') || tool.includes('archive')) return '📦';
-    return '▸';
-  }
 }
 
-function formatInput(input: unknown, noColor: boolean) {
-  const json = JSON.stringify(input);
-  if (!json) return '{}';
-  const value = truncate(json, 220);
-  return noColor ? value : `${colors.yellow}${value}${colors.reset}`;
+/**
+ * exec_cell title summary: the tool name plus its primary target
+ * (path / command / query), mirroring how upstream titles each exec row with
+ * the command it ran.
+ */
+function execTitle(tool: string, input?: unknown, output?: string): string {
+  const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const target = record.path ?? record.command ?? record.query ?? record.pattern ?? record.url;
+  if (typeof target === 'string' && target.trim()) {
+    const text = target.replace(/\s+/g, ' ').trim();
+    return `${tool} ${truncate(text, 60)}`;
+  }
+  if (output) {
+    const firstLine = output.trim().split('\n')[0] ?? '';
+    if (firstLine) return `${tool} · ${truncate(firstLine.replace(/\s+/g, ' ').trim(), 60)}`;
+  }
+  return tool;
 }
 
 function truncate(value: string, max: number) {

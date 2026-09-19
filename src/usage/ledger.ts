@@ -30,6 +30,16 @@ export type UsageLedgerEntry = {
   reasoningEffort?: string;
   /** Real provider cache efficiency this turn: cacheRead/(cacheRead+input). */
   cacheEfficiency?: number;
+  /** 关联字段：本次 turn 的标识（桌面/日志下钻用）。 */
+  turnId?: string;
+  /** 本 turn 的工具调用次数与去重后的工具名（截断到 12 个）。 */
+  toolCalls?: number;
+  toolsUsed?: string[];
+  /** 任务板关联：turn 属于某个任务板的任务时填充。 */
+  boardId?: string;
+  taskId?: string;
+  /** 本 turn 总耗时（毫秒）。 */
+  durationMs?: number;
 };
 
 export function resolveUsageLogPath(explicit?: string, env: NodeJS.ProcessEnv = process.env): string {

@@ -3,7 +3,7 @@ import type { CliArgs } from '../config/types.js';
 import type { ApprovalMode, ProviderName } from '../providers/types.js';
 import type { ToolScope } from '../tools/scope.js';
 
-const providerNames = new Set(['mock', 'openai', 'openai-responses', 'anthropic', 'gemini']);
+const providerNames = new Set(['mock', 'openai', 'openai-responses', 'anthropic', 'gemini', 'grok', 'glm', 'kimi', 'deepseek']);
 const approvalModes = new Set(['ask', 'auto', 'deny', 'plan']);
 const toolScopes = new Set(['auto', 'compact', 'standard', 'full']);
 
@@ -151,6 +151,19 @@ export function parseArgs(argv: string[]): CliArgs {
       case '--doctor':
         args.doctor = true;
         args.noBanner = true;
+        break;
+      case '--invoke-tool': {
+        // Headless single-tool mode for host integrations (e.g. the desktop
+        // quality gateway). Only read-risk tools are allowed; see index.ts.
+        const value = readValue();
+        if (!value.trim()) throw new Error('--invoke-tool requires a tool name');
+        args.invokeTool = value.trim();
+        args.noBanner = true;
+        break;
+      }
+      case '--tool-input':
+        // Inline JSON, or '-' to read the JSON payload from stdin.
+        args.toolInput = readValue();
         break;
       case '--help':
       case '-h':

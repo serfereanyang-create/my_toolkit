@@ -3,12 +3,13 @@ import { dirname, join, resolve } from 'node:path';
 import type { AutomationTask, ExecutionHistory, ExecutionResult } from './types.js';
 
 /**
- * 自动化任务持久化存储
- * 存储到 .aicode/automation/tasks.json
+ * Durable automation persistence. Operations are serialized because trigger
+ * callbacks and manual commands can update the same JSON files concurrently.
  */
 export class AutomationStore {
   private readonly tasksFilePath: string;
   private readonly historyDir: string;
+  private operationQueue: Promise<void> = Promise.resolve();
 
   constructor(workspaceRoot: string) {
     const automationDir = resolve(workspaceRoot, '.aicode', 'automation');
@@ -16,99 +17,93 @@ export class AutomationStore {
     this.historyDir = join(automationDir, 'history');
   }
 
-  /**
-   * 保存或更新一个自动化任务
-   */
   async save(task: AutomationTask): Promise<void> {
+    await this.withLock(async () => {
+      const tasks = await this.readTasks();
+      const index = tasks.findIndex((item) => item.id === task.id);
+      if (index >= 0) tasks[index] = task;
+      else tasks.push(task);
+      await this.writeTasks(tasks);
+    });
+  }
+
+  async load(taskId: string): Promise<AutomationTask | undefined> {
     const tasks = await this.list();
-    const index = tasks.findIndex((t) => t.id === task.id);
-    
-    if (index >= 0) {
-      tasks[index] = task;
-    } else {
-      tasks.push(task);
+    return tasks.find((task) => task.id === taskId);
+  }
+
+  async list(): Promise<AutomationTask[]> {
+    return this.withLock(() => this.readTasks());
+  }
+
+  async delete(taskId: string): Promise<boolean> {
+    return this.withLock(async () => {
+      const tasks = await this.readTasks();
+      const filtered = tasks.filter((task) => task.id !== taskId);
+      if (filtered.length === tasks.length) return false;
+      await this.writeTasks(filtered);
+      return true;
+    });
+  }
+
+  async recordExecution(taskId: string, result: ExecutionResult): Promise<void> {
+    await this.withLock(async () => {
+      const historyFile = join(this.historyDir, `${taskId}.json`);
+      let history = await this.readHistory(historyFile, taskId);
+      history.results.push(result);
+      if (history.results.length > 100) history.results = history.results.slice(-100);
+      await mkdir(this.historyDir, { recursive: true });
+      await writeFile(historyFile, JSON.stringify(history, null, 2), 'utf8');
+    });
+  }
+
+  async getHistory(taskId: string, limit = 10): Promise<ExecutionResult[]> {
+    return this.withLock(async () => {
+      const history = await this.readHistory(join(this.historyDir, `${taskId}.json`), taskId);
+      return history.results.slice(-Math.max(0, limit)).reverse();
+    });
+  }
+
+  private async readTasks(): Promise<AutomationTask[]> {
+    try {
+      const content = await readFile(this.tasksFilePath, 'utf8');
+      const parsed: unknown = JSON.parse(content);
+      if (!Array.isArray(parsed)) throw new Error('Automation task store must contain an array');
+      return parsed as AutomationTask[];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw new Error(`Failed to read automation task store: ${error instanceof Error ? error.message : String(error)}`);
     }
-    
+  }
+
+  private async readHistory(filePath: string, taskId: string): Promise<ExecutionHistory> {
+    try {
+      const content = await readFile(filePath, 'utf8');
+      const parsed: unknown = JSON.parse(content);
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as ExecutionHistory).results)) {
+        throw new Error('Automation history must contain a results array');
+      }
+      return parsed as ExecutionHistory;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { taskId, results: [] };
+      throw new Error(`Failed to read automation history for ${taskId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async writeTasks(tasks: AutomationTask[]): Promise<void> {
     await mkdir(dirname(this.tasksFilePath), { recursive: true });
     await writeFile(this.tasksFilePath, JSON.stringify(tasks, null, 2), 'utf8');
   }
 
-  /**
-   * 加载指定 ID 的任务
-   */
-  async load(taskId: string): Promise<AutomationTask | undefined> {
-    const tasks = await this.list();
-    return tasks.find((t) => t.id === taskId);
-  }
-
-  /**
-   * 列出所有任务
-   */
-  async list(): Promise<AutomationTask[]> {
+  private async withLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.operationQueue;
+    let release!: () => void;
+    this.operationQueue = new Promise<void>((resolveQueue) => { release = resolveQueue; });
+    await previous;
     try {
-      const content = await readFile(this.tasksFilePath, 'utf8');
-      return JSON.parse(content) as AutomationTask[];
-    } catch (error) {
-      // 文件不存在或格式错误，返回空数组
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return [];
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * 删除指定任务
-   */
-  async delete(taskId: string): Promise<boolean> {
-    const tasks = await this.list();
-    const filtered = tasks.filter((t) => t.id !== taskId);
-    
-    if (filtered.length === tasks.length) {
-      return false; // 任务不存在
-    }
-    
-    await mkdir(dirname(this.tasksFilePath), { recursive: true });
-    await writeFile(this.tasksFilePath, JSON.stringify(filtered, null, 2), 'utf8');
-    return true;
-  }
-
-  /**
-   * 记录任务执行结果
-   */
-  async recordExecution(taskId: string, result: ExecutionResult): Promise<void> {
-    const historyFile = join(this.historyDir, `${taskId}.json`);
-    
-    let history: ExecutionHistory;
-    try {
-      const content = await readFile(historyFile, 'utf8');
-      history = JSON.parse(content) as ExecutionHistory;
-    } catch {
-      history = { taskId, results: [] };
-    }
-    
-    // 保留最近100条记录
-    history.results.push(result);
-    if (history.results.length > 100) {
-      history.results = history.results.slice(-100);
-    }
-    
-    await mkdir(this.historyDir, { recursive: true });
-    await writeFile(historyFile, JSON.stringify(history, null, 2), 'utf8');
-  }
-
-  /**
-   * 获取任务执行历史
-   */
-  async getHistory(taskId: string, limit = 10): Promise<ExecutionResult[]> {
-    const historyFile = join(this.historyDir, `${taskId}.json`);
-    
-    try {
-      const content = await readFile(historyFile, 'utf8');
-      const history = JSON.parse(content) as ExecutionHistory;
-      return history.results.slice(-limit).reverse();
-    } catch {
-      return [];
+      return await operation();
+    } finally {
+      release();
     }
   }
 }

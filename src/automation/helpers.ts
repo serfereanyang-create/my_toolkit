@@ -7,8 +7,42 @@ import type { AutomationTask, ExecutionResult } from './types.js';
 const failureHandler = new FailureHandler();
 
 /**
- * 任务执行辅助函数
- * 从 manager.ts 中隔离出来以避免安全扫描误报
+ * Apply the common automation result policy to a task and persist both the
+ * latest status and execution history. All trigger types use this function so
+ * failures, blocked runs, recovery, and automatic disabling behave the same.
+ *
+ * @returns true when the failure policy disabled the task.
+ */
+export async function updateTaskState(
+  task: AutomationTask,
+  result: ExecutionResult,
+  taskId: string,
+  store: AutomationStore,
+): Promise<boolean> {
+  task.lastRunAt = result.executedAt;
+  task.lastRunStatus = result.status;
+  task.lastRunError = result.error;
+
+  let shouldDisable = false;
+  if (result.status === 'success') {
+    const previousFailures = task.consecutiveFailures || 0;
+    task.consecutiveFailures = 0;
+    failureHandler.handleSuccess(task, previousFailures);
+  } else {
+    task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
+    shouldDisable = failureHandler.handleFailure(task, result);
+    if (shouldDisable) task.enabled = false;
+  }
+
+  task.updatedAt = new Date().toISOString();
+  await store.save(task);
+  await store.recordExecution(taskId, result);
+  return shouldDisable;
+}
+
+/**
+ * Run a manually requested automation task. Execution errors are converted to
+ * a failed result instead of escaping without history or a task-state update.
  */
 export async function performTaskRun(options: {
   taskId: string;
@@ -16,61 +50,47 @@ export async function performTaskRun(options: {
   store: AutomationStore;
   executor: AutomationExecutor;
 }): Promise<ExecutionResult> {
-  // 加载任务
   const taskData = await options.store.load(options.taskId);
-  const taskExists = (taskData !== undefined);
-  
-  if (!taskExists) {
-    const errorResult: ExecutionResult = {
+  if (!taskData) {
+    return {
       status: 'failed',
-      error: 'Task not found',
+      error: `Task not found: ${options.taskId}`,
       executedAt: new Date().toISOString(),
     };
-    return errorResult;
   }
-  
-  // 运行任务
-  const result = await options.executor.run(taskData, options.runtime);
-  
-  // 更新任务状态
-  await updateTaskState(taskData, result, options.taskId, options.store);
-  
-  return result;
-}
 
-/**
- * 运行后更新任务状态
- */
-async function updateTaskState(
-  taskData: AutomationTask,
-  result: ExecutionResult,
-  taskId: string,
-  store: AutomationStore,
-): Promise<void> {
-  taskData.lastRunAt = result.executedAt;
-  taskData.lastRunStatus = result.status;
-  taskData.lastRunError = result.error;
-  
-  const isSuccess = (result.status === 'success');
-  const previousFailures = taskData.consecutiveFailures || 0;
-  
-  if (isSuccess) {
-    taskData.consecutiveFailures = 0;
-    failureHandler.handleSuccess(taskData, previousFailures);
-  } else {
-    const currentFailures = taskData.consecutiveFailures || 0;
-    const newFailures = currentFailures + 1;
-    taskData.consecutiveFailures = newFailures;
-    
-    // 使用失败处理器
-    const shouldDisable = failureHandler.handleFailure(taskData, result);
-    
-    if (shouldDisable && taskData.enabled) {
-      taskData.enabled = false;
-    }
+  let result: ExecutionResult;
+  try {
+    result = await options.executor.run(taskData, options.runtime);
+  } catch (error) {
+    result = {
+      status: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+      executedAt: new Date().toISOString(),
+    };
   }
-  
-  taskData.updatedAt = new Date().toISOString();
-  await store.save(taskData);
-  await store.recordExecution(taskId, result);
+
+  try {
+    await updateTaskState(taskData, result, options.taskId, options.store);
+    return result;
+  } catch (error) {
+    // A successful execution whose result cannot be persisted is not safe to
+    // report as success: callers need an actionable failure instead.
+    const persistenceError = error instanceof Error ? error.message : String(error);
+    const failedResult: ExecutionResult = {
+      status: 'failed',
+      boardId: result.boardId,
+      error: `Automation result could not be persisted: ${persistenceError}`,
+      executedAt: new Date().toISOString(),
+    };
+
+    // Best effort: persist the failure state as well. This keeps task status
+    // honest even when the original execution result could not be recorded.
+    try {
+      await updateTaskState(taskData, failedResult, options.taskId, options.store);
+    } catch {
+      // The original persistence error is the useful actionable result.
+    }
+    return failedResult;
+  }
 }

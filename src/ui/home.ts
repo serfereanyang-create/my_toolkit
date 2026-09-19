@@ -110,8 +110,9 @@ export function clearScreen() {
 }
 
 export function chatPromptLabel(options: { noColor?: boolean } = {}) {
+  // chat_composer.rs prompt glyph: bold `›` at column 0 (was OpenCode's `│`).
   const color = (name: keyof typeof c) => (options.noColor ? '' : c[name]);
-  return `${color('blue')}│${color('reset')} `;
+  return `${color('bold')}›${color('reset')} `;
 }
 
 function shortenModel(model: string) {

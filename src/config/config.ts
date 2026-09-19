@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import type { AppConfig, CliArgs, FileConfig, FileProfileConfig } from './types.js';
 import type { ApprovalMode, ProviderName, ReasoningEffort } from '../providers/types.js';
 import type { ToolScope } from '../tools/scope.js';
+import { VENDOR_PROFILES, firstEnv, isVendorId } from '../providers/vendors.js';
 
 const defaultModels: Record<ProviderName, string> = {
   mock: 'mock-code-agent-v1',
@@ -10,6 +11,10 @@ const defaultModels: Record<ProviderName, string> = {
   'openai-responses': 'gpt-5.5',
   anthropic: 'claude-3-5-sonnet-latest',
   gemini: 'gemini-2.5-flash',
+  grok: VENDOR_PROFILES.grok.defaultModel,
+  glm: VENDOR_PROFILES.glm.defaultModel,
+  kimi: VENDOR_PROFILES.kimi.defaultModel,
+  deepseek: VENDOR_PROFILES.deepseek.defaultModel,
 };
 
 export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process.env): Promise<AppConfig> {
@@ -22,7 +27,12 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
   const mergedFileConfig = { ...withoutProfiles(fileConfig), ...profileConfig };
 
   const provider = args.provider ?? providerFromEnv(env) ?? mergedFileConfig.provider ?? 'openai';
-  const model = args.model ?? env[`${provider.toUpperCase()}_MODEL`] ?? modelFromEnv(provider, env) ?? mergedFileConfig.model ?? defaultModels[provider];
+  const model = args.model
+    ?? env[`${provider.toUpperCase()}_MODEL`]
+    ?? vendorModelFromEnv(provider, env)
+    ?? modelFromEnv(provider, env)
+    ?? mergedFileConfig.model
+    ?? defaultModels[provider];
   const sessionDir = resolve(workspaceRoot, args.sessionDir ?? env.AICODE_SESSION_DIR ?? mergedFileConfig.sessionDir ?? '.aicode/sessions');
 
   return {
@@ -52,12 +62,14 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
     configPath,
     profile: profileName,
     doctor: args.doctor ?? false,
+    invokeTool: args.invokeTool,
+    toolInput: args.toolInput,
     completionShell: args.completionShell,
     confirmPlan: args.confirmPlan ?? false,
     desktopBridge: args.desktopBridge ?? false,
     usageLog: args.usageLog ?? env.AICODE_USAGE_LOG,
     reasoningEffort: args.reasoningEffort ?? reasoningEffortFromEnv(env) ?? mergedFileConfig.reasoningEffort,
-    toolScope: args.toolScope ?? toolScopeFromEnv(env),
+    toolScope: args.toolScope ?? toolScopeFromEnv(env) ?? mergedFileConfig.toolScope,
     network: resolveNetworkConfig(env, mergedFileConfig),
   };
 }
@@ -115,12 +127,19 @@ export function safeConfig(config: AppConfig) {
 export function requireProviderAuth(config: AppConfig) {
   if (config.provider === 'mock') return;
   if (config.apiKey) return;
-  const variable = config.provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
+  const variable = isVendorId(config.provider)
+    ? VENDOR_PROFILES[config.provider].apiKeyEnvVars[0]
+    : config.provider === 'openai' || config.provider === 'openai-responses'
+      ? 'OPENAI_API_KEY'
+      : config.provider === 'anthropic'
+        ? 'ANTHROPIC_API_KEY'
+        : 'GEMINI_API_KEY';
   throw new Error(`${variable} is required for provider ${config.provider}. Set it in the environment or .aicode/config.json.`);
 }
 
 function providerFromEnv(env: NodeJS.ProcessEnv): ProviderName | undefined {
   const value = env.AICODE_PROVIDER;
+  if (value && isVendorId(value)) return value;
   if (value === 'mock' || value === 'openai' || value === 'openai-responses' || value === 'anthropic' || value === 'gemini') return value;
   return undefined;
 }
@@ -150,7 +169,17 @@ function modelFromEnv(provider: ProviderName, env: NodeJS.ProcessEnv) {
   return env.MOCK_MODEL;
 }
 
+/** 厂商档案的多名环境变量（XAI/GROK、ZHIPU/GLM、MOONSHOT/KIMI 等）。 */
+function vendorModelFromEnv(provider: ProviderName, env: NodeJS.ProcessEnv) {
+  if (!isVendorId(provider)) return undefined;
+  return firstEnv(VENDOR_PROFILES[provider].modelEnvVars, env);
+}
+
 function baseUrlFromEnv(provider: ProviderName, env: NodeJS.ProcessEnv) {
+  if (isVendorId(provider)) {
+    const vendor = VENDOR_PROFILES[provider];
+    return env[`${provider.toUpperCase()}_BASE_URL`] ?? vendor.defaultBaseUrl;
+  }
   if (provider === 'openai-responses') return env.OPENAI_RESPONSES_BASE_URL ?? env.AICODE_OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
   if (provider === 'openai') return env.AICODE_OPENAI_BASE_URL ?? 'https://ai.furry.edu.gr/v1';
   if (provider === 'anthropic') return env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com/v1';
@@ -158,6 +187,7 @@ function baseUrlFromEnv(provider: ProviderName, env: NodeJS.ProcessEnv) {
 }
 
 function apiKeyFromEnv(provider: ProviderName, env: NodeJS.ProcessEnv) {
+  if (isVendorId(provider)) return firstEnv(VENDOR_PROFILES[provider].apiKeyEnvVars, env);
   if (provider === 'openai' || provider === 'openai-responses') return env.OPENAI_API_KEY;
   if (provider === 'anthropic') return env.ANTHROPIC_API_KEY;
   return env.MOCK_API_KEY;
@@ -203,8 +233,13 @@ function normalizeProfile(input: Record<string, unknown>): FileProfileConfig {
     reasoningEffort: reasoningEffortValue(input.reasoningEffort),
     sessionDir: typeof input.sessionDir === 'string' ? input.sessionDir : undefined,
     maxSteps: typeof input.maxSteps === 'number' && Number.isInteger(input.maxSteps) && input.maxSteps > 0 ? input.maxSteps : undefined,
+    toolScope: toolScopeValue(input.toolScope),
     network: normalizeNetwork(input.network),
   };
+}
+
+function toolScopeValue(value: unknown): ToolScope | undefined {
+  return value === 'auto' || value === 'compact' || value === 'standard' || value === 'full' ? value : undefined;
 }
 
 function normalizeNetwork(value: unknown): { enabled?: boolean; allowlist?: string[] } | undefined {
@@ -223,7 +258,7 @@ function withoutProfiles(config: FileConfig): FileProfileConfig {
 }
 
 function providerValue(value: unknown): ProviderName | undefined {
-  return value === 'mock' || value === 'openai' || value === 'anthropic' ? value : undefined;
+  return typeof value === 'string' && (value === 'mock' || value === 'openai' || value === 'openai-responses' || value === 'anthropic' || value === 'gemini' || isVendorId(value)) ? value as ProviderName : undefined;
 }
 
 function approvalValue(value: unknown): ApprovalMode | undefined {

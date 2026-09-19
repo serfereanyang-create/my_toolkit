@@ -13,6 +13,7 @@ export const gitStatusTool: ToolDefinition<GitInput> = {
   description: 'Show git working tree status without modifying the repository.',
   inputHint: '{ "maxBytes": 20000 }',
   risk: 'read',
+  parallelSafe: true,
   validate: validateGitInput,
   execute(input, context) {
     return runGit(['status', '--short', '--branch'], context.workspaceRoot, input.maxBytes);
@@ -24,6 +25,7 @@ export const gitDiffTool: ToolDefinition<GitInput> = {
   description: 'Show unstaged changes in the working tree (git diff). To see staged/cached changes use git_diff_staged.',
   inputHint: '{ "maxBytes": 40000 }',
   risk: 'read',
+  parallelSafe: true,
   validate: validateGitInput,
   execute(input, context) {
     return runGit(['diff', '--', '.'], context.workspaceRoot, input.maxBytes);
@@ -35,6 +37,7 @@ export const gitDiffStagedTool: ToolDefinition<GitInput> = {
   description: 'Show staged (cached) changes that are ready to commit (git diff --cached). Complements git_diff which only shows unstaged changes.',
   inputHint: '{ "maxBytes": 40000 }',
   risk: 'read',
+  parallelSafe: true,
   validate: validateGitInput,
   execute(input, context) {
     return runGit(['diff', '--cached', '--', '.'], context.workspaceRoot, input.maxBytes);
@@ -54,6 +57,7 @@ export const gitLogTool: ToolDefinition<GitLogInput> = {
   description: 'Show recent git commits. Optionally filter by path, author, or date. n controls how many commits to return (default 10, max 100).',
   inputHint: '{ "n": 10 }  or  { "n": 20, "path": "src/app.ts", "author": "alice", "since": "2024-01-01" }',
   risk: 'read',
+  parallelSafe: true,
   validate(input: unknown): GitLogInput {
     if (input === undefined || input === null) return { maxBytes: 20000, n: 10 };
     if (typeof input !== 'object' || Array.isArray(input)) throw new Error('expected an object');
