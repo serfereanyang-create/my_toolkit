@@ -44,6 +44,37 @@ test('listSessions returns metadata with title derived from first user message',
   await rm(root, { recursive: true, force: true });
 });
 
+test('an unused session gets a readable fallback title, never its raw id', async () => {
+  // A session created but never used has no user text, and the sidebar used to
+  // fall back to the raw id (`sess_20260918154818_ddd042a6`) — an internal
+  // identifier shown as a title.
+  const root = await mkdtemp(path.join(tmpdir(), 'zcode-sess-'));
+  const service = createWorkspaceService();
+  service.setRoot(root);
+
+  await seedSession(root, 'sess_20260918154818_ddd042a6', [], '2026-09-18T15:48:18.000Z');
+  const list = await service.listSessions();
+
+  assert.equal(list.length, 1);
+  assert.ok(!list[0].title.includes('sess_'), `title leaked the raw id: ${list[0].title}`);
+  assert.equal(list[0].title, '未命名会话 · 2026-09-18 15:48');
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('a non-standard session id falls back to its timestamp, not the id', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'zcode-sess-'));
+  const service = createWorkspaceService();
+  service.setRoot(root);
+
+  await seedSession(root, 'legacy-session-1', [], '2026-05-06T07:08:09.000Z');
+  const list = await service.listSessions();
+
+  assert.equal(list[0].title, '未命名会话 · 2026-05-06 07:08');
+
+  await rm(root, { recursive: true, force: true });
+});
+
 test('listSessions sorts pinned first, then by updatedAt desc', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'zcode-sess-'));
   const service = createWorkspaceService();

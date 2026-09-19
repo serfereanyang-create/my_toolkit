@@ -1111,45 +1111,11 @@ h1 {
   font-weight: 500;
 }
 
-.main-tabs {
-  display: flex;
-  gap: var(--sp-1);
-}
-
-.main-tab {
-  height: 30px;
-  padding: 0 var(--sp-3);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  border: 0;
-  border-radius: var(--r-pill);
-  background: transparent;
-  color: var(--fg-muted);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
-}
-
-.main-tab-badge {
-  align-self: center;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 16px;
-}
-
 /* Inline highlight for lines an agent changed (git diff -U0 ranges) */
 .agent-changed-line {
   background: color-mix(in srgb, var(--blue) 12%, transparent);
   border-left: 2px solid var(--blue);
 }
-
-.main-tab:hover { background: var(--bg-hover); color: var(--fg); }
-.main-tab.active { background: var(--bg-sel); color: var(--fg); }
 
 /* --- Quality workspace (dashboard + sub-panel launcher) --- */
 .quality-view {

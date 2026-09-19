@@ -94,6 +94,25 @@ function createWorkspaceService() {
     return text.replace(/\s+/g, ' ').slice(0, 60);
   }
 
+  /**
+   * Fallback label for a session with no user text (created but never used).
+   * Falling back to the raw id put `sess_20260918154818_ddd042a6` in the
+   * sidebar, which is an internal identifier, not a title. Session ids embed
+   * their creation time as YYYYMMDDHHMMSS, so surface that as a readable
+   * stamp and keep the raw id only for ids that don't match the shape.
+   */
+  function fallbackTitle(id, record) {
+    const stamp = /^sess_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/.exec(String(id || ''));
+    if (stamp) {
+      const [, y, mo, d, h, mi] = stamp;
+      return `未命名会话 · ${y}-${mo}-${d} ${h}:${mi}`;
+    }
+    // A record timestamp is still better than an opaque id.
+    const at = record?.createdAt || record?.updatedAt;
+    if (typeof at === 'string' && at.length >= 16) return `未命名会话 · ${at.slice(0, 10)} ${at.slice(11, 16)}`;
+    return '未命名会话';
+  }
+
   async function listSessions() {
     const dir = sessionRootDir();
     let entries;
@@ -113,7 +132,7 @@ function createWorkspaceService() {
         const ov = overlay[id] || {};
         metas.push({
           id,
-          title: ov.title || firstUserText(record) || id,
+          title: ov.title || firstUserText(record) || fallbackTitle(id, record),
           pinned: Boolean(ov.pinned),
           archived: Boolean(ov.archived),
           updatedAt: record.updatedAt || record.createdAt || '',
@@ -149,7 +168,7 @@ function createWorkspaceService() {
         const record = JSON.parse(await fs.readFile(path.join(dir, name), 'utf8'));
         metas.push({
           id,
-          title: ov.title || firstUserText(record) || id,
+          title: ov.title || firstUserText(record) || fallbackTitle(id, record),
           pinned: Boolean(ov.pinned),
           archived: true,
           updatedAt: record.updatedAt || record.createdAt || '',

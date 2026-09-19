@@ -1120,9 +1120,6 @@ export default function App() {
             />
           )}
           <span className="main-topbar-spacer" />
-          <div className="main-tabs">
-            <button className={`main-tab ${mainView === 'chat' ? 'active' : ''}`} onClick={() => setMainView('chat')}>对话</button>
-          </div>
         </div>
 
         {mainView === 'chat' && (
