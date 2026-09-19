@@ -186,7 +186,10 @@ export function SearchPanel({ onOpenHit, onOpenSession, workspaceRoot }: Props) 
         ) : error ? (
           <span className="search-error">{error}</span>
         ) : mode === 'files' && result ? (
-          <span>{totalHits} 条结果 · {groups.length} 个文件 · 扫描 {result.filesScanned} 个 · {result.elapsedMs} ms{result.truncated ? ' · 已截断' : ''}</span>
+          <>
+            <span>{totalHits} 条结果 · {groups.length} 个文件 · 扫描 {result.filesScanned} 个 · {result.elapsedMs} ms{result.truncated ? ' · 已截断' : ''}</span>
+            {result.scanWarning && <span className="search-warning">{result.scanWarning}</span>}
+          </>
         ) : mode === 'sessions' && sessionResult ? (
           <span>{sessionResult.results.length} 个会话命中 · 扫描 {sessionResult.sessionsScanned} 个 · {sessionResult.elapsedMs} ms{sessionResult.truncated ? ' · 已截断' : ''}</span>
         ) : (

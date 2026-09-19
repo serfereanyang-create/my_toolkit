@@ -710,12 +710,31 @@ Edited code:`;
   });
 
   // ── Workspace full-text search (iteration 3) ─────────────────────────────
+  // The renderer must never be left on "搜索中…": the engine already budgets
+  // its own scan, and this outer deadline covers a wedged fs call so the UI
+  // always receives a (possibly partial) answer.
   ipcMain.handle('search.text', async (_event, query, options) => {
     const root = workspace.getRoot();
     if (!root) return { results: [], filesScanned: 0, truncated: false, elapsedMs: 0, error: '没有打开工作区' };
+    const opts = options || {};
+    const budgetMs = Number(opts.budgetMs) > 0 ? Number(opts.budgetMs) : 15000;
+    const deadlineMs = Math.min(Math.max(budgetMs + 10000, 15000), 180000);
     try {
       const { searchWorkspaceText } = require('./workspace-search.cjs');
-      return await searchWorkspaceText(root, (rel) => workspace.resolveInside(rel), query, options || {});
+      const search = searchWorkspaceText(root, (rel) => workspace.resolveInside(rel), query, opts);
+      const timeout = new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(null), deadlineMs);
+        if (typeof timer.unref === 'function') timer.unref();
+      });
+      const result = await Promise.race([search, timeout]);
+      if (result) return result;
+      return {
+        results: [],
+        filesScanned: 0,
+        truncated: true,
+        scanWarning: `搜索超过 ${deadlineMs} ms 仍未完成，已返回空结果；请缩小搜索范围或指定目录。`,
+        elapsedMs: deadlineMs,
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { results: [], filesScanned: 0, truncated: false, elapsedMs: 0, error: message };

@@ -527,6 +527,8 @@ export type SearchResult = {
   skippedBinary: number;
   skippedLarge: number;
   truncated: boolean;
+  /** Set when the scan hit its file/time budget and results are partial. */
+  scanWarning?: string;
   elapsedMs: number;
   error?: string;
 };

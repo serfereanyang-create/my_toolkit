@@ -168,3 +168,33 @@ test('looksBinary sniffs NUL and control density', () => {
   assert.equal(looksBinary(Buffer.from([0x74, 0x00, 0x65])), true);
   assert.equal(looksBinary(Buffer.from([1, 2, 3, 4, 5, 31, 30, 29, 28, 27])), true);
 });
+
+test('scan stops at the file budget and reports a partial result', async () => {
+  const files = {};
+  for (let i = 0; i < 30; i += 1) files[`f${String(i).padStart(2, '0')}.ts`] = 'needle here';
+  const fx = await fixture(files);
+  try {
+    const out = await searchWorkspaceText(fx.root, fx.resolve, 'needle', { maxFiles: 5 });
+    assert.equal(out.truncated, true);
+    assert.ok(out.filesScanned <= 5, `scanned ${out.filesScanned}, expected <= 5`);
+    assert.match(String(out.scanWarning), /文件上限/);
+  } finally { await fx.cleanup(); }
+});
+
+test('scan stops when the time budget is exhausted', async () => {
+  const files = {};
+  for (let i = 0; i < 200; i += 1) files[`d${i}/f.ts`] = 'needle here';
+  const fx = await fixture(files);
+  try {
+    // Deterministic clock: every read reports a time past the deadline, so the
+    // walk must stop with a partial-result warning instead of running unbounded
+    // (the "搜索中…" hang this guards against).
+    let clock = 0;
+    const out = await searchWorkspaceText(fx.root, fx.resolve, 'needle', {
+      budgetMs: 1000,
+      now: () => (clock += 100000),
+    });
+    assert.equal(out.truncated, true);
+    assert.match(String(out.scanWarning), /时间上限/);
+  } finally { await fx.cleanup(); }
+});

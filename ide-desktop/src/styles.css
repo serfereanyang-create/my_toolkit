@@ -3904,6 +3904,9 @@ html[data-theme='dark'] .tag-chip.c7 { color: #979cf2; }
 }
 .search-busy { display: inline-flex; align-items: center; gap: 5px; }
 .search-error { color: var(--danger); }
+/* Partial-result notice: the scan hit its file/time budget. Warning tone, not
+   error tone — results shown are real, just incomplete. */
+.search-warning { margin-left: 10px; color: var(--warn); }
 
 .search-results {
   flex: 1 1 auto;

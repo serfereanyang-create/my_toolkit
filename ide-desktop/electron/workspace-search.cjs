@@ -29,6 +29,41 @@ const TEXT_EXTS = new Set([
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // 2 MiB per file
 const CONTEXT_LINES = 2;
 
+// Scan budgets. A workspace can be an entire home directory (AppData, caches,
+// thousands of small files); without a ceiling the walk never returns and the
+// UI sits on "搜索中…" forever. Returning partial results with a flag is far
+// better than an unbounded spinner — the same fix applied to the code census.
+const DEFAULT_MAX_FILES = 20000;
+const DEFAULT_BUDGET_MS = 15000;
+const MAX_READDIR_MS = 2000;
+const MAX_READFILE_MS = 2000;
+
+/** Race a filesystem promise against a deadline; resolve to `fallback` on timeout. */
+function withDeadline(promise, ms, fallback) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallback);
+    }, ms);
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(fallback);
+      },
+    );
+  });
+}
+
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -107,14 +142,21 @@ function looksBinary(buffer) {
  * workspace service path guard (must throw when a path escapes root).
  */
 async function searchWorkspaceText(root, resolveInside, query, options = {}) {
-  const started = Date.now();
+  // Injectable clock so the time budget is deterministically testable; callers
+  // never pass this and get the real Date.now.
+  const now = typeof options.now === 'function' ? options.now : Date.now;
+  const started = now();
   const maxResults = Math.min(Math.max(1, options.maxResults || 200), 2000);
+  const maxFiles = Math.min(Math.max(1, Number(options.maxFiles) || DEFAULT_MAX_FILES), 200000);
+  const budgetMs = Math.min(Math.max(1, Number(options.budgetMs) || DEFAULT_BUDGET_MS), 120000);
+  const deadline = started + budgetMs;
   const includeRe = options.include ? globToRegExp(options.include) : null;
   const excludeRe = options.exclude ? globToRegExp(options.exclude) : null;
   const matcher = buildMatcher(String(query || ''), options);
   const results = [];
   let filesScanned = 0;
   let truncated = false;
+  let scanWarning = null;
   let skippedBinary = 0;
   let skippedLarge = 0;
 
@@ -122,16 +164,32 @@ async function searchWorkspaceText(root, resolveInside, query, options = {}) {
 
   async function walk(dir) {
     if (truncated) return;
-    let entries;
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      return; // unreadable directory: skip silently
+    if (now() > deadline) {
+      truncated = true;
+      scanWarning = `扫描超过 ${budgetMs} ms 时间上限，以下为部分结果。`;
+      return;
     }
+    if (filesScanned >= maxFiles) {
+      truncated = true;
+      scanWarning = `扫描达到 ${maxFiles} 个文件上限，以下为部分结果。`;
+      return;
+    }
+    const entries = await withDeadline(fs.readdir(dir, { withFileTypes: true }), MAX_READDIR_MS, null);
+    if (!entries) return; // unreadable or stalled directory: skip
     // Dirs first, alphabetical — stable output and top-down folder grouping.
     entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
     for (const entry of entries) {
       if (truncated) return;
+      if (now() > deadline) {
+        truncated = true;
+        scanWarning = `扫描超过 ${budgetMs} ms 时间上限，以下为部分结果。`;
+        return;
+      }
+      if (filesScanned >= maxFiles) {
+        truncated = true;
+        scanWarning = `扫描达到 ${maxFiles} 个文件上限，以下为部分结果。`;
+        return;
+      }
       const abs = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
@@ -145,16 +203,12 @@ async function searchWorkspaceText(root, resolveInside, query, options = {}) {
       const ext = path.extname(entry.name);
       // Unknown extension AND not a dotfile (like .gitignore): skip.
       if (ext && !TEXT_EXTS.has(ext) && !entry.name.startsWith('.')) continue;
-      let stat;
-      try {
-        stat = await fs.stat(abs);
-      } catch { continue; }
+      const stat = await withDeadline(fs.stat(abs), MAX_READFILE_MS, null);
+      if (!stat) continue;
       if (stat.size > MAX_FILE_BYTES) { skippedLarge += 1; continue; }
       if (stat.size === 0) continue;
-      let buffer;
-      try {
-        buffer = await fs.readFile(abs);
-      } catch { continue; }
+      const buffer = await withDeadline(fs.readFile(abs), MAX_READFILE_MS, null);
+      if (!buffer) continue;
       if (looksBinary(buffer)) { skippedBinary += 1; continue; }
       filesScanned += 1;
       const lines = buffer.toString('utf8').split(/\r?\n/);
@@ -198,7 +252,8 @@ async function searchWorkspaceText(root, resolveInside, query, options = {}) {
     skippedBinary,
     skippedLarge,
     truncated,
-    elapsedMs: Date.now() - started,
+    scanWarning,
+    elapsedMs: now() - started,
   };
 }
 
