@@ -424,23 +424,22 @@ async function runAgentTurnCore(
     shouldUseTaskBoard: taskBoard,
   });
   const scopedTools = selectScopedTools(runtime.allTools ?? runtime.tools, resolvedToolScope);
-  // Provider hard limits (e.g. "maximum is 350") reject the whole request rather
-  // than degrading, so cap the array before it is ever serialized.
-  const limited = limitProviderTools(scopedTools);
-  if (limited.dropped.length > 0) {
-    runtime.ui.info(locale === 'zh'
-      ? `工具数 ${scopedTools.length} 超过端点上限，本轮发送 ${limited.tools.length} 个（省略 ${limited.dropped.length} 个插件/MCP 工具）`
-      : `Tool count ${scopedTools.length} exceeds the endpoint limit; sending ${limited.tools.length} this turn (${limited.dropped.length} plugin/MCP tools omitted)`);
-  }
-  const activeTools = ToolRegistry.fromTools(limited.tools);
+  const activeTools = ToolRegistry.fromTools(scopedTools);
   runtime.tools = activeTools;
   runtime.resolvedToolScope = resolvedToolScope;
+
+  // Tools registered below are injected AFTER scope selection, so they are not
+  // in the scoped set. Record their names to keep them off the trim list.
+  const injectedToolNames: string[] = [];
 
   // Inject the computer-control tools post-scope so they exist regardless of
   // tool scope, mirroring the spawn_subagent pattern below.
   if (runtime.computerUseActive) {
     const { createComputerTools } = await import('../tools/computer.js');
-    for (const tool of createComputerTools()) runtime.tools.register(tool, { replace: true });
+    for (const tool of createComputerTools()) {
+      runtime.tools.register(tool, { replace: true });
+      injectedToolNames.push(tool.name);
+    }
   }
 
   // Inject spawn_subagent tool so the main agent can delegate sub-tasks.
@@ -448,13 +447,31 @@ async function runAgentTurnCore(
   // and after the runtime is fully assembled to avoid circular dependency issues.
   {
     const { createSpawnSubagentTool } = await import('../subagent/tool.js');
-    runtime.tools.register(createSpawnSubagentTool(runtime), { replace: true });
+    const tool = createSpawnSubagentTool(runtime);
+    runtime.tools.register(tool, { replace: true });
+    injectedToolNames.push(tool.name);
   }
   // review_loop (executor→reviewer→revise supervisor loop) for the root agent only;
   // sub-agents must not nest review loops.
   if ((runtime.subAgentDepth ?? 0) === 0) {
     const { createReviewLoopTool } = await import('../subagent/reviewLoopTool.js');
-    runtime.tools.register(createReviewLoopTool(runtime), { replace: true });
+    const tool = createReviewLoopTool(runtime);
+    runtime.tools.register(tool, { replace: true });
+    injectedToolNames.push(tool.name);
+  }
+
+  // Cap LAST, after every injection above. Capping before the injections let the
+  // post-scope tools push the serialized array back over the provider ceiling —
+  // the exact 400 this cap exists to prevent. Those injected tools are the ones
+  // the agent cannot work without, so they are protected from trimming.
+  const limited = limitProviderTools(runtime.tools.list(), {
+    protectedNames: new Set(injectedToolNames),
+  });
+  if (limited.dropped.length > 0) {
+    runtime.ui.info(locale === 'zh'
+      ? `工具数超过端点上限，本轮发送 ${limited.tools.length} 个（省略 ${limited.dropped.length} 个插件/MCP 工具）`
+      : `Tool count exceeds the endpoint limit; sending ${limited.tools.length} this turn (${limited.dropped.length} plugin/MCP tools omitted)`);
+    runtime.tools = ToolRegistry.fromTools(limited.tools);
   }
 
   let finalAnswer: string | undefined;

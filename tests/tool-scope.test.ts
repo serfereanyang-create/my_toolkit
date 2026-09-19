@@ -45,7 +45,7 @@ test('compact and standard scopes expose progressively larger registries', () =>
 
 test('limitProviderTools passes a small list through untouched', () => {
   const tools = createDefaultToolRegistry().list().slice(0, 5);
-  const result = limitProviderTools(tools, 10);
+  const result = limitProviderTools(tools, { max: 10 });
   assert.equal(result.tools.length, 5);
   assert.deepEqual(result.dropped, []);
 });
@@ -78,9 +78,42 @@ test('limitProviderTools omits bridge tools before built-ins', () => {
     ...base[0]!,
     name: `plugin_extra_${String(index).padStart(2, '0')}`,
   }));
-  const result = limitProviderTools([...base, ...bridge], base.length + 5);
+  const result = limitProviderTools([...base, ...bridge], { max: base.length + 5 });
   assert.equal(result.tools.length, base.length + 5);
   const droppedBridge = result.dropped.filter((name) => name.startsWith('plugin_') || name.startsWith('mcp_'));
   assert.equal(droppedBridge.length, result.dropped.length, 'every omitted tool should be a bridge tool');
   assert.equal(droppedBridge.length, bridge.length - 5);
+});
+
+test('limitProviderTools never trims a protected tool', () => {
+  // spawn_subagent / review_loop / computer tools are registered AFTER scope
+  // selection; the cap runs last and must keep them even when they sort late.
+  const base = createDefaultToolRegistry().list();
+  const injected = [
+    { ...base[0]!, name: 'zzz_spawn_subagent' },
+    { ...base[0]!, name: 'zzz_review_loop' },
+  ];
+  const result = limitProviderTools([...base, ...injected], {
+    max: 20,
+    protectedNames: new Set(['zzz_spawn_subagent', 'zzz_review_loop']),
+  });
+  const kept = new Set(result.tools.map((tool) => tool.name));
+  assert.ok(kept.has('zzz_spawn_subagent'), 'protected tool must survive');
+  assert.ok(kept.has('zzz_review_loop'), 'protected tool must survive');
+  assert.equal(result.tools.length, 20);
+});
+
+test('capping after injection keeps the serialized count under the ceiling', () => {
+  // Regression: the cap used to run BEFORE the post-scope injections, so those
+  // tools pushed the outbound array back over the provider limit and every turn
+  // 400'd. Simulate the real order: scope -> inject -> cap.
+  const base = createDefaultToolRegistry().list();
+  const injected = ['spawn_subagent', 'review_loop', 'computer_screenshot', 'computer_click']
+    .map((name) => ({ ...base[0]!, name }));
+  const protectedNames = new Set(injected.map((tool) => tool.name));
+  const result = limitProviderTools([...base, ...injected], { protectedNames });
+  assert.ok(result.tools.length <= MAX_PROVIDER_TOOLS, `serialized ${result.tools.length} exceeds cap`);
+  assert.ok(MAX_PROVIDER_TOOLS < 350);
+  const kept = new Set(result.tools.map((tool) => tool.name));
+  for (const name of protectedNames) assert.ok(kept.has(name), `${name} must survive`);
 });

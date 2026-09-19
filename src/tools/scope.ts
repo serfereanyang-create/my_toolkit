@@ -88,21 +88,25 @@ const HIGH_VALUE_EXTRA = new Set([
  * actually needs. Plain alphabetical truncation would cut `write_file` and
  * `search_text` (late letters) while keeping dozens of numeric utilities, so
  * rank by usefulness first:
- *   0. mutating/execution core (write, edit, run, git) — without these the agent cannot work
- *   1. read/inspection allowlist + high-value gates
- *   2. other built-in tools
- *   3. plugin_/mcp_ bridge tools (largest, most replaceable block)
+ *   0. protected tools (injected after scope selection; never trimmed)
+ *   1. mutating/execution core (write, edit, run, git) — without these the agent cannot work
+ *   2. read/inspection allowlist + high-value gates
+ *   3. other built-in tools
+ *   4. plugin_/mcp_ bridge tools (largest, most replaceable block)
  */
 export function limitProviderTools(
   tools: ToolDefinition[],
-  max: number = MAX_PROVIDER_TOOLS,
+  options: { max?: number; protectedNames?: ReadonlySet<string> } = {},
 ): { tools: ToolDefinition[]; dropped: string[] } {
+  const max = options.max ?? MAX_PROVIDER_TOOLS;
+  const protectedNames = options.protectedNames ?? new Set<string>();
   if (tools.length <= max) return { tools, dropped: [] };
   const rank = (tool: ToolDefinition): number => {
-    if (STANDARD_EXTRA_ALLOW.has(tool.name)) return 0;
-    if (COMPACT_ALLOW.has(tool.name) || HIGH_VALUE_EXTRA.has(tool.name)) return 1;
-    if (tool.name.startsWith('plugin_') || tool.name.startsWith('mcp_')) return 3;
-    return 2;
+    if (protectedNames.has(tool.name)) return 0;
+    if (STANDARD_EXTRA_ALLOW.has(tool.name)) return 1;
+    if (COMPACT_ALLOW.has(tool.name) || HIGH_VALUE_EXTRA.has(tool.name)) return 2;
+    if (tool.name.startsWith('plugin_') || tool.name.startsWith('mcp_')) return 4;
+    return 3;
   };
   const ranked = [...tools].sort((a, b) => {
     const byRank = rank(a) - rank(b);
