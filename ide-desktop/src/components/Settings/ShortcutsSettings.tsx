@@ -135,7 +135,10 @@ export function ShortcutsSettings() {
         />
       </div>
 
-      <div className="sc-hint">点击键位标签，按下新的组合键即可改绑；按 Esc 取消。带 ⚠ 的键位与其他命令冲突。</div>
+      {/* The warning glyph must not be an emoji: the UI font stack falls back to
+          a symbol font that renders U+26A0 as a bare triangle, which no longer
+          matches the "带 ⚠" wording below. A plain bullet is font-independent. */}
+      <div className="sc-hint">点击键位标签，按下新的组合键即可改绑；按 Esc 取消。标有「键位冲突」的条目与其他命令冲突。</div>
 
       {filteredGroups.map((group) => (
         <section key={group.heading} className="settings-group">
@@ -151,7 +154,7 @@ export function ShortcutsSettings() {
                   <div className="setting-row-text">
                     <span className="setting-row-title">{item.label}</span>
                     {custom && <span className="sc-custom-badge">已自定义</span>}
-                    {conflict && <span className="sc-conflict-badge">⚠ 键位冲突</span>}
+                    {conflict && <span className="sc-conflict-badge">键位冲突</span>}
                   </div>
                   <div className="setting-row-control sc-keys-control">
                     <button
