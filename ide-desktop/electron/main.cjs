@@ -17,6 +17,7 @@ const { createBookmarkStore } = require('./bookmarks-store.cjs');
 const { createFileHistoryStore } = require('./file-history.cjs');
 const { createSessionNotesStore } = require('./session-notes.cjs');
 const { createSessionTagsStore } = require('./session-tags.cjs');
+const { createSubagentRunStore } = require('./subagent-runs.cjs');
 const { createKeybindingsStore } = require('./keybindings-store.cjs');
 const { registerIpc } = require('./ipc.cjs');
 const { AgentBridge } = require('./agent-bridge.cjs');
@@ -109,7 +110,7 @@ async function notifyKeyState(event, window, settingsStore) {
   }
 }
 
-function createAgentManager({ mainWindow, workspace, settings, secrets }) {
+function createAgentManager({ mainWindow, workspace, settings, secrets, subagentRuns }) {
   let bridge;
   let lifecycleQueue = Promise.resolve();
 
@@ -121,6 +122,29 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
   // Request ids the sandbox already answered, so a late user click on the
   // (now auto-decided) card can't send a second, conflicting decision.
   const sandboxDecided = new Set();
+
+  /**
+   * Session ids whose bridge is currently up. The 子智能体目录 uses this to
+   * tell a genuinely running subagent from one whose bridge died mid-flight:
+   * a stale "running" row would be a lie.
+   *
+   * `bridge_ready` names the session; `agent_offline` does not, so each bridge
+   * instance remembers the session it announced and clears it when that same
+   * bridge reports offline (crash, cancel, or shutdown).
+   */
+  const liveSessions = new Set();
+  const sessionOfBridge = new WeakMap();
+  function trackSessionLifecycle(bridgeInstance, event) {
+    if (!event || !bridgeInstance) return;
+    if (event.type === 'bridge_ready' && event.sessionId) {
+      const id = String(event.sessionId);
+      sessionOfBridge.set(bridgeInstance, id);
+      liveSessions.add(id);
+    } else if (event.type === 'agent_offline') {
+      const id = sessionOfBridge.get(bridgeInstance);
+      if (id) liveSessions.delete(id);
+    }
+  }
 
   /**
    * Run one approval_needed event through the sandbox policy and, when the
@@ -211,6 +235,17 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
         void applySandboxPolicy(capturedBridge, event).finally(() => forward(event));
         return;
       }
+      // Subagent runs are persisted so the 子智能体目录 survives a reload.
+      // Recording is fire-and-forget: a sidecar write failure must never
+      // stall the event stream the conversation depends on.
+      if (event && (event.type === 'subagent_started' || event.type === 'subagent_done')) {
+        void Promise.resolve(
+          subagentRuns.record({ ...event, phase: event.type === 'subagent_done' ? 'done' : 'started' }),
+        ).catch(() => undefined);
+      }
+      // Track which sessions have a live bridge, so a run whose bridge died
+      // mid-flight is not reported as still running.
+      trackSessionLifecycle(capturedBridge, event);
       forward(event);
     });
     // Do not report startup complete until the CLI has emitted bridge_ready;
@@ -256,6 +291,10 @@ function createAgentManager({ mainWindow, workspace, settings, secrets }) {
   return {
     start(resumeSessionId) {
       return start(resumeSessionId);
+    },
+    /** Session ids with a live bridge — the directory's running/finished split. */
+    liveSessions() {
+      return [...liveSessions];
     },
     async taskBoardAction(action, taskId) {
       if (!bridge) throw new Error('Agent is not started');
@@ -386,10 +425,11 @@ function createWindow() {
   const fileHistory = createFileHistoryStore(app.getPath('userData'));
   const notes = createSessionNotesStore(app.getPath('userData'));
   const sessionTags = createSessionTagsStore(() => workspace.getRoot());
+  const subagentRuns = createSubagentRunStore(() => workspace.getRoot());
   const keybindings = createKeybindingsStore(app.getPath('userData'));
   const connectivity = { test: (args) => testProviderConnection(args) };
   const usage = createUsageStore();
-  const agentManager = createAgentManager({ mainWindow, workspace, settings, secrets });
+  const agentManager = createAgentManager({ mainWindow, workspace, settings, secrets, subagentRuns });
   const automation = createAutomationService({ workspace, agentManager, mainWindow });
   const terminalManager = new TerminalManager();
   const previewService = createPreviewService(mainWindow);
@@ -460,7 +500,7 @@ function createWindow() {
     // turns (and writing to the workspace) with nowhere to send their events.
     agentManager.dispose();
   });
-  registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings });
+  registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings, subagentRuns });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   const loadPromise = devUrl

@@ -96,6 +96,22 @@ export default function App() {
   const [quickOpen, setQuickOpen] = useState(false);
   // Iteration 18: workspace session tags (sessionId -> tags[]).
   const [sessionTags, setSessionTags] = useState<Record<string, string[]>>({});
+  // 子智能体目录: number of subagents currently running, for the tab badge.
+  const [runningSubagentCount, setRunningSubagentCount] = useState(0);
+
+  // Track running subagents from the agent stream. The directory panel polls
+  // the store for its own list; this counter exists so the badge is right even
+  // while the panel is closed.
+  useEffect(() => {
+    const off = desktop.agent.onEvent((event) => {
+      if (event.type === 'subagent_started') setRunningSubagentCount((n) => n + 1);
+      else if (event.type === 'subagent_done') setRunningSubagentCount((n) => Math.max(0, n - 1));
+      // A dead bridge can never send the matching done events, so clear the
+      // counter instead of leaving a badge stuck on a finished run.
+      else if (event.type === 'agent_offline') setRunningSubagentCount(0);
+    });
+    return off;
+  }, []);
 
   // Reload tags when the workspace changes; they live in a workspace sidecar.
   useEffect(() => {
@@ -844,6 +860,11 @@ export default function App() {
     toggleWorkDetails: () => dispatch({ type: 'work/toggle' }),
     togglePreview: () => dispatch({ type: 'preview/toggle' }),
     toggleNotes: () => { setNotesOpen((v) => !v); setMainView('chat'); },
+    toggleWorkspaceTools: () => {
+      // Reuse the helper so the panel exclusion rules stay in one place.
+      if (workspaceToolsRef.current.open) setWorkspaceToolsOpen(false);
+      else openWorkspaceTools();
+    },
     openSettings: (page) => { setSettingsPage(page as SettingsNavId | undefined); setMainView('settings'); },
     openWorkspace: () => { void openWorkspace(); },
     openQuickOpen: () => setQuickOpen(true),
@@ -1377,10 +1398,13 @@ export default function App() {
         previewTabCount={state.preview.tabs.length}
         agentStatus={state.agentStatus}
         pendingDiffCount={state.pendingDiffs.filter((d) => d.status === 'pending').length}
+        sessionId={state.activeSessionId ?? undefined}
+        runningSubagentCount={runningSubagentCount}
         onClose={() => setWorkspaceToolsOpen(false)}
         onWidthChange={setWorkspaceToolsWidth}
         onOpenQuality={() => { setWorkspaceToolsOpen(false); setMainView('quality'); }}
         onOpenGit={() => { setWorkspaceToolsOpen(false); setMainView('git'); }}
+        onOpenFile={(path) => { void handleOpenFile(path); }}
         onOpenPreview={() => {
           setWorkspaceToolsOpen(false);
           if (!state.preview.open) dispatch({ type: 'preview/toggle' });

@@ -41,6 +41,7 @@ export function buildCommands(ctx: {
   toggleWorkDetails: () => void;
   togglePreview: () => void;
   toggleNotes: () => void;
+  toggleWorkspaceTools: () => void;
   openSettings: (page?: string) => void;
   openWorkspace: () => void;
   openQuickOpen: () => void;
@@ -74,6 +75,7 @@ export function buildCommands(ctx: {
     { id: 'panels.sidechat', title: 'Toggle Side Chat', group: 'panels', shortcut: 'Alt+Ctrl+S', keywords: '侧边会话 side chat', run: ctx.toggleSideChat },
     { id: 'panels.browser', title: 'Toggle Browser', group: 'panels', shortcut: 'Alt+Ctrl+B', keywords: '浏览器 browser preview web', run: ctx.toggleBrowser },
     { id: 'panels.work', title: 'Toggle Work Details', group: 'panels', keywords: '工作日志 详情 work log details', run: ctx.toggleWorkDetails },
+    { id: 'panels.workspacetools', title: 'Toggle Workspace Tools', group: 'panels', shortcut: 'Alt+Ctrl+W', keywords: '工作区工具 审查 子智能体 技能 workspace tools review subagent', run: ctx.toggleWorkspaceTools },
     { id: 'panels.preview', title: 'Toggle Preview Sidebar', group: 'panels', keywords: '预览 preview sidebar', run: ctx.togglePreview },
   { id: 'panels.notes', title: 'Toggle Session Notes', group: 'panels', keywords: '笔记 会话笔记 notes 备忘', run: ctx.toggleNotes },
     { id: 'settings.theme.light', title: 'Theme: Light', group: 'settings', keywords: '浅色 明亮主题 light theme', run: () => ctx.setTheme('light') },

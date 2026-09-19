@@ -198,6 +198,10 @@ type ZCodeDesktopApi = {
     toggle(sessionId: string, tag: string): Promise<{ ok: boolean; sessionId?: string; tags?: string[]; error?: string }>;
     remove(sessionId: string): Promise<{ ok: boolean; removed?: string; error?: string }>;
   };
+  subagents: {
+    list(sessionId?: string): Promise<{ running: SubagentRun[]; finished: SubagentRun[] }>;
+    remove(sessionId: string): Promise<{ ok: boolean; removed?: string; error?: string }>;
+  };
   keybindings: {
     get(): Promise<Record<string, string>>;
     set(actionId: string, chord: string | null): Promise<{ ok: boolean; actionId?: string; chord?: string | null; error?: string }>;
@@ -258,8 +262,10 @@ type ZCodeDesktopApi = {
     status(): Promise<GitStatus>;
     branches(): Promise<GitBranchList>;
     log(n?: number): Promise<GitLogResult>;
+    graph(n?: number): Promise<GitGraphResult>;
     diff(staged?: boolean): Promise<{ ok: boolean; diff?: string; error?: string }>;
     diffStats(): Promise<GitDiffStats>;
+    fileStats(): Promise<GitFileStatsResult>;
     fileChangeRanges(filePath: string): Promise<{ ok: boolean; file?: string; hunks?: Array<{ start: number; end: number; type: string }>; error?: string }>;
     stage(paths: string[]): Promise<{ ok: boolean; staged?: string[]; error?: string }>;
     unstage(paths: string[]): Promise<{ ok: boolean; unstaged?: string[]; error?: string }>;
@@ -328,6 +334,51 @@ export type GitLogResult = {
   ok: boolean;
   commits?: GitCommit[];
   error?: string;
+};
+
+/** One file's working-tree delta, for the review list's per-row +N −M. */
+export type GitFileStat = {
+  path: string;
+  added: number;
+  removed: number;
+  status: 'staged' | 'unstaged' | 'untracked';
+};
+
+export type GitFileStatsResult = {
+  ok: boolean;
+  files?: GitFileStat[];
+  error?: string;
+};
+
+/** A commit plus its parent hashes — the DAG the graph view lays out. */
+export type GitGraphCommit = GitCommit & { parents: string[] };
+
+export type GitGraphResult = {
+  ok: boolean;
+  commits?: GitGraphCommit[];
+  error?: string;
+};
+
+/**
+ * One subagent run, as listed in the 子智能体目录.
+ *
+ * `interrupted` means the run reported `started` but its parent bridge is gone,
+ * so we cannot claim it is still working — the store reconciles that at read
+ * time because a stale "running" row would mislead.
+ */
+export type SubagentRunStatus = 'running' | 'done' | 'failed' | 'interrupted';
+
+export type SubagentRun = {
+  id: string;
+  goal: string;
+  expert: string;
+  status: SubagentRunStatus;
+  startedAt: string;
+  finishedAt?: string;
+  answer?: string;
+  subSessionId?: string;
+  durationMs?: number;
+  steps?: number;
 };
 
 export type UsageSource = 'provider-reported' | 'local-estimate';

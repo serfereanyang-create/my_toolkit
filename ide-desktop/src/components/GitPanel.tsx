@@ -2,12 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   GitBranch, GitCommit, GitPullRequest, ChevronDown, ChevronRight, Search,
   Plus, Upload, Check, X, AlertCircle, Loader2, Play, Pause, FileDiff,
-  CheckCircle2, Circle, MinusCircle, GitGraph, Settings2,
+  CheckCircle2, Circle, MinusCircle, GitGraph as GitGraphIcon, Settings2,
 } from 'lucide-react';
 import { desktop } from '../lib/ipc';
-import type { GitStatus, GitBranchList, GitCommit as GitCommitType, GitDiffStats } from '../lib/ipc';
+import type { GitStatus, GitBranchList, GitDiffStats } from '../lib/ipc';
 import type { AppState, TaskBoard } from '../types';
 import { formatGoalElapsed, taskProgress, computeStages } from '../lib/gitPanelFormat';
+import { GitGraph } from './GitGraph';
 
 /*
  * GitPanel — Codex 风格的「Git 工具」卡片。
@@ -117,7 +118,7 @@ export function BranchMenu({
       )}
       {onOpenGraph && (
         <button className="gtx-branch-item create" onClick={() => { onOpenGraph(); onClose(); }}>
-          <GitGraph size={13} className="gtx-branch-item-icon" />
+          <GitGraphIcon size={13} className="gtx-branch-item-icon" />
           <span className="gtx-branch-item-body"><span className="gtx-branch-item-name">Git 图谱</span></span>
         </button>
       )}
@@ -174,9 +175,6 @@ export function GitPanel({
   const [prCreating, setPrCreating] = useState(false);
   const [prResult, setPrResult] = useState<{ ok: boolean; url?: string; error?: string } | null>(null);
 
-  // 提交历史
-  const [log, setLog] = useState<GitCommitType[]>([]);
-
   const board = state.taskBoard;
   const [, setTick] = useState(0);
 
@@ -219,12 +217,6 @@ export function GitPanel({
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, [board?.runtimeMode]);
-
-  useEffect(() => {
-    if (logOpen && log.length === 0) {
-      void desktop.git.log(50).then((r) => { if (r.ok && r.commits) setLog(r.commits); });
-    }
-  }, [logOpen, log.length]);
 
   // ── actions ────────────────────────────────────────────────────────────────
   async function doCheckout(branch: string) {
@@ -298,7 +290,7 @@ export function GitPanel({
     try {
       const r = await desktop.git.pull('origin', status?.branch ?? '');
       setSyncMsg(r.ok ? '✔ 已拉取' : `✘ ${r.error}`);
-      if (r.ok) { await refresh(); setLog([]); }
+      if (r.ok) await refresh();
     } finally {
       setPulling(false);
     }
@@ -382,8 +374,7 @@ export function GitPanel({
               onCheckout={(b) => void doCheckout(b)}
               onCreate={(b) => void doCreateBranch(b)}
               onClose={() => setBranchMenuOpen(false)}
-              onOpenGraph={() => { setChangesOpen(true); setLogOpen(true); }}
-            />
+              onOpenGraph={() => { setChangesOpen(true); setLogOpen(true); }}            />
           )}
         </div>
 
@@ -450,17 +441,13 @@ export function GitPanel({
               </>
             )}
             <button className="gtx-btn ghost log-toggle" onClick={() => setLogOpen((v) => !v)}>
-              <GitGraph size={12} /> {logOpen ? '收起提交历史' : '查看提交历史'}
+              <GitGraphIcon size={12} /> {logOpen ? '收起提交历史' : '查看提交历史'}
             </button>
             {logOpen && (
               <div className="gtx-log">
-                {log.length === 0 ? <div className="gtx-empty">暂无提交历史</div> : log.map((c) => (
-                  <div key={c.hash} className="gtx-log-row">
-                    <code className="gtx-log-hash">{c.shortHash}</code>
-                    <span className="gtx-log-msg" title={c.message}>{c.message}</span>
-                    <span className="gtx-log-date">{new Date(c.date).toLocaleDateString('zh-CN')}</span>
-                  </div>
-                ))}
+                {/* The graph carries the history now: it shows the same commits
+                    with lanes, so a separate flat list would duplicate it. */}
+                <GitGraph limit={60} />
               </div>
             )}
           </div>

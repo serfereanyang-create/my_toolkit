@@ -30,6 +30,10 @@
 **/dist/
 **/build/
 
+# Local agent runtime state (sessions, task boards, persona) written into
+# whichever folder is opened as a workspace — never source.
+**/.aicode/
+
 # Keep ZCode-lite source and package metadata visible to the outer repository.
 !/zcode-lite/src/
 !/zcode-lite/tests/

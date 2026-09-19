@@ -18,7 +18,7 @@ function withDeadline(promise, timeoutMs, message) {
   });
 }
 
-function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings }) {
+function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings, subagentRuns }) {
   async function materializePersona(root) {
     try {
       const config = await settings.get();
@@ -790,6 +790,15 @@ Edited code:`;
   ipcMain.handle('tags.toggle', async (_event, sessionId, tag) => sessionTags.toggleTag(sessionId, tag));
   ipcMain.handle('tags.remove', async (_event, sessionId) => sessionTags.remove(sessionId));
 
+  // ── Subagent directory ───────────────────────────────────────────────────
+  // `running` vs `finished` is decided here, not in the renderer: only the
+  // main process knows which sessions still have a live bridge.
+  ipcMain.handle('subagents.list', async (_event, sessionId) => {
+    const live = new Set(agentManager.liveSessions());
+    return await subagentRuns.listGrouped(sessionId, live);
+  });
+  ipcMain.handle('subagents.remove', async (_event, sessionId) => subagentRuns.remove(sessionId));
+
   // ── User keybindings (iteration 19) ──────────────────────────────────────
   ipcMain.handle('keybindings.get', async () => keybindings.getAll());
   ipcMain.handle('keybindings.set', async (_event, actionId, chord) => keybindings.setOne(actionId, chord));
@@ -963,9 +972,13 @@ Edited code:`;
   ipcMain.handle('git.status',        async () => git.getStatus(workspace.getRoot()));
   ipcMain.handle('git.branches',      async () => git.getBranches(workspace.getRoot()));
   ipcMain.handle('git.log',           async (_e, n) => git.getLog(workspace.getRoot(), n));
+  // Commit DAG with parents, for the graph view (git log --graph is ASCII).
+  ipcMain.handle('git.graph',         async (_e, n) => git.getGraph(workspace.getRoot(), n));
   ipcMain.handle('git.diff',          async (_e, staged) => git.getDiff(workspace.getRoot(), staged));
   // Line-level change totals (+N −M) for the Git tools card.
   ipcMain.handle('git.diffStats',     async () => git.getDiffStats(workspace.getRoot()));
+  // Per-file +N −M for the review list.
+  ipcMain.handle('git.fileStats',     async () => git.getFileStats(workspace.getRoot()));
   // Inline editor highlights: current-file changed line ranges from git diff.
   ipcMain.handle('git.fileChangeRanges', async (_e, filePath) => git.getFileChangeRanges(workspace.getRoot(), filePath));
   ipcMain.handle('git.stage',         async (_e, paths) => git.stage(workspace.getRoot(), paths));

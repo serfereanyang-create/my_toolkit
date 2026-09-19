@@ -206,6 +206,10 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     toggle:  (sessionId, tag)      => ipcRenderer.invoke('tags.toggle', sessionId, tag),
     remove:  (sessionId)           => ipcRenderer.invoke('tags.remove', sessionId),
   },
+  subagents: {
+    list:   (sessionId)            => ipcRenderer.invoke('subagents.list', sessionId),
+    remove: (sessionId)            => ipcRenderer.invoke('subagents.remove', sessionId),
+  },
   keybindings: {
     get: ()                     => ipcRenderer.invoke('keybindings.get'),
     set: (actionId, chord)      => ipcRenderer.invoke('keybindings.set', actionId, chord),
@@ -238,8 +242,10 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     status:       ()                           => ipcRenderer.invoke('git.status'),
     branches:     ()                           => ipcRenderer.invoke('git.branches'),
     log:          (n)                          => ipcRenderer.invoke('git.log', n),
+    graph:        (n)                          => ipcRenderer.invoke('git.graph', n),
     diff:         (staged)                     => ipcRenderer.invoke('git.diff', staged),
     diffStats:    ()                           => ipcRenderer.invoke('git.diffStats'),
+    fileStats:    ()                           => ipcRenderer.invoke('git.fileStats'),
     fileChangeRanges: (filePath)               => ipcRenderer.invoke('git.fileChangeRanges', filePath),
     stage:        (paths)                      => ipcRenderer.invoke('git.stage', paths),
     unstage:      (paths)                      => ipcRenderer.invoke('git.unstage', paths),

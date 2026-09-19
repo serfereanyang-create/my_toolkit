@@ -466,12 +466,127 @@ async function createPr(root, { title, body = '', draft = false, base = '' }) {
   }
 }
 
+/**
+ * Per-file working-tree line stats — the "+97 −0" figure next to each row in
+ * the review list. `getDiffStats` only totals the whole workspace, which is
+ * enough for a badge but not for a file list.
+ *
+ * Returns { ok, files: [{ path, added, removed, status }] } where status is
+ * 'staged' | 'unstaged' | 'untracked'. A path changed both staged and
+ * unstaged is reported once with the two sets summed, because the reviewer
+ * cares about the file's total delta.
+ */
+async function getFileStats(root) {
+  const [stagedRes, unstagedRes, untrackedRes] = await Promise.all([
+    safeGit(root, ['diff', '--cached', '--numstat']),
+    safeGit(root, ['diff', '--numstat']),
+    safeGit(root, ['ls-files', '--others', '--exclude-standard']),
+  ]);
+  if (!stagedRes.ok) return { ok: false, error: stagedRes.error };
+
+  const files = new Map();
+  const bump = (rel, added, removed, status) => {
+    const existing = files.get(rel);
+    if (existing) {
+      existing.added += added;
+      existing.removed += removed;
+      // Untracked is the strongest label; otherwise keep the first seen.
+      if (status === 'untracked') existing.status = 'untracked';
+      return;
+    }
+    files.set(rel, { path: rel, added, removed, status });
+  };
+
+  // numstat: "<added>\t<removed>\t<path>". Binary files report "-", which
+  // parses as NaN — count the file but contribute no lines.
+  const walkNumstat = (text, status) => {
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      const tab1 = line.indexOf('\t');
+      if (tab1 < 0) continue;
+      const tab2 = line.indexOf('\t', tab1 + 1);
+      if (tab2 < 0) continue;
+      const rel = line.slice(tab2 + 1);
+      if (!rel) continue;
+      const a = Number(line.slice(0, tab1));
+      const r = Number(line.slice(tab1 + 1, tab2));
+      bump(rel, Number.isFinite(a) ? a : 0, Number.isFinite(r) ? r : 0, status);
+    }
+  };
+  walkNumstat(stagedRes.stdout, 'staged');
+  walkNumstat(unstagedRes.stdout, 'unstaged');
+
+  const untrackedFiles = (untrackedRes.ok ? untrackedRes.stdout.split('\n').filter(Boolean) : [])
+    .slice(0, UNTRACKED_FILE_CAP);
+  let budget = UNTRACKED_LINE_CAP;
+  for (const rel of untrackedFiles) {
+    if (budget <= 0) break;
+    try {
+      const abs = path.resolve(root, rel);
+      const stat = fs.statSync(abs);
+      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) {
+        bump(rel, 0, 0, 'untracked');
+        continue;
+      }
+      const text = fs.readFileSync(abs, 'utf8');
+      let n = 0;
+      for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
+      if (text.length > 0 && text.charCodeAt(text.length - 1) !== 10) n++;
+      const capped = Math.min(n, budget);
+      budget -= capped;
+      bump(rel, capped, 0, 'untracked');
+    } catch {
+      // Unreadable or vanished between ls-files and stat — still list it.
+      bump(rel, 0, 0, 'untracked');
+    }
+  }
+
+  return { ok: true, files: [...files.values()] };
+}
+
+/**
+ * Commit history with parent links, for the commit graph.
+ *
+ * `git log --graph` draws an ASCII picture, which is unusable for a real
+ * renderer: we need the DAG to lay out lanes ourselves. So request parents
+ * as well and let the renderer build the lanes.
+ *
+ * Returns { ok, commits: [{ hash, shortHash, parents[], author, date, message }] }.
+ */
+async function getGraph(root, n = 60) {
+  const limit = Math.max(1, Math.min(500, Number(n) || 60));
+  const sep = '\x1e';
+  const fmt = `%H${sep}%h${sep}%P${sep}%an${sep}%ai${sep}%s`;
+  // --all so the graph shows every branch, matching what a graph view is for.
+  const res = await safeGit(root, ['log', '--all', `--max-count=${limit}`, `--format=${fmt}`]);
+  if (!res.ok) return { ok: false, error: res.error };
+
+  const commits = res.stdout
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [hash, shortHash, parents, author, date, ...rest] = line.split(sep);
+      return {
+        hash,
+        shortHash,
+        parents: String(parents || '').split(' ').filter(Boolean),
+        author,
+        date,
+        message: rest.join(sep),
+      };
+    });
+
+  return { ok: true, commits };
+}
+
 module.exports = {
   getStatus,
   getBranches,
   getLog,
+  getGraph,
   getDiff,
   getDiffStats,
+  getFileStats,
   getFileChangeRanges,
   stage,
   unstage,

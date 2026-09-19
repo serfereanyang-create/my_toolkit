@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, BarChart3, CheckCircle2, ChevronRight, FileDiff, GitBranch, History, LayoutTemplate, PanelRightClose, RefreshCw, Sparkles, X } from 'lucide-react';
+import { Activity, BarChart3, Bot, CheckCircle2, ChevronRight, FileDiff, FileSearch, GitBranch, History, LayoutTemplate, PanelRightClose, RefreshCw, Sparkles, X } from 'lucide-react';
 import { SkillPanel } from './SkillPanel';
 import { ReflectionPanel } from './ReflectionPanel';
 import { ProjectAuditPanel } from './ProjectAuditPanel';
+import { ReviewPanel } from './ReviewPanel';
+import { SubagentDirectory } from './SubagentDirectory';
 
-type WorkspaceToolTab = 'overview' | 'quality' | 'changes' | 'preview' | 'skills' | 'reflections' | 'audit';
+type WorkspaceToolTab = 'overview' | 'quality' | 'changes' | 'review' | 'preview' | 'skills' | 'reflections' | 'audit' | 'subagents';
 
 export type WorkspaceAgentStatus = 'offline' | 'starting' | 'ready' | 'running';
 
@@ -17,11 +19,17 @@ export interface WorkspaceToolsPanelProps {
   previewTabCount: number;
   agentStatus: WorkspaceAgentStatus;
   pendingDiffCount: number;
+  /** Active conversation, so the subagent directory scopes to it. */
+  sessionId?: string;
+  /** Running subagent count, for the 子智能体 tab badge. */
+  runningSubagentCount?: number;
   onClose: () => void;
   onWidthChange: (width: number) => void;
   onOpenQuality: () => void;
   onOpenGit: () => void;
   onOpenPreview: () => void;
+  /** Open one file in the editor (from a review row). */
+  onOpenFile?: (path: string) => void;
 }
 
 const MIN_WIDTH = 320;
@@ -53,11 +61,14 @@ export function WorkspaceToolsPanel({
   previewTabCount,
   agentStatus,
   pendingDiffCount,
+  sessionId,
+  runningSubagentCount,
   onClose,
   onWidthChange,
   onOpenQuality,
   onOpenGit,
   onOpenPreview,
+  onOpenFile,
 }: WorkspaceToolsPanelProps) {
   const [tab, setTab] = useState<WorkspaceToolTab>('overview');
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -94,10 +105,12 @@ export function WorkspaceToolsPanel({
     { id: 'overview', label: '概览', icon: <Activity size={14} /> },
     { id: 'quality', label: '质量', icon: <BarChart3 size={14} /> },
     { id: 'changes', label: '变更', icon: <GitBranch size={14} />, badge: pendingDiffCount || undefined },
+    { id: 'review', label: '审查', icon: <FileSearch size={14} /> },
     { id: 'preview', label: '预览', icon: <FileDiff size={14} />, badge: previewOpen ? previewTabCount || undefined : undefined },
     { id: 'skills', label: '技能', icon: <Sparkles size={14} /> },
     { id: 'reflections', label: '教训', icon: <History size={14} /> },
     { id: 'audit', label: '结构', icon: <LayoutTemplate size={14} /> },
+    { id: 'subagents', label: '子智能体', icon: <Bot size={14} />, badge: runningSubagentCount || undefined },
   ];
 
   return (
@@ -197,6 +210,11 @@ export function WorkspaceToolsPanel({
             <button type="button" className="workspace-tools-primary" onClick={onOpenGit}>查看 Git 变更 <ChevronRight size={14} /></button>
           </div>
         )}
+        {tab === 'review' && (
+          <div className="workspace-tools-review">
+            <ReviewPanel workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />
+          </div>
+        )}
         {tab === 'preview' && (
           <div className="workspace-tools-empty">
             <FileDiff size={28} />
@@ -222,6 +240,11 @@ export function WorkspaceToolsPanel({
         {tab === 'audit' && (
           <div className="workspace-tools-audit">
             <ProjectAuditPanel />
+          </div>
+        )}
+        {tab === 'subagents' && (
+          <div className="workspace-tools-subagents">
+            <SubagentDirectory sessionId={sessionId} />
           </div>
         )}
       </div>
