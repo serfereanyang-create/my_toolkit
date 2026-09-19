@@ -2,7 +2,7 @@ const { dialog, ipcMain, shell, clipboard, app } = require('electron');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { describeFile, inspectProject, resolveWorkspacePath } = require('./preview-policy.cjs');
+const { assertInsideRoot, describeFile, inspectProject, resolveWorkspacePath } = require('./preview-policy.cjs');
 const { createQualityGateway } = require('./quality-gateway.cjs');
 const git = require('./git.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
@@ -491,7 +491,28 @@ Edited code:`;
   // Real packaged version for Help / What's New content selection.
   ipcMain.handle('app.version', () => ({ version: app.getVersion() }));
 
-  ipcMain.handle('terminal.create', async (_event, options) => terminalManager.create(options || {}));
+  ipcMain.handle('terminal.create', async (_event, options) => {
+    // The renderer supplies `cwd`, which used to be handed straight to spawn —
+    // so a compromised renderer could open a shell in any directory on the
+    // machine (or fall back to the user's home directory). Confine it to the
+    // active workspace; the terminal still gets full freedom INSIDE the root,
+    // so `cd node_modules` keeps working.
+    const requested = options && typeof options.cwd === 'string' ? options.cwd : undefined;
+    const root = workspace.getRoot();
+    let cwd;
+    if (!requested) {
+      cwd = root;
+    } else {
+      const resolved = path.resolve(root, requested);
+      try {
+        assertInsideRoot(resolved, root, { allowRoot: true, rejectBlocked: false });
+        cwd = resolved;
+      } catch {
+        cwd = root;
+      }
+    }
+    return terminalManager.create({ ...(options || {}), cwd });
+  });
   ipcMain.handle('terminal.write', async (_event, id, data) => terminalManager.write(id, data));
   ipcMain.handle('terminal.resize', async (_event, id, cols, rows) => terminalManager.resize(id, cols, rows));
   ipcMain.handle('terminal.kill', async (_event, id) => terminalManager.kill(id));
