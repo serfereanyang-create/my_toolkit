@@ -13,6 +13,8 @@ export function formatApprovalPrompt(options: {
   tool: string;
   risk: ApprovalRisk;
   path?: string;
+  /** Multiple targets for one call (e.g. the files `git restore` discards). */
+  paths?: string[];
   from?: string;
   to?: string;
   command?: string;
@@ -21,6 +23,10 @@ export function formatApprovalPrompt(options: {
   const risk = riskLabel[options.locale][options.risk];
   const bits: string[] = [];
   if (options.path) bits.push(options.locale === 'zh' ? `路径=${options.path}` : `path=${options.path}`);
+  if (options.paths && options.paths.length > 0) {
+    const joined = options.paths.join(', ');
+    bits.push(options.locale === 'zh' ? `路径=${joined}` : `paths=${joined}`);
+  }
   if (options.from) bits.push(options.locale === 'zh' ? `从=${options.from}` : `from=${options.from}`);
   if (options.to) bits.push(options.locale === 'zh' ? `到=${options.to}` : `to=${options.to}`);
   if (options.command) bits.push(options.locale === 'zh' ? `命令=${options.command}` : `command=${options.command}`);

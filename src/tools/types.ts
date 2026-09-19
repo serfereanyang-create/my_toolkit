@@ -89,6 +89,16 @@ export type ToolDefinition<TInput = unknown> = {
    * (used by user-declared plugins). Destructive hard-blocks still apply.
    */
   autoApprove?: boolean;
+  /**
+   * When true — or when the predicate returns true for the call's validated
+   * input — this tool is never approved silently: the prompt is required in
+   * every mode, and the registry refuses the call when no confirmation handler
+   * exists. Reserved for actions that destroy work the model cannot
+   * reconstruct, such as `git restore` discarding uncommitted edits.
+   *
+   * Use the predicate form when only some inputs are destructive.
+   */
+  alwaysPrompt?: boolean | ((input: Record<string, unknown>) => boolean);
   validate(input: unknown): TInput;
   execute(input: TInput, context: ToolContext): Promise<ToolResult>;
 };

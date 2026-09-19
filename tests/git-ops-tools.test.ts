@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -36,6 +36,83 @@ test('git_add + git_commit stage and record a real commit', async () => {
   // Verify the commit really exists in the log.
   const { stdout } = await execFileAsync('git', ['log', '--oneline'], { cwd: ws });
   assert.match(stdout, /add a\.txt/);
+
+  await rm(ws, { recursive: true, force: true });
+});
+
+/*
+ * `git restore` without --staged discards uncommitted edits and cannot be
+ * undone. It used to be registered autoApprove, so auto mode ran it with no
+ * prompt at all — the agent could silently delete the user's unsaved work.
+ * It must now always confirm, and refuse outright when nothing can confirm.
+ */
+test('git_restore refuses to discard uncommitted work without a confirmation handler', async () => {
+  const ws = await initRepo();
+  const registry = createDefaultToolRegistry();
+  await writeFile(join(ws, 'a.txt'), 'committed');
+  await execFileAsync('git', ['add', '.'], { cwd: ws });
+  await execFileAsync('git', ['commit', '-m', 'init'], { cwd: ws });
+  await writeFile(join(ws, 'a.txt'), 'precious unsaved edit');
+
+  const result = await registry.execute('git_restore', { paths: ['a.txt'] }, ctx(ws));
+
+  assert.equal(result.ok, false);
+  assert.match(result.output, /no confirmation handler/);
+  // The edit must still be on disk — a refusal must have zero side effects.
+  assert.equal(await readFile(join(ws, 'a.txt'), 'utf8'), 'precious unsaved edit');
+
+  await rm(ws, { recursive: true, force: true });
+});
+
+test('git_restore discard prompts with the target list and only runs when approved', async () => {
+  const ws = await initRepo();
+  const registry = createDefaultToolRegistry();
+  await writeFile(join(ws, 'a.txt'), 'committed');
+  await execFileAsync('git', ['add', '.'], { cwd: ws });
+  await execFileAsync('git', ['commit', '-m', 'init'], { cwd: ws });
+  await writeFile(join(ws, 'a.txt'), 'precious unsaved edit');
+
+  const prompts: string[] = [];
+  const denied = await registry.execute('git_restore', { paths: ['a.txt'] }, {
+    workspaceRoot: ws,
+    approval: 'auto',
+    confirm: async (message) => {
+      prompts.push(message);
+      return false;
+    },
+  });
+  assert.equal(denied.ok, false);
+  assert.equal(await readFile(join(ws, 'a.txt'), 'utf8'), 'precious unsaved edit');
+  // The user must be told WHICH files are about to be discarded.
+  assert.match(prompts[0] ?? '', /paths=a\.txt/);
+
+  const approved = await registry.execute('git_restore', { paths: ['a.txt'] }, {
+    workspaceRoot: ws,
+    approval: 'auto',
+    confirm: async () => true,
+  });
+  assert.equal(approved.ok, true);
+  assert.equal(await readFile(join(ws, 'a.txt'), 'utf8'), 'committed');
+
+  await rm(ws, { recursive: true, force: true });
+});
+
+test('git_restore --staged only unstages and still runs without a prompt', async () => {
+  const ws = await initRepo();
+  const registry = createDefaultToolRegistry();
+  await writeFile(join(ws, 'a.txt'), 'committed');
+  await execFileAsync('git', ['add', '.'], { cwd: ws });
+  await execFileAsync('git', ['commit', '-m', 'init'], { cwd: ws });
+  await writeFile(join(ws, 'a.txt'), 'staged edit');
+  await execFileAsync('git', ['add', 'a.txt'], { cwd: ws });
+
+  // Unstaging is recoverable (the edit stays in the working tree), so it must
+  // NOT be caught by the destructive-input guard.
+  const result = await registry.execute('git_restore', { paths: ['a.txt'], staged: true }, ctx(ws));
+  assert.equal(result.ok, true);
+  assert.equal(await readFile(join(ws, 'a.txt'), 'utf8'), 'staged edit');
+  const { stdout } = await execFileAsync('git', ['diff', '--cached', '--name-only'], { cwd: ws });
+  assert.equal(stdout.trim(), '');
 
   await rm(ws, { recursive: true, force: true });
 });

@@ -283,6 +283,13 @@ export function decideApproval(options: {
   url?: string;
   networkAllowlist?: string[];
   autoApprove?: boolean;
+  /**
+   * Tools that destroy work the model cannot reconstruct must never be approved
+   * silently. Unlike `autoApprove` (which skips the allowlist), this forces the
+   * interactive prompt even in `auto` mode, and the registry refuses the call
+   * when no confirmation handler is available.
+   */
+  alwaysPrompt?: boolean;
   /** Desktop "任意应用" setting: auto mode may run any non-destructive command. */
   computerAnyApp?: boolean;
   /** Desktop "始终允许的应用" list: app names/paths exempt from confirmation. */
@@ -300,6 +307,11 @@ export function decideApproval(options: {
   if (options.mode === 'deny') return { allowed: false, needsPrompt: false, reason: 'approval mode denies write, shell, and network tools' };
   // plan mode: allow reads freely, prompt before every write/shell/network action
   if (options.mode === 'plan') return { allowed: true, needsPrompt: true, reason: 'plan mode requires confirmation before every change' };
+  // Irreversible tools (e.g. `git restore`, which discards uncommitted edits)
+  // are never approved silently, in ANY mode: the user must see the exact
+  // targets before the work is destroyed. The registry turns `needsPrompt`
+  // without a confirmation handler into a refusal rather than a silent run.
+  if (options.alwaysPrompt) return { allowed: true, needsPrompt: true, reason: 'destructive tool requires explicit confirmation' };
 
   if (options.computerUse && options.risk === 'shell' && !options.command) {
     if (options.mode === 'auto') {

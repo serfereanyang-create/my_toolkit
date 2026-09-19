@@ -394,8 +394,11 @@ export function createDefaultToolRegistry(options?: { excelAutomation?: boolean 
   registry.register({ ...gitMergeTool, autoApprove: true });
   registry.register({ ...gitCherryPickTool, autoApprove: true });
   registry.register({ ...gitTagTool, autoApprove: true });
-  // git_reset (soft/mixed only) and git_restore: not autoApprove since they
-  // modify working-tree or index; ask mode will confirm, auto mode allows.
+  // git_reset (soft/mixed only) and git_restore both modify the working tree or
+  // index and are recoverable in their safe variants, so auto mode may run them.
+  // git_restore additionally marks its DESTRUCTIVE variant (staged=false, which
+  // discards uncommitted edits) as `alwaysPrompt`, so that one always confirms
+  // with the target list shown — autoApprove never applies to it.
   registry.register({ ...gitResetTool, autoApprove: true });
   registry.register({ ...gitRestoreTool, autoApprove: true });
   // Project ops / code quality

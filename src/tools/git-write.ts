@@ -207,6 +207,12 @@ export const gitRestoreTool: ToolDefinition<GitRestoreInput> = {
     'WARNING: discards unsaved changes — only use when the user explicitly requests it.',
   inputHint: '{ "paths": ["src/app.ts"] }  or  { "paths": ["."], "staged": true }',
   risk: 'write',
+  // `--staged` only moves the change out of the index and is recoverable, but
+  // discarding working-tree edits permanently destroys uncommitted work, so
+  // that variant must always be confirmed. `git_restore` is deliberately NOT
+  // autoApprove: without this flag the policy would let auto mode silently
+  // throw away unsaved changes with no prompt and no visible target list.
+  alwaysPrompt: (input) => input.staged !== true,
   validate(input): GitRestoreInput {
     const record = asRecord(input);
     return { paths: pathList(record.paths), staged: record.staged === true };

@@ -67,6 +67,7 @@ export class ToolRegistry {
       url: typeof inputRecord.url === 'string' ? inputRecord.url : undefined,
       networkAllowlist: context.networkAllowlist,
       autoApprove: tool.autoApprove === true,
+      alwaysPrompt: resolveAlwaysPrompt(tool, inputRecord),
       computerAnyApp: context.computerAnyApp === true,
       allowedApps: context.computerAllowedApps,
       computerUse: context.computerUse === true,
@@ -137,6 +138,24 @@ function approvalTargetPath(input: Record<string, unknown>) {
   return undefined;
 }
 
+/**
+ * Resolve the tool's alwaysPrompt flag against the call's validated input.
+ * A predicate lets one tool gate only its destructive inputs (e.g.
+ * `git restore` without `--staged`, which discards uncommitted edits) while
+ * letting the recoverable ones (unstaging) follow the normal policy.
+ */
+function resolveAlwaysPrompt(tool: ToolDefinition, input: Record<string, unknown>): boolean {
+  if (tool.alwaysPrompt === undefined) return false;
+  if (typeof tool.alwaysPrompt === 'boolean') return tool.alwaysPrompt;
+  try {
+    return tool.alwaysPrompt(input) === true;
+  } catch {
+    // A throwing predicate must fail CLOSED: an unevaluable destructive guard
+    // is not evidence that the action is safe.
+    return true;
+  }
+}
+
 async function approvalMessage(
   name: string,
   risk: 'read' | 'write' | 'shell' | 'network',
@@ -150,6 +169,11 @@ async function approvalMessage(
     tool: name,
     risk,
     path: typeof input.path === 'string' ? input.path : undefined,
+    // Multi-target tools (git_restore/git_add) carry `paths`; surface every
+    // target so the user approves the exact list, not just the tool name.
+    paths: Array.isArray(input.paths)
+      ? input.paths.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+      : undefined,
     from: typeof input.from === 'string' ? input.from : undefined,
     to: typeof input.to === 'string' ? input.to : undefined,
     command: typeof input.command === 'string' ? input.command : undefined,
