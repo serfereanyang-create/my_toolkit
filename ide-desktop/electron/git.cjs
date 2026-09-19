@@ -275,7 +275,11 @@ async function getDiffStats(root) {
  * Used by the editor to draw inline "agent changed these lines" highlights.
  */
 async function getFileChangeRanges(root, filePath) {
-  const res = await safeGit(root, ['diff', '-U0', '--', filePath]);
+  // Resolved against the repo toplevel for the same reason as getFileDiff:
+  // numstat/diff paths are repo-root-relative, and the workspace may be a
+  // subdirectory of the repo.
+  const abs = await toRepoPath(root, filePath);
+  const res = await safeGit(root, ['diff', '-U0', '--', abs]);
   if (!res.ok) return { ok: false, error: res.error };
   const hunks = [];
   const hunkRe = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
@@ -287,6 +291,134 @@ async function getFileChangeRanges(root, filePath) {
     if (count > 0) hunks.push({ start, end: start + count - 1, type: 'added' });
   }
   return { ok: true, file: filePath, hunks };
+}
+
+/**
+ * Turn a repo-root-relative path into an absolute one.
+ *
+ * `git diff --numstat` reports paths relative to the REPOSITORY ROOT, but the
+ * desktop's workspace root may be a subdirectory of that repo. Passing such a
+ * path back to git unchanged resolves it against the cwd, so it points at
+ * `<workspace>/<repo-relative-path>` — a path that usually does not exist, and
+ * the diff comes back empty. Resolving against the real toplevel is what makes
+ * a file row in the inspector open its actual diff.
+ */
+async function toRepoPath(root, relPath) {
+  const top = await safeGit(root, ['rev-parse', '--show-toplevel']);
+  const base = top.ok && top.stdout.trim() ? top.stdout.trim() : root;
+  return path.resolve(base, relPath);
+}
+
+/**
+ * One file's text diff, for drilling into a single row of the review list.
+ *
+ * `getDiff` returns the whole workspace diff, which is useless when the user
+ * clicked one file. An untracked file has no diff against HEAD at all, so it
+ * is rendered as an all-added listing from its contents — otherwise the row
+ * would open to an empty pane.
+ *
+ * With `ref`, the diff is that commit's change to the file (`git show ref`),
+ * which is what "what did this commit do to this file" means. Without it, the
+ * diff is the working tree.
+ *
+ * Returns { ok, file, diff, staged, untracked, ref }.
+ */
+async function getFileDiff(root, filePath, staged = false, ref = '') {
+  const safe = sanitisePaths([filePath]);
+  if (safe.length === 0) return { ok: false, error: 'No path provided' };
+  const rel = safe[0];
+
+  const commitRef = String(ref || '').trim();
+  if (commitRef && (commitRef.startsWith('-') || /\s/.test(commitRef))) {
+    return { ok: false, error: 'Invalid commit ref' };
+  }
+
+  const abs = await toRepoPath(root, rel);
+  const args = commitRef
+    ? ['show', '--format=', commitRef, '--', abs]
+    : staged ? ['diff', '--cached', '--', abs] : ['diff', '--', abs];
+
+  const res = await safeGit(root, args, { maxBuffer: MAX_DIFF_BYTES });
+  if (!res.ok) return { ok: false, error: res.error };
+
+  if (res.stdout.trim()) {
+    return { ok: true, file: rel, diff: res.stdout, staged, untracked: false, ref: commitRef };
+  }
+  // A commit that did not touch the file legitimately has no diff; only look
+  // for an untracked listing in the working-tree case.
+  if (commitRef) {
+    return { ok: true, file: rel, diff: '', staged, untracked: false, ref: commitRef };
+  }
+
+  // No tracked diff: the path may be untracked, in which case show its
+  // contents as additions (matching how the review list counts it).
+  const untrackedRes = await safeGit(root, ['ls-files', '--others', '--exclude-standard', '--', abs]);
+  if (!untrackedRes.ok || !untrackedRes.stdout.trim()) {
+    return { ok: true, file: rel, diff: '', staged, untracked: false };
+  }
+  try {
+    const stat = fs.statSync(abs);
+    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) {
+      return { ok: true, file: rel, diff: '', staged, untracked: true };
+    }
+    const text = fs.readFileSync(abs, 'utf8');
+    const body = text.split(/\r?\n/).slice(0, 2000).map((line) => `+${line}`).join('\n');
+    return { ok: true, file: rel, diff: `--- /dev/null\n+++ b/${rel}\n${body}`, staged, untracked: true };
+  } catch {
+    return { ok: true, file: rel, diff: '', staged, untracked: true };
+  }
+}
+
+/**
+ * One commit's full message, stats and changed files — the second level of
+ * the inspector's drill-down (graph → commit → file).
+ *
+ * Returns { ok, commit: { hash, shortHash, author, date, message, body,
+ * files: [{ path, added, removed }] } }.
+ */
+async function getCommitDetail(root, ref) {
+  const safeRef = String(ref || '').trim();
+  // A ref is passed to git as an argument, not a shell string, but a leading
+  // dash would still be read as an option.
+  if (!safeRef || safeRef.startsWith('-') || /[\s]/.test(safeRef)) {
+    return { ok: false, error: 'Invalid commit ref' };
+  }
+
+  const sep = '\x1e';
+  const metaRes = await safeGit(root, ['show', '--no-patch', `--format=%H${sep}%h${sep}%an${sep}%ai${sep}%s${sep}%b`, safeRef]);
+  if (!metaRes.ok) return { ok: false, error: metaRes.error };
+  const [hash, shortHash, author, date, subject, ...bodyParts] = metaRes.stdout.split(sep);
+
+  const statRes = await safeGit(root, ['show', '--numstat', '--format=', safeRef]);
+  const files = [];
+  if (statRes.ok) {
+    for (const line of statRes.stdout.split('\n')) {
+      if (!line) continue;
+      const tab1 = line.indexOf('\t');
+      if (tab1 < 0) continue;
+      const tab2 = line.indexOf('\t', tab1 + 1);
+      if (tab2 < 0) continue;
+      const rel = line.slice(tab2 + 1);
+      if (!rel) continue;
+      const a = Number(line.slice(0, tab1));
+      const r = Number(line.slice(tab1 + 1, tab2));
+      // Binary files report "-"; keep the row, contribute no line counts.
+      files.push({ path: rel, added: Number.isFinite(a) ? a : 0, removed: Number.isFinite(r) ? r : 0 });
+    }
+  }
+
+  return {
+    ok: true,
+    commit: {
+      hash,
+      shortHash,
+      author,
+      date,
+      message: subject ?? '',
+      body: bodyParts.join(sep).trim(),
+      files,
+    },
+  };
 }
 
 /**
@@ -587,6 +719,8 @@ module.exports = {
   getDiff,
   getDiffStats,
   getFileStats,
+  getFileDiff,
+  getCommitDetail,
   getFileChangeRanges,
   stage,
   unstage,

@@ -10,6 +10,9 @@ import { DiffReview } from './components/DiffReview/DiffReview';
 import { EditorView, type OpenFile } from './components/Editor/EditorView';
 import { FileTree } from './components/FileTree';
 import { GitPanel } from './components/GitPanel';
+import { GitCapsule } from './components/GitCapsule';
+import { InspectorSidebar } from './components/InspectorSidebar';
+import type { InspectorLevel } from './lib/inspectorNav';
 import { HelpOverlay, type HelpOverlayTab } from './components/HelpOverlay';
 import { InfoPanel } from './components/InfoPanel';
 import { PerformancePanel } from './components/PerformancePanel';
@@ -84,6 +87,13 @@ export default function App() {
   const [infoPanelOpen, setInfoPanelOpen] = useState(false);
   const [workspaceToolsOpen, setWorkspaceToolsOpen] = useState(false);
   const [workspaceToolsWidth, setWorkspaceToolsWidth] = useState(420);
+  // Per-session inspector: the right column opened from the conversation's Git
+  // capsule. Its navigation stack lives in the component (lib/inspectorNav).
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorWidth, setInspectorWidth] = useState(400);
+  // Which level the capsule asked for; consumed when the inspector opens.
+  const [inspectorLevel, setInspectorLevel] = useState<InspectorLevel | undefined>(undefined);
+  const [inspectorNonce, setInspectorNonce] = useState(0);
   // Ctrl+O: Codex-style global expand/collapse of every tool step detail.
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   // Iteration 2: fuzzy command palette (Ctrl+Shift+P).
@@ -302,6 +312,21 @@ export default function App() {
       if (snapshot.sideChatOpen) dispatch({ type: 'sidechat/toggle' });
       setWorkspaceToolsOpen(true);
     }
+  }, [dispatch]);
+
+  // Open the right-hand inspector at a requested level. The right column holds
+  // one panel at a time (browser / side chat / workspace tools / inspector), so
+  // opening the inspector closes whichever of those was showing. The nonce
+  // makes a repeat click on the same capsule segment re-seed the stack instead
+  // of being swallowed by an unchanged prop.
+  const openInspector = useCallback((level: InspectorLevel) => {
+    const snapshot = workspaceToolsRef.current;
+    if (snapshot.browserOpen) dispatch({ type: 'browser/toggle' });
+    if (snapshot.sideChatOpen) dispatch({ type: 'sidechat/toggle' });
+    setWorkspaceToolsOpen(false);
+    setInspectorLevel(level);
+    setInspectorNonce((n) => n + 1);
+    setInspectorOpen(true);
   }, [dispatch]);
   // ── Global shortcuts (iteration 19: user-rebindable) ───────────────────
   // Overrides load once at boot and refresh when the settings page writes
@@ -1105,6 +1130,7 @@ export default function App() {
           state.browserOpen ? `${state.browserWidth}px`
           : state.sideChatOpen ? `${state.sideChatWidth}px`
           : workspaceToolsOpen ? `${workspaceToolsWidth}px`
+          : inspectorOpen ? `${inspectorWidth}px`
           : 'auto'
         }`,
       } as React.CSSProperties}
@@ -1141,6 +1167,9 @@ export default function App() {
             />
           )}
           <span className="main-topbar-spacer" />
+          {mainView === 'chat' && (
+            <GitCapsule state={state} active={inspectorOpen} onOpen={openInspector} />
+          )}
         </div>
 
         {mainView === 'chat' && (
@@ -1409,6 +1438,19 @@ export default function App() {
           setWorkspaceToolsOpen(false);
           if (!state.preview.open) dispatch({ type: 'preview/toggle' });
         }}
+      />
+
+      <InspectorSidebar
+        // `key` on the nonce so re-clicking the same capsule segment restarts
+        // the drill-down stack at that level instead of keeping the old one.
+        key={`insp-${inspectorNonce}`}
+        state={state}
+        open={inspectorOpen}
+        width={inspectorWidth}
+        initialLevel={inspectorLevel}
+        onClose={() => setInspectorOpen(false)}
+        onWidthChange={setInspectorWidth}
+        onOpenFile={(path) => { void handleOpenFile(path); }}
       />
 
       <BrowserPanel

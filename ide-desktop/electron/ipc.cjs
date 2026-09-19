@@ -979,6 +979,9 @@ Edited code:`;
   ipcMain.handle('git.diffStats',     async () => git.getDiffStats(workspace.getRoot()));
   // Per-file +N −M for the review list.
   ipcMain.handle('git.fileStats',     async () => git.getFileStats(workspace.getRoot()));
+  // Drill-down: one file's diff, and one commit's detail.
+  ipcMain.handle('git.fileDiff',      async (_e, filePath, staged, ref) => git.getFileDiff(workspace.getRoot(), filePath, staged === true, ref));
+  ipcMain.handle('git.commitDetail',  async (_e, ref) => git.getCommitDetail(workspace.getRoot(), ref));
   // Inline editor highlights: current-file changed line ranges from git diff.
   ipcMain.handle('git.fileChangeRanges', async (_e, filePath) => git.getFileChangeRanges(workspace.getRoot(), filePath));
   ipcMain.handle('git.stage',         async (_e, paths) => git.stage(workspace.getRoot(), paths));

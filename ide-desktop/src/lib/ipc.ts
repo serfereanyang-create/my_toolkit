@@ -266,6 +266,8 @@ type ZCodeDesktopApi = {
     diff(staged?: boolean): Promise<{ ok: boolean; diff?: string; error?: string }>;
     diffStats(): Promise<GitDiffStats>;
     fileStats(): Promise<GitFileStatsResult>;
+    fileDiff(filePath: string, staged?: boolean, ref?: string): Promise<GitFileDiffResult>;
+    commitDetail(ref: string): Promise<GitCommitDetailResult>;
     fileChangeRanges(filePath: string): Promise<{ ok: boolean; file?: string; hunks?: Array<{ start: number; end: number; type: string }>; error?: string }>;
     stage(paths: string[]): Promise<{ ok: boolean; staged?: string[]; error?: string }>;
     unstage(paths: string[]): Promise<{ ok: boolean; unstaged?: string[]; error?: string }>;
@@ -356,6 +358,40 @@ export type GitGraphCommit = GitCommit & { parents: string[] };
 export type GitGraphResult = {
   ok: boolean;
   commits?: GitGraphCommit[];
+  error?: string;
+};
+
+/** One file's diff text, for the inspector's file level. */
+export type GitFileDiffResult = {
+  ok: boolean;
+  file?: string;
+  diff?: string;
+  staged?: boolean;
+  /** True when the file is untracked, so the diff is a synthetic listing. */
+  untracked?: boolean;
+  error?: string;
+};
+
+export type GitCommitFile = {
+  path: string;
+  added: number;
+  removed: number;
+};
+
+/** One commit's detail, for the inspector's commit level. */
+export type GitCommitDetail = {
+  hash: string;
+  shortHash: string;
+  author: string;
+  date: string;
+  message: string;
+  body: string;
+  files: GitCommitFile[];
+};
+
+export type GitCommitDetailResult = {
+  ok: boolean;
+  commit?: GitCommitDetail;
   error?: string;
 };
 
