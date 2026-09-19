@@ -100,6 +100,15 @@ export type DesktopPreferences = {
   editorTabSize?: number;
   editorMinimap?: boolean;
   editorWordWrap?: boolean;
+  // Appearance → background image. `backgroundImage` is the toggle and
+  // `backgroundDim` / `backgroundBlur` are the readability controls; the image
+  // itself lives in userData/backgrounds (see appearance.* IPC), never here.
+  backgroundImage?: boolean;
+  backgroundDim?: number;
+  backgroundBlur?: number;
+  backgroundScope?: 'app' | 'chat';
+  /** Bumped on every image change so App.tsx re-reads the stored file. */
+  backgroundVersion?: number;
   [key: string]: unknown;
 };
 

@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Toggle, Segmented, SelectPill, SettingsCard, SettingRow, ColorSwatch, Slider, NumberField, TextField } from './controls';
 import { prefBool, prefStr, type Prefs, type SavePref } from './prefs';
+import { BACKGROUND_DEFAULTS, clearBackground, normalizeBlur, normalizeDim, normalizeScope, pickBackground } from '../../lib/background';
 
 const CHINESE_FONT_OPTIONS = [
   { value: 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif', label: '微软雅黑 / 苹方 / Noto Sans CJK' },
@@ -102,6 +104,47 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
   const setPointerCursor = (v: boolean) => savePref({ 'appearance.pointerCursor': v });
   const setReduceMotion = (v: 'system' | 'on' | 'off') => savePref({ 'appearance.reduceMotion': v });
 
+  // 背景图片：图片本身由主进程存到 userData/backgrounds，偏好只保存开关与参数。
+  // 每次换图都递增 backgroundVersion，App.tsx 据此重新读取。
+  const backgroundEnabled = prefBool(prefs, 'backgroundImage', false);
+  const backgroundDim = normalizeDim(prefs.backgroundDim);
+  const backgroundBlur = normalizeBlur(prefs.backgroundBlur);
+  const backgroundScope = normalizeScope(prefs.backgroundScope);
+  const backgroundVersion = Number(prefs.backgroundVersion) || 0;
+  const [backgroundBusy, setBackgroundBusy] = useState(false);
+  const [backgroundError, setBackgroundError] = useState('');
+  const setBackgroundEnabled = (v: boolean) => savePref({ backgroundImage: v });
+  const setBackgroundDim = (v: number) => savePref({ backgroundDim: v });
+  const setBackgroundBlur = (v: number) => savePref({ backgroundBlur: v });
+  const setBackgroundScope = (v: 'app' | 'chat') => savePref({ backgroundScope: v });
+
+  async function chooseBackground() {
+    setBackgroundError('');
+    setBackgroundBusy(true);
+    try {
+      const result = await pickBackground();
+      if (!result.ok) {
+        if (!result.canceled) setBackgroundError(result.error ?? '选择图片失败');
+        return;
+      }
+      // 选好图片即视为启用，避免「选了但没开」的困惑。
+      savePref({ backgroundImage: true, backgroundVersion: result.version });
+    } finally {
+      setBackgroundBusy(false);
+    }
+  }
+
+  async function removeBackground() {
+    setBackgroundError('');
+    setBackgroundBusy(true);
+    try {
+      await clearBackground();
+      savePref({ backgroundImage: false, backgroundVersion: backgroundVersion + 1 });
+    } finally {
+      setBackgroundBusy(false);
+    }
+  }
+
   return (
     <div className="settings-page">
       <h1 className="settings-page-title">外观</h1>
@@ -115,6 +158,49 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
         </div>
         <ThemeDiffPreview />
       </section>
+
+      <SettingsCard heading="背景">
+        <SettingRow
+          title="使用背景图片"
+          description="在界面背后显示一张自定义图片，所有控件仍保持可读"
+          control={<Toggle checked={backgroundEnabled} onChange={setBackgroundEnabled} label="使用背景图片" />}
+        />
+        <SettingRow
+          title="背景图片"
+          description="支持 PNG / JPG / WebP / GIF / BMP / AVIF，最大 16 MB；图片会复制到应用数据目录"
+          control={
+            <div className="background-picker">
+              <button type="button" className="settings-button" onClick={() => void chooseBackground()} disabled={backgroundBusy}>
+                {backgroundBusy ? '处理中…' : (backgroundEnabled ? '更换图片…' : '选择图片…')}
+              </button>
+              {backgroundEnabled && (
+                <button type="button" className="settings-button ghost" onClick={() => void removeBackground()} disabled={backgroundBusy}>
+                  移除
+                </button>
+              )}
+            </div>
+          }
+        />
+        {backgroundError && <p className="settings-error" role="alert">{backgroundError}</p>}
+        <SettingRow
+          title="显示范围"
+          description="「整个界面」连左侧栏一起铺满；「仅对话区」让侧栏保持纯色"
+          control={<Segmented value={backgroundScope} onChange={setBackgroundScope} options={[
+            { value: 'chat', label: '仅对话区' },
+            { value: 'app', label: '整个界面' },
+          ]} />}
+        />
+        <SettingRow
+          title="压暗"
+          description="提高数值可压暗图片，让文字在花哨的背景上依然清晰"
+          control={<Slider value={Math.round(backgroundDim * 100)} min={0} max={90} onChange={(next) => setBackgroundDim(next / 100)} />}
+        />
+        <SettingRow
+          title="模糊"
+          description="柔化背景细节，减少与代码文本的视觉竞争"
+          control={<Slider value={backgroundBlur} min={0} max={40} onChange={setBackgroundBlur} />}
+        />
+      </SettingsCard>
 
       <SettingsCard heading="偏好设置">
         <SettingRow

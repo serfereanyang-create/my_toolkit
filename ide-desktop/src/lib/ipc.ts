@@ -64,6 +64,11 @@ type ZCodeDesktopApi = {
     get(): Promise<DesktopSettings>;
     set(next: Partial<DesktopSettings>): Promise<DesktopSettings>;
   };
+  appearance: {
+    pickBackground(): Promise<{ ok: boolean; canceled?: boolean; version?: number; error?: string }>;
+    readBackground(): Promise<{ ok: boolean; dataUrl?: string; version?: number }>;
+    clearBackground(): Promise<{ ok: boolean }>;
+  };
   secrets: {
     setApiKey(providerId: string, apiKey: string): Promise<{ configured: boolean; hint: string }>;
     hasApiKey(providerId: string): Promise<{ configured: boolean; hint: string }>;

@@ -412,13 +412,23 @@ html[data-reduce-motion='on'] *::after {
 :root {
   color-scheme: light;
 
-  /* Surfaces — codex neutral ramp: white content, cool-grey chrome, no tint */
-  --bg-app: #ffffff;
-  --bg-side: #f7f7f8;
+  /* Surfaces — codex neutral ramp: white content, cool-grey chrome, no tint.
+     The `-solid` values are the opaque palette; the public tokens alias them so
+     the custom-background feature can swap in translucent versions without
+     losing the originals (see "Custom background image" below). */
+  --bg-app-solid: #ffffff;
+  --bg-side-solid: #f7f7f8;
+  --bg-elevated-solid: #ffffff;
+  --bg-input-solid: #ffffff;
+  --bg-app: var(--bg-app-solid);
+  --bg-side: var(--bg-side-solid);
   --bg-hover: #ececee;
   --bg-sel: #e3e4e8;
-  --bg-elevated: #ffffff;
-  --bg-input: #ffffff;
+  --bg-elevated: var(--bg-elevated-solid);
+  --bg-input: var(--bg-input-solid);
+  /* Dim tint for the background image: light theme fades toward white so dark
+     text keeps its contrast, dark theme toward black. */
+  --bg-dim-rgb: 255 255 255;
 
   /* Borders */
   --border: #e3e3e6;
@@ -501,12 +511,17 @@ html[data-reduce-motion='on'] *::after {
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  --bg-app: #1c1c1e;
-  --bg-side: #202022;
+  --bg-app-solid: #1c1c1e;
+  --bg-side-solid: #202022;
+  --bg-elevated-solid: #28282b;
+  --bg-input-solid: #28282b;
+  --bg-app: var(--bg-app-solid);
+  --bg-side: var(--bg-side-solid);
   --bg-hover: #2e2e31;
   --bg-sel: #38383c;
-  --bg-elevated: #28282b;
-  --bg-input: #28282b;
+  --bg-elevated: var(--bg-elevated-solid);
+  --bg-input: var(--bg-input-solid);
+  --bg-dim-rgb: 0 0 0;
 
   --border: #45454a;
   --border-strong: #5c5c62;
@@ -1017,6 +1032,86 @@ h1 {
   min-width: 0;
   min-height: 0;
   background: var(--bg-app);
+  /* Anchors .app-background when the custom background is scoped to the chat
+     column rather than the whole window. */
+  position: relative;
+}
+
+/* --- Custom background image (外观 → 背景) ---
+   One decorative, non-interactive layer painted behind the whole UI. App.tsx
+   sets --bg-image (a data URL resolved by the main process) plus --bg-dim /
+   --bg-blur, and sets [data-bg-scope] to choose how far it spreads.
+
+   z-index: -1 puts the layer above the root background but below every in-flow
+   surface, so no per-element stacking rules are needed. Which parts of the UI
+   reveal it is then decided purely by how translucent their surfaces are:
+   scope "app" makes the rail translucent too, scope "chat" leaves the rail
+   opaque so the image appears only in the conversation column. */
+.app-background {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgb(var(--bg-dim-rgb) / var(--bg-dim, 0)), rgb(var(--bg-dim-rgb) / var(--bg-dim, 0))),
+    var(--bg-image, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  /* Blur softens the image so text stays readable. The slight scale-up hides
+     the translucent fringe that blur leaves around the edges. */
+  filter: blur(var(--bg-blur, 0px));
+  transform: scale(var(--bg-blur-scale, 1));
+}
+
+/* The layer paints above the canvas (the <html> background) but below every
+   in-flow surface. `body` therefore has to stop painting its own opaque
+   background — otherwise it covers the layer outright, because block-level
+   backgrounds paint after negative-z-index descendants. <html> keeps the solid
+   color so there is always a proper backdrop behind the image. */
+[data-bg-image='true'] body {
+  background: transparent;
+}
+
+/* Surfaces in front of the layer become translucent rather than transparent, so
+   the image reads through as a soft wash while text keeps a real backdrop.
+   Fully transparent would look striking on a calm photo but would make a busy
+   one unreadable; the dim slider is a second, user-controlled safety margin.
+
+   The percentage is how much of the original surface color survives: the rail
+   keeps the most body because it holds small labels, the conversation column
+   the least so the image is actually visible. */
+[data-bg-image='true'] .chat-shell {
+  background: transparent;
+}
+
+[data-bg-image='true'] .main {
+  background: color-mix(in srgb, var(--bg-app-solid) 72%, transparent);
+}
+
+[data-bg-image='true'][data-bg-scope='app'] .rail {
+  background: color-mix(in srgb, var(--bg-side-solid) 90%, transparent);
+}
+
+/* Scope "仅对话区": the rail keeps its normal opaque surface, so the image
+   reads only in the conversation column. */
+[data-bg-image='true'][data-bg-scope='chat'] .rail {
+  background: var(--bg-side-solid);
+}
+
+/* 设置 → 外观 → 背景: the settings page is itself a full-window surface, so it
+   has to go translucent too — otherwise 压暗 / 模糊 would be tuned blind.
+   Cards stay opaque so the controls and their labels keep a solid backdrop. */
+[data-bg-image='true'] .settings-view {
+  background: transparent;
+}
+
+[data-bg-image='true'] .settings-content {
+  background: color-mix(in srgb, var(--bg-app-solid) 74%, transparent);
+}
+
+[data-bg-image='true'] .settings-nav {
+  background: color-mix(in srgb, var(--bg-side-solid) 90%, transparent);
 }
 
 .main-topbar {
@@ -3227,6 +3322,30 @@ h1 {
   transition: border-color var(--dur) var(--ease);
 }
 .settings-text-field:focus { border-color: var(--fg-dim); color: var(--fg); }
+
+/* Background picker (外观 → 背景): a button pair plus its inline error. */
+.background-picker { display: flex; align-items: center; gap: var(--sp-2); }
+.settings-button {
+  height: 34px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.settings-button:hover:not(:disabled) { border-color: var(--fg-dim); background: var(--bg-hover); }
+.settings-button:disabled { opacity: 0.55; cursor: default; }
+.settings-button.ghost { background: transparent; color: var(--fg-muted); }
+.settings-error {
+  margin: 0;
+  padding: 0 var(--sp-4) var(--sp-3);
+  color: var(--danger);
+  font-size: var(--fs-sm);
+}
 
 .pane-title {
   padding: var(--sp-3) var(--sp-4);

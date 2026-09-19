@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     get: () => ipcRenderer.invoke('settings.get'),
     set: (next) => ipcRenderer.invoke('settings.set', next),
   },
+  appearance: {
+    pickBackground:   () => ipcRenderer.invoke('appearance.pickBackground'),
+    readBackground:   () => ipcRenderer.invoke('appearance.readBackground'),
+    clearBackground:  () => ipcRenderer.invoke('appearance.clearBackground'),
+  },
   secrets: {
     setApiKey: (providerId, apiKey) => ipcRenderer.invoke('secrets.setApiKey', providerId, apiKey),
     hasApiKey: (providerId) => ipcRenderer.invoke('secrets.hasApiKey', providerId),

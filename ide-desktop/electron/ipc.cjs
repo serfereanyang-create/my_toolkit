@@ -491,6 +491,77 @@ Edited code:`;
   // Real packaged version for Help / What's New content selection.
   ipcMain.handle('app.version', () => ({ version: app.getVersion() }));
 
+  // ── Appearance: custom background image ────────────────────────────────────
+  // The chosen file is COPIED into userData/backgrounds rather than referenced
+  // in place, so the preference survives the user moving or deleting the
+  // original. Only the copy is ever read back, which also keeps the renderer
+  // from pointing at an arbitrary path on disk.
+  const backgroundDir = path.join(app.getPath('userData'), 'backgrounds');
+  const BACKGROUND_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif']);
+  // 16 MB: large enough for a 4K photo, small enough that a mistaken pick
+  // (a video, an ISO) is rejected before it is copied or encoded.
+  const BACKGROUND_MAX_BYTES = 16 * 1024 * 1024;
+
+  async function readBackgroundFile() {
+    let entries;
+    try {
+      entries = await fs.readdir(backgroundDir);
+    } catch {
+      return null;
+    }
+    const name = entries.find((entry) => BACKGROUND_EXTS.has(path.extname(entry).toLowerCase()));
+    if (!name) return null;
+    const file = path.join(backgroundDir, name);
+    const stat = await fs.stat(file).catch(() => null);
+    if (!stat || !stat.isFile()) return null;
+    return { file, ext: path.extname(name).toLowerCase(), mtimeMs: stat.mtimeMs };
+  }
+
+  ipcMain.handle('appearance.pickBackground', async () => {
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: '选择背景图片',
+      properties: ['openFile'],
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif'] }],
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return { ok: false, canceled: true };
+
+    const source = picked.filePaths[0];
+    const ext = path.extname(source).toLowerCase();
+    if (!BACKGROUND_EXTS.has(ext)) return { ok: false, error: `不支持的图片格式：${ext || '(无扩展名)'}` };
+    const stat = await fs.stat(source).catch(() => null);
+    if (!stat || !stat.isFile()) return { ok: false, error: '无法读取所选文件' };
+    if (stat.size > BACKGROUND_MAX_BYTES) {
+      return { ok: false, error: `图片过大（${(stat.size / 1024 / 1024).toFixed(1)} MB），请选择小于 16 MB 的图片` };
+    }
+
+    // Replace any previous background: one active image, no orphan accumulation.
+    await fs.rm(backgroundDir, { recursive: true, force: true });
+    await fs.mkdir(backgroundDir, { recursive: true });
+    await fs.copyFile(source, path.join(backgroundDir, `background${ext}`));
+    const stored = await readBackgroundFile();
+    if (!stored) return { ok: false, error: '背景图片保存失败' };
+    return { ok: true, version: stored.mtimeMs };
+  });
+
+  ipcMain.handle('appearance.readBackground', async () => {
+    const stored = await readBackgroundFile();
+    if (!stored) return { ok: false };
+    try {
+      const bytes = await fs.readFile(stored.file);
+      const mime = stored.ext === '.jpg' || stored.ext === '.jpeg' ? 'image/jpeg'
+        : stored.ext === '.svg' ? 'image/svg+xml'
+        : `image/${stored.ext.slice(1)}`;
+      return { ok: true, dataUrl: `data:${mime};base64,${bytes.toString('base64')}`, version: stored.mtimeMs };
+    } catch {
+      return { ok: false };
+    }
+  });
+
+  ipcMain.handle('appearance.clearBackground', async () => {
+    await fs.rm(backgroundDir, { recursive: true, force: true });
+    return { ok: true };
+  });
+
   ipcMain.handle('terminal.create', async (_event, options) => {
     // The renderer supplies `cwd`, which used to be handed straight to spawn —
     // so a compromised renderer could open a shell in any directory on the

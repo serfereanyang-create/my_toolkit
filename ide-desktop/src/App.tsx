@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { matchAction, resolveBindings } from './lib/keybindings';
+import { applyBackground, normalizeBlur, normalizeDim, normalizeScope, readBackground } from './lib/background';
 import { MessageSquare, Files as FilesIcon, Settings as SettingsIcon, CalendarClock, GitBranch, FileCode, Gauge, Search, Braces, BookmarkCheck, History, BarChart3 } from 'lucide-react';
 import { AutomationPanel } from './components/AutomationPanel';
 import { CodeReviewPanel } from './components/CodeReviewPanel';
@@ -301,6 +302,34 @@ export default function App() {
     if (reduceMotion === 'on') root.setAttribute('data-reduce-motion', 'on');
     else root.removeAttribute('data-reduce-motion');
   }, [pointerCursor, reduceMotion]);
+
+  // 外观页「背景」：启用后从主进程读取图片（data URL）并注入 CSS 变量。
+  // backgroundVersion 变化时重新读取，因此换图后无需重启应用。
+  const backgroundEnabled = state.settings?.preferences?.backgroundImage === true;
+  const backgroundDim = normalizeDim(state.settings?.preferences?.backgroundDim);
+  const backgroundBlur = normalizeBlur(state.settings?.preferences?.backgroundBlur);
+  const backgroundScope = normalizeScope(state.settings?.preferences?.backgroundScope);
+  const backgroundVersion = Number(state.settings?.preferences?.backgroundVersion) || 0;
+  const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!backgroundEnabled) {
+      setBackgroundImage(null);
+      return;
+    }
+    void readBackground().then((dataUrl) => {
+      if (!cancelled) setBackgroundImage(dataUrl);
+    });
+    return () => { cancelled = true; };
+  }, [backgroundEnabled, backgroundVersion]);
+  useEffect(() => {
+    applyBackground({
+      dataUrl: backgroundEnabled ? backgroundImage : null,
+      dim: backgroundDim,
+      blur: backgroundBlur,
+      scope: backgroundScope,
+    });
+  }, [backgroundEnabled, backgroundImage, backgroundDim, backgroundBlur, backgroundScope]);
 
   // Global keyboard shortcuts advertised by the launcher and shortcuts page.
   const workspaceToolsRef = useRef({ open: false, browserOpen: false, sideChatOpen: false });
@@ -1084,6 +1113,9 @@ export default function App() {
   if (mainView === 'settings' && state.settings) {
     return (
       <>
+        {/* Same decorative layer as the main view, so 压暗 / 模糊 have a live
+            preview instead of being tuned blind. */}
+        {backgroundEnabled && backgroundImage && <div className="app-background" aria-hidden="true" />}
         <SettingsView
           settings={state.settings}
           onBack={() => setMainView('chat')}
@@ -1157,6 +1189,9 @@ export default function App() {
         onOpenSession={openSession}
       />
       <div className="main">
+        {/* Decorative background layer, rendered first so every later sibling
+            paints above it. Inert to pointer events. */}
+        {backgroundEnabled && backgroundImage && <div className="app-background" aria-hidden="true" />}
         <div className="main-topbar">
           <div className="main-title">{titleMap[mainView].icon}<span>{titleMap[mainView].label}</span></div>
           {mainView === 'chat' && state.taskSummary && (
