@@ -63,16 +63,24 @@ export function SideChatPanel({
       if (event.type === 'assistant_message' || event.type === 'assistant_delta') {
         const text = String(event.text ?? event.delta ?? event.content ?? '');
         if (!text) return;
+        // `assistant_delta` carries increments; the CLI then emits ONE complete
+        // `assistant_message` for the same reply. Appending both doubled the
+        // answer ("side-okside-ok"), so a final message replaces the streamed
+        // bubble instead of extending it — same contract the main chat uses.
+        const isFinal = event.type === 'assistant_message';
         setChats((prev) =>
           prev.map((c) => {
             if (c.id !== activeId) return c;
             const last = c.messages.at(-1);
-            // If last is an in-progress assistant delta, append; otherwise add new
-            if (last && last.role === 'assistant' && last.id.startsWith('stream-')) {
+            const streaming = Boolean(last && last.role === 'assistant' && last.id.startsWith('stream-'));
+            if (streaming) {
+              const streamed = last as SideMessage;
               return {
                 ...c,
                 messages: c.messages.map((m) =>
-                  m.id === last.id ? { ...m, text: m.text + text } : m
+                  m.id === streamed.id
+                    ? { ...m, text: isFinal ? (text.trim() ? text : streamed.text) : streamed.text + text }
+                    : m
                 ),
               };
             }
