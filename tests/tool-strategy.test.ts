@@ -488,5 +488,8 @@ test('recovery hints explain path and edit failures', () => {
   assert.match(recoveryHintForToolFailure('apply_patch', 'old text not found') ?? '', /retry with exact surrounding text/);
   assert.match(recoveryHintForToolFailure('run_command', 'blocked: command is not allowed') ?? '', /dedicated read-only tool/);
   assert.equal(recoveryHintForToolFailure('run_command', 'cancelled by user'), undefined);
-  assert.equal(recoveryHintForToolFailure('read_file', 'Path escapes workspace'), undefined);
+  // A path escape is recoverable: the model must be told to retry in-workspace
+  // rather than have the turn ended for it.
+  assert.match(recoveryHintForToolFailure('read_file', 'Path escapes workspace') ?? '', /retry with a workspace-relative path/);
+  assert.match(recoveryHintForToolFailure('read_file', '路径越出工作区') ?? '', /retry with a workspace-relative path/);
 });

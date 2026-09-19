@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { detectLocale } from '../src/i18n/locale.js';
-import { formatApprovalPrompt, formatGitConfirm, isBlockedOutput, isCancelledOutput } from '../src/i18n/messages.js';
+import { formatApprovalPrompt, formatGitConfirm, isBlockedOutput, isCancelledOutput, isPathEscapeOutput } from '../src/i18n/messages.js';
 
 test('detectLocale prefers Chinese when CJK is present', () => {
   assert.equal(detectLocale('帮我写个文件'), 'zh');
@@ -38,4 +38,18 @@ test('cancelled and blocked detectors accept zh and en markers', () => {
   assert.equal(isCancelledOutput('工具 write_file 已由用户取消'), true);
   assert.equal(isBlockedOutput('Tool run_command blocked: command is not in auto approval allowlist'), true);
   assert.equal(isBlockedOutput('工具 run_command 已拦截：命令不在自动批准白名单'), true);
+});
+
+/*
+ * A path escape is an input mistake the model can fix, not a policy verdict.
+ * It used to be folded into isBlockedOutput, which made the agent end the turn
+ * the moment it reached for a path outside the workspace.
+ */
+test('a path escape is recoverable and is not reported as a policy block', () => {
+  assert.equal(isBlockedOutput('Tool read_file failed: Path escapes workspace: ../other/README.md'), false);
+  assert.equal(isBlockedOutput('工具 read_file 失败: 路径越出工作区'), false);
+  assert.equal(isPathEscapeOutput('Tool read_file failed: Path escapes workspace: ../other/README.md'), true);
+  assert.equal(isPathEscapeOutput('path escapes workspace: a/../b'), true);
+  assert.equal(isPathEscapeOutput('工具 read_file 失败: 路径越出工作区'), true);
+  assert.equal(isPathEscapeOutput('Tool run_command blocked: nope'), false);
 });

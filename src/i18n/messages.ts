@@ -136,6 +136,22 @@ export function isCancelledOutput(output: string) {
   return output.includes(STABLE.cancelled) || output.includes('已由用户取消');
 }
 
+/**
+ * True when a tool refused because its target resolved outside the workspace.
+ *
+ * Deliberately NOT part of {@link isBlockedOutput}. A path escape is an input
+ * mistake, not a policy verdict: the model can immediately recover by
+ * addressing a path inside the workspace. Folding it into the "blocked" bucket
+ * ended the whole turn, so an agent that reached for `../other-pkg/README.md`
+ * simply stopped instead of correcting the path.
+ */
+export function isPathEscapeOutput(output: string) {
+  // Case-insensitive: the marker is also emitted lowercase by the unified
+  // patch / openapi paths (`path escapes workspace: ...`).
+  const normalized = output.toLowerCase();
+  return normalized.includes(STABLE.pathEscapes.toLowerCase()) || output.includes('路径越出工作区');
+}
+
 export function isBlockedOutput(output: string) {
-  return output.includes(STABLE.blocked) || output.includes('已拦截') || output.includes(STABLE.pathEscapes) || output.includes('路径越出工作区');
+  return output.includes(STABLE.blocked) || output.includes('已拦截');
 }

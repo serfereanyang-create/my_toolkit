@@ -109,6 +109,42 @@ test('a user-denied approval is reported but does not silently kill the turn', a
   }
 });
 
+/*
+ * Regression: reaching outside the workspace is an input mistake, not a policy
+ * verdict. It used to be classified as a block, which ended the turn outright —
+ * an agent that tried to read `../other-pkg/README.md` just stopped instead of
+ * correcting the path.
+ */
+test('a path escape does not end the turn; the model gets to retry in-workspace', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aicode-recover-escape-'));
+  let calls = 0;
+  const provider: Provider = {
+    name: 'openai',
+    model: 'test-model',
+    async complete() {
+      calls += 1;
+      if (calls === 1) {
+        return { actions: [{ type: 'tool', tool: 'always_fails', input: {}, callId: 'c1' }] };
+      }
+      return { actions: [{ type: 'message', content: 'Retried with an in-workspace path.' }] };
+    },
+  };
+
+  try {
+    const runtime = await makeRuntime(
+      root,
+      provider,
+      failingTool('Tool read_file failed: Path escapes workspace: ../other-pkg/README.md'),
+    );
+    const result = await runAgentTurn(runtime, 'read the sibling package readme');
+    assert.equal(calls, 2, 'a path escape must not end the turn');
+    assert.equal(result.ok, true);
+    assert.match(String(result.finalAnswer ?? ''), /in-workspace/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('a policy-blocked tool still stops the turn, since retrying cannot help', async () => {
   const root = await mkdtemp(join(tmpdir(), 'aicode-recover-blocked-'));
   let calls = 0;

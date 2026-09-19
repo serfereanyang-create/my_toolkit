@@ -182,7 +182,12 @@ function stripPaths(value: string) {
 
 export function recoveryHintForToolFailure(tool: string, output: string): string | undefined {
   const normalized = output.toLowerCase();
-  if (normalized.includes('path escapes workspace')) return undefined;
+  // A path escape is recoverable: the model picked a target outside the
+  // workspace and can retry with an in-workspace path. (It used to be treated
+  // as terminal, which ended the turn instead of letting the model correct.)
+  if (normalized.includes('path escapes workspace') || output.includes('路径越出工作区')) {
+    return `The ${tool} target resolved outside the workspace; retry with a workspace-relative path (use list_files or project_index to find it).`;
+  }
   if (normalized.includes('cancelled by user')) return undefined;
   if (normalized.includes('blocked:')) return 'The command was blocked; choose a dedicated read-only tool or ask for approval only if shell access is required.';
   if (normalized.includes('old text not found') || normalized.includes('text not found')) return `The ${tool} edit anchor was not found; read_file the target and retry with exact surrounding text.`;
