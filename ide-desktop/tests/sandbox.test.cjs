@@ -71,10 +71,50 @@ test('isInside handles trailing slashes and case', () => {
   assert.equal(isInside('', 'anything'), false);
 });
 
+test('isInside refuses to be fooled by .. traversal', () => {
+  // A naive prefix check reads `<root>/../../Windows/x` as "inside <root>"
+  // because the string still starts with the root — the classic bypass.
+  assert.equal(isInside('C:/Users/dev/project', 'C:/Users/dev/project/../../Windows/x'), false);
+  assert.equal(isInside('C:/Users/dev/project', 'C:/Users/dev/project/src/../../secret'), false);
+  // Legitimate inner traversal that stays inside must still pass.
+  assert.equal(isInside('C:/Users/dev/project', 'C:/Users/dev/project/src/../app.ts'), true);
+  assert.equal(isInside('C:/Users/dev/project', 'C:/Users/dev/project/./src/app.ts'), true);
+});
+
+test('workspace mode denies a traversal write that escapes the root', () => {
+  const r = evaluate(
+    approval({ input: { path: 'C:/Users/dev/project/../../../Windows/x.dll' } }),
+    { mode: 'workspace', workspaceRoot: ROOT },
+  );
+  assert.equal(r.decision, 'deny');
+  assert.match(r.reason, /工作区之外/);
+});
+
+test('copy_file destination is checked, not its outside source', () => {
+  const policy = { mode: 'workspace', workspaceRoot: ROOT };
+  // Reading a source outside the workspace is allowed; the write target decides.
+  const inside = evaluate(
+    approval({ tool: 'copy_file', input: { from: 'D:/templates/a.txt', to: 'src/a.txt' } }),
+    policy,
+  );
+  assert.equal(inside.decision, 'pass');
+  const outside = evaluate(
+    approval({ tool: 'copy_file', input: { from: 'src/a.txt', to: 'D:/escape/a.txt' } }),
+    policy,
+  );
+  assert.equal(outside.decision, 'deny');
+});
+
 test('matchesDangerous is case-insensitive and whitespace-normalised', () => {
   assert.ok(matchesDangerous('RM    -RF  /'));
   assert.equal(matchesDangerous('rm -rf ./build'), null); // scoped rm is not the bare pattern
   assert.equal(matchesDangerous(''), null);
+});
+
+test('raw physical-drive writes are recognised despite separators', () => {
+  // The pattern previously read `physticaldrive`, so this never matched.
+  assert.ok(matchesDangerous('echo x > \\.\\PhysicalDrive0'));
+  assert.ok(matchesDangerous('dd if=/dev/zero of=/dev/sda'));
 });
 
 test('missing workspace root: writes pass (no root to compare against)', () => {

@@ -33,7 +33,7 @@
 const DANGEROUS_SHELL = [
   'rm -rf /', 'rm -rf ~', 'rm -rf *', 'rmdir /s', 'del /f /s /q c:',
   'format c:', 'mkfs', 'dd if=', 'diskpart', 'shutdown', 'reboot',
-  ':(){', 'fork bomb', '> /dev/sda', '>\\.\physticaldrive',
+  ':(){', 'fork bomb', '/dev/sda', 'physicaldrive',
   'curl | sh', 'curl|sh', 'wget | sh', 'wget|sh', 'Invoke-WebRequest | iex', 'iwr | iex', 'iex(',
   'Set-MpPreference -Disable', 'reg add', 'schtasks /create',
   'chmod -R 777 /', 'chown -R', 'sudo ', 'runas ',
@@ -45,10 +45,29 @@ function normPath(p) {
   return String(p || '').replace(/\\/g, '/').replace(/\/{2,}/g, '/').toLowerCase();
 }
 
+/**
+ * Resolve `.` and `..` segments so containment cannot be fooled by traversal.
+ * `<root>/../../Windows/x` must not read as "inside <root>". Over-popping is
+ * clamped at the drive/root marker: the result only ever moves toward the
+ * filesystem root, which can only make `isInside` MORE likely to say no.
+ */
+function normalizeSegments(p) {
+  const raw = normPath(p);
+  const out = [];
+  for (const part of raw.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') { out.pop(); continue; }
+    out.push(part);
+  }
+  const joined = out.join('/');
+  if (raw.startsWith('/')) return `/${joined}`;
+  return joined;
+}
+
 /** True when `target` is inside `root` (or equal to it). */
 function isInside(root, target) {
-  const r = normPath(root).replace(/\/+$/, '');
-  const t = normPath(target);
+  const r = normalizeSegments(root).replace(/\/+$/, '');
+  const t = normalizeSegments(target);
   if (!r) return false;
   return t === r || t.startsWith(r + '/');
 }
@@ -73,6 +92,9 @@ function eventPath(event) {
   if (input && typeof input === 'object') {
     if (typeof input.path === 'string' && input.path) return input.path;
     if (typeof input.file === 'string' && input.file) return input.file;
+    // copy_file writes to `to` (its `from` may legitimately sit outside the
+    // workspace), so the destination is the path the containment check needs.
+    if (typeof input.to === 'string' && input.to) return input.to;
   }
   if (event && event.diff && typeof event.diff.path === 'string') return event.diff.path;
   return null;
