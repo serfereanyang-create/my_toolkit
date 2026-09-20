@@ -1,7 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { AppConfig } from '../config/types.js';
+import { readPackageVersion } from './packageVersion.js';
 import { GitAuditLog } from '../git-safety/audit.js';
 import { GitSnapshotDiff } from '../git-safety/diff.js';
 import { GitProcess } from '../git-safety/git.js';
@@ -39,7 +37,7 @@ export async function createAgentRuntime(config: AppConfig) {
     }
   }
 
-  const version = await packageVersion();
+  const version = await readPackageVersion(import.meta.url);
   const ui = new TerminalUI({
     quiet: config.quiet,
     json: config.json,
@@ -139,10 +137,4 @@ export async function createAgentRuntime(config: AppConfig) {
       if (closeErrors.length > 0) throw new Error(`Runtime close failures: ${closeErrors.join('; ')}`);
     },
   };
-}
-
-async function packageVersion() {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const packageJson = JSON.parse(await readFile(resolve(here, '../../package.json'), 'utf8')) as { version?: string };
-  return packageJson.version ?? '0.0.0';
 }

@@ -10,7 +10,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test": "npm run test:node && npm run test:unit",
+    "test:node": "npm run build && node --test dist/tests/*.test.js",
+    "test:unit": "vitest run",
     "coverage": "npm run build && node --test --experimental-test-coverage dist/tests/*.test.js",
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
@@ -36,7 +38,8 @@
     "eslint": "^9.39.5",
     "prettier": "^3.9.6",
     "typescript": "^5.8.2",
-    "typescript-eslint": "^8.70.0"
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^3.2.7"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

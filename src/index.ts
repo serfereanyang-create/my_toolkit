@@ -1,7 +1,4 @@
 #!/usr/bin/env node
-import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { completionScript } from './cli/completion.js';
 import { formatDoctor, runDoctor } from './cli/doctor.js';
 import { parseArgs } from './cli/args.js';
@@ -12,6 +9,7 @@ import { confirmProviderStart } from './cli/startupConfirm.js';
 import { loadConfig, requireProviderAuth } from './config/config.js';
 import { formatMcpStatus } from './mcp/manager.js';
 import { createAgentRuntime } from './runtime/createRuntime.js';
+import { readPackageVersion } from './runtime/packageVersion.js';
 
 async function main() {
   // Own the process/window title so hosts don't show system32\cmd.
@@ -23,7 +21,7 @@ async function main() {
   const config = await loadConfig(args);
 
   if (config.version) {
-    process.stdout.write(`${await packageVersion()}\n`);
+    process.stdout.write(`${await readPackageVersion(import.meta.url)}\n`);
     return;
   }
 
@@ -94,12 +92,6 @@ async function main() {
   } finally {
     await created.close();
   }
-}
-
-async function packageVersion() {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const packageJson = JSON.parse(await readFile(resolve(here, '../../package.json'), 'utf8')) as { version?: string };
-  return packageJson.version ?? '0.0.0';
 }
 
 main().catch((error) => {
