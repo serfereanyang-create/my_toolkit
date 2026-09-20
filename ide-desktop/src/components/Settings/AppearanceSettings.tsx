@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Toggle, Segmented, SelectPill, SettingsCard, SettingRow, ColorSwatch, Slider, NumberField, TextField } from './controls';
 import { prefBool, prefStr, type Prefs, type SavePref } from './prefs';
-import { BACKGROUND_DEFAULTS, clearBackground, normalizeBlur, normalizeDim, normalizeScope, pickBackground } from '../../lib/background';
+import { BACKGROUND_DEFAULTS, clearBackground, describeBackgroundControls, normalizeBlur, normalizeDim, normalizeScope, pickBackground, readBackground } from '../../lib/background';
 
 const CHINESE_FONT_OPTIONS = [
   { value: 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif', label: '微软雅黑 / 苹方 / Noto Sans CJK' },
@@ -113,10 +113,30 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
   const backgroundVersion = Number(prefs.backgroundVersion) || 0;
   const [backgroundBusy, setBackgroundBusy] = useState(false);
   const [backgroundError, setBackgroundError] = useState('');
+  // Whether an image is actually stored. The switch and the file are two
+  // separate things: the preference survives a cleared userData directory, a
+  // failed copy, or a manual delete of backgrounds/, and it can also be on with
+  // nothing ever chosen (turning the switch on does not pick a file). Keying the
+  // button label off the switch alone then promised a 更换 that had nothing to
+  // replace, and the enabled-but-empty case rendered a UI with no image and no
+  // hint why.
+  const [backgroundStored, setBackgroundStored] = useState<boolean | null>(null);
   const setBackgroundEnabled = (v: boolean) => savePref({ backgroundImage: v });
   const setBackgroundDim = (v: number) => savePref({ backgroundDim: v });
   const setBackgroundBlur = (v: number) => savePref({ backgroundBlur: v });
   const setBackgroundScope = (v: 'app' | 'chat') => savePref({ backgroundScope: v });
+
+  // Ask the main process what is actually stored. Re-probed whenever the
+  // version stamp changes, so a pick or a removal is reflected immediately.
+  useEffect(() => {
+    let cancelled = false;
+    void readBackground().then((dataUrl) => {
+      if (!cancelled) setBackgroundStored(dataUrl !== null);
+    });
+    return () => { cancelled = true; };
+  }, [backgroundVersion]);
+
+  const controls = describeBackgroundControls(backgroundStored, backgroundEnabled);
 
   async function chooseBackground() {
     setBackgroundError('');
@@ -129,6 +149,7 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
       }
       // 选好图片即视为启用，避免「选了但没开」的困惑。
       savePref({ backgroundImage: true, backgroundVersion: result.version });
+      setBackgroundStored(true);
     } finally {
       setBackgroundBusy(false);
     }
@@ -140,6 +161,7 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
     try {
       await clearBackground();
       savePref({ backgroundImage: false, backgroundVersion: backgroundVersion + 1 });
+      setBackgroundStored(false);
     } finally {
       setBackgroundBusy(false);
     }
@@ -171,9 +193,9 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
           control={
             <div className="background-picker">
               <button type="button" className="settings-button" onClick={() => void chooseBackground()} disabled={backgroundBusy}>
-                {backgroundBusy ? '处理中…' : (backgroundEnabled ? '更换图片…' : '选择图片…')}
+                {backgroundBusy ? '处理中…' : controls.pickLabel}
               </button>
-              {backgroundEnabled && (
+              {controls.showRemove && (
                 <button type="button" className="settings-button ghost" onClick={() => void removeBackground()} disabled={backgroundBusy}>
                   移除
                 </button>
@@ -182,6 +204,9 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
           }
         />
         {backgroundError && <p className="settings-error" role="alert">{backgroundError}</p>}
+        {controls.showEmptyHint && (
+          <p className="settings-error" role="status">已开启背景但还没有选择图片，点击「选择图片…」挑一张。</p>
+        )}
         <SettingRow
           title="显示范围"
           description="「整个界面」连左侧栏一起铺满；「仅对话区」让侧栏保持纯色"
