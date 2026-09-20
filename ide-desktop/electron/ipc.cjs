@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { assertInsideRoot, describeFile, inspectProject, resolveWorkspacePath } = require('./preview-policy.cjs');
+const { describePathError } = require('./path-error.cjs');
 const { createQualityGateway } = require('./quality-gateway.cjs');
 const git = require('./git.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
@@ -178,13 +179,20 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     return (await resolveWorkspacePath(relativePath, root, options)).path;
   }
 
+  /*
+   * Path errors are normalised by electron/path-error.cjs so the rule is unit
+   * testable without Electron. A missing file is an ordinary outcome here — the
+   * renderer can hold a stale path — and the raw ENOENT used to carry an
+   * absolute filesystem path into the UI.
+   */
+
   ipcMain.handle('editor.readFile', async (_event, relativePath) => {
     try {
       const target = await resolveEditorPath(relativePath);
       const content = await fs.readFile(target, 'utf-8');
       return { ok: true, content };
     } catch (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: describePathError(error) };
     }
   });
   ipcMain.handle('editor.saveFile', async (_event, relativePath, content) => {
@@ -202,7 +210,7 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
       await fs.writeFile(target, content, 'utf-8');
       return { ok: true };
     } catch (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: describePathError(error) };
     }
   });
 
@@ -212,7 +220,7 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   const fileWatchers = new Map();
   ipcMain.handle('editor.watchFile', async (_event, relativePath) => {
     let absolutePath;
-    try { absolutePath = await resolveEditorPath(relativePath); } catch (error) { return { ok: false, error: error.message }; }
+    try { absolutePath = await resolveEditorPath(relativePath); } catch (error) { return { ok: false, error: describePathError(error) }; }
     if (fileWatchers.has(absolutePath)) return { ok: true, alreadyWatching: true };
     let lastMtime = 0;
     let lastSize = -1;
@@ -256,7 +264,7 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
       const stat = await fs.stat(target);
       return { ok: true, mtimeMs: stat.mtimeMs, size: stat.size };
     } catch (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: describePathError(error) };
     }
   });
   
@@ -719,7 +727,10 @@ Edited code:`;
     try {
       abs = (await resolveWorkspacePath(relativePath, root)).path;
     } catch (error) {
-      return { ok: false, error: error.message };
+      // A missing file is the ordinary case here — the renderer can hold a stale
+      // path — and describePathError reports it as a plain sentence instead of
+      // leaking the raw ENOENT with an absolute filesystem path.
+      return { ok: false, error: describePathError(error) };
     }
     if (!previewService?.validateToken?.(token, {
       workspaceRoot: root,
@@ -921,7 +932,7 @@ Edited code:`;
       const content = await fileHistory.read(target, snapshotId);
       return content === null ? { ok: false, error: '快照不存在或已清理' } : { ok: true, content };
     } catch (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: describePathError(error) };
     }
   });
   ipcMain.handle('history.restore', async (_event, relativePath, snapshotId) => {
@@ -936,7 +947,7 @@ Edited code:`;
       await fs.writeFile(target, content, 'utf-8');
       return { ok: true };
     } catch (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: describePathError(error) };
     }
   });
   ipcMain.handle('history.remove', async (_event, relativePath, snapshotId) => {
@@ -945,7 +956,7 @@ Edited code:`;
       await fileHistory.remove(target, snapshotId);
       return { ok: true };
     } catch (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: describePathError(error) };
     }
   });
   ipcMain.handle('history.clear', async (_event, relativePath) => {
@@ -953,7 +964,7 @@ Edited code:`;
       const target = await resolveEditorPath(relativePath);
       return await fileHistory.clear(target);
     } catch (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: describePathError(error) };
     }
   });
   ipcMain.handle('history.tracked', async () => fileHistory.listTracked());
