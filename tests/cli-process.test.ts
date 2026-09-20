@@ -1,20 +1,23 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { readPackageVersion } from '../src/runtime/packageVersion.js';
 
-// Avoid `import ... with { type: 'json' }` (ExperimentalWarning in Node 22).
-const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version?: string };
+// Resolve the manifest layout-independently: a fixed '../package.json' is
+// correct from tests/ but points at dist/package.json once compiled, and tsc
+// never emits that file.
+const packageVersion = await readPackageVersion(import.meta.url);
 
 const execFileAsync = promisify(execFile);
 const cliPath = resolve('dist/src/index.js');
 
 test('CLI prints package version', async () => {
   const result = await execFileAsync(process.execPath, [cliPath, '--version']);
-  assert.equal(result.stdout.trim(), packageJson.version);
+  assert.equal(result.stdout.trim(), packageVersion);
   assert.equal(result.stderr, '');
 });
 

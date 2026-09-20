@@ -329,6 +329,19 @@ export class WorkflowEngine {
         throw error;
       }
 
+      // A node that observed the abort signal throws its OWN error, which is
+      // not a WorkflowControlError. Treating it as a failure marked the
+      // interrupted node permanently failed, so every node depending on it was
+      // then blocked and a resume could never finish. When the run was paused
+      // or cancelled, the node is pending work, not a failure.
+      if (this.execution.status === 'paused' || this.execution.status === 'cancelled') {
+        this.removeCurrentNode(node.id);
+        node.status = 'pending';
+        node.finishedAt = undefined;
+        this.execution.failedNodes = this.execution.failedNodes.filter(id => id !== node.id);
+        throw error;
+      }
+
       this.removeCurrentNode(node.id);
       node.status = 'failed';
       node.finishedAt = new Date().toISOString();

@@ -327,43 +327,51 @@ describe('WorkflowEngine', () => {
       .addTask('Task 1')
       .addTask('Task 2', { dependsOn: ['task_1'] })
       .build();
-    
-    let taskCount = 0;
+
+    // Assert on the final state rather than on invocation counts. A pause
+    // aborts the in-flight node, which the engine resets to pending and runs
+    // again after resume, so how many times executeNode is *entered* depends on
+    // exactly when the abort lands. What must always hold is that the run
+    // resumes to completion with each node completed exactly once.
+    const completedNodes: string[] = [];
     let engineInstance: WorkflowEngine | null = null;
-    
+    let pauseRequested = false;
+
     const engine = new WorkflowEngine(workflow, {
-      executeNode: async (node) => {
-        taskCount++;
-        if (taskCount === 1 && engineInstance) {
-          // Pause after first task
-          setTimeout(() => engineInstance!.pause(), 0);
+      // Signature is (node, context, signal) — the signal is the THIRD
+      // parameter, so it must not be destructured into the second slot.
+      executeNode: async (node, _context, signal) => {
+        if (!pauseRequested && engineInstance) {
+          // Request a pause exactly once, while the first node is in flight.
+          pauseRequested = true;
+          queueMicrotask(() => void engineInstance!.pause());
         }
-        await new Promise(resolve => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        // Honor the abort like a real node would: a paused run must not record
+        // work that was interrupted mid-flight.
+        if (signal?.aborted) throw new Error('aborted');
+        completedNodes.push(node.id);
         return { success: true, summary: 'Done' };
       },
     });
-    
+
     engineInstance = engine;
-    
-    // Start execution - it will pause after first task
-    const runPromise = engine.run();
-    
-    // Give it time to execute first task and pause
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    const execution = engine.getExecution();
-    
-    // Check if paused or completed (depending on timing)
-    if (execution.status === 'paused') {
-      // Resume if paused
-      await engine.resume();
-      expect(execution.status).toBe('completed');
-    } else {
-      // Already completed due to timing
-      expect(execution.status).toBe('completed');
+
+    const runPromise = engine.run().catch(() => undefined);
+    // Wait for the pause to take effect before resuming.
+    while (engine.getExecution().status === 'running') {
+      await new Promise((resolve) => setTimeout(resolve, 5));
     }
-    
-    await runPromise.catch(() => {}); // Wait for completion
-    expect(taskCount).toBe(2);
+    expect(engine.getExecution().status).toBe('paused');
+
+    const resumed = await engine.resume();
+    expect(resumed.status).toBe('completed');
+    await runPromise;
+
+    // Each node completed exactly once, with no duplicates from the resume.
+    expect([...completedNodes].sort()).toEqual(['task_1', 'task_2']);
+    const finalExecution = engine.getExecution();
+    expect([...finalExecution.completedNodes].sort()).toEqual(['task_1', 'task_2']);
+    expect(finalExecution.status).toBe('completed');
   });
 });
