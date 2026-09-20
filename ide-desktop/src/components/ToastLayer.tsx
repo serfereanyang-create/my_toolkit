@@ -44,8 +44,11 @@ export function ToastLayer({ onFocusChat }: { onFocusChat: () => void }) {
       } else if (event.type === 'turn_done') {
         // turn_done carries status 'ok' | 'error'; a failed turn must not be
         // announced as 任务完成 — the toast would contradict the transcript.
+        // The CLI also sends WHY the turn failed, which is the difference
+        // between "something went wrong" and something the user can act on.
+        const reason = typeof event.reason === 'string' ? event.reason.trim() : '';
         toast = event.status === 'error'
-          ? { kind: 'error', title: '本轮执行失败', body: '智能体未能完成本轮工作' }
+          ? { kind: 'error', title: '本轮执行失败', body: reason ? reason.slice(0, 120) : '智能体未能完成本轮工作' }
           : { kind: 'success', title: '任务完成', body: '智能体已完成本轮工作' };
       } else if (event.type === 'error') {
         toast = { kind: 'error', title: '执行出错', body: String(event.message || '').slice(0, 120) };

@@ -281,7 +281,19 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
     if (openTurnIndex(state) !== -1) return startTurn(state);
     return { ...startTurn(state), workLog: [], workPhase: 'thinking' };
   }
-  if (event.type === 'turn_done') return { ...endTurn(state), agentStatus: 'ready', workPhase: 'done' };
+  if (event.type === 'turn_done') {
+    // A failed turn used to close silently. The CLI sends the failure reason on
+    // turn_done, but nothing rendered it: the transcript kept only whatever had
+    // streamed before the failure (often nothing) and the toast said just
+    // "执行失败". Record the reason as the same kind:'error' item the bridge
+    // errors use, so it stays readable after the toast is gone.
+    const reason = event.status === 'error' && typeof event.reason === 'string' ? event.reason.trim() : '';
+    const closed = endTurn(state);
+    const next = reason
+      ? appendChat(closed, { id: `turn-error-${crypto.randomUUID()}`, kind: 'error', text: reason })
+      : closed;
+    return { ...next, agentStatus: 'ready', workPhase: 'done' };
+  }
   if (event.type === 'agent_offline') {
     // Close any open turn that never received a turn_done (e.g. process crash).
     // Without this, subsequent tool_start events get appended to the zombie turn.

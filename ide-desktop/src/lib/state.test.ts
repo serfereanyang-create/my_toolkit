@@ -108,6 +108,32 @@ describe('appReducer', () => {
     expect(s.chat.filter((item) => item.kind === 'assistant')).toHaveLength(1);
   });
 
+  it('records the CLI failure reason when a turn ends in error', () => {
+    // The CLI puts WHY a turn failed on turn_done.reason. Nothing used to read
+    // it, so a failed turn left the transcript empty — the user saw the turn
+    // stop with no explanation and no way to tell a crash from a refusal.
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'turn_done', status: 'error', reason: 'API key missing for provider deepseek' });
+    const errors = s.chat.filter((item) => item.kind === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ kind: 'error', text: 'API key missing for provider deepseek' });
+    expect(s.agentStatus).toBe('ready');
+  });
+
+  it('adds no error item when a failed turn carries no reason', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'turn_done', status: 'error' });
+    expect(s.chat.filter((item) => item.kind === 'error')).toHaveLength(0);
+    expect(s.agentStatus).toBe('ready');
+  });
+
+  it('adds no error item for a successful turn, even if a reason rides along', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'turn_done', status: 'ok', reason: 'not a failure' });
+    expect(s.chat.filter((item) => item.kind === 'error')).toHaveLength(0);
+    expect(s.agentStatus).toBe('ready');
+  });
+
   it('computer_screenshot results surface the PNG as an inline data URL on the step', () => {
     let s = emit(initialState, { type: 'turn_start' });
     s = emit(s, { type: 'tool_start', tool: 'computer_screenshot', input: {} });

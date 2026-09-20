@@ -850,7 +850,8 @@ Edited code:`;
     }
   });
 
-  // ── Code snippets library (iteration 4) ──────────────────────────────────  ipcMain.handle('snippets.list', async () => snippets.list());
+  // ── Code snippets library (iteration 4) ──────────────────────────────────
+  ipcMain.handle('snippets.list', async () => snippets.list());
   ipcMain.handle('snippets.search', async (_event, query) => snippets.search(query));
   ipcMain.handle('snippets.create', async (_event, input) => snippets.create(input));
   ipcMain.handle('snippets.update', async (_event, id, patch) => snippets.update(id, patch));
