@@ -56,6 +56,15 @@ export type SubAgentResult = {
   durationMs: number;
   /** 实际执行的 LLM 步数 */
   steps: number;
+  /**
+   * 上游失败的子 agent ID。仅在「因上游失败而未执行」时出现：
+   * 该任务没有跑过，ok=false 是「被阻断」而不是「跑失败」。
+   */
+  blockedBy?: string[];
+  /** 超过单任务超时上限，已在安全检查点中止。 */
+  timedOut?: boolean;
+  /** 同批任务被父级取消或 failFast 终止，本任务从未启动。 */
+  cancelled?: boolean;
 };
 
 /**
@@ -69,4 +78,16 @@ export type SubAgentBatchInput = {
    * 注入到每个子 agent 的 system context，让子 agent 了解整体大目标。
    */
   parentGoal?: string;
+  /**
+   * 同时运行的最大子 agent 数（默认 4，上限 16）。
+   * 无上限会让一个批次把端点配额和本机资源一次性打满。
+   */
+  concurrency?: number;
+  /**
+   * 上游失败时是否阻断依赖它的任务（默认 true）。
+   * 置 false 则依赖照常执行，上游结果里只带失败摘要。
+   */
+  failFast?: boolean;
+  /** 单个子 agent 的超时（ms，默认 600000）。超时按协作式中止，不硬杀进程。 */
+  timeoutMs?: number;
 };

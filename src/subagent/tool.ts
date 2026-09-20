@@ -1,13 +1,18 @@
 import type { AgentRuntime } from '../agent/agent.js';
+import { allExperts } from '../experts/profiles.js';
 import type { ToolDefinition, ToolResult } from '../tools/index.js';
 import { runSubAgentBatch } from './orchestrator.js';
+import { MAX_SUBAGENT_CONCURRENCY } from './orchestrator.js';
 import type { SubAgentBatchInput, SubAgentResult } from './types.js';
 
-/** Valid expert role IDs for validation */
-const VALID_EXPERTS = new Set([
-  'code_edit', 'code_search', 'git_ops', 'test_verify',
-  'doc_generation', 'shell_runtime', 'data_processing', 'general',
-]);
+/**
+ * Valid expert role IDs for validation.
+ *
+ * Derived from the roster rather than hardcoded: the previous literal list
+ * silently rejected any expert added to profiles.ts, so a new role was
+ * unusable until someone remembered to edit this file too.
+ */
+const VALID_EXPERTS = new Set(allExperts.map((e) => e.id));
 
 /**
  * 子智能体嵌套深度上限：root agent 为 0 层，其派生的子 agent 为 1 层，以此类推。
@@ -62,9 +67,28 @@ function validateBatchInput(raw: unknown): SubAgentBatchInput {
     };
   });
 
+  // 调度旋钮：必须在这里显式转发，否则调度器永远只能拿到默认值 —— 曾经
+  // concurrency/failFast/timeoutMs 只存在于 types.ts 和调度器里，模型填了也
+  // 会被这一层丢掉，功能等于没接上。
+  const concurrency = obj['concurrency'];
+  if (concurrency !== undefined && (typeof concurrency !== 'number' || !Number.isFinite(concurrency))) {
+    throw new Error('spawn_subagent: "concurrency" must be a number or omitted');
+  }
+  const failFast = obj['failFast'];
+  if (failFast !== undefined && typeof failFast !== 'boolean') {
+    throw new Error('spawn_subagent: "failFast" must be a boolean or omitted');
+  }
+  const timeoutMs = obj['timeoutMs'];
+  if (timeoutMs !== undefined && (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs))) {
+    throw new Error('spawn_subagent: "timeoutMs" must be a number or omitted');
+  }
+
   return {
     subagents: specs,
     parentGoal: typeof obj['parentGoal'] === 'string' ? obj['parentGoal'] : undefined,
+    concurrency: typeof concurrency === 'number' ? concurrency : undefined,
+    failFast: typeof failFast === 'boolean' ? failFast : undefined,
+    timeoutMs: typeof timeoutMs === 'number' ? timeoutMs : undefined,
   };
 }
 
@@ -120,6 +144,14 @@ export function createSpawnSubagentTool(parentRuntime: AgentRuntime): ToolDefini
       '  general         通用（不限工具，谨慎使用）',
       '',
       '用 dependsOn 声明子任务间的依赖关系，框架自动并行无依赖任务、串行有依赖任务。',
+      '',
+      '调度参数（都可省略）：',
+      '  concurrency  同时运行的上限，默认 4，上限 16。批量大且任务重时调低。',
+      '  failFast     上游失败时是否阻断依赖它的任务，默认 true。',
+      '               被阻断的任务会带 blockedBy 说明，而不是带着空结果硬跑。',
+      '  timeoutMs    单个子任务的超时（ms），默认 600000。超时在安全检查点中止，',
+      '               不硬杀进程，已完成的工具结果保留。',
+      '有任务失败时，先读它的 answer 判断原因，再决定是否补派一个子任务，不要直接放弃整批。',
     ].join('\n'),
     inputHint: JSON.stringify({
       subagents: [
@@ -136,6 +168,8 @@ export function createSpawnSubagentTool(parentRuntime: AgentRuntime): ToolDefini
         },
       ],
       parentGoal: '为整个项目 API 层补充文档',
+      concurrency: 4,
+      failFast: true,
     }, null, 2),
     risk: 'shell',
     validate(input: unknown): SubAgentBatchInput {
