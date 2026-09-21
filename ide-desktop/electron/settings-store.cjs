@@ -82,10 +82,39 @@ function parseSettings(raw) {
 function createSettingsStore(userDataDir) {
   const file = path.join(userDataDir, 'settings.json');
 
+  /*
+   * Migrate the retired 沙箱模式 preference onto the approval mode.
+   *
+   * The two knobs used to be separate: approval mode reached the CLI while
+   * 沙箱模式 lived only in the main process, so they could contradict each
+   * other. They are now one tier knob (cli/src/safety/policy.ts pathScopeFor),
+   * which means a stored `gen.sandboxMode` would otherwise be silently ignored
+   * — and a user who had chosen 严格 would quietly lose the protection it gave.
+   *
+   *   strict    → 只读 (deny):    refuses every write, the closest equivalent
+   *   workspace → 变更前确认 (ask): still prompts before each change
+   *   off       → no change
+   *
+   * Only applied when the approval mode is still the default, so an explicit
+   * choice the user made in the approval control always wins.
+   */
+  function migrateSandboxMode(settings) {
+    const prefs = settings.preferences;
+    if (!prefs || typeof prefs !== 'object') return settings;
+    const legacy = prefs['gen.sandboxMode'];
+    if (typeof legacy !== 'string') return settings;
+    const { 'gen.sandboxMode': _retired, ...rest } = prefs;
+    const migrated = { ...settings, preferences: rest };
+    if (settings.approval && settings.approval !== defaultSettings.approval) return migrated;
+    if (legacy === 'strict') return { ...migrated, approval: 'deny' };
+    if (legacy === 'workspace') return { ...migrated, approval: 'ask' };
+    return migrated;
+  }
+
   async function get() {
     try {
       const raw = await fs.readFile(file, 'utf8');
-      return { ...defaultSettings, ...parseSettings(raw) };
+      return migrateSandboxMode({ ...defaultSettings, ...parseSettings(raw) });
     } catch (error) {
       if (error && error.code === 'ENOENT') return defaultSettings;
       // JSON parse errors (e.g., trailing garbage from a partial write) are

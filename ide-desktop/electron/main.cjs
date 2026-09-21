@@ -33,7 +33,6 @@ const { createPreviewRuntime } = require('./preview-runtime.cjs');
 const { createFimServer } = require('./fim-server.cjs');
 const { createLanguageServer } = require('./language-server.cjs');
 const { CompletionService } = require('./completion-service.cjs');
-const sandbox = require('./sandbox.cjs');
 
 // Register custom scheme BEFORE app.ready (required by Electron)
 registerSchemePrivileges(protocol);
@@ -119,10 +118,6 @@ function createAgentManager({ mainWindow, workspace, settings, secrets, subagent
     lifecycleQueue = run.catch(() => undefined);
     return run;
   }
-  // Request ids the sandbox already answered, so a late user click on the
-  // (now auto-decided) card can't send a second, conflicting decision.
-  const sandboxDecided = new Set();
-
   /**
    * Session ids whose bridge is currently up. The 子智能体目录 uses this to
    * tell a genuinely running subagent from one whose bridge died mid-flight:
@@ -143,38 +138,6 @@ function createAgentManager({ mainWindow, workspace, settings, secrets, subagent
     } else if (event.type === 'agent_offline') {
       const id = sessionOfBridge.get(bridgeInstance);
       if (id) liveSessions.delete(id);
-    }
-  }
-
-  /**
-   * Run one approval_needed event through the sandbox policy and, when the
-   * policy decides, answer the CLI broker directly. The renderer receives the
-   * same event annotated with `autoDecision`/`autoReason` so the card renders
-   * the outcome plus its cause instead of live buttons.
-   */
-  async function applySandboxPolicy(activeBridge, event) {
-    try {
-      const config = await settings.get();
-      const prefs = (config && config.preferences) || {};
-      const mode = sandbox.normalizeMode(prefs['gen.sandboxMode']);
-      if (mode === 'off') return;
-      const verdict = sandbox.evaluate(event, { mode, workspaceRoot: workspace.getRoot() });
-      if (verdict.decision === 'pass') return;
-      const requestId = String(event.requestId || '');
-      if (!requestId || sandboxDecided.has(requestId)) return;
-      sandboxDecided.add(requestId);
-      // Cap the memo so a very long-lived bridge can't grow it unbounded.
-      if (sandboxDecided.size > 500) sandboxDecided.clear();
-      const decision = verdict.decision === 'allow' ? 'allow_once' : 'deny';
-      event.autoDecision = decision;
-      event.autoReason = verdict.reason || '';
-      await activeBridge.approve(requestId, decision);
-      // The annotated approval_needed event (forwarded by the caller after
-      // this promise settles) carries the outcome to the renderer; the
-      // reducer folds it straight into the card's decided state.
-    } catch {
-      // Policy/bridge failures must never break the event stream; the CLI
-      // approval timeout path already denies unanswered requests.
     }
   }
 
@@ -226,15 +189,12 @@ function createAgentManager({ mainWindow, workspace, settings, secrets, subagent
       }
     };
     capturedBridge.on('event', (event) => {
-      // Sandbox interception: before the user ever sees an approval prompt,
-      // the policy engine may answer it outright. The annotated event then
-      // flows to the renderer so the card shows WHY it was auto-decided.
-      // Forwarding must wait for the annotation, or the card would briefly
-      // render live buttons and never learn the outcome.
-      if (event && event.type === 'approval_needed') {
-        void applySandboxPolicy(capturedBridge, event).finally(() => forward(event));
-        return;
-      }
+      // Approval decisions belong to the user and the CLI's own policy layer
+      // (cli/src/safety/policy.ts). This used to intercept approval_needed here
+      // through a separate 沙箱模式 preference that the CLI never saw, so the
+      // two knobs could disagree about what was allowed. The approval mode is
+      // now the single tier knob — it decides both confirmation frequency and
+      // file scope — and it reaches the CLI as --approval.
       // Subagent runs are persisted so the 子智能体目录 survives a reload.
       // Recording is fire-and-forget: a sidecar write failure must never
       // stall the event stream the conversation depends on.

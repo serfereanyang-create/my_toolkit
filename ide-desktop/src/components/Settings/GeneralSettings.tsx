@@ -7,9 +7,9 @@ import type { ApprovalMode } from '../../types';
 /*
  * Full "常规" page. Every control here is wired to a real consumer:
  *  - 权限卡：直接读写 settings.approval（与 Composer 的 ApprovalMenu、CLI
- *    --approval 参数同一数据源，改动立即生效）。
- *  - 沙箱：gen.sandboxMode 由 main.cjs 的 sandbox.cjs 策略引擎消费，
- *    在审批到达用户前自动放行/拦截（off/workspace/strict）。
+ *    --approval 参数同一数据源，改动立即生效）。审批模式同时决定确认频率和
+ *    可及的文件范围，所以这里不再单独提供沙箱模式——原来的 gen.sandboxMode
+ *    只在主进程里自动回答审批、从不传给 CLI，会和审批模式互相矛盾。
  *  - 确认弹窗：gen.approvalModal 控制 ApprovalModal 是否弹出（App.tsx）。
  *  - 提示音：gen.sounds / gen.soundVolume 由 App.tsx 的 notifySounds 消费。
  *  - 发送快捷键 / 上下文用量 / 插件 / 底部面板：App/Composer 读取对应 pref。
@@ -42,9 +42,8 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
   const setTurnNotify = (v: string) => savePref({ 'gen.turnNotify': v });
   const setPermissionNotify = (v: boolean) => savePref({ 'gen.permissionNotify': v });
 
-  // 沙箱与弹窗确认（main.cjs sandbox.cjs / App.tsx ApprovalModal 消费）
-  const sandboxMode = prefStr(prefs, 'gen.sandboxMode', 'off');
-  const setSandboxMode = (v: string) => savePref({ 'gen.sandboxMode': v });
+  // 弹窗确认（App.tsx ApprovalModal 消费）。沙箱模式已并入审批模式：审批模式
+  // 同时决定确认频率与可及的文件范围，见 cli/src/safety/policy.ts 的 pathScopeFor。
   const approvalModal = prefBool(prefs, 'gen.approvalModal', true);
   const setApprovalModal = (v: boolean) => savePref({ 'gen.approvalModal': v });
 
@@ -61,21 +60,12 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
       <SettingsCard heading="权限">
         <SettingRow
           title="审批模式"
-          description="控制智能体执行写入、命令等操作前是否需要你确认。修改立即生效，聊天输入框旁的审批菜单与此同步。"
+          description="同时决定确认频率和可读写的文件范围：只读/仅计划/每次询问只能访问工作区（外加桌面、文档、下载）；自动批准（完全访问）可读写本机任意文件。修改立即生效，聊天输入框旁的审批菜单与此同步。"
           control={<Segmented value={approval} onChange={(next) => onApprovalChange(next)} options={[
             { value: 'ask', label: '每次询问' },
             { value: 'auto', label: '自动批准' },
             { value: 'plan', label: '仅计划' },
             { value: 'deny', label: '只读' },
-          ]} />}
-        />
-        <SettingRow
-          title="沙箱模式"
-          description="在审批到达你之前由策略引擎自动放行或拦截：工作区模式拒绝越界写入与危险命令；严格模式额外禁止 shell 与网络、自动批准只读。"
-          control={<Segmented value={sandboxMode} onChange={setSandboxMode} options={[
-            { value: 'off', label: '关闭' },
-            { value: 'workspace', label: '工作区' },
-            { value: 'strict', label: '严格' },
           ]} />}
         />
       </SettingsCard>

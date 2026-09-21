@@ -2,11 +2,17 @@ import { useEffect, useRef } from 'react';
 import { Hand, Wand2, ClipboardList, ShieldOff, Check } from 'lucide-react';
 import type { ApprovalMode } from '../types';
 
+/*
+ * The description states the real file scope, because the approval mode is the
+ * single tier knob: it decides both how often the user is asked and how far a
+ * path may reach (cli/src/safety/policy.ts pathScopeFor). 「完全访问」 used to
+ * only reduce prompts, which made the label promise access it did not grant.
+ */
 const OPTIONS: { value: ApprovalMode; label: string; description: string; Icon: React.ElementType }[] = [
-  { value: 'auto', label: '完全访问',   description: '减少确认次数。',         Icon: ShieldOff    },
-  { value: 'ask',  label: '变更前确认', description: '改文件前先问我。',       Icon: Hand         },
-  { value: 'plan', label: '计划模式',   description: '编辑前先出计划。',       Icon: ClipboardList },
-  { value: 'deny', label: '只读模式',   description: '禁止所有写操作。',       Icon: Wand2        },
+  { value: 'auto', label: '完全访问',   description: '可读写本机任意文件，不再询问。', Icon: ShieldOff    },
+  { value: 'ask',  label: '变更前确认', description: '改文件前先问我，限工作区内。',   Icon: Hand         },
+  { value: 'plan', label: '计划模式',   description: '编辑前先出计划，限工作区内。',   Icon: ClipboardList },
+  { value: 'deny', label: '只读模式',   description: '禁止所有写操作。',               Icon: Wand2        },
 ];
 
 export const approvalMenuLabel: Record<ApprovalMode, string> = {
