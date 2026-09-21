@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, BellRing, CheckCircle2, WifiOff, X } from 'lucide-react';
+import { AlertTriangle, BellRing, CheckCircle2, Info, WifiOff, X } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 
 /*
@@ -9,7 +9,7 @@ import { desktop } from '../lib/ipc';
  * background-window case; this layer covers the focused case.
  */
 
-type ToastKind = 'approval' | 'success' | 'error' | 'offline';
+type ToastKind = 'approval' | 'success' | 'error' | 'offline' | 'info';
 
 interface ToastItem {
   id: number;
@@ -23,6 +23,7 @@ const TOAST_MS: Record<ToastKind, number> = {
   success: 5000,
   error: 8000,
   offline: 6000,
+  info: 5000,
 };
 
 const KIND_VIEW: Record<ToastKind, { icon: React.ElementType; label: string }> = {
@@ -30,6 +31,7 @@ const KIND_VIEW: Record<ToastKind, { icon: React.ElementType; label: string }> =
   success: { icon: CheckCircle2, label: '任务完成' },
   error: { icon: AlertTriangle, label: '执行出错' },
   offline: { icon: WifiOff, label: '连接断开' },
+  info: { icon: Info, label: '本轮已回复' },
 };
 
 export function ToastLayer({ onFocusChat }: { onFocusChat: () => void }) {
@@ -47,11 +49,21 @@ export function ToastLayer({ onFocusChat }: { onFocusChat: () => void }) {
         // The CLI also sends WHY the turn failed, which is the difference
         // between "something went wrong" and something the user can act on.
         const reason = typeof event.reason === 'string' ? event.reason.trim() : '';
+        // `ok` means "the turn ended without an error", NOT "the work got done":
+        // a model that answers a question or declines a request ends with ok and
+        // no tool calls. Announcing 任务完成 there is a lie — the user asked for
+        // something and nothing happened. codex's own TUI has this bug ("Worked
+        // for Ns · done" regardless of activity), so this is deliberately not
+        // copied.
+        const didWork = event.producedActivity !== false;
         toast = event.status === 'error'
-          ? { kind: 'error', title: '本轮执行失败', body: reason ? reason.slice(0, 120) : '智能体未能完成本轮工作' }
-          : { kind: 'success', title: '任务完成', body: '智能体已完成本轮工作' };
+          ? { kind: 'error', title: '本轮执行失败', body: reason ? reason.slice(0, 200) : 'CLI 没有返回失败原因' }
+          : didWork
+            ? { kind: 'success', title: '任务完成', body: '智能体已完成本轮工作' }
+            : { kind: 'info', title: '本轮已回复', body: '未执行任何操作（只做了回复）' };
       } else if (event.type === 'error') {
-        toast = { kind: 'error', title: '执行出错', body: String(event.message || '').slice(0, 120) };
+        const message = String(event.message || '').trim();
+        toast = { kind: 'error', title: '执行出错', body: (message || 'CLI 没有返回错误详情').slice(0, 200) };
       } else if (event.type === 'agent_offline') {
         toast = { kind: 'offline', title: '连接断开', body: '智能体已离线' };
       }

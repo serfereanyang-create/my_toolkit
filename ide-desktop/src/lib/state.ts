@@ -377,10 +377,14 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
     // streamed before the failure (often nothing) and the toast said just
     // "执行失败". Record the reason as the same kind:'error' item the bridge
     // errors use, so it stays readable after the toast is gone.
-    const reason = event.status === 'error' && typeof event.reason === 'string' ? event.reason.trim() : '';
+    const reason = event.status === 'error' ? String(event.reason ?? '').trim() : '';
     const closed = endTurn(state);
-    const next = reason
-      ? appendChat(closed, { id: `turn-error-${crypto.randomUUID()}`, kind: 'error', text: reason })
+    // A failed turn must always say something. Previously an empty reason left
+    // the turn to close silently, so the user saw a failure with no explanation
+    // at all — worse than a vague one, because there was nothing to act on.
+    const text = reason || (event.status === 'error' ? '本轮执行失败，但 CLI 没有返回原因。' : '');
+    const next = text
+      ? appendChat(closed, { id: `turn-error-${crypto.randomUUID()}`, kind: 'error', text })
       : closed;
     return { ...markSessionRunning(next, state.activeSessionId, false), agentStatus: 'ready', workPhase: 'done' };
   }
@@ -482,12 +486,16 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
   // distinctly from genuine AI replies.  Previously they were injected as
   // kind:'assistant' which made error messages visually indistinguishable.
   if (event.type === 'error') {
-    const next = appendChat(state, { id: `error-${crypto.randomUUID()}`, kind: 'error', text: String(event.message || 'Agent error') });
+    // Fall back to a message that says the cause is unknown, not one that
+    // pretends to be the cause. "Agent error" reads like an explanation and
+    // tells the user nothing.
+    const text = String(event.message || '').trim() || '智能体报错，但没有提供原因。';
+    const next = appendChat(state, { id: `error-${crypto.randomUUID()}`, kind: 'error', text });
     const closed = endTurn(state);
     // Do NOT force agentStatus here: a mid-turn provider error leaves the turn
     // running, and a dead bridge emits agent_offline right after. Forcing
     // 'ready' used to let the UI prompt a bridge that was already gone.
-    return { ...addLog({ type: 'error', phase: 'failed', title: '执行失败', detail: String(event.message || 'Agent error') }, 'failed'), chat: [...closed.chat, ...next.chat.filter((item) => !closed.chat.some((existing) => existing.id === item.id))] };
+    return { ...addLog({ type: 'error', phase: 'failed', title: '执行失败', detail: text }, 'failed'), chat: [...closed.chat, ...next.chat.filter((item) => !closed.chat.some((existing) => existing.id === item.id))] };
   }
   return state;
 }

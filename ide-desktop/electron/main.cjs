@@ -76,6 +76,19 @@ async function notifyKeyState(event, window, settingsStore) {
   };
   const rule = rules[event.type];
   if (!rule) return;
+  // `turn_done` with status ok only means the loop ended without an error. A
+  // turn that replied but ran no tools (answered a question, declined a
+  // request) must not be announced as 任务完成 — the user asked for something
+  // and nothing happened.
+  if (event.type === 'turn_done' && event.status !== 'error' && event.producedActivity === false) {
+    rule.title = '本轮已回复';
+    rule.body = '未执行任何操作（只做了回复）';
+  } else if (event.type === 'turn_done' && event.status === 'error') {
+    rule.title = '本轮执行失败';
+    rule.body = typeof event.reason === 'string' && event.reason.trim()
+      ? event.reason.trim().slice(0, 200)
+      : 'CLI 没有返回失败原因';
+  }
 
   let prefs = {};
   try {

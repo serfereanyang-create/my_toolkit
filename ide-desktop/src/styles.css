@@ -399,6 +399,8 @@ html[data-reduce-motion='on'] *::after {
 .toast-icon-success { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, var(--bg-elevated)); }
 .toast-icon-error { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--bg-elevated)); }
 .toast-icon-offline { color: var(--fg-muted); background: var(--bg-side); }
+/* A turn that replied without doing anything is neither success nor failure. */
+.toast-icon-info { color: var(--fg-muted); background: color-mix(in srgb, var(--fg-muted) 12%, var(--bg-elevated)); }
 .toast-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .toast-title { font-weight: 650; font-size: 13px; }
 .toast-body {

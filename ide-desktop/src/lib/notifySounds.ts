@@ -118,12 +118,15 @@ export function soundVolume(prefs: Record<string, unknown> | undefined | null): 
  * `error`, not `done`: the CLI reports this via turn_done.status, and playing
  * the success chime on a failed turn tells the user the opposite of the truth.
  */
-export function cueForEvent(event: { type?: unknown; autoDecision?: unknown; status?: unknown }): Cue | null {
+export function cueForEvent(event: { type?: unknown; autoDecision?: unknown; status?: unknown; producedActivity?: unknown }): Cue | null {
   switch (event.type) {
     case 'approval_needed':
       return event.autoDecision === 'allow_once' || event.autoDecision === 'deny' ? null : 'approval';
     case 'turn_done':
-      return event.status === 'error' ? 'error' : 'done';
+      if (event.status === 'error') return 'error';
+      // No chime for a turn that ran no tools: the success cue would announce
+      // work that did not happen.
+      return event.producedActivity === false ? null : 'done';
     case 'error':
       return 'error';
     default:

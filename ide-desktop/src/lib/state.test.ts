@@ -120,10 +120,15 @@ describe('appReducer', () => {
     expect(s.agentStatus).toBe('ready');
   });
 
-  it('adds no error item when a failed turn carries no reason', () => {
+  it('still explains a failed turn that carries no reason', () => {
+    // A silent failure is the worst outcome: the turn stops and the user has
+    // nothing to act on. When the CLI gives no reason, say so explicitly rather
+    // than closing the turn in silence.
     let s = emit(initialState, { type: 'turn_start' });
     s = emit(s, { type: 'turn_done', status: 'error' });
-    expect(s.chat.filter((item) => item.kind === 'error')).toHaveLength(0);
+    const errors = s.chat.filter((item) => item.kind === 'error');
+    expect(errors).toHaveLength(1);
+    expect(String((errors[0] as { text?: string }).text)).toContain('没有返回原因');
     expect(s.agentStatus).toBe('ready');
   });
 
@@ -557,6 +562,30 @@ describe('agent event lifecycle (P0)', () => {
     it('tolerates a snapshot with no units array', () => {
       const s = appReducer(initialState, { type: 'agent/event', event: { type: 'supervisor_updated' } });
       expect(s.supervisor?.units).toEqual([]);
+    });
+  });
+
+  describe('error display', () => {
+    const errorEvent = (message: string) => appReducer(initialState, { type: 'agent/event', event: { type: 'error', message } });
+
+    it('shows the error message when the CLI provides one', () => {
+      const errors = errorEvent('API key missing for provider deepseek').chat.filter((item) => item.kind === 'error');
+      expect(errors).toHaveLength(1);
+      expect(String((errors[0] as { text?: string }).text)).toBe('API key missing for provider deepseek');
+    });
+
+    it('says the cause is missing rather than showing a generic label', () => {
+      // "Agent error" reads like an explanation and tells the user nothing.
+      const errors = errorEvent('').chat.filter((item) => item.kind === 'error');
+      expect(errors).toHaveLength(1);
+      const text = String((errors[0] as { text?: string }).text);
+      expect(text).not.toBe('Agent error');
+      expect(text).toContain('没有提供原因');
+    });
+
+    it('treats a whitespace-only message as missing', () => {
+      const errors = errorEvent('   ').chat.filter((item) => item.kind === 'error');
+      expect(String((errors[0] as { text?: string }).text)).toContain('没有提供原因');
     });
   });
 });

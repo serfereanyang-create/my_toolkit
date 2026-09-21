@@ -53,3 +53,26 @@ describe('cueForEvent', () => {
     expect(cueForEvent({})).toBeNull();
   });
 });
+
+describe('cueForEvent activity awareness', () => {
+  it('plays no success chime for a turn that ran no tools', () => {
+    // `ok` means the loop ended cleanly, not that work happened. The success
+    // chime would announce work that did not occur.
+    expect(cueForEvent({ type: 'turn_done', status: 'ok', producedActivity: false })).toBeNull();
+  });
+
+  it('plays the success chime when the turn did work', () => {
+    expect(cueForEvent({ type: 'turn_done', status: 'ok', producedActivity: true })).toBe('done');
+  });
+
+  it('plays the success chime when the flag is absent (older CLI)', () => {
+    // Absent must not be read as "no activity": that would silence every
+    // successful turn against an older bridge.
+    expect(cueForEvent({ type: 'turn_done', status: 'ok' })).toBe('done');
+  });
+
+  it('still plays the error chime for a failed turn regardless of activity', () => {
+    expect(cueForEvent({ type: 'turn_done', status: 'error', producedActivity: true })).toBe('error');
+    expect(cueForEvent({ type: 'turn_done', status: 'error', producedActivity: false })).toBe('error');
+  });
+});
