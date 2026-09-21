@@ -263,6 +263,15 @@ export type AgentTurnResult = {
    * rollover decision needs to be right about.
    */
   steps?: number;
+  /**
+   * Whether the turn changed anything: it ran at least one tool.
+   *
+   * `ok` means "the loop ended without an error" — a model that answers a
+   * question, or declines a request, sets `ok` while doing no work at all.
+   * Callers that need to tell "done" from "nothing happened" must read this
+   * rather than inferring from `ok`.
+   */
+  producedActivity?: boolean;
 };
 
 /** Thrown at a safe boundary when the user requested cancel via runtime.cancelRequested. */
@@ -348,6 +357,22 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
   // Codex-style per-turn footer (real context/cache numbers from the last
   // contextStats snapshot). Runs for ok/failed/cancelled turns alike.
   runtime.ui.turnEnd();
+
+  /**
+   * Did this turn actually change anything?
+   *
+   * Modelled on codex's per-turn activity accounting
+   * (codex-rs/ext/goal/src/accounting.rs): a turn is "active" when it ran a tool
+   * or wrote files. A turn that only produced prose is not.
+   *
+   * This exists because `ok: true` means "the loop ended without an error", not
+   * "the work was done" — codex's own `TurnStatus::Completed` is an
+   * execution-liveness status and its TUI says "done" for a turn that ran no
+   * tools at all. Reporting that as 任务完成 tells the user something false, so
+   * the distinction is tracked explicitly rather than inferred from `ok`.
+   */
+  const toolCallsThisTurn = runtime.session.toolCalls.length - toolCallsBefore;
+  const producedActivity = toolCallsThisTurn > 0;
 
   // Persist the final lifecycle status of the replayed payload. The payload
   // itself (prompt/parts) is kept so /retry can replay the same user turn.
@@ -438,7 +463,7 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
   }
 
   if (thrown) throw thrown;
-  return { ...coreResult, gitSafety, steps: runtime.lastTurnSteps };
+  return { ...coreResult, gitSafety, steps: runtime.lastTurnSteps, producedActivity };
 }
 
 async function runAgentTurnCore(
@@ -785,7 +810,9 @@ async function runAgentTurnCore(
           const execution = await executeToolAction(runtime, action, locale);
           await appendToolActionResult(runtime, execution);
           if (!execution.ok) {
-            const reason = execution.reason ?? 'tool failed';
+            // Never invent a generic reason: `output` is what the tool actually
+            // said, and dropping it leaves the user with a bare "tool failed".
+            const reason = execution.reason ?? execution.output ?? `工具 ${action.tool} 执行失败（未返回说明）`;
             return {
               ok: false,
               session: runtime.session,
@@ -900,7 +927,7 @@ async function runAgentTurnCore(
         lastToolName = batchAction.tool;
         if (batchAction.callId) responseToolOutputs.push({ callId: batchAction.callId, output: toolResult.output ?? toolResult.reason ?? '' });
         if (!toolResult.ok) {
-          const reason = toolResult.reason ?? 'tool failed';
+          const reason = toolFailureReason(toolResult, batchAction.tool, locale);
           return {
             ok: false,
             session: runtime.session,
@@ -1032,7 +1059,9 @@ async function executeToolAction(
     runtime.ui.toolStart(action.tool, action.input);
     runtime.ui.toolResult(action.tool, { ok: false, output: message });
     const record = { tool: action.tool, input: action.input, ok: false, output: message, providerCallId: action.callId };
-    return { ok: false, output: message, record };
+    // `reason` is set, not left for the caller to invent: an error surfaced to
+    // the user must always say what went wrong.
+    return { ok: false, output: message, reason: message, record };
   }
   runtime.ui.toolStart(action.tool, action.input);
   const result = await runtime.tools.execute(action.tool, action.input, {
@@ -1133,10 +1162,13 @@ async function executeToolAction(
         record,
       };
     }
+    // Recoverable failure: the turn continues, but the user still has to be
+    // told what went wrong — the tool's own output is the only useful part.
+    const failureDetail = result.output?.trim() || (locale === 'zh' ? '未返回说明' : 'no output');
     runtime.ui.info(
       recoveryHint
-        ? (locale === 'zh' ? `工具失败；恢复提示：${recoveryHint}` : `tool failed; recovery hint: ${recoveryHint}`)
-        : (locale === 'zh' ? `工具失败；请模型继续恢复：${action.tool}` : `tool failed; asking model to recover: ${action.tool}`),
+        ? (locale === 'zh' ? `工具 ${action.tool} 失败：${failureDetail}；恢复提示：${recoveryHint}` : `${action.tool} failed: ${failureDetail}; recovery hint: ${recoveryHint}`)
+        : (locale === 'zh' ? `工具 ${action.tool} 失败：${failureDetail}；交给模型继续恢复` : `${action.tool} failed: ${failureDetail}; asking model to recover`),
     );
     return { ok: true, output, record };
   }
@@ -1183,6 +1215,32 @@ function latestUserRequest(runtime: AgentRuntime): string | undefined {
     return content;
   }
   return undefined;
+}
+
+/**
+ * The reason to report for a failed tool call.
+ *
+ * Guarantees a non-empty, informative string. A bare "tool failed" tells the
+ * user nothing they cannot already see, and it used to be what surfaced whenever
+ * a caller forgot to set `reason` — so the real cause (the tool's own output)
+ * was thrown away at the exact moment it mattered most.
+ */
+function toolFailureReason(
+  execution: Pick<ToolActionExecution, 'reason' | 'output'>,
+  tool: string,
+  locale: Locale,
+): string {
+  const reason = execution.reason?.trim();
+  if (reason) return reason;
+  const output = execution.output?.trim();
+  if (output) {
+    return locale === 'zh'
+      ? `工具 ${tool} 执行失败：${output}`
+      : `Tool ${tool} failed: ${output}`;
+  }
+  return locale === 'zh'
+    ? `工具 ${tool} 执行失败，且没有返回任何说明。`
+    : `Tool ${tool} failed without reporting a cause.`;
 }
 
 function isParallelSafeAction(

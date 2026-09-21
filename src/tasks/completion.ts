@@ -12,7 +12,14 @@ export type TaskCompletionResult =
 
 export function detectTaskCompletion(input: TaskCompletionInput): TaskCompletionResult {
   if (input.hadTerminalFailure || input.ok === false) {
-    return { status: 'blocked', error: input.error ?? input.finalAnswer ?? 'Task failed' };
+    // Prefer the explicit error, then whatever the turn actually said. The old
+    // fallback was the bare string 'Task failed', which told the user nothing —
+    // the real reason had usually been produced upstream and then dropped here.
+    const detail = input.error?.trim() || input.finalAnswer?.trim();
+    return {
+      status: 'blocked',
+      error: detail || '任务失败，但没有返回失败原因。',
+    };
   }
 
   const answer = input.finalAnswer.trim();

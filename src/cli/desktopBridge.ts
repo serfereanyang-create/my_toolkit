@@ -200,16 +200,24 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
         cancelRequested = false;
         busy = true;
         activeTurn = (async () => {
+          // A slash command's outcome is not a single turn result, so activity
+          // is measured by what the session actually did. `/plan confirm` starts
+          // a board and genuinely works; `/plan` alone only prints a board and
+          // does not.
+          const callsBefore = runtime.session.toolCalls.length;
+          const boardBefore = runtime.session.taskRuntime?.mode;
           try {
             await runPromptMode(runtime, slash);
             // Pair the renderer-facing turn lifecycle: runPromptMode may run
             // agent turns internally (each emitting its own turn_start) but
             // never emits turn_done itself. Without this the UI would keep a
             // turn card "running" forever after a task-board action.
-            emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'ok' });
+            const changed = runtime.session.toolCalls.length > callsBefore
+              || runtime.session.taskRuntime?.mode !== boardBefore;
+            emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'ok', producedActivity: changed });
           } catch (error) {
             emitEvent({ type: 'error', sessionId: runtime.session.id, message: errorMessage(error) });
-            emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'error' });
+            emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'error', reason: errorMessage(error) });
           } finally { busy = false; }
         })();
         continue;
@@ -278,10 +286,16 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
             });
             // Same pairing rationale as task_board_action: the automation goal
             // runs agent turns internally; close the renderer-facing turn here.
-            emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: result.ok ? 'ok' : 'error' });
+            emitEvent({
+              type: 'turn_done',
+              sessionId: runtime.session.id,
+              status: result.ok ? 'ok' : 'error',
+              reason: result.ok ? result.reason : (result.reason ?? '自动化任务失败，但没有返回具体原因。'),
+              producedActivity: result.producedActivity === true,
+            });
           } catch (error) {
             emitEvent({ type: 'automation_done', sessionId: runtime.session.id, taskId: command.taskId, status: 'error', reason: errorMessage(error) });
-            emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'error' });
+            emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'error', reason: errorMessage(error) });
           } finally {
             busy = false;
           }
@@ -381,10 +395,23 @@ async function handleUserMessage(command: Extract<BridgeCommand, { type: 'user_m
     const result = submission.prompt.startsWith('/')
       ? await runPromptMode(runtime, submission.prompt)
       : await runGuardedAgentTurn(runtime, submission.prompt, { parts: submission.parts, displayText: submission.displayText });
-    emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: result.ok ? 'ok' : 'error', reason: result.reason });
+    // A failed turn always carries a reason. `result.reason` can be undefined
+    // even when ok is false, and an unexplained failure is the one thing the
+    // user cannot act on.
+    emitEvent({
+      type: 'turn_done',
+      sessionId: runtime.session.id,
+      status: result.ok ? 'ok' : 'error',
+      reason: result.ok ? result.reason : (result.reason ?? result.finalAnswer ?? '本轮执行失败，但没有返回具体原因。'),
+      // `ok` is an execution-liveness status, not a success one: a model that
+      // answers a question or declines a request ends the turn with ok and no
+      // work done. The renderer needs this to avoid announcing 任务完成 for a
+      // turn that changed nothing.
+      producedActivity: result.producedActivity === true,
+    });
   } catch (error) {
     emitEvent({ type: 'error', sessionId: runtime.session.id, message: errorMessage(error) });
-    emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'error' });
+    emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'error', reason: errorMessage(error) });
   }
 }
 
