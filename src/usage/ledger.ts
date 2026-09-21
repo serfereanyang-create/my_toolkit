@@ -35,6 +35,14 @@ export type UsageLedgerEntry = {
   /** 本 turn 的工具调用次数与去重后的工具名（截断到 12 个）。 */
   toolCalls?: number;
   toolsUsed?: string[];
+  /**
+   * 本 turn 解析出的工具作用域与送出的工具数。
+   *
+   * 工具数组排在 prompt 最前面、且落在缓存段之内，所以它每轮变化就是缓存
+   * 杀手。记下来才能从台账直接判断"命中率低是不是工具面在漂"，而不是靠猜。
+   */
+  toolScope?: string;
+  toolCount?: number;
   /** 任务板关联：turn 属于某个任务板的任务时填充。 */
   boardId?: string;
   taskId?: string;

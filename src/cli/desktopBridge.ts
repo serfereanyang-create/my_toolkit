@@ -166,6 +166,10 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
       }
       if (command.type === 'set_tool_scope') {
         runtime.toolScope = command.toolScope;
+        // The session floor exists to stop the scope drifting on its own, not to
+        // override the user. Clear it so an explicit pick takes effect
+        // immediately instead of being widened back by the previous turns.
+        runtime.sessionToolScopeFloor = undefined;
         emitEvent({ type: 'tool_scope_set', sessionId: runtime.session.id, toolScope: command.toolScope });
         continue;
       }
@@ -273,7 +277,12 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
  */
 async function handleUserMessage(command: Extract<BridgeCommand, { type: 'user_message' }>, runtime: AgentRuntime, filePaths: string[], emitEvent: (event: Record<string, unknown>) => void) {
   if (command.reasoningEffort) runtime.reasoningEffort = command.reasoningEffort;
-  if (command.toolScope) runtime.toolScope = command.toolScope;
+  if (command.toolScope) {
+    runtime.toolScope = command.toolScope;
+    // Same reasoning as set_tool_scope: an explicit per-message choice is the
+    // user's, so drop the session floor rather than widening it back.
+    runtime.sessionToolScopeFloor = undefined;
+  }
   const submission = await prepareSubmittedUserTurn(runtime, command.text, filePaths);
   emitEvent({ type: 'turn_start', sessionId: runtime.session.id, prompt: submission.displayText ?? submission.prompt });
   if (submission.attachments.length > 0) emitEvent({ type: 'info', sessionId: runtime.session.id, message: `Attached ${submission.attachments.length} file(s): ${submission.attachments.map((item) => item.name).join(', ')}` });

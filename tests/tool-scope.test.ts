@@ -19,6 +19,58 @@ test('manual tool scope override wins over auto mapping', () => {
   assert.equal(resolveToolScope({ requested: 'full', prompt: '读取 package.json', shouldUseTaskBoard: false, reasoningEffort: 'off' }), 'full');
 });
 
+/*
+ * The tool array is serialized before the system block and inside the cached
+ * prompt prefix, so any change to it invalidates the cache from byte 0. Scope is
+ * resolved from the turn's PHRASE, so without a floor it flaps and kills the
+ * cache; it also means what the agent could do last turn it might not do this
+ * turn. The floor makes the session monotonic: widen only.
+ */
+test('a session never narrows its tool scope', () => {
+  const small = { requested: 'auto' as const, reasoningEffort: 'auto' as const, shouldUseTaskBoard: false };
+  // Turn 1 is a plain question → standard.
+  const first = resolveToolScope({ ...small, prompt: '这个项目是干什么的' });
+  assert.equal(first, 'standard');
+
+  // Turn 2 is a one-line lookup, which on its own would drop to compact. The
+  // floor keeps it at standard, so the tool array does not change.
+  const second = resolveToolScope({ ...small, prompt: '读一下 package.json', previousScope: first });
+  assert.equal(second, 'standard');
+
+  // And it stays put on later small talk.
+  assert.equal(resolveToolScope({ ...small, prompt: '谢谢', previousScope: second }), 'standard');
+});
+
+test('the floor does not stop a session from widening', () => {
+  const base = { requested: 'auto' as const, reasoningEffort: 'auto' as const, shouldUseTaskBoard: false };
+  const compact = resolveToolScope({ ...base, prompt: '读取 package.json' });
+  assert.equal(compact, 'compact');
+  const widened = resolveToolScope({ ...base, prompt: '实现完整登录流程并补测试', previousScope: compact });
+  assert.equal(widened, 'full');
+});
+
+test('an explicit scope choice is not floored', () => {
+  // The desktop scope picker is the user speaking. Floors exist to stop the
+  // scope drifting on its own, not to override a deliberate choice.
+  const picked = resolveToolScope({
+    requested: 'compact', prompt: '实现完整登录流程并补测试', shouldUseTaskBoard: true, reasoningEffort: 'max', previousScope: 'full',
+  });
+  assert.equal(picked, 'compact');
+});
+
+test('the floored scope keeps the tool array byte-identical across turns', () => {
+  // The whole point: same fingerprint, so the cached prefix survives.
+  const reg = createDefaultToolRegistry();
+  const base = { requested: 'auto' as const, reasoningEffort: 'auto' as const, shouldUseTaskBoard: false };
+  const prompts = ['这个项目是干什么的', '读一下 package.json', '谢谢', '帮我看看这个函数'];
+  let floor: ReturnType<typeof resolveToolScope> | undefined;
+  const sizes = prompts.map((prompt) => {
+    floor = resolveToolScope({ ...base, prompt, previousScope: floor });
+    return selectScopedTools(reg, floor).length;
+  });
+  assert.equal(new Set(sizes).size, 1, `tool count changed across turns: ${sizes.join(' -> ')}`);
+});
+
 test('compact and standard scopes expose progressively larger registries', () => {
   const compact = names('compact');
   const standard = names('standard');

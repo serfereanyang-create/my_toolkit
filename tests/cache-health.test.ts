@@ -90,3 +90,58 @@ test('all-silent ledger never claims stability', async () => {
     assert.ok(!report.findings.some((f) => f.includes('工作正常')));
   });
 });
+
+/*
+ * The tool array is serialized before the system block and inside the cached
+ * prompt prefix, so a mid-session change to it invalidates the cache from byte
+ * 0 — stable system prompt or not. This is the fingerprint of that failure, and
+ * it is reported separately because the existing system-prompt advice cannot
+ * fix it.
+ */
+test('a mid-session tool-array change is reported as a cache killer', async () => {
+  const entries = [
+    entry({ turnId: 't1', toolCount: 232, toolScope: 'standard', cacheReadTokens: 0, cacheCreationTokens: 9000 }),
+    entry({ turnId: 't2', toolCount: 196, toolScope: 'compact', cacheReadTokens: 100 }),
+    entry({ turnId: 't3', toolCount: 232, toolScope: 'standard', cacheReadTokens: 200 }),
+  ];
+  await withLedger(entries, async (logPath) => {
+    const report = await analyzeCacheHealth({ logPath });
+    assert.equal(report.toolSurfaceShifts.length, 2, 'two changes: 232->196 and 196->232');
+    assert.deepEqual(
+      report.toolSurfaceShifts.map((s) => [s.fromCount, s.toCount]),
+      [[232, 196], [196, 232]],
+    );
+    const shift = report.findings.find((f) => f.includes('工具面变化'));
+    assert.ok(shift, 'expected a tool-surface finding');
+    assert.match(shift, /232 → 196/);
+    assert.match(shift, /standard → compact/);
+    assert.match(shift, /第 0 字节/);
+  });
+});
+
+test('a stable tool surface produces no shift finding', async () => {
+  const entries = [
+    entry({ turnId: 't1', toolCount: 232, toolScope: 'standard', cacheReadTokens: 0, cacheCreationTokens: 9000 }),
+    entry({ turnId: 't2', toolCount: 232, toolScope: 'standard', cacheReadTokens: 8000 }),
+    entry({ turnId: 't3', toolCount: 232, toolScope: 'standard', cacheReadTokens: 9000 }),
+  ];
+  await withLedger(entries, async (logPath) => {
+    const report = await analyzeCacheHealth({ logPath });
+    assert.deepEqual(report.toolSurfaceShifts, []);
+    assert.ok(!report.findings.some((f) => f.includes('工具面变化')));
+  });
+});
+
+test('tool-surface changes are tracked per session, not across sessions', async () => {
+  // Two sessions each keeping a stable surface must not look like one session
+  // that changed shape when the second began.
+  const entries = [
+    entry({ sessionId: 'sess_a', turnId: 'a1', toolCount: 232 }),
+    entry({ sessionId: 'sess_b', turnId: 'b1', toolCount: 196 }),
+    entry({ sessionId: 'sess_a', turnId: 'a2', toolCount: 232 }),
+  ];
+  await withLedger(entries, async (logPath) => {
+    const report = await analyzeCacheHealth({ logPath });
+    assert.deepEqual(report.toolSurfaceShifts, []);
+  });
+});

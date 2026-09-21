@@ -6,6 +6,14 @@ import type { ToolDefinition } from './types.js';
 export type ToolScope = 'auto' | 'compact' | 'standard' | 'full';
 export type ResolvedToolScope = 'compact' | 'standard' | 'full';
 
+/** Widening order. Used to compare scopes, never to index a tool list. */
+export const SCOPE_RANK: Record<ResolvedToolScope, number> = { compact: 0, standard: 1, full: 2 };
+
+/** The wider of two scopes. */
+export function widestScope(a: ResolvedToolScope, b: ResolvedToolScope): ResolvedToolScope {
+  return SCOPE_RANK[a] >= SCOPE_RANK[b] ? a : b;
+}
+
 const COMPACT_ALLOW = new Set([
   'project_status', 'recent_activity', 'environment_info', 'cache_probe',
   'git_status', 'git_diff', 'git_diff_staged', 'git_log', 'git_show', 'git_blame',
@@ -33,6 +41,48 @@ const STANDARD_EXTRA_ALLOW = new Set([
 ]);
 
 export function resolveToolScope(options: {
+  requested?: ToolScope;
+  reasoningEffort?: ReasoningEffort;
+  prompt: string;
+  shouldUseTaskBoard: boolean;
+  /**
+   * The scope already resolved earlier in this session, if any. Supplying it
+   * makes the resolution monotonic: a session never narrows.
+   *
+   * WHY. The tool array is serialized into the request BEFORE the system block,
+   * and providers evaluate the prompt prefix in order (tools → system →
+   * messages). So the tool array sits inside the cached prefix, and any change
+   * to it invalidates the cache from byte 0 — the carefully stabilised system
+   * prompt cannot help, because the first difference appears before it.
+   *
+   * Resolution here is driven by the turn's PHRASE, so without a floor it flaps:
+   * measured on this repo, "这个项目是干什么的" resolved standard (232 tools) and
+   * the next turn's "读一下 package.json" resolved compact (196) — 36 tools
+   * dropped, tool array rewritten, cache dead. A user rephrasing a question
+   * silently changed the tool surface, which is also the reliability complaint:
+   * what the agent could do last turn it might not do this turn.
+   *
+   * With the floor, the array only ever grows, so the cached prefix stays valid
+   * for everything before the newly added tools. A session that needs the write
+   * tools once keeps them; a session that never does stays small.
+   */
+  previousScope?: ResolvedToolScope;
+}): ResolvedToolScope {
+  // An explicit request is the user (or the desktop scope picker) speaking, so
+  // it wins outright and is NOT floored — otherwise picking 紧凑 in the UI would
+  // silently do nothing after any turn had widened the scope.
+  if (options.requested && options.requested !== 'auto') return options.requested;
+
+  const resolved = resolveToolScopeForTurn(options);
+  const previous = options.previousScope;
+  return previous ? widestScope(previous, resolved) : resolved;
+}
+
+/**
+ * The per-turn mapping from phrase to scope, without the session floor.
+ * Exported for tests and for callers that genuinely want the raw signal.
+ */
+export function resolveToolScopeForTurn(options: {
   requested?: ToolScope;
   reasoningEffort?: ReasoningEffort;
   prompt: string;

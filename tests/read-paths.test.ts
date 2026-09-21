@@ -22,6 +22,43 @@ test('resolveReadablePath rejects unrelated absolute paths', () => {
   );
 });
 
+/*
+ * The same file used to have two verdicts depending on how it was written:
+ * a workspace-relative path went through resolveWorkspacePath (workspace only)
+ * while an absolute path went through the read allowlist (workspace, Desktop,
+ * Documents, Downloads, home). So `../cli/package.json` was refused while
+ * `C:/.../cli/package.json` was allowed — both naming one file. Which form the
+ * model happened to emit decided whether the read worked, which reads as an
+ * unreliable tool rather than a rule.
+ */
+test('a path resolves the same however it is spelled', async () => {
+  // A real sibling inside an allowed root: the workspace sits under the home
+  // directory, so a climb out of the workspace but still under home is readable
+  // — and must read the same written either way.
+  const home = homedir();
+  const dir = await mkdtemp(join(home, 'aicode-spell-'));
+  const inner = join(dir, 'inner');
+  const outer = join(dir, 'outer');
+  await mkdir(inner, { recursive: true });
+  await mkdir(outer, { recursive: true });
+  await writeFile(join(outer, 'note.txt'), 'sibling-ok\n', 'utf8');
+  try {
+    const viaRelative = resolveReadablePath(inner, '../outer/note.txt');
+    const viaAbsolute = resolveReadablePath(inner, join(outer, 'note.txt'));
+    assert.equal(viaRelative, viaAbsolute);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a relative climb that leaves every allowed root is still refused', () => {
+  // Same rule, both spellings: the verdict follows where the path LANDS.
+  assert.throws(
+    () => resolveReadablePath(process.cwd(), '../../../../../../Windows/win.ini'),
+    /Path escapes workspace|not allowed for read/i,
+  );
+});
+
 test('read_file reads desktop docx text via create_docx fixture', async () => {
   const registry = createDefaultToolRegistry();
   const name = `aicode-read-docx-${Date.now()}.docx`;

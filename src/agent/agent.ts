@@ -105,6 +105,16 @@ export type AgentRuntime = {
   toolScope?: ToolScope;
   resolvedToolScope?: ResolvedToolScope;
   /**
+   * Monotonic floor for the session's tool scope. Once a turn needs the write
+   * tools, later turns keep them even when their phrasing looks small.
+   *
+   * Kept separate from `resolvedToolScope` on purpose: expert routing (see
+   * tasks/runtime.ts) temporarily overwrites `resolvedToolScope` for its own
+   * task and restores it afterwards, so using that field as the floor would let
+   * a task-board expert lower the session floor by accident.
+   */
+  sessionToolScopeFloor?: ResolvedToolScope;
+  /**
    * True for the current turn when the computer-control tools are live:
    * either the session armed them via `/computer use`, or full access
    * (approval 'auto') + desktop "任意应用" lets the agent self-wake.
@@ -305,6 +315,11 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
       turnId,
       toolCalls: newToolCalls.length,
       ...(toolsUsed.length > 0 ? { toolsUsed } : {}),
+      // Which tool surface this turn actually sent. The tool array sits inside
+      // the cached prompt prefix, so this is the field that explains a bad hit
+      // rate: a changing toolCount between turns means the cache died at byte 0.
+      ...(runtime.resolvedToolScope ? { toolScope: runtime.resolvedToolScope } : {}),
+      ...(runtime.tools ? { toolCount: runtime.tools.list().length } : {}),
       ...(options.gitSafetyUnit?.request.kind === 'task'
         ? { boardId: options.gitSafetyUnit.request.boardId, taskId: options.gitSafetyUnit.request.taskId }
         : {}),
@@ -440,7 +455,11 @@ async function runAgentTurnCore(
     reasoningEffort: effectiveEffort,
     prompt,
     shouldUseTaskBoard: taskBoard,
+    // The floor is what keeps the tool array — and therefore the cached prompt
+    // prefix — stable across turns. See resolveToolScope for why that matters.
+    previousScope: runtime.sessionToolScopeFloor,
   });
+  runtime.sessionToolScopeFloor = resolvedToolScope;
   const scopedTools = selectScopedTools(runtime.allTools ?? runtime.tools, resolvedToolScope);
   const activeTools = ToolRegistry.fromTools(scopedTools);
   runtime.tools = activeTools;

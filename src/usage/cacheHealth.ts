@@ -25,6 +25,24 @@ export type TurnDiagnosis = {
   inputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  /** Tool surface this turn sent, when the ledger recorded it. */
+  toolScope?: string;
+  toolCount?: number;
+};
+
+/**
+ * A turn where the tool array changed shape mid-session.
+ *
+ * The tool array is serialized before the system block and inside the cached
+ * prefix, so a change to it invalidates the cache from byte 0 — no matter how
+ * stable the system prompt is. This is the fingerprint of that failure.
+ */
+export type ToolSurfaceShift = {
+  ts: string;
+  fromCount: number;
+  toCount: number;
+  fromScope?: string;
+  toScope?: string;
 };
 
 export type EndpointHealth = {
@@ -48,6 +66,8 @@ export type CacheHealthReport = {
   turns: TurnDiagnosis[];
   findings: string[];
   endpoints: EndpointHealth[];
+  /** Mid-session tool-array changes, newest last. Empty on a stable session. */
+  toolSurfaceShifts: ToolSurfaceShift[];
 };
 
 /**
@@ -107,6 +127,8 @@ export async function analyzeCacheHealth(options?: { logPath?: string; limit?: n
 
   const seenSessions = new Set<string>();
   const turns: TurnDiagnosis[] = [];
+  const toolSurfaceShifts: ToolSurfaceShift[] = [];
+  const lastSurfaceBySession = new Map<string, { count: number; scope?: string }>();
   const patternCounts: Record<TurnPattern, number> = {
     'cold-start': 0, healthy: 0, 'prefix-rebuild': 0, 'unstable-prefix': 0, 'no-cache-data': 0,
   };
@@ -126,7 +148,26 @@ export async function analyzeCacheHealth(options?: { logPath?: string; limit?: n
       inputTokens: entry.inputTokens,
       cacheReadTokens: entry.cacheReadTokens ?? 0,
       cacheCreationTokens: entry.cacheCreationTokens ?? 0,
+      toolScope: entry.toolScope,
+      toolCount: entry.toolCount,
     });
+
+    // A tool array that changes shape mid-session kills the cached prefix from
+    // byte 0. Only meaningful within one session, and only for turns that
+    // actually recorded a count.
+    if (typeof entry.toolCount === 'number') {
+      const previous = lastSurfaceBySession.get(entry.sessionId);
+      if (previous && previous.count !== entry.toolCount) {
+        toolSurfaceShifts.push({
+          ts: entry.ts,
+          fromCount: previous.count,
+          toCount: entry.toolCount,
+          fromScope: previous.scope,
+          toScope: entry.toolScope,
+        });
+      }
+      lastSurfaceBySession.set(entry.sessionId, { count: entry.toolCount, scope: entry.toolScope });
+    }
   }
 
   // Per-endpoint rollup: a weak relay that never reports cache counters must
@@ -192,6 +233,20 @@ export async function analyzeCacheHealth(options?: { logPath?: string; limit?: n
   if (patternCounts['cold-start'] > 0) {
     findings.push(patternCounts['cold-start'] + ' 个会话首轮冷启动属正常现象（会话级缓存），无需修复。');
   }
+  // The tool array precedes the system block and sits inside the cached prefix,
+  // so this is a cache killer the system-prompt advice above cannot fix.
+  if (toolSurfaceShifts.length > 0) {
+    const worst = toolSurfaceShifts.reduce((a, b) =>
+      Math.abs(b.toCount - b.fromCount) > Math.abs(a.toCount - a.fromCount) ? b : a);
+    findings.push(
+      '发现 ' + toolSurfaceShifts.length + ' 次会话内工具面变化（最大 ' +
+      worst.fromCount + ' → ' + worst.toCount + ' 个工具' +
+      (worst.fromScope && worst.toScope ? `，${worst.fromScope} → ${worst.toScope}` : '') +
+      '）：工具数组排在缓存段之内，它一变缓存就从第 0 字节失效，' +
+      '此时稳定 system 提示也救不回来。工具面应当只增不减（sessionToolScopeFloor），' +
+      '若仍出现该告警，检查 resolveToolScope 的 previousScope 是否被绕过。'
+    );
+  }
   // Only vouch for prefix stability when some endpoint actually reports cache
   // data: silence from a not-reporting relay is not evidence of stability.
   if (
@@ -210,6 +265,7 @@ export async function analyzeCacheHealth(options?: { logPath?: string; limit?: n
     turns: turns.slice(-20),
     findings,
     endpoints,
+    toolSurfaceShifts,
   };
 }
 

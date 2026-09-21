@@ -60,6 +60,15 @@ export function resolveWorkspacePath(workspaceRoot: string, targetPath: string) 
  * - desktop/... and bare desktop filenames
  * - absolute paths under home Desktop / Documents / Downloads / home / workspace
  * Writes still use resolveWorkspacePath (except dedicated desktop tools).
+ *
+ * Every spelling of a path is resolved against the SAME allowlist. It used to
+ * be two different rules: a workspace-relative path went through
+ * resolveWorkspacePath (workspace only), while an absolute path went through
+ * assertUnderAllowedReadRoot (workspace, Desktop, Documents, Downloads, home).
+ * So one file had two verdicts depending on how it was written —
+ * `../cli/package.json` was refused while `C:/.../cli/package.json` was allowed,
+ * both naming the same file. Whether a read worked came down to which form the
+ * model happened to emit, which reads as an unreliable tool rather than a rule.
  */
 export function resolveReadablePath(workspaceRoot: string, targetPath: string) {
   const raw = targetPath.trim().replace(/^["']|["']$/g, '');
@@ -74,16 +83,24 @@ export function resolveReadablePath(workspaceRoot: string, targetPath: string) {
     return resolved;
   }
 
+  // Absolute: already unambiguous.
   if (isAbsolute(raw) || /^[A-Za-z]:[\\/]/.test(raw)) {
     const resolved = resolve(raw);
     assertUnderAllowedReadRoot(resolved, workspaceRoot);
     return resolved;
   }
 
+  // Relative: resolve it the same way, then apply the same allowlist. A path
+  // that climbs out of the workspace is judged by where it LANDS, not by the
+  // fact that it climbed — so `../cli/package.json` and its absolute spelling
+  // now agree.
+  const resolved = resolve(workspaceRoot, raw);
   try {
-    return resolveWorkspacePath(workspaceRoot, raw);
+    assertUnderAllowedReadRoot(resolved, workspaceRoot);
+    return resolved;
   } catch {
-    // Fall through: maybe user meant Desktop/file without the desktop/ prefix
+    // Preserve the friendlier Desktop alias: a bare filename may be meant as
+    // Desktop/<name>, which the model writes without the `desktop/` prefix.
     const desktopCandidate = resolve(join(homedir(), 'Desktop'), raw);
     if (isPathInside(join(homedir(), 'Desktop'), desktopCandidate)) {
       return desktopCandidate;
