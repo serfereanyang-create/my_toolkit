@@ -145,6 +145,9 @@ export function parseArgs(argv: string[]): CliArgs {
       case '--confirm-plan':
         args.confirmPlan = true;
         break;
+      case '--auto-review':
+        args.autoReview = true;
+        break;
       case '--desktop-bridge':
         args.desktopBridge = true;
         args.json = true;

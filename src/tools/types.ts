@@ -64,6 +64,16 @@ export type ToolContext = {
    */
   computerUse?: boolean;
   /**
+   * Automatic review of a risky action, consulted only when the policy layer
+   * decided the user would otherwise be prompted.
+   *
+   * Returning `{decision:'allow'}` skips the prompt; `{decision:'deny'}` refuses
+   * the call; `{decision:'abstain'}` falls through to `confirm`. It is never
+   * consulted for a hard-denied action, so it cannot resurrect a blocked
+   * command — see the call site in registry.ts.
+   */
+  autoReview?: (request: ApprovalRequest) => Promise<import('../safety/autoReview.js').AutoReviewDecision>;
+  /**
    * Runner injected by the agent to support the spawn_subagent tool.
    * When present, a sub-agent can be spawned in-process sharing the same
    * provider, workspace, and approval context.

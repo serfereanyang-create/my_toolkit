@@ -67,6 +67,7 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
     toolInput: args.toolInput,
     completionShell: args.completionShell,
     confirmPlan: args.confirmPlan ?? false,
+    autoReview: args.autoReview ?? autoReviewFromEnv(env) ?? mergedFileConfig.autoReview ?? false,
     desktopBridge: args.desktopBridge ?? false,
     usageLog: args.usageLog ?? env.AICODE_USAGE_LOG,
     reasoningEffort: args.reasoningEffort ?? reasoningEffortFromEnv(env) ?? mergedFileConfig.reasoningEffort,
@@ -207,6 +208,19 @@ function maxTokensFromEnv(env: NodeJS.ProcessEnv) {
   return Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
+/**
+ * Auto-review is opt-in: an unrecognized value is treated as "unset" rather than
+ * "on". A security-relevant toggle must not be enabled by a typo.
+ */
+function autoReviewFromEnv(env: NodeJS.ProcessEnv): boolean | undefined {
+  const raw = env.AICODE_AUTO_REVIEW;
+  if (raw === undefined || raw === '') return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === '1' || value === 'true' || value === 'on' || value === 'yes') return true;
+  if (value === '0' || value === 'false' || value === 'off' || value === 'no') return false;
+  return undefined;
+}
+
 async function readFileConfig(path: string): Promise<FileConfig> {
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
@@ -242,6 +256,7 @@ function normalizeProfile(input: Record<string, unknown>): FileProfileConfig {
     sessionDir: typeof input.sessionDir === 'string' ? input.sessionDir : undefined,
     maxSteps: typeof input.maxSteps === 'number' && Number.isInteger(input.maxSteps) && input.maxSteps > 0 ? input.maxSteps : undefined,
     maxTokens: typeof input.maxTokens === 'number' && Number.isInteger(input.maxTokens) && input.maxTokens > 0 ? input.maxTokens : undefined,
+    autoReview: typeof input.autoReview === 'boolean' ? input.autoReview : undefined,
     toolScope: toolScopeValue(input.toolScope),
     network: normalizeNetwork(input.network),
   };

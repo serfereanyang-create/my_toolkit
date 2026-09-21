@@ -18,6 +18,12 @@ export type CliArgs = {
   maxSteps?: number;
   /** Optional per-turn token budget (--max-tokens). */
   maxTokens?: number;
+  /**
+   * Auto-review risky actions with a second model call instead of prompting the
+   * user (--auto-review). Only actions the policy layer would have prompted for
+   * are eligible; hard-denied ones are never reachable by the reviewer.
+   */
+  autoReview?: boolean;
   noBanner?: boolean;
   version?: boolean;
   json?: boolean;
@@ -53,6 +59,8 @@ export type FileProfileConfig = {
   maxSteps?: number;
   /** Optional weighted token budget for a turn — the honest bound to use instead. */
   maxTokens?: number;
+  /** Auto-review risky actions instead of prompting the user. */
+  autoReview?: boolean;
   reasoningEffort?: ReasoningEffort;
   toolScope?: ToolScope;
   /** Network egress policy for the fetch_url tool. */
@@ -96,6 +104,12 @@ export type AppConfig = {
    * long task that is making progress is never cut off by arithmetic.
    */
   maxTokens?: number;
+  /**
+   * Auto-review risky actions with a second model call instead of prompting the
+   * user. Only actions the policy layer would have prompted for are eligible;
+   * hard-denied ones are never reachable by the reviewer.
+   */
+  autoReview?: boolean;
   noBanner: boolean;
   version?: boolean;
   json?: boolean;

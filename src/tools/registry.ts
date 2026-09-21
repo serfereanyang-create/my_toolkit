@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { decideApproval, pathScopeFor, resolveWorkspacePath } from '../safety/policy.js';
 import { formatApprovalOutcome, formatApprovalPrompt } from '../i18n/messages.js';
-import { toolToProviderSpec, type ToolContext, type ToolDefinition, type ToolResult } from './types.js';
+import { toolToProviderSpec, type ApprovalRequest, type ToolContext, type ToolDefinition, type ToolResult } from './types.js';
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
@@ -93,14 +93,42 @@ export class ToolRegistry {
       // can render the real change during confirmation. Zero disk access after
       // this point if the user denies.
       const diff = tool.risk === 'write' ? await buildWriteDiff(name, inputRecord, context) : undefined;
-      const approved = await context.confirm(message, {
+      const request: ApprovalRequest = {
         tool: name,
         risk: tool.risk,
         input: inputRecord,
         reason: decision.reason,
         message,
         diff,
-      });
+      };
+
+      // Automatic review, before the user is asked.
+      //
+      // This is the only place it can go and still be safe: `!decision.allowed`
+      // returned above, so the command blocklist, the SSRF guard, `deny` mode
+      // and `alwaysPrompt` destructive tools are all already decided and out of
+      // the reviewer's reach. Nothing has touched disk yet either — the diff
+      // above is computed from the arguments.
+      //
+      // A verdict only decides whether to ASK. Approving must not bypass the
+      // execution path below (hooks, the tool call itself) — returning early
+      // here once skipped the tool entirely.
+      let approved: boolean;
+      const autoReview = await context.autoReview?.(request);
+      if (autoReview?.decision === 'allow') {
+        approved = true;
+      } else if (autoReview?.decision === 'deny') {
+        context.afterConfirm?.();
+        return {
+          ok: false,
+          output: `${formatApprovalOutcome({ locale, kind: 'cancelled', tool: name })}\n自动审核拒绝：${autoReview.rationale}\n这是审核判定，不是执行失败；可以换一种更窄的做法，或请用户明确授权。`,
+          data: { autoReviewed: true, decision: 'deny', riskLevel: autoReview.riskLevel, rationale: autoReview.rationale },
+        };
+      } else {
+        // abstain → ask the user, which is the pre-existing behaviour.
+        const decisionFromUser = await context.confirm(message, request);
+        approved = decisionFromUser === true || decisionFromUser === 'allow_session';
+      }
       context.afterConfirm?.();
       if (!approved) {
         return { ok: false, output: formatApprovalOutcome({ locale, kind: 'cancelled', tool: name }) };

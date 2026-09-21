@@ -38,6 +38,7 @@ import { getReasoningCapability, clampReasoningEffort } from '../providers/capab
 import { analyzeTaskComplexity } from '../tasks/complexity.js';
 import { COMPUTER_USE_STRATEGY, computerUseShouldWake } from '../tools/computer.js';
 import { Supervisor } from '../supervisor/supervisor.js';
+import { AutoReviewGate, reviewAction } from '../safety/autoReview.js';
 
 type PromptCacheBasis = {
   stablePrefix: string;
@@ -211,6 +212,13 @@ export type AgentRuntime = {
    * depend on all eight remembering to set it.
    */
   lastTurnSteps?: number;
+  /**
+   * Denial-streak state for the auto-reviewer.
+   *
+   * On the runtime rather than a local, because the reviewer is consulted from
+   * `executeToolAction` — a different function from the loop that owns the turn.
+   */
+  autoReviewGate?: AutoReviewGate;
 };
 
 /**
@@ -628,6 +636,9 @@ async function runAgentTurnCore(
   let stoppedBy: 'steps' | 'tokens' | undefined;
   /** Model round-trips actually made, reported to the caller on every exit. */
   let stepsTaken = 0;
+  // A new turn gets a fresh denial streak: the limit exists to stop a bad plan
+  // from stalling, not to mute the reviewer for the rest of the session.
+  runtime.autoReviewGate = new AutoReviewGate();
   for (let step = 0; stepBudget === undefined || step < stepBudget; step += 1) {
     throwIfCancelled(runtime);
     if (tokenBudget !== undefined && spentTokens >= tokenBudget) {
@@ -1038,6 +1049,35 @@ async function executeToolAction(
     computerAllowedApps: runtime.config.allowedApps,
     computerUse: runtime.computerUseActive === true,
     locale,
+    // Auto-review: consult a second model call instead of prompting the user,
+    // but only for actions the policy layer already decided to prompt for. The
+    // registry calls this strictly after its hard-deny branch, so a blocked
+    // command can never be revived here. Gated per turn so a reviewer that keeps
+    // denying stops being asked.
+    autoReview: runtime.config.autoReview === true
+      ? async (request) => {
+          // Fresh streak per turn: the limit is about a run of refusals within
+          // one plan, not a lifetime count that would eventually mute the
+          // reviewer forever.
+          const gate = runtime.autoReviewGate ?? (runtime.autoReviewGate = new AutoReviewGate());
+          if (!gate.shouldConsult(request, true)) {
+            return { decision: 'abstain', reason: `自动审核已连续拒绝 ${gate.denialCount} 次，改为询问用户` };
+          }
+          const decision = await reviewAction(runtime, request, {
+            recentContext: latestUserRequest(runtime),
+          });
+          gate.record(decision);
+          // Surfaced to the user as a log line: an action that ran without a
+          // prompt must still be visible, or "auto-reviewed" is indistinguishable
+          // from "silently allowed".
+          if (decision.decision === 'allow') {
+            runtime.ui.info(`自动审核允许 ${request.tool}：${decision.rationale}`);
+          } else if (decision.decision === 'deny') {
+            runtime.ui.info(`自动审核拒绝 ${request.tool}：${decision.rationale}`);
+          }
+          return decision;
+        }
+      : undefined,
     // Only the root agent may launch workflow task nodes as sub-agents; a
     // workflow running inside a sub-agent must not nest further.
     subAgentRunner: (runtime.subAgentDepth ?? 0) === 0 && runtime.runSubAgentTurn
@@ -1123,6 +1163,26 @@ async function appendToolActionResult(
     await runtime.sessions.appendFinalAnswer(runtime.session, execution.reason ?? execution.output);
   }
   return execution;
+}
+
+/**
+ * The user's most recent request, used as the reviewer's authorization evidence.
+ *
+ * Only user messages count: the reviewer's whole trust model rests on "did the
+ * user ask for this", and assistant text or tool output is exactly the material
+ * a prompt injection would arrive in.
+ */
+function latestUserRequest(runtime: AgentRuntime): string | undefined {
+  const messages = runtime.session.messages ?? [];
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i]!;
+    if (message.role !== 'user') continue;
+    // Skip the framework's own injected blocks (memories, skills, planning).
+    const content = message.content ?? '';
+    if (content.startsWith('<relevant-project-memories>') || content.startsWith('<planning-turn')) continue;
+    return content;
+  }
+  return undefined;
 }
 
 function isParallelSafeAction(
