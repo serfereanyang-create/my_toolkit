@@ -271,6 +271,12 @@ export type TaskBoard = {
   status: TaskBoardStatus;
   runtimeMode: 'idle' | 'planning' | 'awaiting_confirm' | 'executing' | 'paused';
   activeTaskId?: string;
+  /**
+   * The plan document the model wrote, in Markdown. Only present when the model
+   * genuinely planned the task; boards built from the CLI's step template have
+   * no prose body and the card skips the plan section entirely.
+   */
+  planMarkdown?: string;
   /** Wall-clock ms when this board was first received; drives the goal elapsed timer. */
   startedAt?: number;
   tasks: Array<{
@@ -278,8 +284,16 @@ export type TaskBoard = {
     title: string;
     status: TaskItemStatus;
     dependsOn: string[];
-    acceptance: string[];
-    result?: string;
+    /**
+     * A single acceptance sentence. The CLI declares `acceptance?: string`
+     * (cli/src/tasks/types.ts), so this is NOT a list — rendering it as one used
+     * to throw inside the card and take the whole app down with it, because the
+     * ErrorBoundary wraps the app root.
+     */
+    acceptance?: string;
+    detail?: string;
+    /** How the CLI names a finished task's summary. */
+    resultSummary?: string;
     error?: string;
     startedAt?: string;
     finishedAt?: string;

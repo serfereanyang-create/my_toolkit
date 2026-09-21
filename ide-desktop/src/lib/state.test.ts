@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { appReducer, initialState, sessionChangeTotals, activeTurnProgress } from './state';
 
 describe('appReducer', () => {
@@ -443,5 +443,70 @@ describe('agent event lifecycle (P0)', () => {
     // A mid-turn error must not claim the bridge is ready; the turn lifecycle
     // (turn_done / agent_offline) owns the status transitions.
     expect(s.agentStatus).toBe('running');
+  });
+
+  describe('task board updates', () => {
+    const update = (overrides: Record<string, unknown> = {}) => ({
+      type: 'task_board_updated' as const,
+      sessionId: 'sess-1',
+      id: 'board_1',
+      boardId: 'board_1',
+      title: '任务板规划落地',
+      goal: '把规划权交给模型',
+      status: 'draft',
+      runtimeMode: 'awaiting_confirm',
+      tasks: [],
+      ...overrides,
+    });
+
+    it('keeps startedAt across updates of the same board', () => {
+      // The bridge used to send only `boardId` while the renderer read `board.id`,
+      // so the ids never matched and the goal elapsed timer restarted on every
+      // task change. Time is pinned: two updates in the same millisecond would
+      // make the assertion pass even if the timer had restarted.
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+      try {
+        let s = appReducer(initialState, { type: 'agent/event', event: update() });
+        expect(s.taskBoard?.startedAt).toBe(1_000);
+        now.mockReturnValue(9_000);
+        s = appReducer(s, { type: 'agent/event', event: update({ runtimeMode: 'executing' }) });
+        expect(s.taskBoard?.startedAt).toBe(1_000);
+        expect(s.taskBoard?.runtimeMode).toBe('executing');
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it('keeps startedAt when only boardId is sent', () => {
+      // Tolerate the older payload shape rather than resetting the timer.
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+      try {
+        let s = appReducer(initialState, { type: 'agent/event', event: update() });
+        now.mockReturnValue(9_000);
+        s = appReducer(s, { type: 'agent/event', event: { ...update(), id: undefined } });
+        expect(s.taskBoard?.startedAt).toBe(1_000);
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it('restarts the timer for a different board', () => {
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+      try {
+        let s = appReducer(initialState, { type: 'agent/event', event: update() });
+        expect(s.taskBoard?.startedAt).toBe(1_000);
+        now.mockReturnValue(9_000);
+        s = appReducer(s, { type: 'agent/event', event: update({ id: 'board_2', boardId: 'board_2' }) });
+        expect(s.taskBoard?.id).toBe('board_2');
+        expect(s.taskBoard?.startedAt).toBe(9_000);
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it('carries the plan document through to state', () => {
+      const s = appReducer(initialState, { type: 'agent/event', event: update({ planMarkdown: '## 目标\n计划正文' }) });
+      expect(s.taskBoard?.planMarkdown).toBe('## 目标\n计划正文');
+    });
   });
 });
