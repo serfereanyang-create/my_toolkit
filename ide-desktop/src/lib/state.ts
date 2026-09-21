@@ -1,4 +1,4 @@
-import type { AgentEvent, AppState, ChatItem, ContextStats, DesktopSettings, PendingDiff, PreviewTab, ToolChatItem, TreeNode, TurnFileChange, WorkLogEntry, TaskBoard } from '../types';
+import type { AgentEvent, AppState, ChatItem, ContextStats, DesktopSettings, PendingDiff, PreviewTab, SupervisorSnapshot, ToolChatItem, TreeNode, TurnFileChange, WorkLogEntry, TaskBoard } from '../types';
 
 export type AppAction =
   | { type: 'settings/loaded'; settings: DesktopSettings }
@@ -62,6 +62,7 @@ export const initialState: AppState = {
   workPhase: 'idle',
   taskBoard: null,
   taskExecutionMode: 'plan',
+  supervisor: null,
 };
 
 export function appReducer(state: AppState, action: AppAction): AppState {
@@ -214,6 +215,14 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
       ? state.taskBoard.startedAt
       : now;
     return { ...addLog({ type: 'task', phase: 'info', title: '任务计划已更新', detail: String(event.title ?? '') , data: event.tasks }, state.workPhase), taskBoard: { ...board, id: boardId, startedAt } };
+  }
+  if (event.type === 'supervisor_updated') {
+    // The whole snapshot arrives each time, so this is a replace, not a merge —
+    // a unit that finished must disappear from the running list.
+    const units = Array.isArray((event as { units?: unknown }).units)
+      ? (event as unknown as SupervisorSnapshot).units
+      : [];
+    return { ...state, supervisor: { ...(event as unknown as SupervisorSnapshot), units } };
   }
   if (event.type === 'bridge_ready') {
     const sessionId = typeof event.sessionId === 'string' && event.sessionId ? event.sessionId : null;

@@ -253,6 +253,37 @@ html[data-reduce-motion='on'] .reflection-panel-spin { animation: none; }
 .subagent-status-interrupted { color: var(--warn); }
 .subagent-spin { animation: review-spin 1s linear infinite; }
 
+/* ── Supervisor aggregate (子智能体 tab, above the per-run list) ─────────── */
+.sup-panel { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border-subtle); }
+.sup-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.sup-summary-row { display: flex; flex-direction: column; gap: 3px; padding: 8px 9px; border: 1px solid var(--border-subtle); border-radius: var(--r-sm); background: var(--bg-elevated); }
+.sup-summary-row span { color: var(--fg-dim); font-size: 10px; }
+.sup-summary-row strong { color: var(--fg); font: 600 15px var(--font-mono); }
+.sup-summary-row strong.sup-bad { color: var(--danger); }
+.sup-longest { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--warn) 10%, var(--bg-elevated)); color: var(--warn); font-size: 11px; }
+.sup-list { display: flex; flex-direction: column; gap: 6px; }
+.sup-item { display: flex; flex-direction: column; gap: 4px; padding: 8px 9px; border: 1px solid var(--border-subtle); border-left-width: 3px; border-radius: var(--r-sm); background: var(--bg-side); }
+.sup-item.sup-status-running { border-left-color: var(--accent); }
+.sup-item.sup-status-done { border-left-color: var(--success, #3fb950); }
+.sup-item.sup-status-failed { border-left-color: var(--danger); }
+.sup-item.sup-status-cancelled, .sup-item.sup-status-interrupted { border-left-color: var(--warn); }
+.sup-item-head { display: flex; align-items: center; gap: 6px; font-size: 10px; }
+.sup-item-icon { display: flex; color: var(--fg-dim); }
+.sup-status-running .sup-item-icon { color: var(--accent); }
+.sup-status-done .sup-item-icon { color: var(--success, #3fb950); }
+.sup-status-failed .sup-item-icon { color: var(--danger); }
+.sup-spin { animation: review-spin 1s linear infinite; }
+.sup-item-kind { padding: 1px 5px; border-radius: 4px; background: var(--bg-hover); color: var(--fg-muted); }
+.sup-item-id { color: var(--fg-dim); font-family: var(--font-mono); }
+.sup-item-segment { padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.sup-item-status { margin-left: auto; color: var(--fg-dim); }
+.sup-item-label { color: var(--fg); font-size: 12px; line-height: 1.45; }
+.sup-item-meta { display: flex; gap: 10px; color: var(--fg-dim); font-size: 10px; }
+.sup-item-error { color: var(--danger); font-size: 11px; line-height: 1.45; }
+.sup-empty { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 22px 12px; color: var(--fg-dim); text-align: center; }
+.sup-empty strong { color: var(--fg-muted); font-size: 12px; }
+.sup-empty span { font-size: 11px; }
+
 /* ── Git graph ──────────────────────────────────────────────────────────── */
 .git-graph { display: flex; flex-direction: column; gap: 6px; }
 .git-graph-head { display: flex; align-items: center; gap: 8px; color: var(--fg-dim); font-size: 11px; }

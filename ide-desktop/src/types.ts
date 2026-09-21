@@ -300,12 +300,42 @@ export type TaskBoard = {
   }>;
 };
 
+/**
+ * One unit of work as the CLI's supervisor reports it. The CLI aggregates
+ * subagents, board tasks, and turns into a single stream so the UI can answer
+ * "what is running and is any of it stuck" without joining three event types.
+ */
+export type SupervisedUnit = {
+  id: string;
+  kind: 'subagent' | 'task' | 'turn';
+  label: string;
+  status: 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted';
+  parentId?: string;
+  /** Segment index when a sub-agent rolled over into a new session (1 = first). */
+  segment?: number;
+  steps: number;
+  startedAt: number;
+  updatedAt: number;
+  finishedAt?: number;
+  error?: string;
+  sessionId?: string;
+  expert?: string;
+};
+
+export type SupervisorSnapshot = {
+  units: SupervisedUnit[];
+  running: number;
+  done: number;
+  failed: number;
+  steps: number;
+  longestRunningMs?: number;
+};
+
 export type WorkLogEntry = {
   id: string;
   ts: number;
   type: 'model' | 'thinking' | 'tool' | 'info' | 'approval' | 'task' | 'error';
-  phase: 'started' | 'running' | 'done' | 'failed' | 'info';
-  title: string;
+  phase: 'started' | 'running' | 'done' | 'failed' | 'info';  title: string;
   detail?: string;
   tool?: string;
   durationMs?: number;
@@ -342,6 +372,11 @@ export type AppState = {
   workPhase: 'idle' | 'thinking' | 'exploring' | 'executing' | 'done' | 'failed';
   taskBoard: TaskBoard | null;
   taskExecutionMode: 'auto' | 'plan';
+  /**
+   * Aggregate progress across every unit of work in the session, as reported by
+   * the CLI supervisor. Null until the first update arrives.
+   */
+  supervisor: SupervisorSnapshot | null;
 };
 
 // ─── Pending diff types ───────────────────────────────────────────────────────

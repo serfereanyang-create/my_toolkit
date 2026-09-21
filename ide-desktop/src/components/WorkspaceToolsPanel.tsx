@@ -5,6 +5,8 @@ import { ReflectionPanel } from './ReflectionPanel';
 import { ProjectAuditPanel } from './ProjectAuditPanel';
 import { ReviewPanel } from './ReviewPanel';
 import { SubagentDirectory } from './SubagentDirectory';
+import { SupervisorPanel } from './SupervisorPanel';
+import type { SupervisorSnapshot } from '../types';
 
 type WorkspaceToolTab = 'overview' | 'quality' | 'changes' | 'review' | 'preview' | 'skills' | 'reflections' | 'audit' | 'subagents';
 
@@ -23,6 +25,8 @@ export interface WorkspaceToolsPanelProps {
   sessionId?: string;
   /** Running subagent count, for the 子智能体 tab badge. */
   runningSubagentCount?: number;
+  /** Aggregate progress across every unit of work, from the CLI supervisor. */
+  supervisor?: SupervisorSnapshot | null;
   onClose: () => void;
   onWidthChange: (width: number) => void;
   onOpenQuality: () => void;
@@ -63,6 +67,7 @@ export function WorkspaceToolsPanel({
   pendingDiffCount,
   sessionId,
   runningSubagentCount,
+  supervisor,
   onClose,
   onWidthChange,
   onOpenQuality,
@@ -244,6 +249,9 @@ export function WorkspaceToolsPanel({
         )}
         {tab === 'subagents' && (
           <div className="workspace-tools-subagents">
+            {/* Aggregate first: "is anything stuck" is the question this tab
+                exists to answer, and the per-run list below answers "what ran". */}
+            <SupervisorPanel snapshot={supervisor ?? null} />
             <SubagentDirectory sessionId={sessionId} />
           </div>
         )}

@@ -1464,6 +1464,7 @@ export default function App() {
         pendingDiffCount={state.pendingDiffs.filter((d) => d.status === 'pending').length}
         sessionId={state.activeSessionId ?? undefined}
         runningSubagentCount={runningSubagentCount}
+        supervisor={state.supervisor}
         onClose={() => setWorkspaceToolsOpen(false)}
         onWidthChange={setWorkspaceToolsWidth}
         onOpenQuality={() => { setWorkspaceToolsOpen(false); setMainView('quality'); }}

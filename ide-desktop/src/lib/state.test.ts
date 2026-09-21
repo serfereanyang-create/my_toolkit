@@ -509,4 +509,54 @@ describe('agent event lifecycle (P0)', () => {
       expect(s.taskBoard?.planMarkdown).toBe('## 目标\n计划正文');
     });
   });
+
+  describe('supervisor updates', () => {
+    const unit = (overrides: Record<string, unknown> = {}) => ({
+      id: 'worker',
+      kind: 'subagent' as const,
+      label: '重构 tasks',
+      status: 'running' as const,
+      steps: 3,
+      startedAt: 1_000,
+      updatedAt: 2_000,
+      ...overrides,
+    });
+
+    it('stores the aggregate snapshot', () => {
+      const s = appReducer(initialState, {
+        type: 'agent/event',
+        event: { type: 'supervisor_updated', units: [unit()], running: 1, done: 0, failed: 0, steps: 3 },
+      });
+      expect(s.supervisor?.running).toBe(1);
+      expect(s.supervisor?.units).toHaveLength(1);
+      expect(s.supervisor?.units[0].label).toBe('重构 tasks');
+    });
+
+    it('replaces the snapshot instead of merging it', () => {
+      // A unit that finished must leave the running list; merging would leave a
+      // stale "running" row behind forever.
+      let s = appReducer(initialState, {
+        type: 'agent/event',
+        event: { type: 'supervisor_updated', units: [unit()], running: 1, done: 0, failed: 0, steps: 3 },
+      });
+      s = appReducer(s, {
+        type: 'agent/event',
+        event: {
+          type: 'supervisor_updated',
+          units: [unit({ status: 'done', finishedAt: 5_000 })],
+          running: 0,
+          done: 1,
+          failed: 0,
+          steps: 3,
+        },
+      });
+      expect(s.supervisor?.running).toBe(0);
+      expect(s.supervisor?.units[0].status).toBe('done');
+    });
+
+    it('tolerates a snapshot with no units array', () => {
+      const s = appReducer(initialState, { type: 'agent/event', event: { type: 'supervisor_updated' } });
+      expect(s.supervisor?.units).toEqual([]);
+    });
+  });
 });
