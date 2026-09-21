@@ -14,7 +14,10 @@ export type CliArgs = {
   sessionDir?: string;
   resumeSessionId?: string;
   prompt?: string;
+  /** Optional per-turn model round-trip cap (--max-steps). Absent = unlimited. */
   maxSteps?: number;
+  /** Optional per-turn token budget (--max-tokens). */
+  maxTokens?: number;
   noBanner?: boolean;
   version?: boolean;
   json?: boolean;
@@ -46,7 +49,10 @@ export type FileProfileConfig = {
   apiKey?: string;
   approval?: ApprovalMode;
   sessionDir?: string;
+  /** Optional per-turn model round-trip cap. Absent = unlimited (the default). */
   maxSteps?: number;
+  /** Optional weighted token budget for a turn — the honest bound to use instead. */
+  maxTokens?: number;
   reasoningEffort?: ReasoningEffort;
   toolScope?: ToolScope;
   /** Network egress policy for the fetch_url tool. */
@@ -73,7 +79,23 @@ export type AppConfig = {
   network?: { enabled?: boolean; allowlist?: string[] };
   resumeSessionId?: string;
   prompt?: string;
-  maxSteps: number;
+  /**
+   * Model round-trip cap for one turn. **Absent means unlimited**, which is the
+   * default: a hard step count cuts real work off mid-task and reports it as a
+   * failure, and the reference implementation (codex-rs) has no such cap at all
+   * — its turn loop ends when the model stops calling tools, and what bounds a
+   * long run is context compaction.
+   *
+   * Set it only as a deliberate experiment or for a scripted/CI run that must
+   * terminate on a fixed budget. Use `maxTokens` for a real safety bound.
+   */
+  maxSteps?: number;
+  /**
+   * Weighted token budget for the whole turn. This is the honest bound to reach
+   * for instead of a step count: it caps actual spend, not iteration count, so a
+   * long task that is making progress is never cut off by arithmetic.
+   */
+  maxTokens?: number;
   noBanner: boolean;
   version?: boolean;
   json?: boolean;

@@ -26,7 +26,11 @@ export type SubAgentSpec = {
    * 纯搜索类子任务可用 'low' 节省 token；关键修复用 'high'。
    */
   reasoningEffort?: ReasoningEffort;
-  /** 最大执行步数覆盖，默认使用主 agent config.maxSteps */
+  /**
+   * 单段最大执行步数覆盖（默认 DEFAULT_SUBAGENT_SEGMENT_STEPS = 40）。
+   * 这是**每段**预算，不是总预算：用尽后框架会新开一个会话、带着交接摘要继续
+   * 跑，直到完成或段数用尽（MAX_SUBAGENT_SEGMENTS）。
+   */
   maxSteps?: number;
   /**
    * 额外背景信息，会注入到子 agent 的 prompt 前缀。
@@ -65,6 +69,13 @@ export type SubAgentResult = {
   timedOut?: boolean;
   /** 同批任务被父级取消或 failFast 终止，本任务从未启动。 */
   cancelled?: boolean;
+  /**
+   * 实际跑过的段数。大于 1 表示中途用尽单段步数，已新开会话续跑。
+   * 省略表示单段完成（绝大多数情况）。
+   */
+  segments?: number;
+  /** 连续用尽段数上限仍未完成 —— 这次是真的没做完。 */
+  exhaustedSegments?: boolean;
 };
 
 /**

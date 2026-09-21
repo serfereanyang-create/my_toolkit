@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline';
 import type { AgentRuntime } from '../agent/agent.js';
+import { supervisorFor } from '../agent/agent.js';
 import { prepareSubmittedUserTurn, runAutomationGoal, runGuardedAgentTurn, runPromptMode } from './repl.js';
 import { DesktopApprovalBroker } from './approvalBroker.js';
 import type { ReasoningEffort } from '../providers/types.js';
@@ -120,6 +121,14 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
       sessionId: runtime.session.id,
       ...payload,
     });
+  };
+  // One aggregate progress event per unit-of-work change, so the desktop can show
+  // "what is running and is any of it stuck" without reconstructing it from the
+  // subagent/task/turn streams. Emitted on every start/finish, which is low
+  // volume — the supervisor's own state is the coalescing layer.
+  const supervisor = supervisorFor(runtime);
+  supervisor.onChange = (snapshot) => {
+    emitEvent({ type: 'supervisor_updated', sessionId: runtime.session.id, ...snapshot });
   };
 
   emitEvent({

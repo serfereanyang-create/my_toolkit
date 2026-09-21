@@ -49,7 +49,8 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
     sessionDir,
     resumeSessionId: args.resumeSessionId,
     prompt: args.prompt,
-    maxSteps: args.maxSteps ?? maxStepsFromEnv(env) ?? mergedFileConfig.maxSteps ?? 200,
+    maxSteps: args.maxSteps ?? maxStepsFromEnv(env) ?? mergedFileConfig.maxSteps,
+    maxTokens: args.maxTokens ?? maxTokensFromEnv(env) ?? mergedFileConfig.maxTokens,
     noBanner: args.noBanner ?? false,
     version: args.version ?? false,
     json: args.json ?? false,
@@ -114,6 +115,7 @@ export function safeConfig(config: AppConfig) {
     configPath: config.configPath,
     profile: config.profile,
     maxSteps: config.maxSteps,
+    maxTokens: config.maxTokens,
     json: config.json,
     noColor: config.noColor,
     quiet: config.quiet,
@@ -199,6 +201,12 @@ function maxStepsFromEnv(env: NodeJS.ProcessEnv) {
   return Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
+function maxTokensFromEnv(env: NodeJS.ProcessEnv) {
+  if (!env.AICODE_MAX_TOKENS) return undefined;
+  const value = Number(env.AICODE_MAX_TOKENS);
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 async function readFileConfig(path: string): Promise<FileConfig> {
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
@@ -233,6 +241,7 @@ function normalizeProfile(input: Record<string, unknown>): FileProfileConfig {
     reasoningEffort: reasoningEffortValue(input.reasoningEffort),
     sessionDir: typeof input.sessionDir === 'string' ? input.sessionDir : undefined,
     maxSteps: typeof input.maxSteps === 'number' && Number.isInteger(input.maxSteps) && input.maxSteps > 0 ? input.maxSteps : undefined,
+    maxTokens: typeof input.maxTokens === 'number' && Number.isInteger(input.maxTokens) && input.maxTokens > 0 ? input.maxTokens : undefined,
     toolScope: toolScopeValue(input.toolScope),
     network: normalizeNetwork(input.network),
   };

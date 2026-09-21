@@ -6,6 +6,7 @@ import { selectRelevantMemories } from '../memory/select.js';
 import { ProjectMemoryStore } from '../memory/store.js';
 import type { ProjectMemoryEntry } from '../memory/types.js';
 import type { SessionRecord, SessionStore } from '../session/store.js';
+import { supervisorFor } from '../agent/agent.js';
 import { detectTaskCompletion } from './completion.js';
 import type { TaskBoardStore } from './store.js';
 import type { TaskBoard, TaskItem, TaskRuntimeState } from './types.js';
@@ -133,6 +134,8 @@ export type TaskTurnResult = {
   finalAnswer?: string;
   hadTerminalFailure?: boolean;
   outcome?: GitUnitOutcome;
+  /** Model round-trips the task's turn made, for the supervisor's step count. */
+  steps?: number;
 };
 
 export async function runTaskBoardLoop(options: {
@@ -186,6 +189,16 @@ export async function runTaskBoardLoop(options: {
 
     const nowIso = new Date().toISOString();
     startTask(options.board, task.id, nowIso);
+    // Board tasks are units of work too: tracking them here is what lets the
+    // supervisor answer "what is running" across both delegation paths.
+    if (options.runtime) {
+      supervisorFor(options.runtime).start({
+        kind: 'task',
+        id: task.id,
+        label: task.title,
+        parentId: options.board.id,
+      });
+    }
     options.session.taskRuntime = {
       boardId: options.board.id,
       activeTaskId: task.id,
@@ -264,6 +277,12 @@ export async function runTaskBoardLoop(options: {
         : basePrompt;
       
       turn = await options.runTurn(taskPrompt, unit);
+      // Recorded as soon as the turn returns: a task that later fails or blocks
+      // still spent these steps, and a progress view that shows 0 for a task
+      // which clearly ran is worse than showing nothing.
+      if (options.runtime && typeof turn.steps === 'number') {
+        supervisorFor(options.runtime).progress('task', task.id, turn.steps);
+      }
       
       // 记录专家信息
       if (expertRouting) {
@@ -298,14 +317,23 @@ export async function runTaskBoardLoop(options: {
           verifyEnabled: options.verifyEnabled,
         });
         if (!verified.ok) {
+          if (options.runtime) {
+            supervisorFor(options.runtime).finish('task', task.id, 'failed', { error: verified.reason });
+          }
           return { ok: false, status: 'blocked' as const, reason: verified.reason };
         }
         executed += 1;
+        if (options.runtime) {
+          supervisorFor(options.runtime).finish('task', task.id, 'done');
+        }
         options.onUpdate?.(options.board);
         continue;
       }
 
       markTaskBlocked(options.board, task.id, completion.error, doneAt);
+      if (options.runtime) {
+        supervisorFor(options.runtime).finish('task', task.id, 'failed', { error: completion.error });
+      }
       options.session.taskRuntime = {
         boardId: options.board.id,
         activeTaskId: task.id,

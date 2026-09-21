@@ -37,6 +37,7 @@ import type { SubAgentOptions } from '../tools/types.js';
 import { getReasoningCapability, clampReasoningEffort } from '../providers/capabilities.js';
 import { analyzeTaskComplexity } from '../tasks/complexity.js';
 import { COMPUTER_USE_STRATEGY, computerUseShouldWake } from '../tools/computer.js';
+import { Supervisor } from '../supervisor/supervisor.js';
 
 type PromptCacheBasis = {
   stablePrefix: string;
@@ -189,7 +190,45 @@ export type AgentRuntime = {
    * stops at the next checkpoint.
    */
   cancelRequested?: () => boolean;
+  /**
+   * Aggregates every unit of work in this session (subagents, board tasks,
+   * turns) so a caller can answer "what is running and is any of it stuck"
+   * without joining three event streams by hand. Created lazily by
+   * `supervisorFor`; the CLI runs unchanged when nobody reads it.
+   */
+  supervisor?: import('../supervisor/supervisor.js').Supervisor;
+  /**
+   * Called whenever the supervisor's state changes, so an embedding layer can
+   * push an aggregate progress snapshot to its UI. Optional and embedding-only:
+   * the terminal CLI never sets it.
+   */
+  supervisorEmit?: () => void;
+  /**
+   * Model round-trips the most recent turn made.
+   *
+   * Written by the agent loop rather than returned from it: the loop has eight
+   * return paths, and a caller that needs the count (rollover does) must not
+   * depend on all eight remembering to set it.
+   */
+  lastTurnSteps?: number;
 };
+
+/**
+ * The runtime's supervisor, created on first use.
+ *
+ * Lazily created so a plain CLI session pays nothing for a surface only the
+ * embedding layers read.
+ */
+export function supervisorFor(runtime: AgentRuntime): import('../supervisor/supervisor.js').Supervisor {
+  if (!runtime.supervisor) {
+    runtime.supervisor = new Supervisor();
+    // Wired once, at creation: every later mutation notifies without the call
+    // sites having to remember.
+    const emit = runtime.supervisorEmit;
+    if (emit) runtime.supervisor.onChange = () => emit();
+  }
+  return runtime.supervisor;
+}
 
 export type AgentTurnOptions = {
   gitSafetyUnit?: GitUnitContext;
@@ -207,6 +246,15 @@ export type AgentTurnResult = {
   hadTerminalFailure?: boolean;
   outcome?: GitUnitOutcome;
   gitSafety?: GitUnitResult;
+  /**
+   * Model round-trips this turn actually made.
+   *
+   * Reported by the loop because callers cannot derive it: counting assistant
+   * messages undercounts a tool-only run (a segment that makes three tool calls
+   * and stops on budget leaves one message), which is exactly the number a
+   * rollover decision needs to be right about.
+   */
+  steps?: number;
 };
 
 /** Thrown at a safe boundary when the user requested cancel via runtime.cancelRequested. */
@@ -382,7 +430,7 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
   }
 
   if (thrown) throw thrown;
-  return { ...coreResult, gitSafety };
+  return { ...coreResult, gitSafety, steps: runtime.lastTurnSteps };
 }
 
 async function runAgentTurnCore(
@@ -521,6 +569,15 @@ async function runAgentTurnCore(
     runtime.tools.register(tool, { replace: true });
     injectedToolNames.push(tool.name);
   }
+  // Supervisor + PR tools. Root agent only: a sub-agent reports INTO the
+  // supervisor rather than querying it, and must not open PRs of its own.
+  if ((runtime.subAgentDepth ?? 0) === 0) {
+    const { createOpenPullRequestTool, createSupervisorStatusTool } = await import('../tools/supervisorTools.js');
+    for (const tool of [createSupervisorStatusTool(runtime), createOpenPullRequestTool(runtime)]) {
+      runtime.tools.register(tool, { replace: true });
+      injectedToolNames.push(tool.name);
+    }
+  }
 
   // Cap LAST, after every injection above. Capping before the injections let the
   // post-scope tools push the serialized array back over the provider ceiling —
@@ -537,18 +594,30 @@ async function runAgentTurnCore(
   }
 
   const planningBlock = runtime.planGoal ? PLANNING_TURN_INSTRUCTION : undefined;
-  // A planning turn is a bounded survey, not the work itself. Left on the full
-  // maxSteps budget a model can spend the whole turn reading files and never
-  // call propose_plan, which silently degrades the whole feature back to the
-  // template board. The cap is a ceiling on exploration; the instruction asks
-  // for far less.
-  const stepBudget = planningBlock
-    ? Math.min(runtime.config.maxSteps, PLANNING_TURN_MAX_STEPS)
-    : runtime.config.maxSteps;
-  // On the final budgeted step the read tools are withdrawn, leaving
-  // propose_plan as the only tool that can advance the turn. Nudging in prose
-  // was not enough: a model mid-survey reads the nudge as one more thing to
-  // investigate and keeps calling read_file until the budget is gone.
+  // A planning turn keeps a small cap — that cap is about producing a plan
+  // promptly, not about bounding the work. An explicit --max-steps still lowers
+  // it further.
+  const planningStepBudget = planningBlock
+    ? Math.min(runtime.config.maxSteps ?? PLANNING_TURN_MAX_STEPS, PLANNING_TURN_MAX_STEPS)
+    : undefined;
+  /**
+   * Model round-trips allowed this turn. `undefined` means unlimited, which is
+   * the default: a fixed step count cuts real work off mid-task and reports it
+   * as a failure, and the reference implementation (codex-rs) has no such cap —
+   * its turn ends when the model stops calling tools.
+   */
+  const stepBudget = planningBlock ? planningStepBudget : runtime.config.maxSteps;
+  /**
+   * The real safety bound, when the user sets one. It caps spend rather than
+   * iteration count, so a long task that is making progress is never stopped by
+   * arithmetic. Usage is summed across the turn's model calls.
+   */
+  const tokenBudget = runtime.config.maxTokens;
+  let spentTokens = 0;
+  // On the final budgeted step of a planning turn the read tools are withdrawn,
+  // leaving propose_plan as the only tool that can advance the turn. Nudging in
+  // prose was not enough: a model mid-survey reads the nudge as one more thing
+  // to investigate and keeps calling read_file until the budget is gone.
   const planningOnlyTools = planningBlock
     ? ToolRegistry.fromTools(runtime.tools.list().filter((tool) => tool.name === 'propose_plan'))
     : undefined;
@@ -556,11 +625,20 @@ async function runAgentTurnCore(
   let finalAnswer: string | undefined;
   let warnedAboutCompaction = false;
   let lastToolName: string | undefined;
-  for (let step = 0; step < stepBudget; step += 1) {
+  let stoppedBy: 'steps' | 'tokens' | undefined;
+  /** Model round-trips actually made, reported to the caller on every exit. */
+  let stepsTaken = 0;
+  for (let step = 0; stepBudget === undefined || step < stepBudget; step += 1) {
     throwIfCancelled(runtime);
+    if (tokenBudget !== undefined && spentTokens >= tokenBudget) {
+      stoppedBy = 'tokens';
+      break;
+    }
     // Last budgeted step, still nothing proposed: withdraw everything except
     // propose_plan so the only way forward is to write the plan.
-    const lastCall = Boolean(planningBlock) && step === stepBudget - 1 && !runtime.planProposed;
+    const lastCall = planningStepBudget !== undefined
+      && step === planningStepBudget - 1
+      && !runtime.planProposed;
     const stepTools = lastCall && planningOnlyTools ? planningOnlyTools : runtime.tools;
     let response;
     try {
@@ -605,7 +683,7 @@ async function runAgentTurnCore(
       // Last call: the budget is nearly gone and the model has not proposed.
       // Appending here (rather than trusting the opening instruction) is what
       // makes the cap a guarantee instead of a hope.
-      if (planningBlock && step === stepBudget - 1 && !runtime.planProposed) {
+      if (lastCall) {
         packed.messages.push({
           role: 'user',
           content: PLANNING_TURN_FINAL_CALL,
@@ -625,6 +703,11 @@ async function runAgentTurnCore(
       }
       const promptCacheBasis = buildPromptCacheBasis(packed.messages, stepTools.specs(), projectContext, toolStrategy);
       const predictedPromptCacheRate = predictPromptCacheReuse(runtime.lastPromptCacheBasis, promptCacheBasis);
+      // Counted before the call: a model round-trip that throws still happened,
+      // and a budget that ignores failed attempts would be a budget that leaks.
+      // Published on the runtime as we go so every return path reports it.
+      stepsTaken += 1;
+      runtime.lastTurnSteps = stepsTaken;
       // codex-rs two-tier retry collapsed onto the single complete() entry:
       // transport-class failures (5xx/network/timeout) back off exponentially
       // and re-issue the whole request; 429/4xx and user cancels propagate.
@@ -651,6 +734,10 @@ async function runAgentTurnCore(
       // Accumulate the real token usage this step reported (if any).
       if (response.usage) {
         response.usage.localCachePredictedRate = predictedPromptCacheRate;
+        // Counted for the turn's token budget. Input tokens dominate on a long
+        // run (the whole history is resent each step), which is exactly the
+        // spend a step cap was a crude proxy for.
+        spentTokens += response.usage.inputTokens + response.usage.outputTokens;
       }
       if (usageTotals && response.usage) {
         usageTotals.inputTokens += response.usage.inputTokens;
@@ -869,7 +956,12 @@ async function runAgentTurnCore(
     }
   }
 
-  const message = `Stopped after reaching max steps (${runtime.config.maxSteps}).`;
+  // Falling out of the loop means a budget the user explicitly set was hit.
+  // With no budget configured the loop cannot reach here — it exits from one of
+  // the returns above — so this path never invents a limit that does not exist.
+  const message = stoppedBy === 'tokens'
+    ? `Stopped after reaching the token budget (${tokenBudget} tokens).`
+    : `Stopped after reaching max steps (${stepBudget ?? runtime.config.maxSteps}).`;
   runtime.ui.assistant(message);
   await runtime.sessions.appendFinalAnswer(runtime.session, message);
   return {

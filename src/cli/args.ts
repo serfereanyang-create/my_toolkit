@@ -100,6 +100,12 @@ export function parseArgs(argv: string[]): CliArgs {
         args.maxSteps = value;
         break;
       }
+      case '--max-tokens': {
+        const value = Number(readValue());
+        if (!Number.isInteger(value) || value < 1) throw new Error('--max-tokens must be a positive integer');
+        args.maxTokens = value;
+        break;
+      }
       case '--no-banner':
         args.noBanner = true;
         break;

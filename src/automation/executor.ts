@@ -57,6 +57,7 @@ export class AutomationExecutor {
             finalAnswer: turnResult.finalAnswer ?? turnResult.reason,
             hadTerminalFailure: turnResult.hadTerminalFailure,
             outcome: turnResult.outcome,
+            steps: turnResult.steps,
           };
         },
         onInfo: (message) => console.log(`[Automation ${task.id}] ${message}`),

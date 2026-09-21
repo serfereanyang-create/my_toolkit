@@ -330,6 +330,7 @@ async function continueTaskBoard(runtime: AgentRuntime): Promise<AgentTurnResult
         finalAnswer: result.finalAnswer ?? result.reason,
         hadTerminalFailure: result.hadTerminalFailure,
         outcome: result.outcome,
+        steps: result.steps,
       };
     },
     onInfo: (message) => runtime.ui.info(message),
