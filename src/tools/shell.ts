@@ -1,4 +1,4 @@
-import { formatSandboxResult, runSandboxedCommand } from '../safety/sandbox.js';
+import { assertNoPosixDrivePath, formatSandboxResult, runSandboxedCommand } from '../safety/sandbox.js';
 import { DEFAULT_COMMAND_JOB_MAX_OUTPUT_BYTES } from '../safety/commandJobs.js';
 import type { ToolDefinition } from './types.js';
 
@@ -9,15 +9,22 @@ export type RunCommandInput = {
   maxOutputBytes?: number;
 };
 
+const SHELL_HINT = process.platform === 'win32'
+  ? ' Commands run through cmd.exe: use Windows syntax (dir, %VAR%, &&), and Windows paths ("C:\\Users\\me\\x.txt" or a workspace-relative path) — an MSYS path like /c/Users/me/x.txt does not exist here.'
+  : ' Commands run through /bin/sh.';
+
 export const runCommandTool: ToolDefinition<RunCommandInput> = {
   name: 'run_command',
-  description: 'Run an approved shell command in the workspace under the process sandbox. Set background=true to start an in-process job and poll it with poll_command.',
+  description: `Run an approved shell command in the workspace under the process sandbox. Set background=true to start an in-process job and poll it with poll_command.${SHELL_HINT}`,
   inputHint: '{ "command": "node --version", "timeoutMs": 30000, "background": false }',
   risk: 'shell',
   validate(input) {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new Error('expected an object');
     const record = input as Record<string, unknown>;
     if (typeof record.command !== 'string' || record.command.length === 0) throw new Error('command is required');
+    // Fail before the approval prompt: asking the user to approve a command
+    // that cmd.exe cannot run wastes their decision on a doomed call.
+    assertNoPosixDrivePath(record.command);
     if (record.background !== undefined && typeof record.background !== 'boolean') throw new Error('background must be a boolean');
     if (record.maxOutputBytes !== undefined && (typeof record.maxOutputBytes !== 'number' || !Number.isFinite(record.maxOutputBytes) || record.maxOutputBytes <= 0)) {
       throw new Error('maxOutputBytes must be a positive number');

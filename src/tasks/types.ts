@@ -29,6 +29,14 @@ export type TaskBoard = {
   confirmedAt?: string;
   gitBranch?: string;
   gitCommitSha?: string;
+  /**
+   * The plan document the model wrote, in Markdown.
+   *
+   * Written by `propose_plan` when the model genuinely plans the work. Absent on
+   * boards built from the fallback template (`planBoardFromGoal`), which has no
+   * prose body — the desktop renders the plan section only when this is present.
+   */
+  planMarkdown?: string;
   tasks: TaskItem[];
 };
 

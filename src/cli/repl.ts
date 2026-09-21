@@ -176,7 +176,57 @@ async function handleDevelopmentPrompt(runtime: AgentRuntime, prompt: string, ex
     });
   }
 
+  // A large task gets a planning turn first, so the model writes the plan
+  // itself instead of the hardcoded template. When it does not call
+  // propose_plan — a mock provider, a model that ignores the instruction, or a
+  // refusal — fall back to the template so the board still exists and the
+  // confirm/execute path is unchanged.
+  const planning = await runPlanningTurn(runtime, prompt, extras);
+  if (planning) {
+    // --confirm-plan means "do not stop for approval", so a proposed plan is
+    // confirmed and executed exactly like a template board would be. Returning
+    // the planning result here would leave that flag silently ignored.
+    if (!runtime.config.confirmPlan) return planning;
+    const store = new TaskBoardStore(runtime.config.workspaceRoot);
+    const board = await store.load(runtime.session.taskRuntime?.boardId ?? '');
+    return confirmAndRunBoard(runtime, store, board);
+  }
+
+  runtime.ui.info(
+    runtime.locale === 'zh'
+      ? '模型没有提交计划，改用默认步骤模板。'
+      : 'Model did not propose a plan; falling back to the default step template.',
+  );
   return createAndMaybeRunTaskBoard(runtime, prompt);
+}
+
+/**
+ * Run the planning turn and report whether the model actually proposed a plan.
+ *
+ * `runtime.planGoal` is what `propose_plan` records as the board's goal, and it
+ * is also what makes the agent append the planning instruction to the turn — it
+ * must be set before the turn starts and cleared after, or every later turn
+ * would carry the instruction.
+ */
+async function runPlanningTurn(
+  runtime: AgentRuntime,
+  prompt: string,
+  extras?: TurnExtras,
+): Promise<AgentTurnResult | undefined> {
+  const previousGoal = runtime.planGoal;
+  const previousProposed = runtime.planProposed;
+  runtime.planGoal = prompt;
+  runtime.planProposed = false;
+  try {
+    const result = await runAgentTurn(runtime, prompt, {
+      parts: extras?.parts,
+      displayText: extras?.displayText,
+    });
+    return runtime.planProposed ? result : undefined;
+  } finally {
+    runtime.planGoal = previousGoal;
+    runtime.planProposed = previousProposed;
+  }
 }
 
 export async function runAutomationGoal(runtime: AgentRuntime, goal: string): Promise<AgentTurnResult> {
@@ -219,6 +269,21 @@ async function createAndMaybeRunTaskBoard(runtime: AgentRuntime, prompt: string)
     return { ok: true, session: runtime.session };
   }
 
+  return confirmAndRunBoard(runtime, store, board);
+}
+
+/**
+ * Confirm a draft board and hand it to the task loop.
+ *
+ * Shared by the template path and the model-proposed path: both end the same
+ * way, and duplicating the branch/lease bookkeeping here is how the two would
+ * drift apart.
+ */
+async function confirmAndRunBoard(
+  runtime: AgentRuntime,
+  store: TaskBoardStore,
+  board: TaskBoard,
+): Promise<AgentTurnResult> {
   confirmBoard(board, new Date().toISOString());
   if (runtime.gitProcess && runtime.gitRepository) {
     const branchResult = await ensureBoardBranch({

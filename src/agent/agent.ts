@@ -25,7 +25,7 @@ import { compactMessagesForModel, resolveContextBudgetChars } from './contextBud
 import { globalToolHealth } from './toolHealth.js';
 import { buildToolSystemPrompt, buildToolSystemPromptParts } from '../providers/protocol.js';
 import { planLocalFallback } from './fallback.js';
-import { shouldUseTaskBoard } from '../tasks/planner.js';
+import { PLANNING_TURN_FINAL_CALL, PLANNING_TURN_INSTRUCTION, PLANNING_TURN_MAX_STEPS, shouldUseTaskBoard } from '../tasks/planner.js';
 import { formatToolStrategy, planToolStrategy, recentToolResultsFromSession, recoveryHintForToolFailure, nextStepHint } from './toolStrategy.js';
 import { detectLocale, resolveSessionLocale, type Locale } from '../i18n/locale.js';
 import { isBlockedOutput } from '../i18n/messages.js';
@@ -133,6 +133,21 @@ export type AgentRuntime = {
    */
   runSubAgentTurn?: (runtime: AgentRuntime, goal: string) => Promise<string>;
   taskBoardEmit?: (board: unknown) => void;
+  /**
+   * The user's original request for the planning turn currently in flight.
+   *
+   * `propose_plan` reads it to record the board's `goal`. The tool cannot
+   * recover it any other way: during a planning turn the prompt is a planning
+   * instruction, not the user's words, and the goal must be the user's.
+   */
+  planGoal?: string;
+  /**
+   * Set by `propose_plan` when it persists a board. The planning turn reads it
+   * to decide whether the model planned or whether to fall back to the
+   * template. A board id is not a usable signal here: revising a plan reuses
+   * the session's existing draft board id.
+   */
+  planProposed?: boolean;
   /**
    * Injected by the desktop bridge to surface subagent runs in the 子智能体
    * directory (running / finished). Emitted by runSubAgent at start and at
@@ -496,6 +511,16 @@ async function runAgentTurnCore(
     runtime.tools.register(tool, { replace: true });
     injectedToolNames.push(tool.name);
   }
+  // propose_plan lets the model write the plan document for a large task instead
+  // of the hardcoded template in tasks/planner.ts. Injected post-scope for the
+  // same reason as spawn_subagent: the planning turn must be able to call it at
+  // any tool scope. Root agent only — a sub-agent works inside an existing plan.
+  if ((runtime.subAgentDepth ?? 0) === 0) {
+    const { createProposePlanTool } = await import('../tasks/proposeTool.js');
+    const tool = createProposePlanTool(runtime);
+    runtime.tools.register(tool, { replace: true });
+    injectedToolNames.push(tool.name);
+  }
 
   // Cap LAST, after every injection above. Capping before the injections let the
   // post-scope tools push the serialized array back over the provider ceiling —
@@ -511,11 +536,32 @@ async function runAgentTurnCore(
     runtime.tools = ToolRegistry.fromTools(limited.tools);
   }
 
+  const planningBlock = runtime.planGoal ? PLANNING_TURN_INSTRUCTION : undefined;
+  // A planning turn is a bounded survey, not the work itself. Left on the full
+  // maxSteps budget a model can spend the whole turn reading files and never
+  // call propose_plan, which silently degrades the whole feature back to the
+  // template board. The cap is a ceiling on exploration; the instruction asks
+  // for far less.
+  const stepBudget = planningBlock
+    ? Math.min(runtime.config.maxSteps, PLANNING_TURN_MAX_STEPS)
+    : runtime.config.maxSteps;
+  // On the final budgeted step the read tools are withdrawn, leaving
+  // propose_plan as the only tool that can advance the turn. Nudging in prose
+  // was not enough: a model mid-survey reads the nudge as one more thing to
+  // investigate and keeps calling read_file until the budget is gone.
+  const planningOnlyTools = planningBlock
+    ? ToolRegistry.fromTools(runtime.tools.list().filter((tool) => tool.name === 'propose_plan'))
+    : undefined;
+
   let finalAnswer: string | undefined;
   let warnedAboutCompaction = false;
   let lastToolName: string | undefined;
-  for (let step = 0; step < runtime.config.maxSteps; step += 1) {
+  for (let step = 0; step < stepBudget; step += 1) {
     throwIfCancelled(runtime);
+    // Last budgeted step, still nothing proposed: withdraw everything except
+    // propose_plan so the only way forward is to write the plan.
+    const lastCall = Boolean(planningBlock) && step === stepBudget - 1 && !runtime.planProposed;
+    const stepTools = lastCall && planningOnlyTools ? planningOnlyTools : runtime.tools;
     let response;
     try {
       runtime.ui.modelStart();
@@ -544,6 +590,28 @@ async function runAgentTurnCore(
           createdAt: new Date().toISOString(),
         });
       }
+      // Planning turn: the instruction rides on the newest user message, i.e.
+      // AFTER the sliding cache breakpoint. Putting it in the system prompt
+      // instead would change the cached prefix for every later turn.
+      if (step === 0 && planningBlock && packed.messages.length > 0) {
+        const last = packed.messages[packed.messages.length - 1]!;
+        if (last.role === 'user') {
+          packed.messages[packed.messages.length - 1] = {
+            ...last,
+            content: `${last.content}\n\n${planningBlock}`,
+          };
+        }
+      }
+      // Last call: the budget is nearly gone and the model has not proposed.
+      // Appending here (rather than trusting the opening instruction) is what
+      // makes the cap a guarantee instead of a hope.
+      if (planningBlock && step === stepBudget - 1 && !runtime.planProposed) {
+        packed.messages.push({
+          role: 'user',
+          content: PLANNING_TURN_FINAL_CALL,
+          createdAt: new Date().toISOString(),
+        });
+      }
       if (packed.truncated && !warnedAboutCompaction) {
         const detail = [
           `mode=${packed.mode}`,
@@ -555,7 +623,7 @@ async function runAgentTurnCore(
         runtime.ui.info(`Context compacted for model: ${detail}`);
         warnedAboutCompaction = true;
       }
-      const promptCacheBasis = buildPromptCacheBasis(packed.messages, runtime.tools.specs(), projectContext, toolStrategy);
+      const promptCacheBasis = buildPromptCacheBasis(packed.messages, stepTools.specs(), projectContext, toolStrategy);
       const predictedPromptCacheRate = predictPromptCacheReuse(runtime.lastPromptCacheBasis, promptCacheBasis);
       // codex-rs two-tier retry collapsed onto the single complete() entry:
       // transport-class failures (5xx/network/timeout) back off exponentially
@@ -563,7 +631,7 @@ async function runAgentTurnCore(
       response = await withModelRetry(
         () => runtime.provider.complete({
           messages: packed.messages,
-          tools: runtime.tools.specs(),
+          tools: stepTools.specs(),
           workspaceRoot: runtime.config.workspaceRoot,
           projectContext,
           toolStrategy,
@@ -701,6 +769,27 @@ async function runAgentTurnCore(
           if (!isParallelSafeAction(runtime, next) || isDuplicateSuccessfulTool(runtime, next.tool, next.input)) break;
           batch.push(next);
         }
+      }
+
+      // On the final planning step the model may still name a withdrawn tool
+      // (providers echo a stale tool list). Refuse it here rather than running
+      // it: the tool array is the contract, and executing something it does not
+      // contain would silently reopen the survey the cap exists to close.
+      if (lastCall && batch.some((item) => item.tool !== 'propose_plan')) {
+        for (const item of batch) {
+          if (item.tool === 'propose_plan') continue;
+          const refusal = `工具 ${item.tool} 在计划提交阶段不可用。请调用 propose_plan 提交计划。`;
+          await runtime.sessions.appendToolCall(runtime.session, {
+            tool: item.tool,
+            input: item.input,
+            ok: false,
+            output: refusal,
+            providerCallId: item.callId,
+          });
+          if (item.callId) responseToolOutputs.push({ callId: item.callId, output: refusal });
+        }
+        batch.splice(0, batch.length, ...batch.filter((item) => item.tool === 'propose_plan'));
+        if (batch.length === 0) continue;
       }
 
       sawTool = true;

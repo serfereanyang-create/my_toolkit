@@ -133,6 +133,36 @@ export function isSecretEnvKey(key: string) {
   return SECRET_ENV_KEYS.some((pattern) => pattern.test(key));
 }
 
+/**
+ * Find an MSYS/Git-Bash drive path (`/c/Users/me/x.txt`, `/mnt/c/...`) in a
+ * command that will be handed to cmd.exe, where no such path exists.
+ *
+ * Detection only — the command is never rewritten. The same text can be a regex
+ * or a quoted literal, so rewriting it would silently change what the command
+ * means. An actionable error costs one round trip; a wrong rewrite costs a
+ * wrong result.
+ */
+export function findPosixDrivePath(command: string): string | undefined {
+  if (process.platform !== 'win32') return undefined;
+  // At least one character must follow the drive slash: `/c/` alone is far more
+  // likely to be a regex or a literal than a path, and flagging it would reject
+  // working commands such as `grep -o "/c/" file`.
+  const pattern = /(?:^|[\s"'`(=&|;])((?:\/mnt)?\/[a-zA-Z]\/[^\s"'`;|&()]+)/;
+  const match = pattern.exec(command);
+  return match?.[1];
+}
+
+/** Throw with a fix-it message when a command carries an MSYS drive path. */
+export function assertNoPosixDrivePath(command: string) {
+  const posixPath = findPosixDrivePath(command);
+  if (!posixPath) return;
+  const windowsPath = `${posixPath.replace(/^\/(?:mnt\/)?([a-zA-Z])\//, (_m, drive: string) => `${drive.toUpperCase()}:\\`).replace(/\//g, '\\')}`;
+  throw new Error(
+    `commands run through cmd.exe on Windows, which cannot resolve the MSYS path "${posixPath}". `
+    + `Re-issue it with a Windows path ("${windowsPath}") or a workspace-relative path.`,
+  );
+}
+
 export function validateSandboxCommand(command: string) {
   if (typeof command !== 'string' || command.trim() === '') {
     throw new Error('command is required');
@@ -143,6 +173,7 @@ export function validateSandboxCommand(command: string) {
   if (command.length > 32_768) {
     throw new Error('command exceeds 32KB limit');
   }
+  assertNoPosixDrivePath(command);
 }
 
 /**

@@ -15,6 +15,17 @@ export type PromptIdentity = {
 
 import { SUBAGENT_STRATEGY_HINT } from '../agent/toolStrategy.js';
 
+/**
+ * The shell a command will actually run under, and the path format that shell
+ * understands. Stated as a fact rather than an instruction because the model
+ * has no way to observe it: on Windows `shell: true` means cmd.exe, so an MSYS
+ * path like `/c/Users/me` is simply not a path — and the model has no reason to
+ * suspect that if it learned paths from a Git Bash transcript.
+ */
+const SHELL_PATH_HINT = process.platform === 'win32'
+  ? 'Shell commands run through cmd.exe, not a POSIX shell: use Windows syntax (dir, %VAR%, &&) and Windows paths ("C:\\Users\\me\\x.txt" or a workspace-relative path such as src/index.ts). An MSYS path like /c/Users/me/x.txt is rejected before it runs.'
+  : 'Shell commands run through /bin/sh.';
+
 export function buildToolSystemPromptParts(
   tools: ProviderToolSpec[],
   projectContext?: string,
@@ -32,7 +43,7 @@ export function buildToolSystemPromptParts(
     'For spreadsheets use create_xlsx (rows as a 2D array or an array of objects; optional headers). For tabular text use read_csv / write_csv. For structured data use read_json (optional dot-path query). Prefer these dedicated tools over run_command.',
     'To find information online when you do not have a URL, use web_search first, then call fetch_url on a chosen result. To fetch a known URL use fetch_url (HTTP GET). Only hosts on the network allowlist are reachable; if fetch_url returns a redirect, call it again with the new URL.',
     'Write final answers as plain terminal text. Do not use Markdown decorations such as **bold**, ## headings, or bullet markdown when talking to the user.',
-    `Runtime platform: ${process.platform}. Prefer dedicated tools over shell commands. For disk capacity/free-space questions, use disk_info. For disk growth/recent large files questions, use disk_growth. For recent activity/session/history questions, use recent_activity. For environment/container/system identity questions, use environment_info. For memory/process ranking questions, use process_memory instead of run_command. For cache hit-rate / cache health / cache efficiency questions, use cache_probe. If you must run a shell command on Windows, use Windows-compatible commands.`,
+    `Runtime platform: ${process.platform}. ${SHELL_PATH_HINT} Prefer dedicated tools over shell commands. For disk capacity/free-space questions, use disk_info. For disk growth/recent large files questions, use disk_growth. For recent activity/session/history questions, use recent_activity. For environment/container/system identity questions, use environment_info. For memory/process ranking questions, use process_memory instead of run_command. For cache hit-rate / cache health / cache efficiency questions, use cache_probe.`,
     identity?.workspaceRoot
       ? `Workspace root: ${identity.workspaceRoot}. All relative paths in tool calls resolve against this root.`
       : undefined,

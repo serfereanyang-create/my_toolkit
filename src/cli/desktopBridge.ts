@@ -48,6 +48,46 @@ export type BridgeRunOptions = {
  * Injecting `input`/`emit` lets tests drive the whole bridge in-process; the
  * production entry passes nothing and uses stdin/stdout.
  */
+/**
+ * Build the `task_board_updated` payload.
+ *
+ * The renderer stores this payload as a board object and reads the id as
+ * `board.id`, while the event contract named it `boardId`. Both keys are sent so
+ * neither reader breaks; a missing `id` silently disabled the renderer's
+ * startedAt preservation, resetting the elapsed timer on every update.
+ */
+export function taskBoardEventPayload(
+  board: {
+    id?: unknown;
+    title?: unknown;
+    goal?: unknown;
+    status?: unknown;
+    planMarkdown?: unknown;
+    createdAt?: unknown;
+    updatedAt?: unknown;
+    tasks?: unknown;
+  },
+  options: { sessionId: string; runtimeMode: string },
+) {
+  const tasks = Array.isArray(board.tasks) ? board.tasks : [];
+  const boardId = typeof board.id === 'string' ? board.id : undefined;
+  return {
+    type: 'task_board_updated' as const,
+    sessionId: options.sessionId,
+    id: boardId,
+    boardId,
+    title: board.title,
+    goal: board.goal,
+    status: board.status,
+    runtimeMode: options.runtimeMode,
+    activeTaskId: tasks.find((task: any) => task?.status === 'in_progress')?.id,
+    planMarkdown: typeof board.planMarkdown === 'string' ? board.planMarkdown : undefined,
+    createdAt: board.createdAt,
+    updatedAt: board.updatedAt,
+    tasks,
+  };
+}
+
 export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRunOptions = {}) {
   const emitEvent = options.emit ?? emit;
   const broker = new DesktopApprovalBroker(runtime.session.id, { emit: emitEvent, timeoutMs: options.approvalTimeoutMs });
@@ -61,18 +101,10 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
   let cancelRequested = false;
   runtime.cancelRequested = () => cancelRequested;
   runtime.taskBoardEmit = (board: any) => {
-    const tasks = Array.isArray(board.tasks) ? board.tasks : [];
-    emitEvent({
-      type: 'task_board_updated',
+    emitEvent(taskBoardEventPayload(board ?? {}, {
       sessionId: runtime.session.id,
-      boardId: board.id,
-      title: board.title,
-      goal: board.goal,
-      status: board.status,
       runtimeMode: runtime.session.taskRuntime?.mode ?? 'idle',
-      activeTaskId: tasks.find((task: any) => task.status === 'in_progress')?.id,
-      tasks,
-    });
+    }));
   };
   // Context compaction divider (Codex "正在压缩上下文 / 上下文已自动压缩").
   // The renderer keeps the 'started' row pending until completed/failed arrives.

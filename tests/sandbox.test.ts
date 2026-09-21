@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
+  assertNoPosixDrivePath,
   buildSandboxEnv,
   buildWindowsShellCommand,
+  findPosixDrivePath,
   isSandboxScrubEnabled,
   isSecretEnvKey,
   runSandboxedCommand,
@@ -84,6 +86,74 @@ test('validateSandboxCommand rejects null bytes and empty commands', () => {
   assert.throws(() => validateSandboxCommand(''), /required/);
   assert.throws(() => validateSandboxCommand('echo\0hi'), /null bytes/);
   validateSandboxCommand('node --version');
+});
+
+/*
+ * Windows commands run through cmd.exe, so an MSYS drive path like
+ * /c/Users/me/x.txt is not a path at all. The guard is Windows-only and must
+ * not touch anything that is not a drive path — a regex, a quoted literal or a
+ * POSIX-only command would otherwise be rejected for no reason.
+ */
+test('findPosixDrivePath finds MSYS drive paths and nothing else', () => {
+  const found = process.platform === 'win32'
+    ? [
+        '/c/Users/34516/x.txt',
+        'node /c/Users/34516/x.js',
+        'type "C:\\x" && cat /d/data/log.txt',
+        '/mnt/c/Users/me/x.txt',
+        '--out=/e/tmp/out.json',
+      ]
+    : [];
+  for (const command of found) {
+    assert.ok(findPosixDrivePath(command), `expected a hit: ${command}`);
+  }
+
+  const clean = [
+    'node --version',
+    'npm run build && npm test',
+    'sed -i "s/a/b/g" file.txt',
+    'ls /tmp',
+    'git log --format=%h/%an',
+    'echo "C:/Users/me/x.txt"',
+    'curl https://example.com/a/b',
+    'grep -o "/c/" file.txt.bak',
+  ];
+  for (const command of clean) {
+    // `grep -o "/c/"` is a pattern inside quotes, not a drive path: the guard
+    // matches a following path segment, so it stays clean.
+    if (process.platform !== 'win32') continue;
+    assert.equal(findPosixDrivePath(command), undefined, `expected no hit: ${command}`);
+  }
+});
+
+test('assertNoPosixDrivePath names the offending path and the fix', () => {
+  if (process.platform !== 'win32') return;
+  assert.throws(
+    () => assertNoPosixDrivePath('cat /c/Users/34516/notes.md'),
+    /cmd\.exe.*\/c\/Users\/34516\/notes\.md.*C:\\Users\\34516\\notes\.md/s,
+  );
+  assert.doesNotThrow(() => assertNoPosixDrivePath('cat C:\\Users\\34516\\notes.md'));
+  assert.doesNotThrow(() => assertNoPosixDrivePath('cat notes.md'));
+});
+
+/*
+ * The guard is only worth anything if it is actually wired into the paths a
+ * command travels. Two of them: the shared sandbox validator (used by /run,
+ * projectops and plugin commands) and run_command's own validate, which fires
+ * before the approval prompt so the user is never asked to approve a command
+ * that cmd.exe cannot run.
+ */
+test('the sandbox validator and run_command both refuse MSYS drive paths', async () => {
+  if (process.platform !== 'win32') return;
+  assert.throws(() => validateSandboxCommand('cat /c/Users/34516/notes.md'), /MSYS path/);
+
+  const tool = createDefaultToolRegistry().list().find((item) => item.name === 'run_command');
+  assert.ok(tool, 'run_command must be registered');
+  assert.throws(
+    () => tool!.validate({ command: 'cat /c/Users/34516/notes.md', timeoutMs: 1000, background: false }),
+    /MSYS path/,
+  );
+  assert.doesNotThrow(() => tool!.validate({ command: 'type notes.md', timeoutMs: 1000, background: false }));
 });
 
 test('runSandboxedCommand executes in workspace with scrubbed env', async () => {
