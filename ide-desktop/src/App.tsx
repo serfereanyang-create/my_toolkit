@@ -578,6 +578,34 @@ export default function App() {
     }
   }
 
+  /**
+   * Start `/review` in the active conversation.
+   *
+   * Sent as a normal user message rather than through a dedicated IPC channel:
+   * the CLI intercepts `/review` inside runPromptMode, so it travels the same
+   * path as anything the user types — one implementation, and the queued-message
+   * handling applies for free. The findings come back as a `review_report`
+   * event, not as this call's return value.
+   */
+  async function runReview() {
+    if (stateRef.current.agentStatus === 'running') {
+      dispatch({ type: 'agent/event', event: { type: 'info', message: '当前回合进行中，请等它结束后再审查。' } });
+      return;
+    }
+    dispatch({ type: 'chat/user', text: '/review' });
+    try {
+      if (stateRef.current.agentStatus === 'offline') {
+        dispatch({ type: 'agent/status', status: 'starting' });
+        await desktop.agent.start(stateRef.current.activeSessionId ?? undefined);
+      }
+      const toolScope = (stateRef.current.settings?.preferences?.toolScope as ToolScope | undefined) ?? 'auto';
+      await desktop.agent.prompt('/review', [], toolScope, stateRef.current.activeSessionId ?? undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      dispatch({ type: 'agent/event', event: { type: 'error', message: `无法启动审查：${cleanIpcError(message)}` } });
+    }
+  }
+
   async function handleSaveFile(path: string, content: string) {
     try {
       // Conflict guard: if the file changed on disk after we opened/last synced
@@ -1549,6 +1577,9 @@ export default function App() {
         onOpenQuality={() => { setWorkspaceToolsOpen(false); setMainView('quality'); }}
         onOpenGit={() => { setWorkspaceToolsOpen(false); setMainView('git'); }}
         onOpenFile={(path) => { void handleOpenFile(path); }}
+        chat={state.chat}
+        onRunReview={() => { void runReview(); }}
+        reviewRunning={state.agentStatus === 'running'}
         onOpenPreview={() => {
           setWorkspaceToolsOpen(false);
           if (!state.preview.open) dispatch({ type: 'preview/toggle' });

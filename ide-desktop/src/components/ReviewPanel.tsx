@@ -1,18 +1,22 @@
-import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, FileCode2, FileImage, FileJson, FileText, Folder, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, ChevronDown, ChevronRight, FileCode2, FileImage, FileJson, FileText, Folder, RefreshCw, Sparkles } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import type { GitFileStat, GitStatus } from '../lib/ipc';
+import type { ChatItem } from '../types';
+import { ReviewReport } from './ReviewReport';
 
 /*
- * ReviewPanel — 审查：the working-tree file list with per-file +N −M.
+ * ReviewPanel — 审查：the AI review report, then the working-tree file list.
  *
- * The Git panel shows one workspace-wide total; a reviewer needs to see which
- * file the lines are in. Stats come from `git.fileStats` (numstat per file,
- * untracked files counted by content), and the staged/unstaged/untracked
- * filter mirrors the 未暂存 dropdown in the mock.
+ * Two independent things share this tab because they answer the same question
+ * in different ways: "what is wrong with what I am about to commit". The AI
+ * section is the newest review from the conversation (the CLI writes it into
+ * session history, so it survives a reload); the file list below is the
+ * mechanical +N −M per file.
  *
- * Deliberately read-only: staging, discarding and committing stay in the Git
- * panel so this view cannot destroy work while the user is reading it.
+ * The file list is deliberately read-only: staging, discarding and committing
+ * stay in the Git panel so this view cannot destroy work while the user is
+ * reading it.
  */
 
 type Filter = 'all' | 'unstaged' | 'staged' | 'untracked';
@@ -51,9 +55,19 @@ function splitPath(path: string): { dir: string; name: string } {
 export function ReviewPanel({
   workspaceRoot,
   onOpenFile,
+  chat,
+  onRunReview,
+  reviewRunning,
 }: {
   workspaceRoot: string;
-  onOpenFile?: (path: string) => void;
+  /** Open a file (optionally at a line) from a finding. */
+  onOpenFile?: (path: string, line?: number) => void;
+  /** The conversation, so the newest AI review can be shown without a second
+   *  subscription. The CLI also writes it into session history. */
+  chat?: ChatItem[];
+  /** Start `/review`. Absent when the caller cannot send messages. */
+  onRunReview?: () => void;
+  reviewRunning?: boolean;
 }) {
   const [files, setFiles] = useState<GitFileStat[]>([]);
   const [status, setStatus] = useState<GitStatus | null>(null);
@@ -87,6 +101,14 @@ export function ReviewPanel({
 
   useEffect(() => { void refresh(); }, [refresh, workspaceRoot]);
 
+  // Newest AI review in the conversation. `findLast` rather than `find` so a
+  // second /review replaces the first in this view instead of the tab going
+  // stale — the transcript keeps both, this panel shows the current state.
+  const latestReview = useMemo(
+    () => [...(chat ?? [])].reverse().find((item): item is Extract<ChatItem, { kind: 'review' }> => item.kind === 'review'),
+    [chat],
+  );
+
   const visible = filter === 'all' ? files : files.filter((file) => file.status === filter);
   const totals = visible.reduce(
     (acc, file) => ({ added: acc.added + file.added, removed: acc.removed + file.removed }),
@@ -97,6 +119,31 @@ export function ReviewPanel({
 
   return (
     <section className="review-panel" aria-label="审查">
+      <div className="review-ai">
+        <div className="review-ai-head">
+          <Sparkles size={14} />
+          <strong>AI 审查</strong>
+          <span className="review-ai-hint">独立只读子会话，按 P0–P3 报出本次改动的问题</span>
+          <button
+            type="button"
+            className="review-ai-run"
+            onClick={() => onRunReview?.()}
+            disabled={!onRunReview || reviewRunning}
+            title={onRunReview ? '运行 /review（会消耗 token，需要几十秒）' : '当前无法发送消息'}
+          >
+            {reviewRunning ? '审查中…' : latestReview ? '重新审查' : '开始审查'}
+          </button>
+        </div>
+        {latestReview
+          ? <ReviewReport review={latestReview} onOpenFile={onOpenFile} />
+          : (
+            <p className="review-ai-empty">
+              还没有审查过。点「开始审查」会以独立只读子会话检查未提交的改动；
+              也可以用 /review base &lt;分支&gt; 或 /review commit &lt;sha&gt; 审查别的范围。
+            </p>
+          )}
+      </div>
+
       <header className="review-head">
         <div className="review-filter">
           <button

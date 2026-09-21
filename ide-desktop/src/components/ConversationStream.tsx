@@ -10,6 +10,7 @@ import { MessageOutline } from './MessageOutline';
 import { activeTurnProgress } from '../lib/state';
 import { desktop } from '../lib/ipc';
 import { TaskBoardCard } from './TaskBoardCard';
+import { ReviewReport } from './ReviewReport';
 
 export function ConversationStream({ state, onApprove, onEditUser, onLaunch, onUndo, onOpenFile, dispatch, expandAll, onPickCommand, onCancel }: {
   state: AppState;
@@ -135,7 +136,7 @@ export function ConversationStream({ state, onApprove, onEditUser, onLaunch, onU
         {state.chat.map((item) =>
           item.kind === 'turn'
             ? <TurnRow key={item.id} item={item} onApprove={onApprove} onUndo={onUndo} now={now} onOpenFile={onOpenFile} expandAll={expandAll} />
-            : <Row key={item.id} item={item} onApprove={onApprove} onEditUser={onEditUser} dispatch={dispatch} />
+            : <Row key={item.id} item={item} onApprove={onApprove} onEditUser={onEditUser} onOpenFile={onOpenFile} dispatch={dispatch} />
         )}
         <div />
       </div>
@@ -162,10 +163,11 @@ function TurnRow({ item, onApprove, onUndo, now, onOpenFile, expandAll }: {
   return <TurnSummary item={item} onApprove={onApprove} onUndo={onUndo} now={now} onOpenFile={onOpenFile} expandAll={expandAll} />;
 }
 
-function Row({ item, onApprove, onEditUser, dispatch }: {
+function Row({ item, onApprove, onEditUser, onOpenFile, dispatch }: {
   item: Exclude<ChatItem, { kind: 'turn' }>;
   onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void;
   onEditUser: (text: string) => void;
+  onOpenFile?: (path: string, line?: number) => void;
   dispatch: React.Dispatch<AppAction>;
 }) {
   if (item.kind === 'tool' || item.kind === 'approval') return <ToolCard item={item} onApprove={onApprove} />;
@@ -208,6 +210,12 @@ function Row({ item, onApprove, onEditUser, dispatch }: {
         <span className="msg-error-text">{item.text}</span>
       </div>
     );
+  }
+  if (item.kind === 'review') {
+    // Rendered from the structured report rather than the prose: the same
+    // component the 审查 tab uses, so the transcript and the tab cannot
+    // disagree about what the review said.
+    return <ReviewReport review={item} onOpenFile={onOpenFile} />;
   }
   
   // Assistant message with code block actions

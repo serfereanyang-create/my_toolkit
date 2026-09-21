@@ -6,7 +6,7 @@ import { ProjectAuditPanel } from './ProjectAuditPanel';
 import { ReviewPanel } from './ReviewPanel';
 import { SubagentDirectory } from './SubagentDirectory';
 import { SupervisorPanel } from './SupervisorPanel';
-import type { SupervisorSnapshot } from '../types';
+import type { ChatItem, SupervisorSnapshot } from '../types';
 
 type WorkspaceToolTab = 'overview' | 'quality' | 'changes' | 'review' | 'preview' | 'skills' | 'reflections' | 'audit' | 'subagents';
 
@@ -34,6 +34,11 @@ export interface WorkspaceToolsPanelProps {
   onOpenPreview: () => void;
   /** Open one file in the editor (from a review row). */
   onOpenFile?: (path: string) => void;
+  /** The conversation, so the 审查 tab can show the newest AI review. */
+  chat?: ChatItem[];
+  /** Start `/review` in the active conversation. */
+  onRunReview?: () => void;
+  reviewRunning?: boolean;
 }
 
 const MIN_WIDTH = 320;
@@ -74,6 +79,9 @@ export function WorkspaceToolsPanel({
   onOpenGit,
   onOpenPreview,
   onOpenFile,
+  chat,
+  onRunReview,
+  reviewRunning,
 }: WorkspaceToolsPanelProps) {
   const [tab, setTab] = useState<WorkspaceToolTab>('overview');
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -217,7 +225,13 @@ export function WorkspaceToolsPanel({
         )}
         {tab === 'review' && (
           <div className="workspace-tools-review">
-            <ReviewPanel workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />
+            <ReviewPanel
+              workspaceRoot={workspaceRoot}
+              onOpenFile={onOpenFile}
+              chat={chat}
+              onRunReview={onRunReview}
+              reviewRunning={reviewRunning}
+            />
           </div>
         )}
         {tab === 'preview' && (

@@ -1,4 +1,4 @@
-import type { AgentEvent, AppState, ChatItem, ContextStats, DesktopSettings, PendingDiff, PreviewTab, QueuedMessage, SupervisorSnapshot, ToolChatItem, TreeNode, TurnFileChange, WorkLogEntry, TaskBoard } from '../types';
+import type { AgentEvent, AppState, ChatItem, ContextStats, DesktopSettings, PendingDiff, PreviewTab, QueuedMessage, ReviewFinding, SupervisorSnapshot, ToolChatItem, TreeNode, TurnFileChange, WorkLogEntry, TaskBoard } from '../types';
 
 export type AppAction =
   | { type: 'settings/loaded'; settings: DesktopSettings }
@@ -362,6 +362,67 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
       { type: 'info', phase: phase === 'failed' ? 'failed' : 'done', title: phase === 'failed' ? '上下文压缩失败' : auto ? '上下文已自动压缩' : '上下文已压缩', detail },
       state.workPhase,
       { ...state, chat },
+    );
+  }
+  if (event.type === 'review_report') {
+    // A finished /review, as structured findings. Recorded as a chat row so the
+    // transcript shows it inline; the 审查 tab reads the newest one from here
+    // rather than subscribing separately.
+    const findings: ReviewFinding[] = Array.isArray(event.findings)
+      ? (event.findings as unknown[]).flatMap((raw) => {
+          if (!raw || typeof raw !== 'object') return [];
+          const record = raw as Record<string, unknown>;
+          const title = typeof record.title === 'string' ? record.title : '';
+          if (!title) return [];
+          return [{
+            title,
+            body: typeof record.body === 'string' ? record.body : '',
+            ...(typeof record.priority === 'number' ? { priority: record.priority } : {}),
+            ...(typeof record.confidenceScore === 'number' ? { confidenceScore: record.confidenceScore } : {}),
+            ...(typeof record.filePath === 'string' ? { filePath: record.filePath } : {}),
+            ...(typeof record.lineStart === 'number' ? { lineStart: record.lineStart } : {}),
+            ...(typeof record.lineEnd === 'number' ? { lineEnd: record.lineEnd } : {}),
+          }];
+        })
+      : [];
+    const outcome = event.outcome === 'correct' || event.outcome === 'incorrect' ? event.outcome : 'unknown';
+    const item: ChatItem = {
+      id: `review-${crypto.randomUUID()}`,
+      kind: 'review',
+      label: typeof event.label === 'string' ? event.label : '代码审查',
+      ok: event.ok !== false,
+      findings,
+      outcome,
+      ...(typeof event.error === 'string' && event.error ? { error: event.error } : {}),
+      ...(event.unparsed === true ? { unparsed: true } : {}),
+      ...(typeof event.explanation === 'string' && event.explanation ? { explanation: event.explanation } : {}),
+      ...(typeof event.subSessionId === 'string' && event.subSessionId ? { subSessionId: event.subSessionId } : {}),
+      ...(typeof event.durationMs === 'number' ? { durationMs: event.durationMs } : {}),
+    };
+    // A failed review is an error the user must see the reason for — the same
+    // rule as every other failure. An unparsed review is NOT a failure (it ran
+    // and returned something unreadable), so it stays an info-level row.
+    if (!item.ok) {
+      return addLog(
+        { type: 'error', phase: 'failed', title: '代码审查失败', detail: item.error ?? '没有返回原因。' },
+        state.workPhase,
+        appendChat(state, item),
+      );
+    }
+    const counts = findings.reduce<Record<string, number>>((acc, finding) => {
+      const key = finding.priority === undefined ? '未分级' : `P${finding.priority}`;
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    const detail = item.unparsed
+      ? '审查返回的内容不是结构化结果'
+      : findings.length === 0
+        ? '未发现问题'
+        : Object.keys(counts).sort().map((key) => `${key} ${counts[key]}`).join('，');
+    return addLog(
+      { type: 'info', phase: 'done', title: `代码审查完成：${item.label}`, detail },
+      state.workPhase,
+      appendChat(state, item),
     );
   }
   if (event.type === 'turn_start') {

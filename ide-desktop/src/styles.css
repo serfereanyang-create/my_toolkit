@@ -214,6 +214,48 @@ html[data-reduce-motion='on'] .reflection-panel-spin { animation: none; }
 .review-spin { animation: review-spin 1s linear infinite; }
 @keyframes review-spin { to { transform: rotate(360deg); } }
 
+/* ── AI review (审查 tab section + transcript row) ──────────────────────── */
+.review-ai { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border-subtle); border-radius: var(--r-md); background: var(--bg-side); }
+.review-ai-head { display: flex; align-items: center; gap: 7px; }
+.review-ai-head > svg { flex: none; color: var(--accent); }
+.review-ai-head strong { font-size: 12px; }
+.review-ai-hint { flex: 1; min-width: 0; overflow: hidden; color: var(--fg-dim); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.review-ai-run { flex: none; padding: 5px 10px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: var(--r-sm); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); font-size: 11px; cursor: pointer; }
+.review-ai-run:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.review-ai-run:disabled { opacity: .55; cursor: default; }
+.review-ai-empty { margin: 0; color: var(--fg-dim); font-size: 11px; line-height: 1.6; }
+.review-report { display: flex; flex-direction: column; gap: 8px; }
+.review-report-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.review-report-head > svg { flex: none; color: var(--danger); }
+.review-report-label { overflow: hidden; color: var(--fg-dim); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.review-report-duration { color: var(--fg-dim); font: 11px var(--font-mono); }
+.review-verdict { padding: 1px 7px; border-radius: var(--r-pill); font-size: 10px; white-space: nowrap; }
+.review-verdict.correct { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.review-verdict.incorrect { color: var(--danger); background: color-mix(in srgb, var(--danger) 13%, transparent); }
+.review-verdict.unknown { color: var(--fg-muted); background: var(--bg-hover); }
+.review-report-explanation { margin: 0; color: var(--fg-muted); font-size: 12px; line-height: 1.6; }
+.review-report-note { margin: 0; color: var(--fg-dim); font-size: 11px; line-height: 1.6; }
+.review-report-error { margin: 0; color: var(--danger); font-size: 12px; line-height: 1.6; }
+.review-report.failed { padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); border-radius: var(--r-sm); background: color-mix(in srgb, var(--danger) 6%, transparent); }
+.review-report.unparsed { padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: var(--r-sm); background: color-mix(in srgb, var(--warn) 6%, transparent); }
+.review-report.unparsed .review-report-head > svg { color: var(--warn); }
+.review-findings { display: flex; flex-direction: column; gap: 7px; }
+.review-finding-group { display: flex; flex-direction: column; gap: 5px; }
+.review-finding { display: flex; flex-direction: column; gap: 3px; padding: 7px 9px; border: 1px solid var(--border-subtle); border-radius: var(--r-sm); background: var(--bg-elevated); }
+.review-finding-head { display: flex; align-items: baseline; gap: 7px; }
+.review-finding-priority { flex: none; padding: 1px 6px; border-radius: var(--r-pill); font: 600 10px var(--font-mono); }
+.review-finding-priority.p0 { color: #fff; background: var(--danger); }
+.review-finding-priority.p1 { color: var(--danger); background: color-mix(in srgb, var(--danger) 15%, transparent); }
+.review-finding-priority.p2 { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
+.review-finding-priority.p3 { color: var(--fg-muted); background: var(--bg-hover); }
+.review-finding-priority.unrated { color: var(--fg-dim); background: var(--bg-hover); font-weight: 400; }
+.review-finding-title { flex: 1; min-width: 0; font-size: 12px; line-height: 1.5; }
+.review-finding-confidence { flex: none; color: var(--fg-dim); font: 10px var(--font-mono); font-variant-numeric: tabular-nums; }
+.review-finding-body { margin: 0; color: var(--fg-muted); font-size: 11px; line-height: 1.6; }
+.review-finding-location { display: inline-flex; align-items: center; gap: 2px; align-self: flex-start; padding: 2px 5px; border: 0; border-radius: var(--r-sm); color: var(--accent); background: transparent; font: 11px var(--font-mono); text-align: left; cursor: pointer; }
+.review-finding-location:hover { background: var(--bg-hover); }
+.review-finding-location.static { color: var(--fg-dim); cursor: default; }
+
 /* ── Subagent directory (WorkspaceTools 子智能体 tab) ───────────────────── */
 .subagent-panel { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .subagent-head { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: var(--r-md); background: var(--bg-side); }

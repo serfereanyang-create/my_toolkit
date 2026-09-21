@@ -229,6 +229,10 @@ export type ChatItem =
   // Context compaction divider (Codex "正在压缩上下文" → "上下文已自动压缩").
   // 'running' rows flip to 'done'/'failed' when the follow-up event arrives.
   | { id: string; kind: 'compaction'; phase: 'running' | 'done' | 'failed'; auto: boolean; before?: number; after?: number; reason?: string }
+  // A finished code review (CLI /review). The report is ALSO written into the
+  // CLI's session history, so it survives a reload; this row is what renders it
+  // as findings with click-to-jump while the session is live.
+  | { id: string; kind: 'review'; label: string; ok: boolean; error?: string; unparsed?: boolean; findings: ReviewFinding[]; outcome?: 'correct' | 'incorrect' | 'unknown'; explanation?: string; subSessionId?: string; durationMs?: number }
   | ToolChatItem
   | { id: string; kind: 'approval'; requestId: string; tool: string; message: string; input?: unknown; risk?: 'read' | 'write' | 'shell' | 'network'; diff?: PendingDiff; decided?: 'allow_once' | 'allow_session' | 'deny'; autoReason?: string }
   // A single agent working round: the tool steps it ran, the distinct files it
@@ -253,6 +257,27 @@ export type ChatItem =
 // One distinct file changed during a turn. `checkpointIds` are the CLI backup
 // ids to revert (a file written twice in one turn has multiple).
 export type TurnFileChange = { path: string; added: number; removed: number; checkpointIds: string[] };
+
+/**
+ * One finding from an AI code review, as the CLI parsed it out of the
+ * reviewer's rubric-shaped reply.
+ *
+ * `priority` is deliberately optional: the reviewer may not state one, and
+ * showing "未分级" is honest where defaulting to P2 would invent a severity.
+ * Likewise `unparsed` on the review row distinguishes "the reviewer found
+ * nothing" from "the reviewer's reply could not be read" — the two look
+ * identical if you only count findings.
+ */
+export type ReviewFinding = {
+  title: string;
+  body: string;
+  /** 0-3 (P0-P3), absent when the reviewer did not state one. */
+  priority?: number;
+  confidenceScore?: number;
+  filePath?: string;
+  lineStart?: number;
+  lineEnd?: number;
+};
 
 export type TaskSummary = {
   title: string;
