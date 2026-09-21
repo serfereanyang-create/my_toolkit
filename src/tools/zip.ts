@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises';
 import { dirname, join, relative, basename } from 'node:path';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import type { ToolDefinition } from './types.js';
-import { resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
 
 /**
  * ZIP file creation, extraction, and inspection tools.
@@ -201,13 +201,13 @@ export const createZipTool: ToolDefinition<{
     };
   },
   async execute(input, context) {
-    const targetPath = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const targetPath = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const finalTarget = targetPath.toLowerCase().endsWith('.zip') ? targetPath : `${targetPath}.zip`;
     const checkpoint = await context.checkpoints?.beforeWrite(finalTarget);
     await mkdir(dirname(finalTarget), { recursive: true });
 
     const fileMap = new Map<string, Buffer>();
-    const baseDir = input.baseDir ? resolveReadablePath(context.workspaceRoot, input.baseDir) : context.workspaceRoot;
+    const baseDir = input.baseDir ? resolveReadablePath(context.workspaceRoot, input.baseDir, pathScopeFor(context.approval)) : context.workspaceRoot;
 
     for (const fileSpec of input.files) {
       if (typeof fileSpec.path !== 'string' || !fileSpec.path.trim()) {
@@ -292,7 +292,7 @@ export const listZipTool: ToolDefinition<{ path: string }> = {
     return { path: record.path.trim() };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const buffer = await readFile(target);
     const entries = listZipEntries(buffer);
 
@@ -352,11 +352,11 @@ export const extractZipTool: ToolDefinition<{
     };
   },
   async execute(input, context) {
-    const sourcePath = resolveReadablePath(context.workspaceRoot, input.path);
+    const sourcePath = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const buffer = await readFile(sourcePath);
     const headers = readZipLocalHeaders(buffer);
 
-    const targetDir = input.to ? resolveWorkspacePath(context.workspaceRoot, input.to) : context.workspaceRoot;
+    const targetDir = input.to ? resolveWorkspacePath(context.workspaceRoot, input.to, pathScopeFor(context.approval)) : context.workspaceRoot;
     const checkpoint = await context.checkpoints?.beforeWrite(targetDir);
 
     const fileFilter = input.files ? new Set(input.files) : null;
@@ -434,7 +434,7 @@ export const zipSummaryTool: ToolDefinition<{
     };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const buffer = await readFile(target);
     const entries = listZipEntries(buffer);
 

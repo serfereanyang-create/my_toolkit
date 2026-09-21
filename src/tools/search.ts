@@ -1,6 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import { resolveWorkspacePath } from '../safety/policy.js';
+import { pathScopeFor, resolveWorkspacePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 const ignoredDirs = new Set(['node_modules', 'dist', '.git', '.gradle', 'build', '.aicode', '.aicode-smoke']);
@@ -22,7 +22,7 @@ export const searchTextTool: ToolDefinition<{ query: string; path: string; maxMa
     };
   },
   async execute(input, context) {
-    const start = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const start = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const matches: Array<{ path: string; line: number; text: string }> = [];
     await search(start, context.workspaceRoot, input.query, input.maxMatches, matches);
     const output = matches.map((match) => `${match.path}:${match.line}: ${match.text}`).join('\n') || '(no matches)';

@@ -1,6 +1,6 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import { resolveWorkspacePath } from '../safety/policy.js';
+import { pathScopeFor, resolveWorkspacePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 const ignoredDirs = new Set(['node_modules', 'dist', '.git', '.gradle', 'build', '.aicode', '.aicode-smoke']);
@@ -20,7 +20,7 @@ export const projectIndexTool: ToolDefinition<{ path: string; maxFiles: number }
     };
   },
   async execute(input, context) {
-    const root = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const root = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const files: string[] = [];
     const requestedMax = input.maxFiles;
     await walk(root, context.workspaceRoot, files, requestedMax);

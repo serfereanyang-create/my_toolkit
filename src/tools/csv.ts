@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 /**
@@ -24,7 +24,7 @@ export const readCsvTool: ToolDefinition<{ path: string; maxBytes: number }> = {
     return { path: record.path.trim(), maxBytes };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const raw = await readFile(target, 'utf8');
     const sliced = raw.slice(0, input.maxBytes);
     const rows = parseCsv(sliced);
@@ -54,7 +54,7 @@ export const writeCsvTool: ToolDefinition<{ path: string; rows: unknown[] }> = {
     return { path: record.path.trim(), rows: record.rows };
   },
   async execute(input, context) {
-    const target = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const matrix = toMatrix(input.rows);
     const csv = writeCsv(matrix);
     const checkpoint = await context.checkpoints?.beforeWrite(target);
@@ -192,7 +192,7 @@ export const csvStatsTool: ToolDefinition<{
     };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const raw = await readFile(target, 'utf8');
     const sliced = raw.slice(0, input.maxBytes);
     const rows = parseCsv(sliced);
@@ -259,7 +259,7 @@ export const csvPreviewTool: ToolDefinition<{
     };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const raw = await readFile(target, 'utf8');
     const sliced = raw.slice(0, input.maxBytes);
     const allRows = parseCsv(sliced);

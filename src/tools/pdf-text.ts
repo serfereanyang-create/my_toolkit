@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolveReadablePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 function decodePdfLiteral(text: string) {
@@ -45,7 +45,7 @@ export const pdfToTextTool: ToolDefinition<{ path: string; maxBytes: number }> =
     return { path: record.path.trim(), maxBytes };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const buffer = (await readFile(target)).subarray(0, input.maxBytes);
     const text = extractPdfTextFromBuffer(buffer);
     if (!text) {

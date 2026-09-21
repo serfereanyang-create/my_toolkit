@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { resolveWorkspacePath } from '../safety/policy.js';
+import { pathScopeFor, resolveWorkspacePath } from '../safety/policy.js';
 import { lineDiff } from './lineDiff.js';
 import type { ToolDefinition } from './types.js';
 
@@ -18,7 +18,7 @@ export const applyPatchTool: ToolDefinition<{ path: string; oldText?: string; ne
     return { path: record.path, oldText: record.oldText, newText: record.newText };
   },
   async execute(input, context) {
-    const target = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const checkpoint = await context.checkpoints?.beforeWrite(target);
     await mkdir(dirname(target), { recursive: true });
     if (input.oldText === undefined) {

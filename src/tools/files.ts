@@ -1,7 +1,7 @@
 import { inflateRawSync } from 'node:zlib';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, relative } from 'node:path';
-import { resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
 import { lineDiff } from './lineDiff.js';
 import type { ToolDefinition } from './types.js';
 
@@ -52,7 +52,7 @@ export const listFilesTool: ToolDefinition<{ path: string; maxFiles: number }> =
     };
   },
   async execute(input, context) {
-    const root = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const root = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const files: string[] = [];
     await walk(root, context.workspaceRoot, files, input.maxFiles);
     return { ok: true, output: files.join('\n') || '(no files)', data: { files } };
@@ -75,7 +75,7 @@ export const readFileTool: ToolDefinition<{ path: string; maxBytes: number }> = 
     };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     if (extname(target).toLowerCase() === '.docx') {
       const extracted = await extractDocxText(target);
       const sliced = extracted.slice(0, input.maxBytes);
@@ -112,7 +112,7 @@ export const writeFileTool: ToolDefinition<{ path: string; content: string }> = 
     return { path: record.path, content: record.content };
   },
   async execute(input, context) {
-    const target = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const checkpoint = await context.checkpoints?.beforeWrite(target);
     await mkdir(dirname(target), { recursive: true });
     // Capture the prior contents (empty when the file is new) so we can report

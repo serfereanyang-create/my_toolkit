@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolveReadablePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 /**
@@ -211,7 +211,7 @@ export const markdownToHtmlTool: ToolDefinition<{ markdown?: string; path?: stri
     let source: string;
     
     if (input.path) {
-      const target = resolveReadablePath(context.workspaceRoot, input.path);
+      const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
       const raw = await readFile(target, 'utf8');
       markdown = raw.slice(0, input.maxBytes);
       source = input.path;
@@ -264,7 +264,7 @@ export const markdownOutlineTool: ToolDefinition<{
     let source: string;
     
     if (input.path) {
-      const target = resolveReadablePath(context.workspaceRoot, input.path);
+      const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
       const raw = await readFile(target, 'utf8');
       markdown = raw.slice(0, input.maxBytes!);
       source = input.path;
@@ -352,7 +352,7 @@ export const markdownLinksTool: ToolDefinition<{
     let source: string;
     
     if (input.path) {
-      const target = resolveReadablePath(context.workspaceRoot, input.path);
+      const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
       const raw = await readFile(target, 'utf8');
       markdown = raw.slice(0, input.maxBytes!);
       source = input.path;
@@ -451,7 +451,7 @@ export const markdownCodeBlocksTool: ToolDefinition<{
     let source: string;
     
     if (input.path) {
-      const target = resolveReadablePath(context.workspaceRoot, input.path);
+      const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
       const raw = await readFile(target, 'utf8');
       markdown = raw.slice(0, input.maxBytes!);
       source = input.path;

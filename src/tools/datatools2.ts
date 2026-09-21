@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
-import { resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
 import { lineDiff } from './lineDiff.js';
 import { parseCsv, writeCsv } from './csv.js';
 import type { ToolDefinition } from './types.js';
@@ -34,7 +34,7 @@ export const readManyFilesTool: ToolDefinition<{ paths: string[]; maxBytesEach: 
     let okCount = 0;
     for (const rawPath of input.paths) {
       try {
-        const target = resolveReadablePath(context.workspaceRoot, rawPath);
+        const target = resolveReadablePath(context.workspaceRoot, rawPath, pathScopeFor(context.approval));
         const content = await readFile(target, 'utf8');
         const clipped = content.length > input.maxBytesEach ? `${content.slice(0, input.maxBytesEach)}\n[...truncated]` : content;
         sections.push(`===== ${rawPath} =====\n${clipped}`);
@@ -64,7 +64,7 @@ export const globFilesTool: ToolDefinition<{ pattern: string; path: string; maxR
     return { pattern: record.pattern.trim(), path, maxResults };
   },
   async execute(input, context) {
-    const root = resolveReadablePath(context.workspaceRoot, input.path);
+    const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const regex = globToRegExp(input.pattern);
     const matches: string[] = [];
     await walkFiles(root, root, regex, matches, input.maxResults);
@@ -137,8 +137,8 @@ export const diffFilesTool: ToolDefinition<{ left: string; right: string }> = {
     return { left: record.left.trim(), right: record.right.trim() };
   },
   async execute(input, context) {
-    const leftText = await readFile(resolveReadablePath(context.workspaceRoot, input.left), 'utf8');
-    const rightText = await readFile(resolveReadablePath(context.workspaceRoot, input.right), 'utf8');
+    const leftText = await readFile(resolveReadablePath(context.workspaceRoot, input.left, pathScopeFor(context.approval)), 'utf8');
+    const rightText = await readFile(resolveReadablePath(context.workspaceRoot, input.right, pathScopeFor(context.approval)), 'utf8');
     const { added, removed } = lineDiff(leftText, rightText);
     const preview = unifiedPreview(leftText.split(/\r?\n/), rightText.split(/\r?\n/), 40);
     return {
@@ -181,7 +181,7 @@ export const editLinesTool: ToolDefinition<{ path: string; start: number; end: n
     return { path: record.path.trim(), start, end, mode, text };
   },
   async execute(input, context) {
-    const target = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     let before = '';
     try {
       before = await readFile(target, 'utf8');
@@ -229,7 +229,7 @@ export const writeJsonTool: ToolDefinition<{ path: string; value: unknown; prett
     return { path: record.path.trim(), value: record.value, pretty: record.pretty !== false };
   },
   async execute(input, context) {
-    const target = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const serialized = JSON.stringify(input.value, null, input.pretty ? 2 : 0);
     let before = '';
     try {
@@ -361,7 +361,7 @@ export const listTreeTool: ToolDefinition<{ path: string; maxDepth: number; maxE
     return { path, maxDepth, maxEntries };
   },
   async execute(input, context) {
-    const root = resolveReadablePath(context.workspaceRoot, input.path);
+    const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const lines: string[] = [];
     const counter = { n: 0 };
     await treeInto(root, '', 0, input.maxDepth, input.maxEntries, lines, counter);

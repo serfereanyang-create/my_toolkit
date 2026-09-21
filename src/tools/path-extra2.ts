@@ -1,6 +1,6 @@
 import { readdir, stat } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
-import { resolveReadablePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 const IGNORED = new Set(['node_modules', '.git', 'dist', 'build', '.aicode']);
@@ -24,7 +24,7 @@ function resolveAny(workspaceRoot: string, value: string) {
 export const pathExistsTool: ToolDefinition<{ path: string }> = {
   name: 'path_exists', description: 'Check whether a readable file or directory exists. Read-only.', inputHint: '{ "path": "package.json" }', risk: 'read',
   validate(input) { const record = asRecord(input); if (typeof record.path !== 'string' || !record.path.trim()) throw new Error('path is required'); return { path: record.path.trim() }; },
-  async execute(input, context) { try { const target = resolveReadablePath(context.workspaceRoot, input.path); const info = await stat(target); return { ok: true, output: `${input.path} exists (${info.isDirectory() ? 'directory' : 'file'})`, data: { path: target, exists: true } }; } catch { return { ok: true, output: `${input.path} does not exist`, data: { path: input.path, exists: false } }; } },
+  async execute(input, context) { try { const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)); const info = await stat(target); return { ok: true, output: `${input.path} exists (${info.isDirectory() ? 'directory' : 'file'})`, data: { path: target, exists: true } }; } catch { return { ok: true, output: `${input.path} does not exist`, data: { path: input.path, exists: false } }; } },
 };
 
 export const pathNormalizeTool: ToolDefinition<{ path: string }> = {
@@ -73,7 +73,7 @@ export const listDirsTool: ToolDefinition<{ path: string; recursive: boolean; ma
   name: 'list_dirs', description: 'List directories under a path, optionally recursively. Read-only.', inputHint: '{ "path": ".", "recursive": true, "maxResults": 200 }', risk: 'read',
   validate(input) { const record = asRecord(input); const path = typeof record.path === 'string' && record.path.trim() ? record.path.trim() : '.'; return { path, recursive: record.recursive === true, maxResults: typeof record.maxResults === 'number' && record.maxResults > 0 ? Math.min(Math.floor(record.maxResults), 5000) : 200 }; },
   async execute(input, context) {
-    const root = resolveReadablePath(context.workspaceRoot, input.path); const out: string[] = [];
+    const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)); const out: string[] = [];
     await walkDirs(root, root, out, input.maxResults, input.recursive);
     return { ok: true, output: out.length ? out.join('\n') : '(no directories)', data: { count: out.length, dirs: out } };
   },
@@ -83,7 +83,7 @@ export const recentFilesTool: ToolDefinition<{ path: string; maxResults: number 
   name: 'recent_files', description: 'List the most recently modified files under a directory. Read-only.', inputHint: '{ "path": "src", "maxResults": 20 }', risk: 'read',
   validate(input) { const record = asRecord(input); const path = typeof record.path === 'string' && record.path.trim() ? record.path.trim() : '.'; const maxResults = typeof record.maxResults === 'number' && record.maxResults > 0 ? Math.min(Math.floor(record.maxResults), 500) : 20; return { path, maxResults }; },
   async execute(input, context) {
-    const root = resolveReadablePath(context.workspaceRoot, input.path); const out: Array<{ path: string; mtime: number }> = [];
+    const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)); const out: Array<{ path: string; mtime: number }> = [];
     await walkFiles(root, async (file) => { const info = await stat(file); out.push({ path: relative(context.workspaceRoot, file).replace(/\\/g, '/'), mtime: info.mtimeMs }); });
     out.sort((a, b) => b.mtime - a.mtime);
     const picked = out.slice(0, input.maxResults);
@@ -95,7 +95,7 @@ export const largestFilesTool: ToolDefinition<{ path: string; maxResults: number
   name: 'largest_files', description: 'List the largest files under a directory. Read-only.', inputHint: '{ "path": ".", "maxResults": 20 }', risk: 'read',
   validate(input) { const record = asRecord(input); const path = typeof record.path === 'string' && record.path.trim() ? record.path.trim() : '.'; const maxResults = typeof record.maxResults === 'number' && record.maxResults > 0 ? Math.min(Math.floor(record.maxResults), 500) : 20; return { path, maxResults }; },
   async execute(input, context) {
-    const root = resolveReadablePath(context.workspaceRoot, input.path); const out: Array<{ path: string; size: number }> = [];
+    const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)); const out: Array<{ path: string; size: number }> = [];
     await walkFiles(root, async (file) => { const info = await stat(file); out.push({ path: relative(context.workspaceRoot, file).replace(/\\/g, '/'), size: info.size }); });
     out.sort((a, b) => b.size - a.size);
     const picked = out.slice(0, input.maxResults);
@@ -107,7 +107,7 @@ export const directorySummaryTool: ToolDefinition<{ path: string }> = {
   name: 'directory_summary', description: 'Summarize a directory: file count, directory count, total bytes, and top extensions. Read-only.', inputHint: '{ "path": "src" }', risk: 'read',
   validate(input) { const record = asRecord(input); const path = typeof record.path === 'string' && record.path.trim() ? record.path.trim() : '.'; return { path }; },
   async execute(input, context) {
-    const root = resolveReadablePath(context.workspaceRoot, input.path); let fileCount = 0; let dirCount = 0; let totalBytes = 0; const byExt = new Map<string, number>();
+    const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)); let fileCount = 0; let dirCount = 0; let totalBytes = 0; const byExt = new Map<string, number>();
     await walkTree(root, async (fullPath, kind) => {
       if (kind === 'dir') { dirCount += 1; return; }
       const info = await stat(fullPath); fileCount += 1; totalBytes += info.size; const ext = extname(fullPath).toLowerCase() || '(none)'; byExt.set(ext, (byExt.get(ext) ?? 0) + 1);

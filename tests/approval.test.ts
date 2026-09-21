@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { createDefaultToolRegistry } from '../src/tools/index.js';
-import { isAutoAllowedCommand, isAutoAllowedWrite, isBlockedCommand } from '../src/safety/policy.js';
+import {
+  isAutoAllowedCommand,
+  isAutoAllowedWrite,
+  isBlockedCommand,
+  pathScopeFor,
+  resolveReadablePath,
+  resolveWorkspacePath,
+} from '../src/safety/policy.js';
 
 test('auto mode allows writing ordinary files inside the workspace', () => {
   const workspace = 'C:/work/app';
@@ -21,7 +28,39 @@ test('auto mode still refuses writes to protected workspace internals', () => {
 
 test('auto mode refuses writes that escape the workspace', () => {
   const workspace = 'C:/work/app';
-  assert.throws(() => isAutoAllowedWrite(workspace, '../outside.txt'));
+  // A denial, not a throw. This used to let resolveWorkspacePath's throw escape,
+  // and decideApproval does not catch it while registry.execute calls
+  // decideApproval OUTSIDE its try block — so an out-of-workspace write raised
+  // an unhandled error instead of a denial the model could read and recover from.
+  assert.equal(isAutoAllowedWrite(workspace, '../outside.txt'), false);
+});
+
+/*
+ * On Windows path.relative returns an absolute path when the two paths are on
+ * different drives — relative('C:/work', 'D:/x') is 'D:\\x', which does not
+ * start with '..'. The confinement check therefore admitted any other drive,
+ * so D:/anything.txt was treated as inside the workspace.
+ */
+test('another drive is outside the workspace', () => {
+  const workspace = 'C:/work/app';
+  assert.throws(() => resolveWorkspacePath(workspace, 'D:/projects/x/file.md'), /Path escapes workspace/);
+  assert.throws(() => resolveWorkspacePath(workspace, 'E:/x.txt'), /Path escapes workspace/);
+  assert.equal(isAutoAllowedWrite(workspace, 'D:/projects/x/file.md'), false);
+});
+
+test('unrestricted scope reaches any drive, workspace scope does not', () => {
+  const workspace = 'C:/work/app';
+  assert.equal(resolveWorkspacePath(workspace, 'D:/projects/x/file.md', 'unrestricted'), resolve('D:/projects/x/file.md'));
+  assert.throws(() => resolveWorkspacePath(workspace, 'D:/projects/x/file.md', 'workspace'));
+});
+
+test('omitting the scope keeps the old workspace-only behaviour', () => {
+  // The default parameter is what let 89 call sites and every existing test stay
+  // unchanged, so it is worth pinning.
+  const workspace = 'C:/work/app';
+  assert.equal(resolveWorkspacePath(workspace, 'note.md'), resolve(workspace, 'note.md'));
+  assert.throws(() => resolveWorkspacePath(workspace, '../out.md'), /Path escapes workspace/);
+  assert.throws(() => resolveReadablePath(workspace, 'C:/Windows/System32/drivers/etc/hosts'), /not allowed for read/i);
 });
 
 test('auto mode auto-approves a real workspace write end to end', async () => {

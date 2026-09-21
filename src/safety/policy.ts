@@ -6,6 +6,32 @@ import type { ApprovalMode } from '../providers/types.js';
 
 export type ToolRisk = 'read' | 'write' | 'shell' | 'network';
 
+/**
+ * How far a path may reach.
+ *
+ * The approval mode is the single tier knob: it already decides how often the
+ * user is asked, and it now also decides the reachable file scope, so the two
+ * cannot contradict each other. They used to be separate — `--approval` reached
+ * the CLI while the desktop's 沙箱模式 never did — which made 「完全访问」 a
+ * label that only reduced prompts without granting the access it named.
+ *
+ *   'workspace'    — workspace plus the read allowlist (Desktop/Documents/
+ *                    Downloads/home). What every mode except 'auto' uses.
+ *   'unrestricted' — any path on the machine. Only approval 'auto' (完全访问).
+ */
+export type PathScope = 'workspace' | 'unrestricted';
+
+/**
+ * Map an approval mode to its path scope.
+ *
+ * Only 完全访问 widens: every other mode keeps the existing allowlist, because
+ * reading a Desktop document is behaviour users already rely on and narrowing
+ * it would be a silent regression.
+ */
+export function pathScopeFor(approval: ApprovalMode): PathScope {
+  return approval === 'auto' ? 'unrestricted' : 'workspace';
+}
+
 export type ApprovalDecision = {
   allowed: boolean;
   reason: string;
@@ -45,10 +71,27 @@ const autoAllowedCommandPatterns = [
   /^powershell(\.exe)?\s+(-NoProfile\s+)?(-Command\s+)?"?\s*Get-CimInstance\s+Win32_LogicalDisk/i,
 ];
 
-export function resolveWorkspacePath(workspaceRoot: string, targetPath: string) {
+/**
+ * Write-path resolution: confined to the workspace, unless the scope says
+ * otherwise.
+ *
+ * The default is 'workspace' so every existing caller — and every test that
+ * pins the confinement — keeps its behaviour without change.
+ */
+export function resolveWorkspacePath(
+  workspaceRoot: string,
+  targetPath: string,
+  scope: PathScope = 'workspace',
+) {
   const resolved = resolve(workspaceRoot, targetPath);
+  if (scope === 'unrestricted') return resolved;
   const rel = relative(workspaceRoot, resolved);
-  if (rel === '' || (!rel.startsWith('..') && !resolve(rel).startsWith('..'))) {
+  // `isAbsolute(rel)` is load-bearing on Windows: for a target on a DIFFERENT
+  // drive, path.relative returns that drive's absolute path instead of a
+  // `..`-prefixed one — `relative('C:/work', 'D:/x')` is `'D:\\x'`. Without this
+  // check the guard saw a path not starting with `..` and admitted it, so any
+  // other drive bypassed the workspace confinement entirely.
+  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel) && !resolve(rel).startsWith('..'))) {
     return resolved;
   }
   throw new Error(`Path escapes workspace: ${targetPath}`);
@@ -70,7 +113,11 @@ export function resolveWorkspacePath(workspaceRoot: string, targetPath: string) 
  * both naming the same file. Whether a read worked came down to which form the
  * model happened to emit, which reads as an unreliable tool rather than a rule.
  */
-export function resolveReadablePath(workspaceRoot: string, targetPath: string) {
+export function resolveReadablePath(
+  workspaceRoot: string,
+  targetPath: string,
+  scope: PathScope = 'workspace',
+) {
   const raw = targetPath.trim().replace(/^["']|["']$/g, '');
   if (!raw) throw new Error('path is required');
   const normalized = raw.replace(/\\/g, '/');
@@ -79,6 +126,7 @@ export function resolveReadablePath(workspaceRoot: string, targetPath: string) {
     const rest = normalized.replace(/^desktop\/?/i, '');
     const desktop = join(homedir(), 'Desktop');
     const resolved = rest ? resolve(desktop, rest) : desktop;
+    if (scope === 'unrestricted') return resolved;
     assertUnderAllowedReadRoot(resolved, workspaceRoot);
     return resolved;
   }
@@ -86,6 +134,7 @@ export function resolveReadablePath(workspaceRoot: string, targetPath: string) {
   // Absolute: already unambiguous.
   if (isAbsolute(raw) || /^[A-Za-z]:[\\/]/.test(raw)) {
     const resolved = resolve(raw);
+    if (scope === 'unrestricted') return resolved;
     assertUnderAllowedReadRoot(resolved, workspaceRoot);
     return resolved;
   }
@@ -95,6 +144,7 @@ export function resolveReadablePath(workspaceRoot: string, targetPath: string) {
   // fact that it climbed — so `../cli/package.json` and its absolute spelling
   // now agree.
   const resolved = resolve(workspaceRoot, raw);
+  if (scope === 'unrestricted') return resolved;
   try {
     assertUnderAllowedReadRoot(resolved, workspaceRoot);
     return resolved;
@@ -202,18 +252,37 @@ function isDestructiveGitCommand(command: string) {
 // accidental write is high blast-radius.
 const protectedWorkspaceDirs = ['.git/', 'node_modules/'];
 
-export function isAutoAllowedWrite(workspaceRoot: string, targetPath: string) {
+/**
+ * Whether `auto` mode may write this target without asking.
+ *
+ * Returns false rather than throwing on a path the scope does not reach. It
+ * used to let resolveWorkspacePath's throw escape, and decideApproval does not
+ * catch it while registry.execute calls decideApproval OUTSIDE its try block —
+ * so a write outside the workspace raised an unhandled error instead of
+ * producing an ordinary denial the model can read and recover from.
+ */
+export function isAutoAllowedWrite(
+  workspaceRoot: string,
+  targetPath: string,
+  scope: PathScope = 'workspace',
+) {
   const normalizedTarget = targetPath.replace(/\\/g, '/').toLowerCase();
   if (normalizedTarget.startsWith('desktop/') && normalizedTarget.endsWith('.docx')) return true;
-  // resolveWorkspacePath throws if the target escapes the workspace, so any
-  // path that resolves here is inside it. In `auto` mode we let the agent write
-  // anywhere in the current workspace (like Claude Code / Cursor) except a few
-  // protected internals. Writes outside the workspace still require approval.
-  const resolved = resolveWorkspacePath(workspaceRoot, targetPath);
+
+  let resolved: string;
+  try {
+    resolved = resolveWorkspacePath(workspaceRoot, targetPath, scope);
+  } catch {
+    return false;
+  }
+
   const rel = relative(workspaceRoot, resolved).replace(/\\/g, '/');
   // Historical smoke/test fixture allowlist kept explicit so audits and smoke
   // runs stay stable: .smoke/, cli/.smoke/, cli/tests/fixtures/, .aicode-smoke/.
   const relLower = rel.toLowerCase();
+  // A path outside the workspace has a leading `..`, so it can never match a
+  // protected prefix below — protection applies to the workspace's own
+  // internals, which is what those directories are.
   if (protectedWorkspaceDirs.some((dir) => relLower === dir.slice(0, -1) || relLower.startsWith(dir))) return false;
   return true;
 }
@@ -374,7 +443,7 @@ export function decideApproval(options: {
     // that carry no path target and have destructive variants already excluded).
     // Such tools skip the path allowlist in auto mode but, like every write,
     // still prompt in ask mode and are refused in deny mode.
-    if (!options.targetPath || !isAutoAllowedWrite(options.workspaceRoot, options.targetPath)) {
+    if (!options.targetPath || !isAutoAllowedWrite(options.workspaceRoot, options.targetPath, pathScopeFor(options.mode))) {
       return { allowed: false, needsPrompt: false, reason: 'write target is not in auto approval allowlist' };
     }
   }

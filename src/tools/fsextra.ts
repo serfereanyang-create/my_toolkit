@@ -1,6 +1,6 @@
 import { mkdir, readdir, stat, copyFile, rm } from 'node:fs/promises';
 import { dirname, join, relative, basename } from 'node:path';
-import { resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 /*
@@ -21,7 +21,7 @@ export const fileInfoTool: ToolDefinition<{ path: string }> = {
     return { path: record.path.trim() };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const info = await stat(target);
     const kind = info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other';
     return {
@@ -43,7 +43,7 @@ export const makeDirTool: ToolDefinition<{ path: string }> = {
     return { path: record.path.trim() };
   },
   async execute(input, context) {
-    const target = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     await mkdir(target, { recursive: true });
     return { ok: true, output: `Created directory ${relative(context.workspaceRoot, target) || '.'}`, data: { path: target } };
   },
@@ -61,8 +61,8 @@ export const copyFileTool: ToolDefinition<{ from: string; to: string }> = {
     return { from: record.from.trim(), to: record.to.trim() };
   },
   async execute(input, context) {
-    const source = resolveReadablePath(context.workspaceRoot, input.from);
-    const dest = resolveWorkspacePath(context.workspaceRoot, input.to);
+    const source = resolveReadablePath(context.workspaceRoot, input.from, pathScopeFor(context.approval));
+    const dest = resolveWorkspacePath(context.workspaceRoot, input.to, pathScopeFor(context.approval));
     await mkdir(dirname(dest), { recursive: true });
     const checkpoint = await context.checkpoints?.beforeWrite(dest);
     await copyFile(source, dest);
@@ -85,7 +85,7 @@ export const deletePathTool: ToolDefinition<{ path: string }> = {
     return { path: record.path.trim() };
   },
   async execute(input, context) {
-    const target = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const checkpoint = await context.checkpoints?.beforeWrite(target);
     await rm(target, { recursive: true, force: true });
     return {
@@ -109,7 +109,7 @@ export const findFilesTool: ToolDefinition<{ pattern: string; path: string; maxR
     return { pattern: record.pattern.trim(), path, maxResults };
   },
   async execute(input, context) {
-    const root = resolveReadablePath(context.workspaceRoot, input.path);
+    const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const regex = globToRegExp(input.pattern);
     const matches: string[] = [];
     await walk(root, regex, matches, input.maxResults);
@@ -132,7 +132,7 @@ export const countFilesTool: ToolDefinition<{ path: string }> = {
     return { path };
   },
   async execute(input, context) {
-    const root = resolveReadablePath(context.workspaceRoot, input.path);
+    const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const counts = new Map<string, number>();
     let total = 0;
     await walkCount(root, (name) => {

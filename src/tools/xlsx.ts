@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve, isAbsolute } from 'node:path';
+import { pathScopeFor, resolveWorkspacePath } from '../safety/policy.js';
+import { dirname, join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import type { ToolDefinition } from './types.js';
 import { escapeXml } from './docx.js';
@@ -121,7 +122,11 @@ export const createXlsxTool: ToolDefinition<{
     }
     const workspaceRoot = context.workspaceRoot;
     const inputPath = input.path ?? 'data.xlsx';
-    const targetPath = isAbsolute(inputPath) ? resolve(inputPath) : join(workspaceRoot, inputPath);
+    // Same tier-aware resolution every other write tool uses. This previously
+    // resolved an absolute path with no check at all, so create_xlsx could write
+    // anywhere on the machine regardless of the approval mode — the one write
+    // tool that ignored the workspace boundary.
+    const targetPath = resolveWorkspacePath(workspaceRoot, inputPath, pathScopeFor(context.approval));
     const finalTarget = targetPath.toLowerCase().endsWith('.xlsx') ? targetPath : `${targetPath}.xlsx`;
     const checkpoint = await context.checkpoints?.beforeWrite(finalTarget);
     await mkdir(dirname(finalTarget), { recursive: true });

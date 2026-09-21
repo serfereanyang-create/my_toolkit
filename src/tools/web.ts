@@ -1,5 +1,5 @@
 import { writeFile } from 'node:fs/promises';
-import { resolveWorkspacePath } from '../safety/policy.js';
+import { pathScopeFor, resolveWorkspacePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 /**
@@ -254,7 +254,7 @@ export const downloadFileTool: ToolDefinition<{
       }
 
       const buffer = await readCappedBinary(response, input.maxBytes);
-      const targetPath = resolveWorkspacePath(context.workspaceRoot, input.to);
+      const targetPath = resolveWorkspacePath(context.workspaceRoot, input.to, pathScopeFor(context.approval));
       const checkpoint = await context.checkpoints?.beforeWrite(targetPath);
       
       await writeFile(targetPath, buffer);

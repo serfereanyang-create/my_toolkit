@@ -1,6 +1,6 @@
 import { readdir, stat } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
-import { resolveReadablePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 const IGNORED = new Set(['node_modules', '.git', 'dist', 'build', '.aicode']);
@@ -73,7 +73,7 @@ export const fileExtensionsInDirTool: ToolDefinition<{ path: string }> = {
   name: 'file_extensions_in_dir', description: 'List file extensions present under a directory with counts. Read-only.', inputHint: '{ "path": "src" }', risk: 'read',
   validate(input) { const record = asRecord(input); return { path: typeof record.path === 'string' && record.path.trim() ? record.path.trim() : '.' }; },
   async execute(input, context) {
-    const root = resolveReadablePath(context.workspaceRoot, input.path); const counts = new Map<string, number>();
+    const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)); const counts = new Map<string, number>();
     await walk(root, async (file) => { const ext = extname(file).toLowerCase() || '(none)'; counts.set(ext, (counts.get(ext) ?? 0) + 1); });
     return { ok: true, output: [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([ext, count]) => `${ext}: ${count}`).join('\n') || '(no files)', data: { byExtension: Object.fromEntries(counts) } };
   },
@@ -82,19 +82,19 @@ export const fileExtensionsInDirTool: ToolDefinition<{ path: string }> = {
 export const emptyDirsTool: ToolDefinition<{ path: string; maxResults: number }> = {
   name: 'empty_dirs', description: 'List empty directories under a path. Read-only.', inputHint: '{ "path": ".", "maxResults": 100 }', risk: 'read',
   validate(input) { const record = asRecord(input); return { path: typeof record.path === 'string' && record.path.trim() ? record.path.trim() : '.', maxResults: typeof record.maxResults === 'number' && record.maxResults > 0 ? Math.min(Math.floor(record.maxResults), 2000) : 100 }; },
-  async execute(input, context) { const root = resolveReadablePath(context.workspaceRoot, input.path); const out: string[] = []; await walkDirs(root, root, out, input.maxResults); return { ok: true, output: out.join('\n') || '(no empty dirs)', data: { count: out.length, dirs: out } }; },
+  async execute(input, context) { const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)); const out: string[] = []; await walkDirs(root, root, out, input.maxResults); return { ok: true, output: out.join('\n') || '(no empty dirs)', data: { count: out.length, dirs: out } }; },
 };
 
 export const siblingFilesTool: ToolDefinition<{ path: string }> = {
   name: 'sibling_files', description: 'List files that share the same directory as a given file. Read-only.', inputHint: '{ "path": "src/index.ts" }', risk: 'read',
   validate(input) { const record = asRecord(input); if (typeof record.path !== 'string' || !record.path.trim()) throw new Error('path is required'); return { path: record.path.trim() }; },
-  async execute(input, context) { const target = resolveReadablePath(context.workspaceRoot, input.path); const dir = dirname(target); const entries = await readdir(dir, { withFileTypes: true }); const siblings = entries.filter((entry) => entry.isFile()).map((entry) => entry.name); return { ok: true, output: siblings.join('\n') || '(no sibling files)', data: { count: siblings.length, siblings } }; },
+  async execute(input, context) { const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)); const dir = dirname(target); const entries = await readdir(dir, { withFileTypes: true }); const siblings = entries.filter((entry) => entry.isFile()).map((entry) => entry.name); return { ok: true, output: siblings.join('\n') || '(no sibling files)', data: { count: siblings.length, siblings } }; },
 };
 
 export const duplicateFilenamesTool: ToolDefinition<{ path: string; maxResults: number }> = {
   name: 'duplicate_filenames', description: 'Find files under a directory that share the same basename. Read-only.', inputHint: '{ "path": ".", "maxResults": 100 }', risk: 'read',
   validate(input) { const record = asRecord(input); return { path: typeof record.path === 'string' && record.path.trim() ? record.path.trim() : '.', maxResults: typeof record.maxResults === 'number' && record.maxResults > 0 ? Math.min(Math.floor(record.maxResults), 1000) : 100 }; },
-  async execute(input, context) { const root = resolveReadablePath(context.workspaceRoot, input.path); const byName = new Map<string, string[]>(); await walk(root, async (file) => { const key = basename(file); const list = byName.get(key) ?? []; list.push(relative(context.workspaceRoot, file).replace(/\\/g, '/')); byName.set(key, list); }); const duplicates = [...byName.entries()].filter(([, files]) => files.length > 1).slice(0, input.maxResults); return { ok: true, output: duplicates.length ? duplicates.map(([name, files]) => `${name}\n  ${files.join('\n  ')}`).join('\n') : '(no duplicates)', data: { count: duplicates.length } }; },
+  async execute(input, context) { const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)); const byName = new Map<string, string[]>(); await walk(root, async (file) => { const key = basename(file); const list = byName.get(key) ?? []; list.push(relative(context.workspaceRoot, file).replace(/\\/g, '/')); byName.set(key, list); }); const duplicates = [...byName.entries()].filter(([, files]) => files.length > 1).slice(0, input.maxResults); return { ok: true, output: duplicates.length ? duplicates.map(([name, files]) => `${name}\n  ${files.join('\n  ')}`).join('\n') : '(no duplicates)', data: { count: duplicates.length } }; },
 };
 
 export const pathCompareTool: ToolDefinition<{ left: string; right: string }> = {
@@ -118,19 +118,19 @@ export const pathParentTool: ToolDefinition<{ path: string }> = {
 export const hiddenFilesTool: ToolDefinition<{ path: string; maxResults: number }> = {
   name: 'hidden_files', description: 'List dot-prefixed hidden files under a directory. Read-only.', inputHint: '{ "path": ".", "maxResults": 200 }', risk: 'read',
   validate(input) { const record = asRecord(input); return { path: typeof record.path === 'string' && record.path.trim() ? record.path.trim() : '.', maxResults: typeof record.maxResults === 'number' && record.maxResults > 0 ? Math.min(Math.floor(record.maxResults), 2000) : 200 }; },
-  async execute(input, context) { const root = resolveReadablePath(context.workspaceRoot, input.path); const out: string[] = []; await walk(root, async (file) => { const name = basename(file); if (name.startsWith('.')) out.push(relative(context.workspaceRoot, file).replace(/\\/g, '/')); }); return { ok: true, output: out.slice(0, input.maxResults).join('\n') || '(no hidden files)', data: { count: Math.min(out.length, input.maxResults) } }; },
+  async execute(input, context) { const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)); const out: string[] = []; await walk(root, async (file) => { const name = basename(file); if (name.startsWith('.')) out.push(relative(context.workspaceRoot, file).replace(/\\/g, '/')); }); return { ok: true, output: out.slice(0, input.maxResults).join('\n') || '(no hidden files)', data: { count: Math.min(out.length, input.maxResults) } }; },
 };
 
 export const directoryDepthSummaryTool: ToolDefinition<{ path: string }> = {
   name: 'directory_depth_summary', description: 'Count files by relative depth under a directory. Read-only.', inputHint: '{ "path": "." }', risk: 'read',
   validate(input) { const record = asRecord(input); return { path: typeof record.path === 'string' && record.path.trim() ? record.path.trim() : '.' }; },
-  async execute(input, context) { const root = resolveReadablePath(context.workspaceRoot, input.path); const counts = new Map<number, number>(); await walk(root, async (file) => { const depth = relative(root, file).split(/[\\/]+/).filter(Boolean).length; counts.set(depth, (counts.get(depth) ?? 0) + 1); }); return { ok: true, output: [...counts.entries()].sort((a, b) => a[0] - b[0]).map(([depth, count]) => `${depth}: ${count}`).join('\n') || '(no files)', data: { byDepth: Object.fromEntries(counts) } }; },
+  async execute(input, context) { const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)); const counts = new Map<number, number>(); await walk(root, async (file) => { const depth = relative(root, file).split(/[\\/]+/).filter(Boolean).length; counts.set(depth, (counts.get(depth) ?? 0) + 1); }); return { ok: true, output: [...counts.entries()].sort((a, b) => a[0] - b[0]).map(([depth, count]) => `${depth}: ${count}`).join('\n') || '(no files)', data: { byDepth: Object.fromEntries(counts) } }; },
 };
 
 export const nearestAncestorWithTool: ToolDefinition<{ path: string; targetName: string }> = {
   name: 'nearest_ancestor_with', description: 'Walk up parent directories from a starting path and return the nearest ancestor containing a named file or directory. Read-only.', inputHint: '{ "path": "src/components/App.tsx", "targetName": "package.json" }', risk: 'read',
   validate(input) { const record = asRecord(input); if (typeof record.path !== 'string' || typeof record.targetName !== 'string' || !record.targetName.trim()) throw new Error('path and targetName are required'); return { path: record.path, targetName: record.targetName.trim() }; },
-  async execute(input, context) { let current = dirname(resolveReadablePath(context.workspaceRoot, input.path)); while (true) { const candidate = join(current, input.targetName); try { await stat(candidate); return { ok: true, output: candidate, data: { path: candidate } }; } catch {} const parent = dirname(current); if (parent === current) break; current = parent; } return { ok: false, output: `${input.targetName} not found in ancestors of ${input.path}` }; },
+  async execute(input, context) { let current = dirname(resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval))); while (true) { const candidate = join(current, input.targetName); try { await stat(candidate); return { ok: true, output: candidate, data: { path: candidate } }; } catch {} const parent = dirname(current); if (parent === current) break; current = parent; } return { ok: false, output: `${input.targetName} not found in ancestors of ${input.path}` }; },
 };
 
 async function walk(root: string, onFile: (file: string) => Promise<void>): Promise<void> {

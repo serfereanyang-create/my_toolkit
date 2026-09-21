@@ -1,6 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { resolveReadablePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 const IGNORED = new Set(['node_modules', '.git', 'dist', 'build', '.aicode']);
@@ -26,7 +26,7 @@ export const filename_searchTool: ToolDefinition<{ path: string; query: string; 
     };
   },
   async execute(input, context) {
-    const root = resolveReadablePath(context.workspaceRoot, input.path);
+    const root = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const out: string[] = [];
     const needle = input.caseSensitive ? input.query : input.query.toLowerCase();
     await walk(root, out, input.maxResults, (name) => {

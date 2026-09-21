@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, delimiter, join } from 'node:path';
 import { access, constants } from 'node:fs/promises';
-import { resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
 import { isSecretEnvKey } from '../safety/sandbox.js';
 import { lineDiff } from './lineDiff.js';
 import type { ToolDefinition } from './types.js';
@@ -41,7 +41,7 @@ export const readLinesTool: ToolDefinition<{ path: string; start: number; end: n
     return { path: record.path.trim(), start, end };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const raw = await readFile(target, 'utf8');
     const lines = raw.replace(/\r\n/g, '\n').split('\n');
     const from = Math.min(input.start, lines.length);
@@ -70,7 +70,7 @@ export const appendFileTool: ToolDefinition<{ path: string; content: string }> =
     return { path: record.path.trim(), content: record.content };
   },
   async execute(input, context) {
-    const target = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const checkpoint = await context.checkpoints?.beforeWrite(target);
     await mkdir(dirname(target), { recursive: true });
     const previous = await readFileOrEmpty(target);

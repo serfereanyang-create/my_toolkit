@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { resolveReadablePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 /*
@@ -62,7 +62,7 @@ export const hashTextTool: ToolDefinition<{ text?: string; path?: string; algori
   },
   async execute(input, context) {
     const buffer = input.path
-      ? await readFile(resolveReadablePath(context.workspaceRoot, input.path))
+      ? await readFile(resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)))
       : Buffer.from(input.text ?? '', 'utf8');
     const digest = createHash(input.algorithm).update(buffer).digest('hex');
     return { ok: true, output: digest, data: { algorithm: input.algorithm, bytes: buffer.length } };

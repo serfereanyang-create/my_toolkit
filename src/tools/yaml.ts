@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolveReadablePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 import { getByPath } from './dataFile.js';
 
@@ -252,7 +252,7 @@ export const yamlParseTool: ToolDefinition<{ yaml?: string; path?: string }> = {
     let source: string;
     
     if (input.path) {
-      const target = resolveReadablePath(context.workspaceRoot, input.path);
+      const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
       yamlText = await readFile(target, 'utf8');
       source = input.path;
     } else {
@@ -355,7 +355,7 @@ export const yamlQueryTool: ToolDefinition<{
     let source: string;
     
     if (input.path) {
-      const target = resolveReadablePath(context.workspaceRoot, input.path);
+      const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
       yamlText = await readFile(target, 'utf8');
       source = input.path;
     } else {
@@ -425,7 +425,7 @@ export const yamlKeysTool: ToolDefinition<{
     let source: string;
     
     if (input.path) {
-      const target = resolveReadablePath(context.workspaceRoot, input.path);
+      const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
       yamlText = await readFile(target, 'utf8');
       source = input.path;
     } else {

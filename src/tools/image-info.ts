@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
-import { resolveReadablePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 /**
@@ -159,7 +159,7 @@ export const imageInfoTool: ToolDefinition<{ path: string }> = {
     return { path: record.path.trim() };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const buffer = await readHeader(target);
     const info = parseImageInfo(buffer);
     if (!info) {
@@ -205,7 +205,7 @@ export const imageBatchInfoTool: ToolDefinition<{ paths: string[]; maxFiles: num
     const processed = input.paths.slice(0, input.maxFiles);
     for (const itemPath of processed) {
       try {
-        const target = resolveReadablePath(context.workspaceRoot, itemPath);
+        const target = resolveReadablePath(context.workspaceRoot, itemPath, pathScopeFor(context.approval));
         const buffer = await readHeader(target);
         results.push({ path: itemPath, info: parseImageInfo(buffer) });
       } catch (error) {
@@ -243,7 +243,7 @@ export const imageAspectRatioTool: ToolDefinition<{ path: string }> = {
     return { path: record.path.trim() };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const buffer = await readHeader(target);
     const info = parseImageInfo(buffer);
     if (!info || info.width === 0 || info.height === 0) {
@@ -295,7 +295,7 @@ export const imageDominantColorsTool: ToolDefinition<{ path: string; maxColors: 
     return { path: record.path.trim(), maxColors };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const image = await decodeImage(target, 192);
     const buckets = new Map<string, { count: number; r: number; g: number; b: number }>();
 
@@ -354,7 +354,7 @@ export const imageTransparencyTool: ToolDefinition<{ path: string }> = {
     return { path: record.path.trim() };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const image = await decodeImage(target, 256);
     let transparent = 0;
     let semiTransparent = 0;
@@ -399,7 +399,7 @@ export const imageContentBoundsTool: ToolDefinition<{ path: string; background?:
     return { path: record.path.trim(), background, threshold };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const image = await decodeImage(target, 256);
 
     const sample = (pixelIndex: number) => ({

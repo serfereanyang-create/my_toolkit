@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolveReadablePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 /**
@@ -29,7 +29,7 @@ export const readJsonTool: ToolDefinition<{ path: string; query?: string; maxByt
     return { path: record.path.trim(), query, maxBytes };
   },
   async execute(input, context) {
-    const target = resolveReadablePath(context.workspaceRoot, input.path);
+    const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const raw = await readFile(target, 'utf8');
     if (raw.length > input.maxBytes) {
       return { ok: false, output: `JSON file too large (${raw.length} bytes > ${input.maxBytes}). Raise maxBytes to read it.`, data: { path: target, bytes: raw.length } };
@@ -136,7 +136,7 @@ export const jsonKeysTool: ToolDefinition<{
     let parsed: unknown;
     
     if (input.path) {
-      const target = resolveReadablePath(context.workspaceRoot, input.path);
+      const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
       const raw = await readFile(target, 'utf8');
       try {
         parsed = JSON.parse(raw);
@@ -203,7 +203,7 @@ export const jsonTypeSummaryTool: ToolDefinition<{
     let parsed: unknown;
     
     if (input.path) {
-      const target = resolveReadablePath(context.workspaceRoot, input.path);
+      const target = resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
       const raw = await readFile(target, 'utf8');
       try {
         parsed = JSON.parse(raw);
@@ -282,7 +282,7 @@ export const jsonMergeTool: ToolDefinition<{
       let parsed: unknown;
       
       if (source.path) {
-        const target = resolveReadablePath(context.workspaceRoot, source.path);
+        const target = resolveReadablePath(context.workspaceRoot, source.path, pathScopeFor(context.approval));
         const raw = await readFile(target, 'utf8');
         try {
           parsed = JSON.parse(raw);

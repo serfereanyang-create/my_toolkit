@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolveReadablePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 function parseAttributes(raw: string) {
@@ -45,7 +45,7 @@ export const xmlToTextTool: ToolDefinition<{ xml?: string; path?: string; maxByt
   },
   async execute(input, context) {
     const xml = input.path
-      ? (await readFile(resolveReadablePath(context.workspaceRoot, input.path), 'utf8')).slice(0, input.maxBytes)
+      ? (await readFile(resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)), 'utf8')).slice(0, input.maxBytes)
       : input.xml!.slice(0, input.maxBytes);
     const text = xmlToText(xml);
     return {
@@ -72,7 +72,7 @@ export const xmlSummaryTool: ToolDefinition<{ xml?: string; path?: string; maxBy
   },
   async execute(input, context) {
     const xml = input.path
-      ? (await readFile(resolveReadablePath(context.workspaceRoot, input.path), 'utf8')).slice(0, input.maxBytes)
+      ? (await readFile(resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)), 'utf8')).slice(0, input.maxBytes)
       : input.xml!.slice(0, input.maxBytes);
     const cleaned = stripXmlComments(xml);
     const tagNames: string[] = [];
@@ -120,7 +120,7 @@ export const xmlQueryTool: ToolDefinition<{ xml?: string; path?: string; tag: st
   },
   async execute(input, context) {
     const xml = input.path
-      ? (await readFile(resolveReadablePath(context.workspaceRoot, input.path), 'utf8')).slice(0, input.maxBytes)
+      ? (await readFile(resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)), 'utf8')).slice(0, input.maxBytes)
       : input.xml!.slice(0, input.maxBytes);
     const escapedTag = input.tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const pattern = new RegExp(`<${escapedTag}([^>]*)>([\\s\\S]*?)<\\/${escapedTag}>`, 'g');

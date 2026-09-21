@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolveReadablePath } from '../safety/policy.js';
+import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 
 export function rtfToText(rtf: string) {
@@ -31,7 +31,7 @@ export const rtfToTextTool: ToolDefinition<{ path?: string; rtf?: string; maxByt
   },
   async execute(input, context) {
     const rtf = input.path
-      ? (await readFile(resolveReadablePath(context.workspaceRoot, input.path), 'utf8')).slice(0, input.maxBytes)
+      ? (await readFile(resolveReadablePath(context.workspaceRoot, input.path, pathScopeFor(context.approval)), 'utf8')).slice(0, input.maxBytes)
       : input.rtf!.slice(0, input.maxBytes);
     const text = rtfToText(rtf);
     return {

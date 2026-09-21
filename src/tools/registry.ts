@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { decideApproval, resolveWorkspacePath } from '../safety/policy.js';
+import { decideApproval, pathScopeFor, resolveWorkspacePath } from '../safety/policy.js';
 import { formatApprovalOutcome, formatApprovalPrompt } from '../i18n/messages.js';
 import { toolToProviderSpec, type ToolContext, type ToolDefinition, type ToolResult } from './types.js';
 
@@ -197,7 +197,7 @@ function simpleDiff(before: string[], after: string[]) {
 async function diffPreview(name: string, input: Record<string, unknown>, context: ToolContext) {
   if (name !== 'write_file' || typeof input.path !== 'string' || typeof input.content !== 'string') return '';
   try {
-    const target = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const before = await readFile(target, 'utf8').catch(() => '');
     const beforeLines = before.split(/\r?\n/);
     const afterLines = input.content.split(/\r?\n/);
@@ -220,7 +220,7 @@ async function buildWriteDiff(
 ): Promise<import('./types.js').ApprovalRequest['diff']> {
   if (typeof input.path !== 'string' || !input.path) return undefined;
   try {
-    const target = resolveWorkspacePath(context.workspaceRoot, input.path);
+    const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const originalContent = await readFile(target, 'utf8').catch(() => '');
     let modifiedContent: string | undefined;
 
