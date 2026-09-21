@@ -142,6 +142,15 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
 
   const rl = createInterface({ input: options.input ?? process.stdin, crlfDelay: Infinity });
   let busy = false;
+  /**
+   * Messages that arrived while a turn was running, in submission order.
+   *
+   * The desktop queues on its side too, so this catches the race between the
+   * status flip and the send. Dropping them (the old behaviour) lost whatever
+   * the user had typed.
+   */
+  const pendingMessages: Array<Extract<BridgeCommand, { type: 'user_message' }>> = [];
+  let shuttingDown = false;
   // The in-flight turn runs detached from the read loop so that
   // `approval_response` lines can still be read and delivered to the broker
   // while a turn is awaiting an interactive approval. Awaiting the turn inside
@@ -281,20 +290,61 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
       }
       if (command.type === 'user_message') {
         if (busy) {
-          emitEvent({ type: 'error', sessionId: runtime.session.id, message: 'Agent turn already running' });
+          // Queue it rather than dropping it. The desktop already queues while a
+          // turn runs, so this is the race case: the status flip and the send
+          // are separate messages, and a message that arrives in the gap used to
+          // be rejected outright with "Agent turn already running" — losing
+          // whatever the user typed.
+          pendingMessages.push(command);
+          emitEvent({
+            type: 'info',
+            sessionId: runtime.session.id,
+            message: `当前回合进行中，已排队第 ${pendingMessages.length} 条消息。`,
+          });
           continue;
         }
         // A fresh turn clears any cancel left over from a previous one.
         cancelRequested = false;
         busy = true;
         const filePaths = (command.files ?? []).map((file) => file.path).filter((value): value is string => Boolean(value && value.trim()));
-        activeTurn = handleUserMessage(command, runtime, filePaths, emitEvent).finally(() => { busy = false; });
+        activeTurn = handleUserMessage(command, runtime, filePaths, emitEvent).finally(() => {
+          busy = false;
+          // Drain one queued message per finished turn, so each runs to
+          // completion before the next starts and the transcript stays ordered.
+          void drainPending();
+        });
+      }
+    }
+
+    /**
+     * Send the next queued message, if any.
+     *
+     * Deliberately one at a time: sending the whole queue at once would be
+     * rejected by the same busy guard, and interleaving them would scramble the
+     * order the user submitted them in.
+     */
+    async function drainPending(): Promise<void> {
+      if (busy || shuttingDown) return;
+      const next = pendingMessages.shift();
+      if (!next) return;
+      cancelRequested = false;
+      busy = true;
+      const filePaths = (next.files ?? []).map((file) => file.path).filter((value): value is string => Boolean(value && value.trim()));
+      try {
+        await handleUserMessage(next, runtime, filePaths, emitEvent);
+      } catch (error) {
+        emitEvent({ type: 'error', sessionId: runtime.session.id, message: errorMessage(error) });
+      } finally {
+        busy = false;
+        void drainPending();
       }
     }
     // The read loop ended (EOF or `shutdown`). Deny any approvals still pending
     // BEFORE awaiting the turn — otherwise a turn blocked on an approval that
     // can never be answered would keep `await activeTurn` (and this process)
     // alive forever.
+    shuttingDown = true;
+    pendingMessages.length = 0;
     cancelRequested = true;
     broker.denyAll('桥接正在关闭');
     // Let any in-flight turn settle before tearing down stdin on EOF/shutdown.
