@@ -1,7 +1,7 @@
 import { Plus, ShieldCheck, ArrowUp, Square, Gauge, Terminal, AtSign, FileEdit } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import type { AppState, ReasoningEffort, ToolScope } from '../types';
+import type { AppState, QueuedMessage, ReasoningEffort, ToolScope } from '../types';
 import { PluginMenu, type PluginItem } from './PluginMenu';
 import { ModelMenu } from './ModelMenu';
 import { ThinkingMenu, effortLabel } from './ThinkingMenu';
@@ -10,6 +10,7 @@ import { ApprovalMenu, approvalMenuLabel } from './ApprovalMenu';
 import { ContextStatsMenu } from './ContextStatsMenu';
 import { FileAttachmentList } from './FileAttachmentCard';
 import { SlashCommandMenu } from './SlashCommandMenu';
+import { MessageQueue } from './MessageQueue';
 import { MentionPicker, type MentionItem } from './MentionPicker';
 import { categorizeFile, getMediaType, getCategoryIcon, generateSmartPrompt, validateFile, MAX_FILE_COUNT, type DetectedFile } from '../lib/fileDetection';
 import { sessionChangeTotals } from '../lib/state';
@@ -20,7 +21,7 @@ import { contextBudget, estimateTokens, tokenBreakdown } from '../lib/tokenEstim
 // approvalLabel is imported from ApprovalMenu and used via approvalMenuLabel below.
 // No local duplicate needed.
 
-export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, onPickPlugin, onPickModel, onPickEffort, onPickToolScope, onManageModels, terminalOutput }: {
+export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, onPickPlugin, onPickModel, onPickEffort, onPickToolScope, onManageModels, terminalOutput, queue, onQueueSendNow, onQueueEdit, onQueueRemove }: {
   state: AppState;
   prefill?: { text: string; nonce: number } | null;
   onSubmit: (text: string, files?: DetectedFile[], mentions?: MentionItem[]) => void;
@@ -32,6 +33,11 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   onPickToolScope: (toolScope: ToolScope) => void;
   onManageModels: () => void;
   terminalOutput?: string;
+  /** Messages submitted while the agent was busy, oldest first. */
+  queue?: QueuedMessage[];
+  onQueueSendNow?: (id: string) => void;
+  onQueueEdit?: (id: string, text: string) => void;
+  onQueueRemove?: (id: string) => void;
 }) {
   const [text, setText] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<DetectedFile[]>([]);
@@ -302,6 +308,12 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   return (
     <div className="composer-wrap">
       <div className="composer-stack">
+        <MessageQueue
+          items={queue ?? []}
+          onSendNow={onQueueSendNow ?? (() => {})}
+          onEdit={onQueueEdit ?? (() => {})}
+          onRemove={onQueueRemove ?? (() => {})}
+        />
         {menuOpen && (
           <PluginMenu prefs={prefs} onClose={() => setMenuOpen(false)}
             onPick={(plugin) => { setMenuOpen(false); onPickPlugin(plugin); }} />

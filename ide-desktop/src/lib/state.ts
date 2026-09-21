@@ -1,4 +1,4 @@
-import type { AgentEvent, AppState, ChatItem, ContextStats, DesktopSettings, PendingDiff, PreviewTab, SupervisorSnapshot, ToolChatItem, TreeNode, TurnFileChange, WorkLogEntry, TaskBoard } from '../types';
+import type { AgentEvent, AppState, ChatItem, ContextStats, DesktopSettings, PendingDiff, PreviewTab, QueuedMessage, SupervisorSnapshot, ToolChatItem, TreeNode, TurnFileChange, WorkLogEntry, TaskBoard } from '../types';
 
 export type AppAction =
   | { type: 'settings/loaded'; settings: DesktopSettings }
@@ -11,6 +11,12 @@ export type AppAction =
   | { type: 'agent/status'; status: AppState['agentStatus'] }
   | { type: 'agent/event'; event: AgentEvent }
   | { type: 'approval/decided'; requestId: string; decision: 'allow_once' | 'allow_session' | 'deny' }
+  // Message queue: submissions made while the agent was busy.
+  | { type: 'queue/add'; message: QueuedMessage }
+  | { type: 'queue/remove'; id: string }
+  | { type: 'queue/update'; id: string; text: string }
+  | { type: 'queue/promote'; id: string }
+  | { type: 'queue/clear'; sessionId?: string }
   | { type: 'turn/undo-state'; turnId: string; undo: 'idle' | 'undoing' | 'undone' | 'failed' }
   | { type: 'bottom/toggle' }
   | { type: 'task/set'; title: string }
@@ -65,6 +71,7 @@ export const initialState: AppState = {
   supervisor: null,
   runningSessions: [],
   sessionApprovals: {},
+  messageQueue: [],
 };
 
 export function appReducer(state: AppState, action: AppAction): AppState {
@@ -120,6 +127,42 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         pendingDiffs: state.pendingDiffs.map((diff) => diff.id === action.requestId
           ? { ...diff, status: action.decision === 'deny' ? 'rejected' : 'accepted' }
           : diff),
+      };
+    case 'queue/add':
+      return { ...state, messageQueue: [...state.messageQueue, action.message] };
+    case 'queue/remove':
+      return { ...state, messageQueue: state.messageQueue.filter((item) => item.id !== action.id) };
+    case 'queue/update':
+      return {
+        ...state,
+        messageQueue: state.messageQueue.map((item) => item.id === action.id ? { ...item, text: action.text } : item),
+      };
+    case 'queue/promote': {
+      // Move one entry to the front of its own session's queue. Other sessions'
+      // entries keep their order — their sequencing is unrelated.
+      const target = state.messageQueue.find((item) => item.id === action.id);
+      if (!target) return state;
+      const withoutTarget = state.messageQueue.filter((item) => item.id !== action.id);
+      const firstPeer = withoutTarget.findIndex((item) => item.sessionId === target.sessionId);
+      // No peers left in this session: it is already the only entry.
+      if (firstPeer === -1) return state;
+      return {
+        ...state,
+        messageQueue: [
+          ...withoutTarget.slice(0, firstPeer),
+          target,
+          ...withoutTarget.slice(firstPeer),
+        ],
+      };
+    }
+    case 'queue/clear':
+      // No sessionId clears everything (used when a workspace changes); with one,
+      // only that conversation's entries — the others may still be waiting.
+      return {
+        ...state,
+        messageQueue: action.sessionId
+          ? state.messageQueue.filter((item) => item.sessionId !== action.sessionId)
+          : [],
       };
     case 'bottom/toggle':
       return { ...state, bottomOpen: !state.bottomOpen };

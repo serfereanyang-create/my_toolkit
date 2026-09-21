@@ -3421,6 +3421,20 @@ h1 {
   max-width: 768px;
 }
 
+/* ── Queued messages (submitted while the agent was busy) ────────────────── */
+.msg-queue { display:flex; flex-direction:column; gap:4px; margin-bottom:6px; }
+.msg-queue-item { display:flex; align-items:center; gap:8px; padding:7px 10px; border:1px solid var(--border-subtle); border-radius:var(--r-md); background:var(--bg-side); color:var(--fg); font-size:12px; }
+.msg-queue-item:hover { background:var(--bg-elevated); }
+.msg-queue-grip { flex:none; color:var(--fg-dim); }
+.msg-queue-text { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.msg-queue-input { flex:1; min-width:0; padding:2px 6px; border:1px solid var(--accent); border-radius:var(--r-sm); background:var(--bg-app); color:var(--fg); font:inherit; }
+.msg-queue-actions { display:flex; align-items:center; gap:2px; flex:none; }
+.msg-queue-btn { display:inline-flex; align-items:center; gap:3px; padding:3px 6px; border:0; border-radius:var(--r-sm); background:transparent; color:var(--fg-dim); cursor:pointer; font-size:11px; }
+.msg-queue-btn:hover { background:var(--bg-hover); color:var(--fg); }
+.msg-queue-now { border:1px solid color-mix(in srgb,var(--accent) 34%,var(--border)); color:var(--accent); }
+.msg-queue-now:hover { background:color-mix(in srgb,var(--accent) 14%,var(--bg-elevated)); color:var(--accent); }
+.msg-queue-index { flex:none; min-width:14px; color:var(--fg-dim); font:11px var(--font-mono); text-align:right; }
+
 .plugin-menu {
   position: absolute;
   left: 0;

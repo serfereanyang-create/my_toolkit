@@ -211,6 +211,14 @@ export default function App() {
       // are silent by design. Never throws.
       const cue = cueForEvent(event as { type?: unknown; autoDecision?: unknown });
       if (cue) playCue(cue, soundVolume(stateRef.current.settings?.preferences));
+      // A finished turn is when the next queued message may go out. Keyed by the
+      // event's session so a background conversation drains its own queue rather
+      // than the one on screen.
+      if (event.type === 'turn_done') {
+        void drainQueue(typeof event.sessionId === 'string' && event.sessionId
+          ? event.sessionId
+          : stateRef.current.activeSessionId);
+      }
       if (event.type === 'turn_done' && pendingRestartRef.current && !switchingSessionRef.current) {
         // Model was switched mid-turn; now that files are no longer being
         // written, it's safe to swap the bridge to the new provider/model.
@@ -844,6 +852,26 @@ export default function App() {
       return;
     }
 
+    // While a turn is in flight the CLI rejects a second prompt outright
+    // ("Agent turn already running"), which used to lose whatever the user had
+    // typed. Queue it instead and send it when the turn ends — submissions then
+    // run in the order they were made.
+    const sessionId = stateRef.current.activeSessionId;
+    const busy = stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting';
+    if (busy) {
+      dispatch({
+        type: 'queue/add',
+        message: {
+          id: `queued-${crypto.randomUUID()}`,
+          sessionId: sessionId ?? '',
+          text: expandedText,
+          files: files?.map((file) => ({ path: file.path, name: file.name, size: file.size })),
+          createdAt: Date.now(),
+        },
+      });
+      return;
+    }
+
     // Show the user's message immediately so it never silently disappears,
     // even if starting the agent or sending the prompt fails below.
     dispatch({ type: 'chat/user', text: expandedText });
@@ -862,6 +890,29 @@ export default function App() {
       const message = error instanceof Error ? error.message : String(error);
       dispatch({ type: 'agent/event', event: { type: 'error', message: `无法启动对话：${cleanIpcError(message)}` } });
       dispatch({ type: 'agent/status', status: 'offline' });
+    }
+  }
+
+  /**
+   * Send the next queued message for a session, if any.
+   *
+   * Called when a turn ends. Only one message is sent per turn — the queue is a
+   * line, not a batch, so each message's turn runs to completion before the next
+   * starts and the transcript stays readable.
+   */
+  async function drainQueue(sessionId: string | null) {
+    if (!sessionId) return;
+    const next = stateRef.current.messageQueue.find((item) => item.sessionId === sessionId);
+    if (!next) return;
+    // Drop it before sending: a failure below must not leave it queued forever.
+    dispatch({ type: 'queue/remove', id: next.id });
+    dispatch({ type: 'chat/user', text: next.text });
+    try {
+      const toolScope = (stateRef.current.settings?.preferences?.toolScope as ToolScope | undefined) ?? 'auto';
+      await desktop.agent.prompt(next.text, next.files, toolScope, sessionId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      dispatch({ type: 'agent/event', event: { type: 'error', message: `队列消息发送失败：${cleanIpcError(message)}` } });
     }
   }
 
@@ -1398,6 +1449,16 @@ export default function App() {
             prefill={prefill}
             onSubmit={submitPrompt}
             onCancel={cancelTurn}
+            queue={state.messageQueue.filter((item) => item.sessionId === (state.activeSessionId ?? ''))}
+            onQueueSendNow={(id) => {
+              // Jump the line: move it to the front of its session's queue. It
+              // still waits for the running turn — "立即" means "next", not
+              // "interrupt", because cancelling the current turn is a different
+              // decision the user has not made.
+              dispatch({ type: 'queue/promote', id });
+            }}
+            onQueueEdit={(id, text) => dispatch({ type: 'queue/update', id, text })}
+            onQueueRemove={(id) => dispatch({ type: 'queue/remove', id })}
             onPickApproval={async (mode) => {
               if (!state.settings) return;
               await saveSettings({ ...state.settings, approval: mode });

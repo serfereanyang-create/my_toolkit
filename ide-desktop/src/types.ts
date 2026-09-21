@@ -336,6 +336,25 @@ export type SupervisorSnapshot = {
   longestRunningMs?: number;
 };
 
+/**
+ * A message the user submitted while the agent was busy.
+ *
+ * Held instead of rejected: a running turn used to make a new submission fail
+ * outright ("Agent turn already running"), which lost whatever the user typed.
+ * Queueing keeps their place in line and sends it when the turn ends.
+ *
+ * `files` mirrors `AttachedFile` structurally rather than importing it —
+ * lib/ipc.ts reads `window.zcodeDesktop` at module scope, so types.ts must not
+ * depend on it.
+ */
+export type QueuedMessage = {
+  id: string;
+  sessionId: string;
+  text: string;
+  files?: Array<{ path: string; name: string; size: number }>;
+  createdAt: number;
+};
+
 export type WorkLogEntry = {
   id: string;
   ts: number;
@@ -393,6 +412,11 @@ export type AppState = {
    * with no explanation.
    */
   sessionApprovals: Record<string, number>;
+  /**
+   * Messages waiting for their turn to be sent, in submission order. Each entry
+   * names the session it belongs to, so a queue survives switching conversations.
+   */
+  messageQueue: QueuedMessage[];
 };
 
 // ─── Pending diff types ───────────────────────────────────────────────────────
