@@ -277,7 +277,10 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     // The approval mode is baked into the CLI child at spawn time; switching
     // it mid-session must invalidate the live bridge so the next prompt
     // re-starts with the new mode (otherwise "变更前确认" silently stays auto).
-    if (previous.approval !== merged.approval) {
+    // Auto-review travels the same way (--auto-review), so it needs the same
+    // treatment or the toggle would silently do nothing until an app restart.
+    if (previous.approval !== merged.approval
+      || previous.preferences?.autoReview !== merged.preferences?.autoReview) {
       try { agentManager.invalidate(); } catch { /* no live bridge */ }
     }
     try {
@@ -329,18 +332,23 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     const all = await usageCall('recordsAsync', 'records', h, 0, 100000);
     return { csv: usageToCsv(all.records ?? [], { bom: true }), count: all.records?.length ?? 0 };
   });
+  // Every agent call carries the session it targets. With one CLI child per
+  // session, an un-addressed call would reach whichever bridge happened to be
+  // the only one — correct by luck in a single-conversation app, wrong the
+  // moment a second conversation is running.
   ipcMain.handle('agent.start', async (_event, resumeSessionId) => await agentManager.start(resumeSessionId));
-  ipcMain.handle('agent.prompt', async (_event, text, files, toolScope) => agentManager.prompt(text, files, toolScope));
-  ipcMain.handle('agent.taskBoardAction', async (_event, action, taskId) => agentManager.taskBoardAction(action, taskId));
-  ipcMain.handle('agent.setEffort', async (_event, reasoningEffort) => agentManager.setEffort(reasoningEffort));
-  ipcMain.handle('agent.setToolScope', async (_event, toolScope) => agentManager.setToolScope(toolScope));
-  ipcMain.handle('agent.cancel', async () => agentManager.cancel());
+  ipcMain.handle('agent.prompt', async (_event, text, files, toolScope, sessionId) => agentManager.prompt(text, files, toolScope, sessionId));
+  ipcMain.handle('agent.taskBoardAction', async (_event, action, taskId, sessionId) => agentManager.taskBoardAction(action, taskId, sessionId));
+  ipcMain.handle('agent.setEffort', async (_event, reasoningEffort, sessionId) => agentManager.setEffort(reasoningEffort, sessionId));
+  ipcMain.handle('agent.setToolScope', async (_event, toolScope, sessionId) => agentManager.setToolScope(toolScope, sessionId));
+  ipcMain.handle('agent.cancel', async (_event, sessionId) => agentManager.cancel(sessionId));
   ipcMain.handle('agent.restart', async (_event, resumeSessionId) => await agentManager.restart(resumeSessionId));
-  ipcMain.handle('agent.approve', async (_event, requestId, decision) => agentManager.approve(requestId, decision));
+  ipcMain.handle('agent.stopSession', async (_event, sessionId) => await agentManager.stopSession(sessionId));
+  ipcMain.handle('agent.approve', async (_event, requestId, decision, sessionId) => agentManager.approve(requestId, decision, sessionId));
   // preload sends: ipcRenderer.invoke('agent.undo', checkpointIds, undoId).
   // undoId lets the renderer match the CLI's authoritative undo_done event
   // back to the turn card that requested the revert.
-  ipcMain.handle('agent.undo', async (_event, checkpointIds, undoId) => agentManager.undo(Array.isArray(checkpointIds) ? checkpointIds : [], undoId));
+  ipcMain.handle('agent.undo', async (_event, checkpointIds, undoId, sessionId) => agentManager.undo(Array.isArray(checkpointIds) ? checkpointIds : [], undoId, sessionId));
 
   // ── Side chat: independent bridge/session, write-denied assistant ─────────
   ipcMain.handle('sidechat.prompt', async (_event, text) => agentManager.sideChatPrompt(text));

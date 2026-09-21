@@ -284,6 +284,10 @@ html[data-reduce-motion='on'] .reflection-panel-spin { animation: none; }
 .sup-empty strong { color: var(--fg-muted); font-size: 12px; }
 .sup-empty span { font-size: 11px; }
 
+/* ── Background conversations (TopBar) ──────────────────────────────────── */
+.main-topbar-background { display:inline-flex; align-items:center; gap:5px; padding:4px 9px; border:1px solid color-mix(in srgb,var(--accent) 34%,var(--border)); border-radius:99px; background:color-mix(in srgb,var(--accent) 10%,var(--bg-elevated)); color:var(--accent); cursor:pointer; font-size:11px; }
+.main-topbar-background:hover { background:color-mix(in srgb,var(--accent) 18%,var(--bg-elevated)); }
+
 /* ── Git graph ──────────────────────────────────────────────────────────── */
 .git-graph { display: flex; flex-direction: column; gap: 6px; }
 .git-graph-head { display: flex; align-items: center; gap: 8px; color: var(--fg-dim); font-size: 11px; }

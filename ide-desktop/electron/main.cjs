@@ -10,6 +10,7 @@ if (process.platform === 'win32') app.setAppUserModelId('com.yoycode.desktop');
 // File/Edit/View/Window/Help application menu.
 Menu.setApplicationMenu(null);
 const { createWorkspaceService } = require('./workspace.cjs');
+const { BridgeRegistry } = require('./bridge-registry.cjs');
 const { createSettingsStore } = require('./settings-store.cjs');
 const { createSecretStore } = require('./secret-store.cjs');
 const { createSnippetsStore } = require('./snippets-store.cjs');
@@ -110,7 +111,16 @@ async function notifyKeyState(event, window, settingsStore) {
 }
 
 function createAgentManager({ mainWindow, workspace, settings, secrets, subagentRuns }) {
-  let bridge;
+  /**
+   * One CLI child per session, not one for the whole app.
+   *
+   * This used to be a single `bridge`, and `startNow` disposed it before
+   * spawning the next — so opening another conversation killed the running
+   * task, and the UI had to warn about it. A second bridge was already proven
+   * to work (see `sideBridge` below), so the constraint was this variable, not
+   * the process layer.
+   */
+  const registry = new BridgeRegistry();
   let lifecycleQueue = Promise.resolve();
 
   function enqueueLifecycle(task) {
@@ -135,18 +145,43 @@ function createAgentManager({ mainWindow, workspace, settings, secrets, subagent
       const id = String(event.sessionId);
       sessionOfBridge.set(bridgeInstance, id);
       liveSessions.add(id);
+      // Adopt the bridge under its real session id. `startNow` could not know
+      // it before the child announced it (a resumed session keeps its id, a
+      // fresh one gets a new id).
+      registry.adopt(bridgeInstance, id);
     } else if (event.type === 'agent_offline') {
       const id = sessionOfBridge.get(bridgeInstance);
-      if (id) liveSessions.delete(id);
+      if (id) {
+        liveSessions.delete(id);
+        registry.removeBridge(bridgeInstance);
+      }
     }
   }
 
+  /**
+   * The bridge for a session, or the sole running one when no id is given.
+   *
+   * A caller that names no session gets the only live bridge — that is the
+   * pre-existing single-session behaviour, kept so an un-updated caller keeps
+   * working instead of silently addressing the wrong conversation.
+   */
+  function bridgeFor(sessionId) {
+    return registry.get(sessionId);
+  }
+
   async function startNow(resumeSessionId) {
+    // Reuse the live bridge when this session already has one. Restarting it
+    // would kill a turn that is still running — the exact behaviour that made
+    // switching conversations destructive.
+    if (resumeSessionId) {
+      const existing = registry.get(resumeSessionId);
+      if (existing && existing.child) return { ok: true, reused: true };
+    }
+
     const config = await settings.get();
     const providerConfig = config.providers.find((item) => item.id === config.activeProviderId) || config.providers[0];
     const apiKey = providerConfig.type === 'mock' ? '' : await secrets.getApiKey(providerConfig.id);
     if (providerConfig.type !== 'mock' && !apiKey) throw new Error(`API key is missing for ${providerConfig.label}`);
-    if (bridge) await bridge.dispose();
     // The CLI only knows mock/openai/anthropic wire formats. A custom provider
     // declares which one via apiFormat. Base URL is forced to the official
     // OpenAI endpoint only for the built-in openai provider when empty (never
@@ -159,7 +194,7 @@ function createAgentManager({ mainWindow, workspace, settings, secrets, subagent
     // Reasoning effort tier persists in preferences; default 'off' (no thinking).
     const reasoningEffort = normalizeEffort(config.preferences && config.preferences.reasoningEffort);
     const toolScope = normalizeToolScope(config.preferences && config.preferences.toolScope);
-    const capturedBridge = bridge = new AgentBridge({
+    const capturedBridge = new AgentBridge({
       cliRoot: path.resolve(__dirname, '..', '..', 'cli'),
       workspaceRoot: workspace.getRoot(),
       sessionDir: path.join(workspace.getRoot(), '.aicode', 'sessions'),
@@ -176,12 +211,21 @@ function createAgentManager({ mainWindow, workspace, settings, secrets, subagent
       toolScope,
       contextWindowTokens: contextWindowForModel(providerConfig),
       confirmPlan: config.preferences?.taskExecutionMode === 'auto',
+      autoReview: config.preferences?.autoReview === true,
       resumeSessionId: resumeSessionId || undefined,
     });
+    registry.addPending(capturedBridge);
     const forward = (event) => {
+      // Stamp every event with the session it came from. The CLI's streaming
+      // events (turn_start, tool_start, assistant_delta) carry no session id of
+      // their own, and with several bridges on one channel the renderer cannot
+      // otherwise tell whose turn a step belongs to.
+      const stamped = sessionOfBridge.get(capturedBridge)
+        ? { ...event, sessionId: event.sessionId ?? sessionOfBridge.get(capturedBridge) }
+        : event;
       // The window may be closing while the child is still draining events.
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent.event', event);
-      notifyKeyState(event, mainWindow, settings);
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent.event', stamped);
+      notifyKeyState(stamped, mainWindow, settings);
       if (event.type === 'automation_done') {
         // Bug-12 fix: use the dedicated automationBus instead of mainWindow.emit()
         // so the handler in automation.cjs survives window recreation.
@@ -204,13 +248,19 @@ function createAgentManager({ mainWindow, workspace, settings, secrets, subagent
         ).catch(() => undefined);
       }
       // Track which sessions have a live bridge, so a run whose bridge died
-      // mid-flight is not reported as still running.
+      // mid-flight is not reported as still running. Must run before forward()
+      // so the stamped session id is available.
       trackSessionLifecycle(capturedBridge, event);
       forward(event);
     });
     // Do not report startup complete until the CLI has emitted bridge_ready;
     // otherwise the first prompt can race the child process initialization.
     await capturedBridge.start();
+    // If bridge_ready never arrived the bridge is not adopted; keep it out of
+    // the registry so a later start() does not reuse a dead child.
+    if (resumeSessionId && registry.get(resumeSessionId) === undefined) {
+      registry.adopt(capturedBridge, resumeSessionId);
+    }
     return { ok: true };
   }
 
@@ -256,23 +306,33 @@ function createAgentManager({ mainWindow, workspace, settings, secrets, subagent
     liveSessions() {
       return [...liveSessions];
     },
-    async taskBoardAction(action, taskId) {
-      if (!bridge) throw new Error('Agent is not started');
-      await bridge.taskBoardAction(action, taskId);
+    async taskBoardAction(action, taskId, sessionId) {
+      const target = bridgeFor(sessionId);
+      if (!target) throw new Error('Agent is not started');
+      await target.taskBoardAction(action, taskId);
       return { ok: true };
     },
-    async prompt(text, files, toolScope) {
+    async prompt(text, files, toolScope, sessionId) {
       // Recover from a bridge that failed during startup or exited before the
       // renderer sent its first prompt. The old synchronous throw forced the
       // user to resend the message manually.
-      if (!bridge || !bridge.child) await start();
-      if (!bridge || !bridge.child) throw new Error('Agent bridge failed to start');
-      await bridge.prompt(text, files, toolScope);
+      let target = bridgeFor(sessionId);
+      if (!target || !target.child) {
+        await start(sessionId);
+        target = bridgeFor(sessionId);
+      }
+      if (!target || !target.child) throw new Error('Agent bridge failed to start');
+      await target.prompt(text, files, toolScope);
       return { ok: true };
     },
-    async automationTask(taskId, goal) {
-      if (!bridge) await start();
-      await bridge.automationTask(taskId, goal);
+    async automationTask(taskId, goal, sessionId) {
+      let target = bridgeFor(sessionId);
+      if (!target) {
+        await start(sessionId);
+        target = bridgeFor(sessionId);
+      }
+      if (!target) throw new Error('Agent bridge failed to start');
+      await target.automationTask(taskId, goal);
       return { ok: true };
     },
     async sideChatPrompt(text) {
@@ -303,49 +363,69 @@ function createAgentManager({ mainWindow, workspace, settings, secrets, subagent
       }
       return { ok: true };
     },
-    setEffort(reasoningEffort) {
+    setEffort(reasoningEffort, sessionId) {
       const normalized = normalizeEffort(reasoningEffort);
       // Update the live child if running; otherwise it takes effect at next start.
-      if (bridge) bridge.setEffort(normalized);
+      const target = bridgeFor(sessionId);
+      if (target) target.setEffort(normalized);
       return { ok: true, reasoningEffort: normalized };
     },
-    setToolScope(toolScope) {
+    setToolScope(toolScope, sessionId) {
       const normalized = normalizeToolScope(toolScope);
-      if (bridge) bridge.setToolScope(normalized);
+      const target = bridgeFor(sessionId);
+      if (target) target.setToolScope(normalized);
       return { ok: true, toolScope: normalized };
     },
-    async approve(requestId, decision) {
-      if (!bridge) throw new Error('Agent is not started');
-      await bridge.approve(requestId, decision);
+    async approve(requestId, decision, sessionId) {
+      const target = bridgeFor(sessionId);
+      if (!target) throw new Error('Agent is not started');
+      await target.approve(requestId, decision);
       return { ok: true };
     },
-    async undo(checkpointIds, undoId) {
-      if (!bridge) throw new Error('Agent is not started');
-      await bridge.undo(Array.isArray(checkpointIds) ? checkpointIds : [], undoId);
+    async undo(checkpointIds, undoId, sessionId) {
+      const target = bridgeFor(sessionId);
+      if (!target) throw new Error('Agent is not started');
+      await target.undo(Array.isArray(checkpointIds) ? checkpointIds : [], undoId);
       return { ok: true };
     },
-    cancel() {
-      if (bridge) bridge.cancel();
+    cancel(sessionId) {
+      const target = bridgeFor(sessionId);
+      if (target) target.cancel();
       return { ok: true };
     },
+    /**
+     * Ensure a live bridge for a session. Reuses one that is already up, so
+     * opening a conversation whose task is still running does NOT restart it.
+     */
     async restart(resumeSessionId) {
       return start(resumeSessionId);
     },
+    /** Close one session's bridge, leaving the others running. */
+    async stopSession(sessionId) {
+      const target = registry.remove(sessionId);
+      if (target) await target.dispose();
+      return { ok: true };
+    },
     /**
-     * Drop the live bridge without starting a new one. The approval mode is
-     * baked into the CLI child at spawn time, so changing it in settings must
-     * invalidate the running bridge; the next prompt lazily re-starts with the
-     * new mode (prompt() already recovers from a missing bridge).
+     * Drop every live bridge without starting a new one. The approval mode and
+     * auto-review are baked into the CLI child at spawn time, so changing them
+     * in settings must invalidate the running children; the next prompt lazily
+     * re-starts with the new settings (prompt() already recovers).
      */
-    invalidate() {
-      if (bridge) {
-        bridge.dispose();
-        bridge = null;
+    async invalidate() {
+      const all = registry.all();
+      registry.clear();
+      for (const target of all) {
+        try { await target.dispose(); } catch { /* already gone */ }
       }
       return { ok: true };
     },
     async dispose() {
-      if (bridge) await bridge.dispose();
+      const all = registry.all();
+      registry.clear();
+      for (const target of all) {
+        try { await target.dispose(); } catch { /* already gone */ }
+      }
       if (sideBridge) await sideBridge.dispose();
     },
   };

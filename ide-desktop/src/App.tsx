@@ -853,7 +853,9 @@ export default function App() {
         await desktop.agent.start(stateRef.current.activeSessionId ?? undefined);
       }
       const toolScope = (stateRef.current.settings?.preferences?.toolScope as ToolScope | undefined) ?? 'auto';
-      await desktop.agent.prompt(expandedText, files, toolScope);
+      // Target this conversation's CLI child explicitly: other conversations may
+      // be running at the same time.
+      await desktop.agent.prompt(expandedText, files, toolScope, stateRef.current.activeSessionId ?? undefined);
     } catch (error) {
       // Surface the real reason (e.g. "API key is missing") in the conversation
       // instead of failing silently, and reset so the next prompt can retry.
@@ -864,7 +866,7 @@ export default function App() {
   }
 
   async function cancelTurn() {
-    await desktop.agent.cancel();
+    await desktop.agent.cancel(stateRef.current.activeSessionId ?? undefined);
     // agent-bridge.cancel() now emits both turn_done and agent_offline, so the
     // agent/event listener will set agentStatus → 'offline' automatically.
     // We do NOT force 'ready' here; that would leave the bridge in a dead state
@@ -934,7 +936,7 @@ export default function App() {
     if ((approval?.kind === 'approval' && approval.decided) || approvingRequests.current.has(requestId)) return;
     approvingRequests.current.add(requestId);
     try {
-      await desktop.agent.approve(requestId, decision);
+      await desktop.agent.approve(requestId, decision, stateRef.current.activeSessionId ?? undefined);
       dispatch({ type: 'approval/decided', requestId, decision });
     } catch (error) {
       dispatch({ type: 'agent/event', event: { type: 'error', message: `审批提交失败：${cleanIpcError(error)}` } });
@@ -955,7 +957,7 @@ export default function App() {
     try {
       // IPC 成功仅表示命令已送入 CLI。保留 undoing，等待 CLI 的
       // `undo_done` 事件按同一个 turnId 写入真实的 undone/failed 结果。
-      await desktop.agent.undo(checkpointIds, turnId);
+      await desktop.agent.undo(checkpointIds, turnId, stateRef.current.activeSessionId ?? undefined);
     } catch {
       dispatch({ type: 'turn/undo-state', turnId, undo: 'failed' });
     }
@@ -966,16 +968,10 @@ export default function App() {
     const seq = ++switchSequenceRef.current;
     switchingSessionRef.current = true;
     try {
-      if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
-        const proceed = window.confirm(
-          '智能体正在工作中。\n\n切换到新对话将中断当前任务，已执行的部分会保留在历史记录中。\n\n是否继续？'
-        );
-        if (!proceed || seq !== switchSequenceRef.current) return;
-      }
-      pendingRestartRef.current = false;
-      if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting' || stateRef.current.agentStatus === 'ready') {
-        try { await desktop.agent.restart(); } catch { /* next prompt retries */ }
-      }
+      // A new conversation starts its own CLI child. Any conversation still
+      // running keeps running in the background — this no longer interrupts it,
+      // so there is nothing to warn about. The session being left is dropped
+      // from view only; its work continues and is on disk.
       if (seq !== switchSequenceRef.current) return;
       dispatch({ type: 'chat/clear' });
       setMainView('chat');
@@ -990,18 +986,17 @@ export default function App() {
     const seq = ++switchSequenceRef.current;
     switchingSessionRef.current = true;
     try {
-      if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
-        const proceed = window.confirm(
-          '智能体正在工作中。\n\n切换会话将中断当前任务，已执行的部分会保留在历史记录中。\n\n是否继续？'
-        );
-        if (!proceed || seq !== switchSequenceRef.current) return;
-      }
+      // No interruption warning any more: each conversation has its own CLI
+      // child, so switching views does not touch the session being left behind.
+      // The old confirm existed because `agent.restart` killed the running task.
       const record = await desktop.sessions.load(id);
       if (seq !== switchSequenceRef.current) return;
       pendingRestartRef.current = false;
       dispatch({ type: 'chat/load', sessionId: id, chat: sessionToChat(record) });
       setMainView('chat');
-      try { await desktop.agent.restart(id); } catch (error) {
+      // Ensure a bridge for the target session, but reuse one that is already
+      // up — restarting would kill a turn that is still running there.
+      try { await desktop.agent.start(id); } catch (error) {
         if (seq === switchSequenceRef.current) {
           dispatch({ type: 'agent/event', event: { type: 'error', message: `会话桥接启动失败：${cleanIpcError(error)}` } });
         }
@@ -1136,6 +1131,17 @@ export default function App() {
     );
   }
 
+  // Other conversations with work in flight, excluding the one on screen (its
+  // progress is already visible in the transcript).
+  const backgroundRunning = state.runningSessions.filter((id) => id !== state.activeSessionId);
+  const backgroundApprovals = Object.entries(state.sessionApprovals)
+    .filter(([id]) => id !== state.activeSessionId)
+    .reduce((sum, [, count]) => sum + count, 0);
+  const backgroundWorkCount = backgroundRunning.length + backgroundApprovals;
+  const backgroundWorkLabel = backgroundApprovals > 0
+    ? `${backgroundRunning.length} 个会话运行中 · ${backgroundApprovals} 个待审批`
+    : `${backgroundRunning.length} 个会话运行中`;
+
   const titleMap: Record<MainView, { icon: JSX.Element; label: string }> = {
     chat: { icon: <MessageSquare size={16} />, label: '对话' },
     files: { icon: <FilesIcon size={16} />, label: '文件' },
@@ -1202,6 +1208,18 @@ export default function App() {
             />
           )}
           <span className="main-topbar-spacer" />
+          {/* Background conversations are invisible otherwise: with one CLI child
+              per session, other conversations keep working while you look at
+              this one, and one of them may be blocked on an approval. */}
+          {backgroundWorkCount > 0 && (
+            <button
+              className="main-topbar-background"
+              title={backgroundWorkLabel}
+              onClick={() => setMainView('chat')}
+            >
+              {backgroundWorkLabel}
+            </button>
+          )}
           {mainView === 'chat' && (
             <GitCapsule state={state} active={inspectorOpen} onOpen={openInspector} />
           )}

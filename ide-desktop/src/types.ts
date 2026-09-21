@@ -79,6 +79,11 @@ export type DesktopPreferences = {
   reasoningEffortByModel?: Record<string, ReasoningEffort>;
   toolScope?: ToolScope;
   taskExecutionMode?: 'auto' | 'plan';
+  /**
+   * Auto-review risky actions with a second model call instead of prompting the
+   * user. Reaches the CLI as --auto-review.
+   */
+  autoReview?: boolean;
   // Git workflow prefs (GitSettings). Injected into .aicode/persona.md so the
   // agent follows branch/PR/commit guidance. Flat keys match savePref patches.
   gitBranchPrefix?: string;
@@ -377,6 +382,17 @@ export type AppState = {
    * the CLI supervisor. Null until the first update arrives.
    */
   supervisor: SupervisorSnapshot | null;
+  /**
+   * Session ids with a turn in flight, including conversations that are not on
+   * screen. Each conversation has its own CLI child, so several can work at once.
+   */
+  runningSessions: string[];
+  /**
+   * Pending approval count per session id. A background conversation blocked on
+   * an approval is invisible otherwise — the user would see a stalled session
+   * with no explanation.
+   */
+  sessionApprovals: Record<string, number>;
 };
 
 // ─── Pending diff types ───────────────────────────────────────────────────────

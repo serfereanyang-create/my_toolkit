@@ -108,15 +108,21 @@ type ZCodeDesktopApi = {
   };
   agent: {
     start(resumeSessionId?: string): Promise<{ ok: boolean }>;
-    prompt(text: string, files?: AttachedFile[], toolScope?: ToolScope): Promise<{ ok: boolean }>;
-    taskBoardAction(action: 'confirm' | 'pause' | 'continue' | 'skip' | 'reopen', taskId?: string): Promise<{ ok: boolean }>;
-    setEffort(reasoningEffort: ReasoningEffort): Promise<{ ok: boolean; reasoningEffort: ReasoningEffort }>;
-    setToolScope(toolScope: ToolScope): Promise<{ ok: boolean; toolScope: ToolScope }>;
-    cancel(): Promise<{ ok: boolean }>;
+    /**
+     * The trailing sessionId addresses one conversation's CLI child. Several can
+     * be running at once, so omitting it may reach the wrong one.
+     */
+    prompt(text: string, files?: AttachedFile[], toolScope?: ToolScope, sessionId?: string): Promise<{ ok: boolean }>;
+    taskBoardAction(action: 'confirm' | 'pause' | 'continue' | 'skip' | 'reopen', taskId?: string, sessionId?: string): Promise<{ ok: boolean }>;
+    setEffort(reasoningEffort: ReasoningEffort, sessionId?: string): Promise<{ ok: boolean; reasoningEffort: ReasoningEffort }>;
+    setToolScope(toolScope: ToolScope, sessionId?: string): Promise<{ ok: boolean; toolScope: ToolScope }>;
+    cancel(sessionId?: string): Promise<{ ok: boolean }>;
     restart(resumeSessionId?: string): Promise<{ ok: boolean }>;
-    approve(requestId: string, decision: 'allow_once' | 'allow_session' | 'deny'): Promise<{ ok: boolean }>;
+    /** Close one session's CLI child, leaving any others running. */
+    stopSession(sessionId: string): Promise<{ ok: boolean }>;
+    approve(requestId: string, decision: 'allow_once' | 'allow_session' | 'deny', sessionId?: string): Promise<{ ok: boolean }>;
     /** turnId 由 CLI 在 undo_done 事件中回显，是撤销结果归属的权威标识。 */
-    undo(checkpointIds: string[], turnId?: string): Promise<{ ok: boolean }>;
+    undo(checkpointIds: string[], turnId?: string, sessionId?: string): Promise<{ ok: boolean }>;
     onEvent(handler: (event: AgentEvent) => void): () => void;
   };
   /**

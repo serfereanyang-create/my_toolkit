@@ -63,6 +63,8 @@ export const initialState: AppState = {
   taskBoard: null,
   taskExecutionMode: 'plan',
   supervisor: null,
+  runningSessions: [],
+  sessionApprovals: {},
 };
 
 export function appReducer(state: AppState, action: AppAction): AppState {
@@ -203,6 +205,38 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
     workLog: [...base.workLog, { ...entry, id: `work-${crypto.randomUUID()}`, ts: now }].slice(-200),
     workPhase: phase,
   });
+
+  // ── Background conversations ───────────────────────────────────────────────
+  // Every bridge stamps its events with a session id. An event from a session
+  // that is not the one on screen must NOT be folded into the visible chat —
+  // that would interleave two conversations into one transcript. It still
+  // updates the cross-session facts the UI needs: which sessions are working,
+  // and which have an approval waiting.
+  const eventSession = typeof event.sessionId === 'string' && event.sessionId ? event.sessionId : null;
+  if (eventSession && state.activeSessionId && eventSession !== state.activeSessionId) {
+    const running = new Set(state.runningSessions);
+    if (event.type === 'turn_start') running.add(eventSession);
+    else if (event.type === 'turn_done' || event.type === 'agent_offline') running.delete(eventSession);
+
+    let approvals = state.sessionApprovals;
+    if (event.type === 'approval_needed') {
+      approvals = { ...approvals, [eventSession]: (approvals[eventSession] ?? 0) + 1 };
+    } else if (event.type === 'approval_resolved' || event.type === 'turn_done' || event.type === 'agent_offline') {
+      // A finished or offline session cannot still be waiting on an answer.
+      if (approvals[eventSession]) {
+        const { [eventSession]: _cleared, ...rest } = approvals;
+        approvals = rest;
+      }
+    }
+
+    if (running.size === state.runningSessions.length
+      && [...running].every((id) => state.runningSessions.includes(id))
+      && approvals === state.sessionApprovals) {
+      return state;
+    }
+    return { ...state, runningSessions: [...running], sessionApprovals: approvals };
+  }
+
   if (event.type === 'task_board_updated') {
     const board = event as unknown as TaskBoard;
     // The bridge sends the board id as both `id` and `boardId`. Reading only one
@@ -291,8 +325,8 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
     // The CLI emits turn_start both from the bridge wrapper and from inside
     // runAgentTurn. A duplicate for an already-open turn must not wipe the
     // workLog the first one started filling.
-    if (openTurnIndex(state) !== -1) return startTurn(state);
-    return { ...startTurn(state), workLog: [], workPhase: 'thinking' };
+    const started = openTurnIndex(state) !== -1 ? startTurn(state) : { ...startTurn(state), workLog: [], workPhase: 'thinking' as const };
+    return markSessionRunning(started, state.activeSessionId, true);
   }
   if (event.type === 'turn_done') {
     // A failed turn used to close silently. The CLI sends the failure reason on
@@ -305,7 +339,7 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
     const next = reason
       ? appendChat(closed, { id: `turn-error-${crypto.randomUUID()}`, kind: 'error', text: reason })
       : closed;
-    return { ...next, agentStatus: 'ready', workPhase: 'done' };
+    return { ...markSessionRunning(next, state.activeSessionId, false), agentStatus: 'ready', workPhase: 'done' };
   }
   if (event.type === 'agent_offline') {
     // Close any open turn that never received a turn_done (e.g. process crash).
@@ -319,7 +353,7 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
         ? { ...item, decided: 'deny' as const, diff: item.diff ? { ...item.diff, status: 'rejected' as const } : undefined }
         : item,
     );
-    return { ...closed, chat, pendingDiffs: [], agentStatus: 'offline' };
+    return { ...markSessionRunning({ ...closed, chat, pendingDiffs: [], agentStatus: 'offline' }, state.activeSessionId, false) };
   }
   if (event.type === 'undo_done') {
     // Authoritative undo result from the CLI (the IPC reply only says the
@@ -426,6 +460,19 @@ function openTurnIndex(state: AppState): number {
 
 function replaceChat(state: AppState, index: number, item: ChatItem): AppState {
   return { ...state, chat: state.chat.map((existing, i) => (i === index ? item : existing)) };
+}
+
+/** Add or remove a session from the running set. */
+function markSessionRunning(state: AppState, sessionId: string | null, running: boolean): AppState {
+  if (!sessionId) return state;
+  const has = state.runningSessions.includes(sessionId);
+  if (running === has) return state;
+  return {
+    ...state,
+    runningSessions: running
+      ? [...state.runningSessions, sessionId]
+      : state.runningSessions.filter((id) => id !== sessionId),
+  };
 }
 
 function startTurn(state: AppState): AppState {

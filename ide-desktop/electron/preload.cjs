@@ -84,15 +84,19 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     },
   },
   agent: {
+    // The trailing sessionId on each call targets one conversation's CLI child.
+    // Several can be running at once, so an un-addressed call could reach the
+    // wrong one.
     start: (resumeSessionId) => ipcRenderer.invoke('agent.start', resumeSessionId),
-    prompt: (text, files, toolScope) => ipcRenderer.invoke('agent.prompt', text, files, toolScope),
-    taskBoardAction: (action, taskId) => ipcRenderer.invoke('agent.taskBoardAction', action, taskId),
-    setEffort: (reasoningEffort) => ipcRenderer.invoke('agent.setEffort', reasoningEffort),
-    setToolScope: (toolScope) => ipcRenderer.invoke('agent.setToolScope', toolScope),
-    cancel: () => ipcRenderer.invoke('agent.cancel'),
+    prompt: (text, files, toolScope, sessionId) => ipcRenderer.invoke('agent.prompt', text, files, toolScope, sessionId),
+    taskBoardAction: (action, taskId, sessionId) => ipcRenderer.invoke('agent.taskBoardAction', action, taskId, sessionId),
+    setEffort: (reasoningEffort, sessionId) => ipcRenderer.invoke('agent.setEffort', reasoningEffort, sessionId),
+    setToolScope: (toolScope, sessionId) => ipcRenderer.invoke('agent.setToolScope', toolScope, sessionId),
+    cancel: (sessionId) => ipcRenderer.invoke('agent.cancel', sessionId),
     restart: (resumeSessionId) => ipcRenderer.invoke('agent.restart', resumeSessionId),
-    approve: (requestId, decision) => ipcRenderer.invoke('agent.approve', requestId, decision),
-    undo: (checkpointIds, undoId) => ipcRenderer.invoke('agent.undo', checkpointIds, undoId),
+    stopSession: (sessionId) => ipcRenderer.invoke('agent.stopSession', sessionId),
+    approve: (requestId, decision, sessionId) => ipcRenderer.invoke('agent.approve', requestId, decision, sessionId),
+    undo: (checkpointIds, undoId, sessionId) => ipcRenderer.invoke('agent.undo', checkpointIds, undoId, sessionId),
     onEvent: (handler) => {
       const listener = (_event, payload) => handler(payload);
       ipcRenderer.on('agent.event', listener);

@@ -47,6 +47,11 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
   const approvalModal = prefBool(prefs, 'gen.approvalModal', true);
   const setApprovalModal = (v: boolean) => savePref({ 'gen.approvalModal': v });
 
+  // 自动审核：让模型先审一遍本该问用户的高风险动作。硬拒绝（黑名单命令、
+  // SSRF、只读模式）永远轮不到它，见 cli/src/tools/registry.ts 的落点。
+  const autoReview = prefBool(prefs, 'autoReview', false);
+  const setAutoReview = (v: boolean) => savePref({ autoReview: v });
+
   // 提示音（App.tsx notifySounds 消费；音量 0 = 静音）
   const sounds = prefBool(prefs, 'gen.sounds', true);
   const soundVolume = prefNum(prefs, 'gen.soundVolume', 0.5);
@@ -67,6 +72,11 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
             { value: 'plan', label: '仅计划' },
             { value: 'deny', label: '只读' },
           ]} />}
+        />
+        <SettingRow
+          title="自动审核"
+          description="本该问你的高风险动作先交给模型审一遍：判定为低风险就自动放行，判定为高风险就拒绝，审不出结论才来问你。审核用同一个模型、不带任何工具，且只作用于「本来会问你」的动作——黑名单命令、越权网络、只读模式这些硬拒绝它碰不到。每次审核结果都会记在对话里。"
+          control={<Toggle checked={autoReview} onChange={setAutoReview} />}
         />
       </SettingsCard>
 

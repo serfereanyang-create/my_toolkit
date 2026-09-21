@@ -24,6 +24,8 @@ class AgentBridge extends EventEmitter {
     this.excelAutomation = options.excelAutomation === true;
     this.toolScope = options.toolScope || 'auto';
     this.confirmPlan = options.confirmPlan === true;
+    // Auto-review risky actions with a second model call instead of prompting.
+    this.autoReview = options.autoReview === true;
     // Token size of the active model's context window. When known, the CLI's
     // pre-turn auto-compact (90% threshold) becomes active in this bridge via
     // AICODE_CONTEXT_WINDOW; undefined leaves compaction manual-only.
@@ -104,6 +106,7 @@ class AgentBridge extends EventEmitter {
     if (this.reasoningEffort && this.reasoningEffort !== 'off') args.push('--reasoning-effort', this.reasoningEffort);
     if (this.toolScope) args.push('--tool-scope', this.toolScope);
     if (this.confirmPlan) args.push('--confirm-plan');
+    if (this.autoReview) args.push('--auto-review');
 
     const env = { ...process.env };
     // When the desktop app is launched via the packaged shortcut, process.execPath
