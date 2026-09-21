@@ -14,6 +14,41 @@ export function widestScope(a: ResolvedToolScope, b: ResolvedToolScope): Resolve
   return SCOPE_RANK[a] >= SCOPE_RANK[b] ? a : b;
 }
 
+/**
+ * Tools that can start another agent, and therefore can cause a write **without
+ * themselves being a write-risk tool**.
+ *
+ * `risk` answers "does calling this touch the world?", which is the wrong
+ * question for delegation: `spawn_subagent` has risk `read` because the call
+ * itself writes nothing, but with `readonly: false` (its default) it starts a
+ * sub-agent that can write, run commands, and commit. `review_loop` is the same
+ * shape — a review-and-revise loop whose executor edits files.
+ *
+ * So a filter that means "this agent must not change anything" cannot be
+ * expressed with `risk === 'read'` alone. Anything claiming read-only-ness has
+ * to consult this list, and the reviewers that rely on that claim are tested
+ * against it (tests/review-readonly.test.ts).
+ */
+export const AGENT_SPAWNING_TOOLS: ReadonlySet<string> = new Set([
+  'spawn_subagent',
+  'review_loop',
+  'workflow_execute',
+  'workflow_resume',
+]);
+
+/** Whether a tool could cause a write by starting another agent. */
+export function canSpawnAgent(toolName: string): boolean {
+  return AGENT_SPAWNING_TOOLS.has(toolName);
+}
+
+/**
+ * Whether a tool is genuinely read-only: it touches nothing itself AND it
+ * cannot delegate to something that does.
+ */
+export function isReadOnlyTool(tool: { name: string; risk: string }): boolean {
+  return tool.risk === 'read' && !canSpawnAgent(tool.name);
+}
+
 const COMPACT_ALLOW = new Set([
   'project_status', 'recent_activity', 'environment_info', 'cache_probe',
   'git_status', 'git_diff', 'git_diff_staged', 'git_log', 'git_show', 'git_blame',

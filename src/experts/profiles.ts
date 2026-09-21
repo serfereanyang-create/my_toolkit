@@ -1,4 +1,6 @@
 import type { ExpertProfile } from './types.js';
+import { isReadOnlyTool } from '../tools/scope.js';
+import { REVIEW_RUBRIC, REVIEW_TASK_PREAMBLE } from '../review/rubric.js';
 
 /**
  * 代码编辑专家 - 专注代码修改/重构/实现
@@ -48,8 +50,9 @@ export const codeSearchExpert: ExpertProfile = {
   description: '专注代码搜索、理解、架构分析，只读不写',
   intent: 'code_search',
   toolFilter: (tool) => {
-    // 只允许只读工具
-    return tool.risk === 'read';
+    // 只允许只读工具。isReadOnlyTool 而非 risk==='read'：spawn_subagent 的风险
+    // 是 read，却能起一个可写的子智能体 —— 调研专家不该有这条路。
+    return isReadOnlyTool(tool);
   },
   systemPrompt: `You are the **Code Search Expert**. Your role is to locate, read, and analyze code without modifying it.
 
@@ -215,6 +218,47 @@ Work focus:
 When done, reply with: TASK_DONE: <data operation summary>`,
 };
 
+export const CODE_REVIEW_EXPERT_ID = 'code_review';
+
+/**
+ * 代码审查专家 - 独立子会话里的只读审查者。
+ *
+ * `intent: 'code_search'` 是有意的复用：ExpertIntent 是路由器的封闭联合类型，
+ * 加一个新成员要动分类器，而审查在路由意义上确实就是"调研代码、不改动"。
+ *
+ * **只读性完全由这里的 toolFilter 保证**：runSubAgent 把 confirm/toolConfirm
+ * 硬编码为 `() => true`（子智能体一律自动批准），所以过滤器是唯一的边界 —— 放
+ * 宽它等于放开写权限。`risk === 'read'` 同时也挡掉了 run_command（shell 风险）。
+ *
+ * rubric 就是它的 system prompt（codex 的做法：`rubric.md` 逐字当系统提示），
+ * 所以判定标准与代码分开维护在 `review/rubric.ts`。
+ */
+export const codeReviewExpert: ExpertProfile = {
+  id: CODE_REVIEW_EXPERT_ID,
+  name: '代码审查专家',
+  description: '独立只读审查代码改动，按 P0-P3 分级报出问题，不修改任何文件',
+  intent: 'code_search',
+  toolFilter: (tool) => {
+    // Read-only, full stop. A reviewer that can write is a reviewer that can
+    // "fix" what it was asked to judge, and its findings stop being evidence.
+    //
+    // `isReadOnlyTool`, not `risk === 'read'`: spawn_subagent carries risk
+    // `read` while being able to start a write-capable sub-agent, so a plain
+    // risk check would hand the reviewer a way around its own boundary — and
+    // the reviewer cannot be prompted about it, because runSubAgent hardcodes
+    // every approval to true.
+    return isReadOnlyTool(tool);
+  },
+  systemPrompt: [
+    'You are the **Code Review Expert**. You review a proposed code change and report defects. You are read-only.',
+    '',
+    REVIEW_TASK_PREAMBLE,
+    '',
+    REVIEW_RUBRIC,
+  ].join('\n'),
+  toolScopeOverride: 'compact',
+};
+
 /**
  * 通用专家 - 兜底，适用于混合/不明确任务
  */
@@ -236,10 +280,26 @@ When done, reply with: TASK_DONE: <task summary>`,
   toolScopeOverride: 'full',
 };
 
+/**
+ * Resolve an expert by profile ID.
+ *
+ * Returns undefined for an unknown id rather than falling back to the general
+ * expert. A silent fallback would hand a caller that asked for the read-only
+ * reviewer the full write toolset — the filter is the security boundary, so
+ * getting the wrong profile is a privilege change, not a degraded experience.
+ */
+export function expertById(id: string): ExpertProfile | undefined {
+  return allExperts.find((expert) => expert.id === id);
+}
+
 /** 所有预定义专家（按专精程度排序：越专精的越靠前，通用兜底放最后） */
 export const allExperts: ExpertProfile[] = [
   codeEditExpert,
   codeSearchExpert,
+  // Shares code_search's intent, so it must come AFTER it: the router picks the
+  // first profile matching an intent, and review must never be auto-routed to
+  // for an ordinary search task. Nothing routes to it — /review selects it by id.
+  codeReviewExpert,
   gitOpsExpert,
   testVerifyExpert,
   docGenerationExpert,

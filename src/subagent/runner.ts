@@ -1,6 +1,6 @@
 import type { AgentRuntime } from '../agent/agent.js';
 import { supervisorFor } from '../agent/agent.js';
-import { allExperts } from '../experts/profiles.js';
+import { allExperts, expertById } from '../experts/profiles.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { TerminalUI } from '../ui/terminal.js';
 import { formatHandoff, runSubAgentWithRollover, type RolloverSegment } from './rollover.js';
@@ -16,6 +16,20 @@ import type { SubAgentResult, SubAgentSpec } from './types.js';
  * off, not accumulate an unbounded transcript.
  */
 export const DEFAULT_SUBAGENT_SEGMENT_STEPS = 40;
+
+/**
+ * Which expert a `spawn_subagent` call runs as.
+ *
+ * `readonly: true` promises "no file writes", and the expert's toolFilter is
+ * what enforces that — so the flag has to select the read-only expert rather
+ * than be applied as a filter afterwards. Kept as a named function because the
+ * promise is a security property: the runner used to ignore the option entirely
+ * and always pass `code_edit`, so a caller asking for a read-only sub-agent
+ * silently got one that could write.
+ */
+export function expertIdForSubAgentRequest(options?: { readonly?: boolean }): string {
+  return options?.readonly ? 'code_search' : 'code_edit';
+}
 
 /**
  * 运行单个子智能体。
@@ -44,7 +58,42 @@ export async function runSubAgent(
   const t0 = Date.now();
 
   // ── 1. 找到对应专家配置 ──────────────────────────────────────────────────────
-  const profile = allExperts.find((e) => e.id === spec.expert) ?? allExperts[allExperts.length - 1]!;
+  // By profile id, and a miss is fatal. The fallback used to be "last profile
+  // in the roster", which handed an unknown expert the general expert's full
+  // toolset — a silent privilege widening for a caller that may have asked for
+  // the read-only reviewer. (It was also the general expert only by accident:
+  // it happened to be last.)
+  // The label is what the progress panel and 子智能体目录 show, so it must be
+  // short. `spec.goal` is the full task text sent to the model — for a code
+  // review that is the whole diff, and using it as a label both floods the
+  // panel and writes the diff into the desktop's persisted run records.
+  const label = spec.label?.trim() || spec.goal;
+
+  const profile = expertById(spec.expert);
+  if (!profile) {
+    const answer = `未知的专家档案：${spec.expert}。可用：${allExperts.map((e) => e.id).join(', ')}`;
+    parentRuntime.subagentEmit?.({
+      phase: 'done',
+      id: spec.id,
+      goal: label,
+      expert: spec.expert,
+      ok: false,
+      answer,
+      subSessionId: '',
+      durationMs: 0,
+      steps: 0,
+    });
+    return {
+      id: spec.id,
+      goal: spec.goal,
+      expert: spec.expert,
+      ok: false,
+      answer,
+      sessionId: '',
+      durationMs: 0,
+      steps: 0,
+    };
+  }
 
   const segmentSteps = spec.maxSteps ?? DEFAULT_SUBAGENT_SEGMENT_STEPS;
   const segments: RolloverSegment[] = [];
@@ -57,14 +106,14 @@ export async function runSubAgent(
   parentRuntime.subagentEmit?.({
     phase: 'started',
     id: spec.id,
-    goal: spec.goal,
+    goal: label,
     expert: profile.id,
     subSessionId: '',
   });
   supervisorFor(parentRuntime).start({
     kind: 'subagent',
     id: spec.id,
-    label: spec.goal,
+    label,
     expert: profile.id,
     segment: 1,
   });
@@ -171,7 +220,7 @@ export async function runSubAgent(
           supervisorFor(parentRuntime).start({
             kind: 'subagent',
             id: spec.id,
-            label: spec.goal,
+            label,
             expert: profile.id,
             segment,
             sessionId,
@@ -188,7 +237,7 @@ export async function runSubAgent(
     parentRuntime.subagentEmit?.({
       phase: 'done',
       id: spec.id,
-      goal: spec.goal,
+      goal: label,
       expert: profile.id,
       ok: false,
       answer,
@@ -217,7 +266,7 @@ export async function runSubAgent(
   parentRuntime.subagentEmit?.({
     phase: 'done',
     id: spec.id,
-    goal: spec.goal,
+    goal: label,
     expert: profile.id,
     ok: outcome.ok,
     answer: outcome.answer,

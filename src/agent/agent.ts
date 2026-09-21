@@ -169,13 +169,35 @@ export type AgentRuntime = {
     steps?: number;
   }) => void;
   /**
-   * Injected by the desktop bridge to surface context compaction in the chat
-   * stream as a centered divider ("正在压缩上下文" → "上下文已自动压缩"),
-   * mirroring Codex. Emitted by autoCompact.maybeAutoCompact (auto) and the
-   * /compact slash command (manual). The terminal UI keeps using ui.info; this
-   * hook is embedding-layer only and optional, so the CLI runs unchanged
-   * without it.
+   * Injected by the desktop bridge to surface a finished code review as
+   * structured findings, so the 审查 tab can render P0-P3 groups with
+   * click-to-jump instead of parsing the transcript. The review itself is
+   * recorded in session history regardless (review/writeback.ts); this hook is
+   * only how the renderer hears about it while the session is live.
    */
+  reviewEmit?: (payload: {
+    /** What was reviewed, as shown to the user. */
+    label: string;
+    ok: boolean;
+    /** Present when the review could not run. */
+    error?: string;
+    /** True when the reply did not match the rubric's schema. */
+    unparsed?: boolean;
+    findings: Array<{
+      title: string;
+      body: string;
+      priority?: number;
+      confidenceScore?: number;
+      filePath?: string;
+      lineStart?: number;
+      lineEnd?: number;
+    }>;
+    outcome?: 'correct' | 'incorrect' | 'unknown';
+    explanation?: string;
+    /** The sub-session the review ran in, for drill-down. */
+    subSessionId?: string;
+    durationMs?: number;
+  }) => void;
   compactEmit?: (payload: {
     phase: 'started' | 'completed' | 'failed';
     auto: boolean;
@@ -1110,13 +1132,16 @@ async function executeToolAction(
     // Only the root agent may launch workflow task nodes as sub-agents; a
     // workflow running inside a sub-agent must not nest further.
     subAgentRunner: (runtime.subAgentDepth ?? 0) === 0 && runtime.runSubAgentTurn
-      ? async (goal) => {
-          const { runSubAgent } = await import('../subagent/runner.js');
+      ? async (goal, options) => {
+          const { runSubAgent, expertIdForSubAgentRequest } = await import('../subagent/runner.js');
           const result = await runSubAgent(
             {
               id: 'wf-' + randomUUID().slice(0, 6),
               goal,
-              expert: 'code_edit',
+              // `readonly` selects the read-only expert, whose toolFilter is
+              // the boundary that makes the flag real.
+              expert: expertIdForSubAgentRequest(options),
+              ...(options?.maxSteps ? { maxSteps: options.maxSteps } : {}),
             },
             runtime,
             new Map(),

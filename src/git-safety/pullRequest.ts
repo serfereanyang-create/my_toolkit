@@ -138,6 +138,60 @@ export function classifyGhFailure(stderr: string): { blocker: PrBlocker; detail:
  * Everything here is local and safe: it reads the branch, counts commits, and
  * writes nothing.
  */
+/**
+ * Resolve the branch a change would merge into.
+ *
+ * Shared with code review so both answer "what is the base" the same way: the
+ * remote's default branch when there is one, then the usual main/master probes.
+ * A disagreement between the PR base and the review base would make the review
+ * judge a different diff than the one being opened.
+ */
+export async function resolveBaseBranch(git: GitProcess, explicit?: string): Promise<string> {
+  if (explicit) return explicit;
+  for (const candidate of ['origin/HEAD', 'origin/main', 'origin/master', 'main', 'master']) {
+    try {
+      const resolved = (await git.text(['rev-parse', '--abbrev-ref', `${candidate}`])).trim();
+      if (resolved && resolved !== 'HEAD') return resolved.replace(/^origin\//, '');
+    } catch { /* try the next candidate */ }
+  }
+  return 'main';
+}
+
+/**
+ * The merge base between HEAD and a base branch.
+ *
+ * Prefers the base's upstream when it exists: for a "PR-style" review the
+ * question is what would merge, and comparing against a stale local branch
+ * would include commits the remote already has. Mirrors codex's
+ * `merge_base_with_head` (codex-rs/git-utils/src/branch.rs).
+ *
+ * Returns undefined when it cannot be computed — an unborn HEAD or an unknown
+ * base — so the caller can fall back to a plain diff instead of failing.
+ */
+export async function mergeBaseWithHead(git: GitProcess, base: string): Promise<string | undefined> {
+  try {
+    const upstream = (await git.text(['rev-parse', '--abbrev-ref', `${base}@{upstream}`])).trim();
+    // Only prefer the upstream when it is actually ahead, otherwise the local
+    // branch is the better comparison point.
+    if (upstream && upstream !== base) {
+      try {
+        const ahead = (await git.text(['rev-list', '--count', `${base}..${upstream}`])).trim();
+        if (Number.parseInt(ahead, 10) > 0) {
+          const viaUpstream = (await git.text(['merge-base', 'HEAD', upstream])).trim();
+          if (viaUpstream) return viaUpstream;
+        }
+      } catch { /* no upstream comparison available */ }
+    }
+  } catch { /* no upstream configured — use the branch itself */ }
+
+  try {
+    const sha = (await git.text(['merge-base', 'HEAD', base])).trim();
+    return sha || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function prepareBoardPr(options: {
   git: GitProcess;
   board: TaskBoard;
@@ -192,16 +246,7 @@ export async function prepareBoardPr(options: {
     };
   }
 
-  if (!base) {
-    // Prefer the remote's default branch; fall back to main/master probes.
-    for (const candidate of ['origin/HEAD', 'origin/main', 'origin/master', 'main', 'master']) {
-      try {
-        const resolved = (await options.git.text(['rev-parse', '--abbrev-ref', `${candidate}`])).trim();
-        if (resolved && resolved !== 'HEAD') { base = resolved.replace(/^origin\//, ''); break; }
-      } catch { /* try the next candidate */ }
-    }
-    base = base ?? 'main';
-  }
+  if (!base) base = await resolveBaseBranch(options.git);
 
   try {
     const countText = (await options.git.text(['rev-list', '--count', `${base}..HEAD`])).trim();

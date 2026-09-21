@@ -5,11 +5,15 @@ import { readFile } from 'node:fs/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { runAgentTurn, type AgentRuntime, type AgentTurnResult } from '../agent/agent.js';
 import { handleLazyDevInput } from '../guard/lazyDevGuard.js';
+import { GitProcess } from '../git-safety/git.js';
 import { formatMemories } from '../memory/format.js';
 import { selectRelevantMemories } from '../memory/select.js';
 import { ProjectMemoryStore } from '../memory/store.js';
 import { commitBoardChanges, ensureBoardBranch, previewBoardCommit } from '../git-safety/workflow.js';
 import type { MessagePart } from '../providers/types.js';
+import { runCodeReview, summarizeReview } from '../review/reviewer.js';
+import { parseReviewTarget, resolveReviewTarget, type ResolvedTarget } from '../review/target.js';
+import { recordReviewInHistory } from '../review/writeback.js';
 import { planBoardFromGoal, shouldUseTaskBoard } from '../tasks/planner.js';
 import { confirmBoard, formatBoard, runTaskBoardLoop } from '../tasks/runtime.js';
 import { TaskBoardStore } from '../tasks/store.js';
@@ -65,6 +69,13 @@ export async function runPromptMode(runtime: AgentRuntime, prompt: string): Prom
   if (prompt.trim() === '/retry') {
     return retryLastUserTurn(runtime);
   }
+  // `/review` runs a real review in a separate read-only sub-session. It needs
+  // the provider, the git process and the session store, none of which
+  // `handleSlashCommand` receives — so it is intercepted here rather than
+  // returning a prompt string the user would have to paste back.
+  if (prompt === '/review' || prompt.startsWith('/review ')) {
+    return runReviewCommand(runtime, prompt.slice('/review'.length).trim());
+  }
   // `/computer use <goal>` arms the session AND immediately starts an agent
   // turn on the goal, so one composer line is enough to delegate a GUI task.
   if (prompt.startsWith('/computer use ') && prompt.slice('/computer use '.length).trim()) {
@@ -92,6 +103,70 @@ export async function runPromptMode(runtime: AgentRuntime, prompt: string): Prom
     parts: prepared.parts,
     displayText: prepared.displaySummary,
   });
+}
+
+/**
+ * `/review [target]` — run a review in a separate read-only sub-session and
+ * write the findings back into this session's history.
+ *
+ * The turn result is `ok: true` even when the review finds defects: a review
+ * that reports problems did its job, and marking it failed would tell the
+ * desktop to raise an error banner for a successful review. A review that could
+ * not *run* is the failure case, and carries its reason.
+ *
+ * `producedActivity` is true — a review genuinely ran a sub-session and read
+ * code, even when it reports no findings, so the "只做了回复" toast must not fire.
+ */
+export async function runReviewCommand(runtime: AgentRuntime, argument: string): Promise<AgentTurnResult> {
+  let target: ResolvedTarget;
+  try {
+    const parsed = parseReviewTarget(argument);
+    target = await resolveReviewTarget({
+      target: parsed,
+      git: runtime.gitProcess ?? new GitProcess(runtime.config.workspaceRoot),
+      repositoryRoot: runtime.config.workspaceRoot,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    runtime.ui.info(`审查目标无法解析：${message}`);
+    return { ok: false, session: runtime.session, reason: `审查目标无法解析：${message}` };
+  }
+
+  runtime.ui.info(`开始代码审查：${target.label}`);
+  if (target.files.length === 0 && !target.diff.trim()) {
+    runtime.ui.info('没有发现改动，审查仍会运行（审查者会自行查看工作区）。');
+  }
+
+  const result = await runCodeReview({ runtime, target });
+  const { assistantMessage } = await recordReviewInHistory(runtime, result);
+  runtime.ui.info(summarizeReview(result));
+  runtime.ui.assistant(assistantMessage);
+
+  // Surface the structured report to the embedding layer. The review is already
+  // in session history; this is how the 审查 tab learns about it while the
+  // session is live, without re-parsing the transcript.
+  runtime.reviewEmit?.({
+    label: result.label,
+    ok: result.ok,
+    ...(result.error ? { error: result.error } : {}),
+    ...(result.report.unparsed ? { unparsed: true } : {}),
+    findings: result.report.findings,
+    outcome: result.report.outcome,
+    ...(result.report.explanation ? { explanation: result.report.explanation } : {}),
+    ...(result.sessionId ? { subSessionId: result.sessionId } : {}),
+    durationMs: result.durationMs,
+  });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      session: runtime.session,
+      reason: result.error ?? '审查未能完成，但没有返回原因。',
+      finalAnswer: assistantMessage,
+      producedActivity: true,
+    };
+  }
+  return { ok: true, session: runtime.session, finalAnswer: assistantMessage, producedActivity: true };
 }
 
 export async function runGuardedAgentTurn(runtime: AgentRuntime, line: string, extras?: TurnExtras): Promise<AgentTurnResult> {

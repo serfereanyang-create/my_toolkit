@@ -32,6 +32,10 @@ export const spawnSubAgentTool: ToolDefinition<SpawnSubAgentInput> = {
     'Returns the sub-agent\'s final answer as a string. ' +
     'Max nesting depth: ' + MAX_SUBAGENT_DEPTH + ' levels.',
   inputHint: '{ "goal": "analyze the test coverage of src/", "readonly": true, "maxSteps": 20, "label": "coverage-analyzer" }',
+  // `read` because the tool itself touches nothing — but it is NOT safe to hand
+  // to a caller whose read-only-ness matters: with readonly:false (the default)
+  // it starts a sub-agent that can write. See canSpawnAgent in tools/scope.ts;
+  // a filter that means to be read-only must exclude it by name.
   risk: 'read',
 
   validate(input: unknown): SpawnSubAgentInput {

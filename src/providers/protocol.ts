@@ -296,6 +296,19 @@ function extractJsonCandidates(content: string) {
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
+/**
+ * Every balanced `{...}` / `[...]` block in the text, in order of appearance.
+ *
+ * Depth-counting with string state, so nested objects and braces inside string
+ * literals are handled. Exported because a caller that must pull one JSON object
+ * out of prose (code review, structured verdicts) cannot use a naive
+ * first-brace-to-last-brace scan: a reply quoting a second object — or JSON from
+ * the very code it is reviewing — gets cut in the wrong place.
+ */
+export function extractBalancedJsonText(content: string, open: '{' | '[', close: '}' | ']'): string[] {
+  return extractBalancedJson(content, open, close);
+}
+
 function extractBalancedJson(content: string, open: '{' | '[', close: '}' | ']') {
   const blocks: string[] = [];
   let start = -1;

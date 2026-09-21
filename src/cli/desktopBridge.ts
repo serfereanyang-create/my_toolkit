@@ -112,6 +112,12 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
   runtime.compactEmit = (payload) => {
     emitEvent({ type: 'context_compaction', sessionId: runtime.session.id, ...payload });
   };
+  // A finished code review, as structured findings. The review is also written
+  // into session history (review/writeback.ts) so the next turn can act on it;
+  // this event is what lets the 审查 tab render it without parsing prose.
+  runtime.reviewEmit = (payload) => {
+    emitEvent({ type: 'review_report', sessionId: runtime.session.id, ...payload });
+  };
   // Subagent runs feed the desktop 子智能体目录. `sessionId` here is the PARENT
   // session — the subagent's own session id travels as `subSessionId` — so the
   // directory can group runs per conversation.

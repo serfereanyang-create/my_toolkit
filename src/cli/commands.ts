@@ -247,7 +247,7 @@ export async function handleSlashCommand(options: {
     return handleScopeCommand(command, options);
   }
   if (command === '/review' || command.startsWith('/review ')) {
-    return handleReviewCommand(command, options);
+    return handleReviewCommand(command);
   }
   if (command === '/security') {
     return 'Run a security review with: ask the agent "Please do a security review of this project".\nOr use /mimosa-scan (Mimosa plugin) if installed.';
@@ -1307,14 +1307,18 @@ function handleScopeCommand(command: string, options: { config: AppConfig }): st
   return `Set tool scope to "${scope}" in Desktop settings → Preferences → Tool Scope.`;
 }
 
-async function handleReviewCommand(
-  command: string,
-  options: { config: AppConfig },
-): Promise<string> {
+// `/review` is NOT handled here: it runs a real review in a separate read-only
+// sub-session, which needs the provider, the git process and the session store.
+// `handleSlashCommand` receives none of those, so `/review` is intercepted in
+// `runPromptMode` (cli/repl.ts, runReviewCommand). This branch only catches the
+// callers that reach commands.ts directly (e.g. the REPL's own dispatch) and
+// points them at the real implementation instead of returning a prompt string
+// the user would have to paste back by hand.
+async function handleReviewCommand(command: string): Promise<string> {
   const target = command.slice('/review'.length).trim();
-  if (!target) return 'Usage: /review <file-or-directory>\nSend this to the agent to perform a code review.';
-  const abs = resolve(options.config.workspaceRoot, target);
-  return `Code review request:\nPlease do a thorough code review of ${abs}.\nLook for: bugs, security issues, style problems, missing error handling, and improvement opportunities.`;
+  return target
+    ? `审查需要在会话里运行，请把这条命令发给智能体：/review ${target}`
+    : '审查需要在会话里运行，请把这条命令发给智能体：/review';
 }
 
 async function handleLintCommand(

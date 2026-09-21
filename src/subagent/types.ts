@@ -11,10 +11,22 @@ export type SubAgentSpec = {
   /** 子任务的自然语言目标 */
   goal: string;
   /**
-   * 专家角色 → 自动限制可用工具集和 toolScope。
-   * 无需主 agent 手动列举工具，框架根据 ExpertProfile 自动过滤。
+   * 短标签，用于进度面板/子智能体目录。省略时退回 goal。
+   *
+   * 为什么需要它：goal 是**发给模型的完整任务描述**，对代码审查这类任务它包含
+   * 整段 diff。把它当标签用会让进度面板显示几万字符，并且这份内容会被写进桌面
+   * 端的子智能体记录。
    */
-  expert: ExpertIntent;
+  label?: string;
+  /**
+   * 专家档案 ID（如 'code_edit'）→ 自动限制可用工具集和 toolScope。
+   * 无需主 agent 手动列举工具，框架根据 ExpertProfile 自动过滤。
+   *
+   * 用档案 ID 而不是 ExpertIntent：两者目前取值同名，但一个是工具域划分、
+   * 一个是路由标签，而且**多个档案可以共享同一个 intent** —— 代码审查专家就
+   * 复用 code_search 的 intent。用 intent 做键会让这类档案永远选不中。
+   */
+  expert: string;
   /**
    * 依赖的其他子 agent ID 列表。
    * 只有列表中所有子 agent 都完成后，本任务才会开始执行。
@@ -48,8 +60,8 @@ export type SubAgentResult = {
   id: string;
   /** 对应 SubAgentSpec.goal */
   goal: string;
-  /** 使用的专家角色 */
-  expert: ExpertIntent;
+  /** 使用的专家档案 ID */
+  expert: string;
   /** 执行是否成功 */
   ok: boolean;
   /** 子 agent 的 finalAnswer，或失败时的 reason */
