@@ -43,7 +43,8 @@ import { cueForEvent, playCue, soundVolume } from './lib/notifySounds';
 import { Welcome } from './components/Welcome';
 import { desktop } from './lib/ipc';
 import { appReducer, initialState, languageForPath, sessionChangeTotals, activeTurnProgress, sessionToChat } from './lib/state';
-import { nextQueued, queueForSession } from './lib/messageQueueSelect';
+import { queueForSession } from './lib/messageQueueSelect';
+import { decideQueuePump, pumpSessionId } from './lib/queuePump';
 import { setLanguageWorkspaceRoot } from './lib/languageProviders';
 import { transcriptFileName, transcriptToMarkdown } from './lib/transcriptExport';
 import { loadRecent, rankRecent, touchRecent, type RecentFile } from './lib/recentFiles';
@@ -164,6 +165,10 @@ export default function App() {
   const switchingSessionRef = useRef(false);
   const switchSequenceRef = useRef(0);
   const approvingRequests = useRef(new Set<string>());
+  // Closes the window between writing a prompt to the bridge and the CLI's
+  // turn_start arriving. The pump effect re-fires on the queue change the send
+  // itself causes, so without this a second message would be pushed immediately.
+  const sendInFlightRef = useRef(false);
   const [activeFile, setActiveFile] = useState<string | null>(null);
 
   const stateRef = useRef(state);
@@ -212,13 +217,17 @@ export default function App() {
       // are silent by design. Never throws.
       const cue = cueForEvent(event as { type?: unknown; autoDecision?: unknown });
       if (cue) playCue(cue, soundVolume(stateRef.current.settings?.preferences));
-      // A finished turn is when the next queued message may go out. Keyed by the
-      // event's session so a background conversation drains its own queue rather
-      // than the one on screen.
+      // A finished turn frees the conversation, so the next queued message may
+      // go out. Keyed by the event's session so a background conversation drains
+      // its own line rather than the one on screen. (The on-screen conversation
+      // is also covered by the idle effect below; this call is what lets a
+      // background conversation advance.)
       if (event.type === 'turn_done') {
-        void drainQueue(typeof event.sessionId === 'string' && event.sessionId
-          ? event.sessionId
-          : stateRef.current.activeSessionId);
+        // justFinished: the dispatch above has not committed yet, so the state
+        // still says this session is running. Without the flag the pump would
+        // decide 'wait' and a background conversation's queue would stall — the
+        // idle effect below only ever serves the conversation on screen.
+        void pumpQueue(pumpSessionId(event.sessionId, stateRef.current.activeSessionId), { justFinished: true });
       }
       if (event.type === 'turn_done' && pendingRestartRef.current && !switchingSessionRef.current) {
         // Model was switched mid-turn; now that files are no longer being
@@ -248,6 +257,28 @@ export default function App() {
     if (!stateRef.current.workspaceRoot) return;
     desktop.sessions.list().then(setSessions).catch(() => setSessions([]));
   }, []);
+
+  /*
+   * Serve the queue whenever the answer to "can we send?" could have changed.
+   *
+   * Declarative on purpose. The original code triggered the drain from exactly
+   * one place (`turn_done`), which is why a message queued while the agent was
+   * idle or starting never went out: there was no turn to end, so nothing fired
+   * and it hung above the composer forever. Enumerating more call sites would
+   * reproduce that bug the next time a state transition is added; keying off the
+   * state itself cannot.
+   *
+   * `messageQueue` is in the deps because the head of the line changing is
+   * itself a reason to look again (a send finishing, or the user removing the
+   * front entry). pumpQueue is a no-op when it decides 'wait' or 'idle', so the
+   * effect is cheap to run often.
+   */
+  useEffect(() => {
+    void pumpQueue(state.activeSessionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pumpQueue reads
+    // live state through stateRef and is intentionally not a dependency: making
+    // it one would re-create it every render and re-fire this effect forever.
+  }, [state.activeSessionId, state.agentStatus, state.runningSessions, state.messageQueue]);
 
   useEffect(() => {
     refreshSessions();
@@ -898,6 +929,9 @@ export default function App() {
           createdAt: Date.now(),
         },
       });
+      // Submitting into a queue that is already being served needs no extra
+      // push — the in-flight send will finish and the next trigger picks this
+      // up. Only a queue that nothing is watching needs one.
       return;
     }
 
@@ -923,32 +957,50 @@ export default function App() {
   }
 
   /**
-   * Send the next queued message for a session, if any.
+   * Send the next queued message for a conversation, if any.
    *
-   * Called when a turn ends. Only one message is sent per turn — the queue is a
-   * line, not a batch, so each message's turn runs to completion before the next
-   * starts and the transcript stays readable.
+   * One entry point, called from every moment the answer could have changed —
+   * not just `turn_done`. That single trigger was the bug: a message queued
+   * while the agent was idle or still starting had no turn to wait for, so
+   * nothing ever fired and it hung above the composer indefinitely.
+   *
+   * Only one message per call: the queue is a line, not a batch, so each runs
+   * to completion before the next starts and the transcript stays ordered.
+   * `sendInFlightRef` closes the gap between writing to the bridge and the
+   * CLI's `turn_start` arriving — the effect re-fires on the queue change the
+   * send itself causes, and without the guard it would push the next message
+   * immediately, emptying the queue instead of showing what is still waiting.
    */
-  async function drainQueue(sessionId: string | null) {
-    if (!sessionId) return;
-    // Same selection rule the composer displays with, so what the user sees
-    // queued is exactly what can go out.
-    const next = nextQueued(stateRef.current.messageQueue, sessionId);
-    if (!next) return;
-    // Adopt an orphaned entry — queued while the bridge was still starting, so
-    // it carries no session id — into the conversation draining it. Until it is
-    // adopted it would count as belonging to EVERY conversation, so it would
-    // show up in all of them.
-    if (!next.sessionId) dispatch({ type: 'queue/adopt', id: next.id, sessionId });
-    // Drop it before sending: a failure below must not leave it queued forever.
-    dispatch({ type: 'queue/remove', id: next.id });
-    dispatch({ type: 'chat/user', text: next.text });
+  async function pumpQueue(sessionId: string | null, options?: { justFinished?: boolean }) {
+    if (!sessionId || sendInFlightRef.current) return;
+    const decision = decideQueuePump({
+      queue: stateRef.current.messageQueue,
+      sessionId,
+      // Per conversation, not the global status: several can run at once.
+      sessionRunning: stateRef.current.runningSessions.includes(sessionId),
+      bridgeReady: stateRef.current.agentStatus === 'ready',
+      sendInFlight: sendInFlightRef.current,
+      ...(options?.justFinished ? { justFinished: true } : {}),
+    });
+    if (decision.action !== 'send') return;
+
+    const next = decision.message;
+    sendInFlightRef.current = true;
     try {
+      // Adopt an orphaned entry — queued while the bridge was still starting, so
+      // it carries no session id — into the conversation sending it. Until it is
+      // adopted it would count as belonging to EVERY conversation.
+      if (!next.sessionId) dispatch({ type: 'queue/adopt', id: next.id, sessionId });
+      // Drop it before sending: a failure below must not leave it queued forever.
+      dispatch({ type: 'queue/remove', id: next.id });
+      dispatch({ type: 'chat/user', text: next.text });
       const toolScope = (stateRef.current.settings?.preferences?.toolScope as ToolScope | undefined) ?? 'auto';
       await desktop.agent.prompt(next.text, next.files, toolScope, sessionId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       dispatch({ type: 'agent/event', event: { type: 'error', message: `队列消息发送失败：${cleanIpcError(message)}` } });
+    } finally {
+      sendInFlightRef.current = false;
     }
   }
 
