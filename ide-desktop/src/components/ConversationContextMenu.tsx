@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Pin, Trash2, Pencil, Archive,
-  FolderOpen, Copy, Hash, Link2, MessageSquarePlus, FileDown, Tag,
+  FolderOpen, Copy, Hash, Link2, GitFork, FileDown, Tag, MessageSquare,
 } from 'lucide-react';
 
 export type ConvoAction =
   | 'pin' | 'remove' | 'rename' | 'archive'
   | 'reveal' | 'copy-cwd' | 'copy-id' | 'copy-deeplink'
-  | 'continue-chat' | 'export-md' | 'edit-tags';
+  | 'open-chat' | 'fork-chat' | 'export-md' | 'edit-tags';
 
 type Item =
   | { kind: 'item'; id: ConvoAction; name: string; icon: JSX.Element }
@@ -26,7 +26,10 @@ const ITEMS: Item[] = [
   { kind: 'item', id: 'copy-deeplink',name: '复制深度链接',        icon: <Link2 size={15} /> },
   { kind: 'item', id: 'export-md',    name: '导出为 Markdown',     icon: <FileDown size={15} /> },
   { kind: 'sep' },
-  { kind: 'item', id: 'continue-chat', name: '在新聊天中继续', icon: <MessageSquarePlus size={15} /> },
+  // Two different things that used to share one label. "在新聊天中继续" named
+  // the second but did the first, so neither was actually reachable.
+  { kind: 'item', id: 'open-chat', name: '打开此会话', icon: <MessageSquare size={15} /> },
+  { kind: 'item', id: 'fork-chat', name: '分叉新会话', icon: <GitFork size={15} /> },
 ];
 
 export function ConversationContextMenu({ x, y, onClose, onPick }: {

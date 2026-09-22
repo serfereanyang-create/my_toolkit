@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const path = require('node:path');
+const { randomBytes } = require('node:crypto');
 
 function createWorkspaceService() {
   let root = '';
@@ -225,10 +226,64 @@ function createWorkspaceService() {
     return sessionFile(id);
   }
 
+  /**
+   * Copy a session into a new one that inherits its whole conversation.
+   *
+   * The context menu has always offered "continue in a new chat", but it only
+   * reopened the original session. A fork that carried just the last message
+   * would be no better: the new conversation could not answer a follow-up about
+   * anything decided earlier.
+   *
+   * The source file is never written, so forking cannot alter the conversation
+   * it forks. Only the sidecar overlay gets a title for the new id.
+   */
+  async function forkSession(id) {
+    const source = JSON.parse(await fs.readFile(sessionFile(id), 'utf8'));
+    const now = new Date();
+    const forkedId = `sess_${now.toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}_${randomBytes(4).toString('hex')}`;
+    const forked = {
+      ...source,
+      id: forkedId,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    const messages = Array.isArray(source.messages) ? source.messages : [];
+    forked.messages = [
+      ...messages,
+      {
+        role: 'user',
+        content: `[forked from ${id}] 以上是继承自原会话的历史记录，请在此基础上继续。`,
+        createdAt: now.toISOString(),
+      },
+    ];
+    // A fork is a new conversation: it must not resume the source's
+    // provider-side response chain, replay its last turn, or inherit a task
+    // board whose board id still belongs to the source session.
+    delete forked.providerContinuation;
+    delete forked.lastTurn;
+    delete forked.taskRuntime;
+
+    await fs.mkdir(sessionRootDir(), { recursive: true });
+    // `wx` refuses to overwrite: a colliding id must never clobber a session.
+    // The trailing newline matches what the CLI's SessionStore writes, so the
+    // two writers agree byte for byte on the file format.
+    await fs.writeFile(sessionFile(forkedId), `${JSON.stringify(forked, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+
+    // Inherit the visible title so the copy is recognisable in the sidebar, and
+    // so it never falls back to "未命名会话".
+    const overlay = await readOverlay();
+    const sourceTitle = overlay[id]?.title || firstUserText(source) || fallbackTitle(id, source);
+    overlay[forkedId] = { ...(overlay[forkedId] || {}), title: `${sourceTitle}（副本）`.slice(0, 120) };
+    await writeOverlay(overlay);
+
+    return { ok: true, id: forkedId, sourceId: id, messageCount: forked.messages.length };
+  }
+
   return {
     setRoot, getRoot, resolveInside, readFile, writeFile, tree,
     listSessions, listArchivedSessions, loadSession, deleteSession,
     renameSession, pinSession, archiveSession, sessionAbsolutePath,
+    forkSession,
   };
 }
 

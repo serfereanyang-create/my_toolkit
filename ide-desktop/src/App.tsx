@@ -1153,9 +1153,22 @@ export default function App() {
   async function handleConvoAction(action: string, sessionId: string) {
     const meta = sessions.find((s) => s.id === sessionId);
     switch (action) {
-      case 'continue-chat':
+      case 'open-chat':
         await openSession(sessionId);
         return;
+      case 'fork-chat': {
+        // Branch the conversation: a new session that inherits the whole
+        // transcript, leaving the source untouched. Then open the branch, so
+        // the user lands in the copy rather than wondering where it went.
+        try {
+          const forked = await desktop.sessions.fork(sessionId);
+          refreshSessions();
+          await openSession(forked.id);
+        } catch {
+          dispatch({ type: 'agent/event', event: { type: 'error', message: '分叉失败：无法读取该会话' } });
+        }
+        return;
+      }
       case 'export-md': {
         // Iteration 14: export any listed session — load its record through
         // the same converter the open flow uses, then share the serializer.

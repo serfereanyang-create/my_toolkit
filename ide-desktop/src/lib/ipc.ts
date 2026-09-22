@@ -88,6 +88,11 @@ type ZCodeDesktopApi = {
     listArchived(): Promise<SessionMeta[]>;
     load(id: string): Promise<SessionRecord>;
     delete(id: string): Promise<{ ok: boolean; id: string }>;
+    /**
+     * Copy a conversation into a new session that inherits its whole history.
+     * The source session is not modified.
+     */
+    fork(id: string): Promise<{ ok: boolean; id: string; sourceId: string; messageCount: number }>;
     rename(id: string, title: string): Promise<{ ok: boolean; id: string; title: string }>;
     pin(id: string, pinned: boolean): Promise<{ ok: boolean; id: string; pinned: boolean }>;
     archive(id: string, archived: boolean): Promise<{ ok: boolean; id: string; archived: boolean }>;

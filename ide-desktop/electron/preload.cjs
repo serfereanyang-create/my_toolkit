@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     listArchived: () => ipcRenderer.invoke('sessions.listArchived'),
     load: (id) => ipcRenderer.invoke('sessions.load', id),
     delete: (id) => ipcRenderer.invoke('sessions.delete', id),
+    fork: (id) => ipcRenderer.invoke('sessions.fork', id),
     rename: (id, title) => ipcRenderer.invoke('sessions.rename', id, title),
     pin: (id, pinned) => ipcRenderer.invoke('sessions.pin', id, pinned),
     archive: (id, archived) => ipcRenderer.invoke('sessions.archive', id, archived),

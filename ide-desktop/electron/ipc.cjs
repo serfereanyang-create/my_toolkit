@@ -97,6 +97,7 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('sessions.listArchived', async () => await workspace.listArchivedSessions());
   ipcMain.handle('sessions.load', async (_event, id) => await workspace.loadSession(id));
   ipcMain.handle('sessions.delete', async (_event, id) => await workspace.deleteSession(id));
+  ipcMain.handle('sessions.fork', async (_event, id) => await workspace.forkSession(id));
   ipcMain.handle('sessions.rename', async (_event, id, title) => await workspace.renameSession(id, title));
   ipcMain.handle('sessions.pin', async (_event, id, pinned) => await workspace.pinSession(id, pinned));
   ipcMain.handle('sessions.archive', async (_event, id, archived) => await workspace.archiveSession(id, archived));

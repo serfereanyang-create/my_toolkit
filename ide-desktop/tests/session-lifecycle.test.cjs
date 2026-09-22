@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtemp, mkdir, writeFile, readdir, rm } = require('node:fs/promises');
+const { mkdtemp, mkdir, writeFile, readFile, readdir, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
@@ -171,6 +171,128 @@ test('corrupt session files are skipped, not fatal', async () => {
   const list = await service.listSessions();
   assert.equal(list.length, 1);
   assert.equal(list[0].id, 'sess_ok');
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('forkSession copies the whole transcript and leaves the source byte-identical', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'zcode-sess-'));
+  const service = createWorkspaceService();
+  service.setRoot(root);
+
+  await seedSession(root, 'sess_src', [
+    { role: 'user', content: '第一个问题', createdAt: '2026-01-01T00:00:00.000Z' },
+    { role: 'assistant', content: '第一个回答', createdAt: '2026-01-01T00:00:01.000Z' },
+    { role: 'user', content: '第二个问题', createdAt: '2026-01-01T00:00:02.000Z' },
+  ], '2026-01-02T00:00:00.000Z');
+  const sourcePath = service.sessionAbsolutePath('sess_src');
+  const sourceBefore = await readFile(sourcePath, 'utf8');
+
+  const result = await service.forkSession('sess_src');
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceId, 'sess_src');
+  assert.notEqual(result.id, 'sess_src');
+
+  const forked = await service.loadSession(result.id);
+  const source = await service.loadSession('sess_src');
+
+  // The whole conversation is inherited, in order, plus a fork marker.
+  assert.equal(forked.messages.length, source.messages.length + 1);
+  assert.deepEqual(
+    forked.messages.slice(0, -1).map((m) => m.content),
+    source.messages.map((m) => m.content),
+  );
+  assert.match(forked.messages.at(-1).content, /forked from sess_src/);
+
+  // The key safety property: forking must not rewrite the conversation it forks.
+  assert.equal(await readFile(sourcePath, 'utf8'), sourceBefore);
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('a forked session is titled as a copy, never as 未命名会话', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'zcode-sess-'));
+  const service = createWorkspaceService();
+  service.setRoot(root);
+
+  await seedSession(root, 'sess_named', [
+    { role: 'user', content: '帮我重构登录模块', createdAt: '' },
+  ], '2026-01-01T00:00:00.000Z');
+
+  const { id } = await service.forkSession('sess_named');
+  const list = await service.listSessions();
+  const copy = list.find((s) => s.id === id);
+
+  assert.equal(copy.title, '帮我重构登录模块（副本）');
+  assert.ok(!copy.title.includes('未命名'), `copy fell back to a placeholder title: ${copy.title}`);
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('a copy of a desktop-renamed session keeps the custom title', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'zcode-sess-'));
+  const service = createWorkspaceService();
+  service.setRoot(root);
+
+  await seedSession(root, 'sess_renamed', [{ role: 'user', content: 'raw first message', createdAt: '' }]);
+  await service.renameSession('sess_renamed', '自定义标题');
+
+  const { id } = await service.forkSession('sess_renamed');
+  const list = await service.listSessions();
+  const copy = list.find((s) => s.id === id);
+
+  // The overlay title wins over the first user message, exactly as in the list.
+  assert.equal(copy.title, '自定义标题（副本）');
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('forking an unknown session fails instead of creating an empty one', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'zcode-sess-'));
+  const service = createWorkspaceService();
+  service.setRoot(root);
+
+  await assert.rejects(() => service.forkSession('sess_does_not_exist'));
+
+  // Nothing was written: a failed fork must not leave a stray session behind.
+  const list = await service.listSessions();
+  assert.equal(list.length, 0);
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('forkSession refuses a path-traversal id', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'zcode-sess-'));
+  const service = createWorkspaceService();
+  service.setRoot(root);
+
+  await assert.rejects(() => service.forkSession('../../etc/passwd'), /Invalid session id/);
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('forkSession drops the source turn payload and task board', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'zcode-sess-'));
+  const service = createWorkspaceService();
+  service.setRoot(root);
+
+  await seedSession(root, 'sess_state', [{ role: 'user', content: 'go', createdAt: '' }]);
+  const dir = path.join(root, '.aicode', 'sessions');
+  const record = JSON.parse(await readFile(path.join(dir, 'sess_state.json'), 'utf8'));
+  record.lastTurn = { prompt: 'go', status: 'done', startedAt: '2026-01-01T00:00:00.000Z' };
+  record.taskRuntime = { mode: 'executing', boardId: 'board_20260101000000_aaaaaaaa' };
+  record.providerContinuation = { id: 'resp_123' };
+  await writeFile(path.join(dir, 'sess_state.json'), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+  const { id } = await service.forkSession('sess_state');
+  const forked = await service.loadSession(id);
+
+  // A fork is a new conversation: replaying the source's turn, adopting its
+  // task board, or continuing its provider response chain would all be wrong.
+  assert.equal(forked.lastTurn, undefined);
+  assert.equal(forked.taskRuntime, undefined);
+  assert.equal(forked.providerContinuation, undefined);
+  assert.equal(forked.messages.length, 2);
 
   await rm(root, { recursive: true, force: true });
 });
