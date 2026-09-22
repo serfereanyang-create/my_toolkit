@@ -92,6 +92,42 @@ export class SessionStore {
     return session;
   }
 
+  /**
+   * Copy a session into a new one that inherits its whole conversation.
+   *
+   * A fork that carries only the last message is not an inheritance — the new
+   * session has no idea what was decided earlier. Copying the transcript keeps
+   * the branch coherent.
+   *
+   * The source record is never written: everything is read from a fresh load,
+   * so forking cannot mutate the conversation being forked.
+   */
+  async fork(id: string, options: { provider: ProviderName; model: string; workspaceRoot: string }) {
+    const source = await this.load(id);
+    const now = new Date().toISOString();
+    const forked: SessionRecord = {
+      ...structuredClone(source),
+      id: `sess_${now.replace(/[-:.TZ]/g, '').slice(0, 14)}_${randomUUID().slice(0, 8)}`,
+      createdAt: now,
+      updatedAt: now,
+      provider: options.provider,
+      model: options.model,
+      workspaceRoot: options.workspaceRoot,
+    };
+    forked.messages = [
+      ...structuredClone(source.messages),
+      { role: 'user', content: forkMarker(source.id), createdAt: now },
+    ];
+    // A forked session is a new conversation: it must not resume the source's
+    // provider-side response chain, replay its last turn, or inherit a task
+    // board whose board id still belongs to the source session.
+    delete forked.providerContinuation;
+    delete forked.lastTurn;
+    delete forked.taskRuntime;
+    await this.save(forked);
+    return forked;
+  }
+
   async appendMessage(session: SessionRecord, message: Omit<AgentMessage, 'createdAt'>) {
     session.messages.push({ ...message, createdAt: new Date().toISOString() });
     await this.touch(session);
@@ -255,6 +291,15 @@ function assertSafeSessionId(id: string) {
 function parseSession(value: unknown, expectedId: string): SessionRecord {
   if (!isRecord(value) || value.id !== expectedId) throw new Error(`Invalid session record: ${expectedId}`);
   return value as SessionRecord;
+}
+
+/**
+ * A trailing user message so the model knows the transcript above is inherited
+ * context, not something it just said. Without it the fork opens on an
+ * assistant turn and the next prompt reads as a non-sequitur.
+ */
+export function forkMarker(sourceId: string) {
+  return `[forked from ${sourceId}] 以上是继承自原会话的历史记录，请在此基础上继续。`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

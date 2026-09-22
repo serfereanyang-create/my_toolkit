@@ -138,3 +138,72 @@ test('SessionStore queue recovers after a permanent save failure', async () => {
   assert.equal(loaded.messages.at(-1)?.content, 'later snapshot');
   await rm(workspace, { recursive: true, force: true });
 });
+
+test('SessionStore fork carries the whole transcript and leaves the source untouched', async () => {
+  const { workspace, store, session } = await createSessionStore('aicode-session-fork-');
+  await store.appendMessage(session, { role: 'user', content: 'first request' });
+  await store.appendMessage(session, { role: 'assistant', content: 'first answer' });
+  await store.appendMessage(session, { role: 'user', content: 'second request' });
+  const sourcePath = store.filePath(session.id);
+  const sourceBytesBefore = await readFile(sourcePath, 'utf8');
+
+  const forked = await store.fork(session.id, {
+    provider: 'mock',
+    model: 'mock-code-agent-v1',
+    workspaceRoot: workspace,
+  });
+
+  assert.notEqual(forked.id, session.id);
+  // Every original message is present, in order, plus the fork marker.
+  assert.equal(forked.messages.length, session.messages.length + 1);
+  assert.deepEqual(
+    forked.messages.slice(0, -1).map((m) => m.content),
+    session.messages.map((m) => m.content),
+  );
+  assert.match(forked.messages.at(-1)?.content ?? '', /forked from/);
+  assert.match(forked.messages.at(-1)?.content ?? '', new RegExp(session.id));
+
+  // The key safety property: forking must not rewrite the conversation it forks.
+  assert.equal(await readFile(sourcePath, 'utf8'), sourceBytesBefore);
+
+  // The fork is a real, independently loadable session.
+  const reloaded = await store.load(forked.id);
+  assert.equal(reloaded.messages.length, forked.messages.length);
+  await rm(workspace, { recursive: true, force: true });
+});
+
+test('SessionStore fork refuses an unknown session instead of creating an empty one', async () => {
+  const { workspace, store } = await createSessionStore('aicode-session-fork-missing-');
+  await assert.rejects(
+    store.fork('sess_20260706120000_deadbeef', {
+      provider: 'mock',
+      model: 'mock-code-agent-v1',
+      workspaceRoot: workspace,
+    }),
+  );
+  await rm(workspace, { recursive: true, force: true });
+});
+
+test('SessionStore fork drops the source turn payload and task board', async () => {
+  const { workspace, store, session } = await createSessionStore('aicode-session-fork-state-');
+  await store.appendMessage(session, { role: 'user', content: 'do the thing' });
+  await store.setLastTurn(session, {
+    prompt: 'do the thing',
+    status: 'done',
+    startedAt: new Date().toISOString(),
+  });
+  session.taskRuntime = { mode: 'idle', boardId: 'board_20260706120000_abcdef12' };
+  await store.save(session);
+
+  const forked = await store.fork(session.id, {
+    provider: 'mock',
+    model: 'mock-code-agent-v1',
+    workspaceRoot: workspace,
+  });
+
+  // A fork must not replay the source's last turn or adopt its task board.
+  assert.equal(forked.lastTurn, undefined);
+  assert.equal(forked.taskRuntime, undefined);
+  assert.equal(forked.messages.length, session.messages.length + 1);
+  await rm(workspace, { recursive: true, force: true });
+});

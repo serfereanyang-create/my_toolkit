@@ -63,22 +63,17 @@ function runCopy(runtime: MessageActionsRuntime) {
 }
 
 async function runFork(runtime: MessageActionsRuntime) {
-  const forked = await runtime.sessions.create({
+  // Carry the whole conversation, not just the last message: a fork seeded with
+  // one message cannot answer a follow-up about anything decided earlier.
+  const forked = await runtime.sessions.fork(runtime.session.id, {
     provider: runtime.provider.name,
     model: runtime.provider.model,
     workspaceRoot: runtime.config.workspaceRoot,
   });
-  // Seed fork with a short handoff note (not full history — keeps it light).
-  const last = latestCopyableText(runtime.session);
-  if (last) {
-    await runtime.sessions.appendMessage(forked, {
-      role: 'user',
-      content: `[forked from ${runtime.session.id}]\n${last.slice(0, 2000)}`,
-    });
-  }
   runtime.onSessionForked?.(forked);
   runtime.session = forked;
-  return `Forked new session: ${forked.id}`;
+  const carried = forked.messages.length - 1;
+  return `Forked new session: ${forked.id} (carried ${carried} message${carried === 1 ? '' : 's'})`;
 }
 
 function latestCopyableText(session: SessionRecord) {
