@@ -303,6 +303,7 @@ html[data-reduce-motion='on'] .reflection-panel-spin { animation: none; }
 .sup-summary-row strong { color: var(--fg); font: 600 15px var(--font-mono); }
 .sup-summary-row strong.sup-bad { color: var(--danger); }
 .sup-longest { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--warn) 10%, var(--bg-elevated)); color: var(--warn); font-size: 11px; }
+.sup-delegated { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated)); color: var(--accent); font-size: 11px; }
 .sup-list { display: flex; flex-direction: column; gap: 6px; }
 .sup-item { display: flex; flex-direction: column; gap: 4px; padding: 8px 9px; border: 1px solid var(--border-subtle); border-left-width: 3px; border-radius: var(--r-sm); background: var(--bg-side); }
 .sup-item.sup-status-running { border-left-color: var(--accent); }

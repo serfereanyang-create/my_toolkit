@@ -2,7 +2,7 @@ import { Volume2 } from 'lucide-react';
 import { Toggle, Segmented, SelectPill, SettingsCard, SettingRow } from './controls';
 import { prefBool, prefNum, prefStr, type Prefs, type SavePref } from './prefs';
 import { playCue } from '../../lib/notifySounds';
-import type { ApprovalMode } from '../../types';
+import type { ApprovalMode, DelegationLevel } from '../../types';
 
 /*
  * Full "常规" page. Every control here is wired to a real consumer:
@@ -52,6 +52,12 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
   const autoReview = prefBool(prefs, 'autoReview', false);
   const setAutoReview = (v: boolean) => savePref({ autoReview: v });
 
+  // 子智能体委派力度（CLI --delegation）。默认「积极」：每个任务尽量都派一个
+  // 子智能体。注意写操作的限制——子智能体没有确认通道，所以「积极」档在提示词
+  // 里明确要求把改文件/提交的工作留给主智能体走审批，只把调研派出去。
+  const delegation = prefStr(prefs, 'delegation', 'eager') as DelegationLevel;
+  const setDelegation = (v: DelegationLevel) => savePref({ delegation: v });
+
   // 提示音（App.tsx notifySounds 消费；音量 0 = 静音）
   const sounds = prefBool(prefs, 'gen.sounds', true);
   const soundVolume = prefNum(prefs, 'gen.soundVolume', 0.5);
@@ -77,6 +83,15 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
           title="自动审核"
           description="本该问你的高风险动作先交给模型审一遍：判定为低风险就自动放行，判定为高风险就拒绝，审不出结论才来问你。审核用同一个模型、不带任何工具，且只作用于「本来会问你」的动作——黑名单命令、越权网络、只读模式这些硬拒绝它碰不到。每次审核结果都会记在对话里。"
           control={<Toggle checked={autoReview} onChange={setAutoReview} />}
+        />
+        <SettingRow
+          title="子智能体委派"
+          description="主智能体把工作交给子智能体的积极程度。积极（默认）：几乎每个任务都先派子智能体，只读的调研、搜索、分析交给它们并行做，你负责整合结果。均衡：只有多步骤任务才派。关闭：全部自己做。注意：子智能体没有向你请求确认的通道，所以积极档下改文件、提交、推送这些操作仍由主智能体执行，以便你能在确认框里看到——被派出去的只有调研。每次委派都会多花一次独立会话的开销（子智能体要重建提示词，且首次请求无法命中缓存）。"
+          control={<Segmented value={delegation} onChange={setDelegation} options={[
+            { value: 'eager', label: '积极' },
+            { value: 'balanced', label: '均衡' },
+            { value: 'off', label: '关闭' },
+          ]} />}
         />
       </SettingsCard>
 

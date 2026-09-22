@@ -2,6 +2,11 @@ export type ProviderType = 'mock' | 'openai' | 'anthropic' | 'custom';
 export type ApprovalMode = 'ask' | 'auto' | 'plan' | 'deny';
 export type ReasoningEffort = 'auto' | 'off' | 'low' | 'medium' | 'high' | 'max';
 export type ToolScope = 'auto' | 'compact' | 'standard' | 'full';
+/**
+ * How readily the agent hands work to a sub-agent. Mirrors the CLI's
+ * DelegationLevel; the strings must match or the CLI's arg parser rejects them.
+ */
+export type DelegationLevel = 'off' | 'balanced' | 'eager';
 export type ActivityView = 'files' | 'search' | 'sessions' | 'settings';
 
 export type AutomationTrigger =
@@ -84,6 +89,11 @@ export type DesktopPreferences = {
    * user. Reaches the CLI as --auto-review.
    */
   autoReview?: boolean;
+  /**
+   * Sub-agent delegation eagerness. Reaches the CLI as --delegation.
+   * Absent means the CLI's default (eager).
+   */
+  delegation?: DelegationLevel;
   // Git workflow prefs (GitSettings). Injected into .aicode/persona.md so the
   // agent follows branch/PR/commit guidance. Flat keys match savePref patches.
   gitBranchPrefix?: string;
@@ -359,6 +369,9 @@ export type SupervisorSnapshot = {
   failed: number;
   steps: number;
   longestRunningMs?: number;
+  /** Sub-agent runs this session has produced, and which experts they used. */
+  delegated?: number;
+  delegatedExperts?: string[];
 };
 
 /**

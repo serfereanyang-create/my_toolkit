@@ -75,7 +75,22 @@ export function SupervisorPanel({ snapshot }: { snapshot: SupervisorSnapshot | n
           <span>累计步数</span>
           <strong>{snapshot.steps}</strong>
         </div>
+        <div className="sup-summary-row">
+          {/* Delegation count, so "did it actually delegate?" has a number
+              rather than an absence to interpret. A session that delegated
+              nothing shows 0, which is a fact; before this the only evidence
+              was the subagent list staying empty. */}
+          <span>已委派</span>
+          <strong>{snapshot.delegated ?? 0}</strong>
+        </div>
       </div>
+
+      {(snapshot.delegatedExperts?.length ?? 0) > 0 && (
+        <div className="sup-delegated">
+          <Bot size={12} />
+          <span>用到的专家：{snapshot.delegatedExperts!.join('、')}</span>
+        </div>
+      )}
 
       {snapshot.longestRunningMs !== undefined && snapshot.longestRunningMs > 0 && (
         <div className="sup-longest">

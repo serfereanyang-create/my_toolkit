@@ -3,6 +3,9 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 const { apiKeyEnvVar } = require('./provider-map.cjs');
 
+/** Must match the CLI's --delegation values (cli/src/cli/args.ts). */
+const DELEGATION_LEVELS = new Set(['off', 'balanced', 'eager']);
+
 class AgentBridge extends EventEmitter {
   constructor(options) {
     super();
@@ -26,6 +29,10 @@ class AgentBridge extends EventEmitter {
     this.confirmPlan = options.confirmPlan === true;
     // Auto-review risky actions with a second model call instead of prompting.
     this.autoReview = options.autoReview === true;
+    // Sub-agent delegation eagerness. Normalized here rather than forwarded
+    // verbatim: the CLI's arg parser rejects an unknown value outright, and a
+    // corrupted preference must not make the agent fail to start.
+    this.delegation = DELEGATION_LEVELS.has(options.delegation) ? options.delegation : undefined;
     // Token size of the active model's context window. When known, the CLI's
     // pre-turn auto-compact (90% threshold) becomes active in this bridge via
     // AICODE_CONTEXT_WINDOW; undefined leaves compaction manual-only.
@@ -62,6 +69,39 @@ class AgentBridge extends EventEmitter {
     this.resumeSessionId = resumeSessionId || null;
   }
 
+  /**
+   * The CLI argv for this bridge.
+   *
+   * Extracted from start() so the flag set is testable without spawning a
+   * child: a preference that reaches the bridge but not the argv is invisible
+   * — the CLI just applies its own default and nothing reports a mismatch.
+   */
+  buildArgs() {
+    const args = [
+      path.join(this.cliRoot, 'dist', 'src', 'index.js'),
+      '--desktop-bridge',
+      '--provider', this.provider,
+      '--model', this.model,
+      '--approval', this.approval,
+      '--workspace', this.workspaceRoot,
+      '--session-dir', this.sessionDir,
+    ];
+    if (this.baseUrl) args.push('--base-url', this.baseUrl);
+    if (this.customProvider) args.push('--custom-provider');
+    if (this.computerAnyApp) args.push('--computer-any-app');
+    if (this.allowedApps.length > 0) args.push('--allowed-apps', this.allowedApps.join(','));
+    if (this.excelAutomation) args.push('--excel');
+    if (this.resumeSessionId) args.push('--resume', this.resumeSessionId);
+    if (this.reasoningEffort && this.reasoningEffort !== 'off') args.push('--reasoning-effort', this.reasoningEffort);
+    if (this.toolScope) args.push('--tool-scope', this.toolScope);
+    if (this.confirmPlan) args.push('--confirm-plan');
+    if (this.autoReview) args.push('--auto-review');
+    // Only when set: omitting it lets the CLI apply its own default, so the two
+    // sides cannot drift into disagreeing about what "unset" means.
+    if (this.delegation) args.push('--delegation', this.delegation);
+    return args;
+  }
+
   start() {
     if (this.child) return this.readyPromise || Promise.resolve();
     const generation = ++this.generation;
@@ -88,25 +128,7 @@ class AgentBridge extends EventEmitter {
     }, 15000);
     if (typeof this.readyTimer.unref === 'function') this.readyTimer.unref();
 
-    const args = [
-      path.join(this.cliRoot, 'dist', 'src', 'index.js'),
-      '--desktop-bridge',
-      '--provider', this.provider,
-      '--model', this.model,
-      '--approval', this.approval,
-      '--workspace', this.workspaceRoot,
-      '--session-dir', this.sessionDir,
-    ];
-    if (this.baseUrl) args.push('--base-url', this.baseUrl);
-    if (this.customProvider) args.push('--custom-provider');
-    if (this.computerAnyApp) args.push('--computer-any-app');
-    if (this.allowedApps.length > 0) args.push('--allowed-apps', this.allowedApps.join(','));
-    if (this.excelAutomation) args.push('--excel');
-    if (this.resumeSessionId) args.push('--resume', this.resumeSessionId);
-    if (this.reasoningEffort && this.reasoningEffort !== 'off') args.push('--reasoning-effort', this.reasoningEffort);
-    if (this.toolScope) args.push('--tool-scope', this.toolScope);
-    if (this.confirmPlan) args.push('--confirm-plan');
-    if (this.autoReview) args.push('--auto-review');
+    const args = this.buildArgs();
 
     const env = { ...process.env };
     // When the desktop app is launched via the packaged shortcut, process.execPath

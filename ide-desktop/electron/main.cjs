@@ -225,6 +225,7 @@ function createAgentManager({ mainWindow, workspace, settings, secrets, subagent
       contextWindowTokens: contextWindowForModel(providerConfig),
       confirmPlan: config.preferences?.taskExecutionMode === 'auto',
       autoReview: config.preferences?.autoReview === true,
+      delegation: config.preferences?.delegation,
       resumeSessionId: resumeSessionId || undefined,
     });
     registry.addPending(capturedBridge);
