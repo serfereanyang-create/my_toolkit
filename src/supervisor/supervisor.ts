@@ -52,6 +52,18 @@ export type SupervisorSnapshot = {
   steps: number;
   /** Oldest still-running unit's elapsed ms, if any. */
   longestRunningMs?: number;
+  /**
+   * How many sub-agent runs this session has produced, and which experts they
+   * used.
+   *
+   * Exists because "did delegation fire?" is otherwise unanswerable from the
+   * outside: a turn that delegated nothing emits no subagent event at all, so
+   * the only evidence is an absence — and an absence is indistinguishable from
+   * a broken emit. Counting from the unit list makes the negative case
+   * observable (delegated: 0) instead of inferred.
+   */
+  delegated: number;
+  delegatedExperts: string[];
 };
 
 /**
@@ -163,6 +175,7 @@ export class Supervisor {
   snapshot(): SupervisorSnapshot {
     const units = [...this.units.values()].sort((a, b) => b.updatedAt - a.updatedAt);
     const runningUnits = units.filter((unit) => unit.status === 'running');
+    const subagents = units.filter((unit) => unit.kind === 'subagent');
     const now = Date.now();
     return {
       units,
@@ -170,6 +183,8 @@ export class Supervisor {
       done: units.filter((unit) => unit.status === 'done').length,
       failed: units.filter((unit) => unit.status === 'failed').length,
       steps: units.reduce((sum, unit) => sum + unit.steps, 0),
+      delegated: subagents.length,
+      delegatedExperts: [...new Set(subagents.map((unit) => unit.expert).filter((id): id is string => Boolean(id)))],
       ...(runningUnits.length > 0
         ? { longestRunningMs: Math.max(...runningUnits.map((unit) => now - unit.startedAt)) }
         : {}),

@@ -1,4 +1,5 @@
 import type { AgentAction, AgentMessage, ProviderRequest, ProviderToolSpec } from './types.js';
+import type { DelegationLevel } from '../config/types.js';
 import { cacheControl } from './cacheStrategy.js';
 
 /**
@@ -11,9 +12,14 @@ export type PromptIdentity = {
   workspaceRoot?: string;
   /** True when this CLI process was spawned as the agent backend for the desktop IDE. */
   desktopBridge?: boolean;
+  /**
+   * How readily the agent should delegate to sub-agents. Absent means the
+   * documented default (eager) — see delegationHint.
+   */
+  delegation?: DelegationLevel;
 };
 
-import { SUBAGENT_STRATEGY_HINT } from '../agent/toolStrategy.js';
+import { DEFAULT_DELEGATION_LEVEL, delegationHint } from '../agent/toolStrategy.js';
 
 /**
  * The shell a command will actually run under, and the path format that shell
@@ -48,7 +54,11 @@ export function buildToolSystemPromptParts(
       ? `Workspace root: ${identity.workspaceRoot}. All relative paths in tool calls resolve against this root.`
       : undefined,
     projectContext ? `Project context and instructions:\n${projectContext}` : undefined,
-    SUBAGENT_STRATEGY_HINT,
+    // The delegation policy depends on the configured level; the rest of the
+    // hint (expert roster, dependsOn rules) is shared. Absent identity means
+    // the default, which is what a caller that never heard of this setting
+    // should get.
+    delegationHint(identity?.delegation ?? DEFAULT_DELEGATION_LEVEL),
     'Text fallback tool call shape:',
     '{"tool":"read_file","input":{"path":"package.json"}}',
     'Available tools:',

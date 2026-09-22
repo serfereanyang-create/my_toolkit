@@ -51,6 +51,13 @@ export type ProviderRequest = {
   reasoningEffort?: ReasoningEffort;
   /** True when this CLI process is running as the agent backend for the desktop IDE. */
   desktopBridge?: boolean;
+  /**
+   * How readily the agent should delegate to sub-agents. Absent means the
+   * documented default; the value only selects which delegation block goes into
+   * the stable system prompt, so it must not vary within a session or the
+   * cached prefix is lost.
+   */
+  delegation?: import('../config/types.js').DelegationLevel;
   /** True when the wire provider is a user-configured custom endpoint. */
   customProvider?: boolean;
   /** Responses continuation state for the next function_call_output turn. */

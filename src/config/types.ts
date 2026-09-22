@@ -1,6 +1,19 @@
 import type { ApprovalMode, ProviderName, ReasoningEffort } from '../providers/types.js';
 import type { ToolScope } from '../tools/scope.js';
 
+/**
+ * How readily the main agent hands work to a sub-agent.
+ *
+ * The tool itself has no framework gate — `spawn_subagent` is injected into
+ * every root turn — so the only thing deciding whether delegation happens is
+ * the model's reading of one prompt block. This level is what steers it.
+ *
+ * `eager` is the default: almost every request should produce at least one
+ * delegated run. That costs real money (each sub-agent is a fresh session with
+ * a cold prompt cache), so `balanced` and `off` exist to dial it back.
+ */
+export type DelegationLevel = 'off' | 'balanced' | 'eager';
+
 export type CliArgs = {
   provider?: ProviderName;
   model?: string;
@@ -24,6 +37,8 @@ export type CliArgs = {
    * are eligible; hard-denied ones are never reachable by the reviewer.
    */
   autoReview?: boolean;
+  /** Sub-agent delegation eagerness (--delegation). */
+  delegation?: DelegationLevel;
   noBanner?: boolean;
   version?: boolean;
   json?: boolean;
@@ -61,6 +76,8 @@ export type FileProfileConfig = {
   maxTokens?: number;
   /** Auto-review risky actions instead of prompting the user. */
   autoReview?: boolean;
+  /** Sub-agent delegation eagerness. Absent = 'eager'. */
+  delegation?: DelegationLevel;
   reasoningEffort?: ReasoningEffort;
   toolScope?: ToolScope;
   /** Network egress policy for the fetch_url tool. */
@@ -110,6 +127,14 @@ export type AppConfig = {
    * hard-denied ones are never reachable by the reviewer.
    */
   autoReview?: boolean;
+  /**
+   * How readily the main agent delegates to sub-agents. `config.ts` resolves
+   * this from --delegation / AICODE_DELEGATION / the config file, defaulting to
+   * 'eager'; read it through `delegationLevelOf()` rather than testing it
+   * against a literal, so an AppConfig built by hand (tests, embedding) still
+   * gets the documented default instead of silently meaning "off".
+   */
+  delegation?: DelegationLevel;
   noBanner: boolean;
   version?: boolean;
   json?: boolean;

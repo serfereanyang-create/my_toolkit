@@ -77,6 +77,7 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
       const systemParts = buildToolSystemPromptParts(request.tools, request.projectContext, request.toolStrategy, {
         workspaceRoot: request.workspaceRoot,
         desktopBridge: request.desktopBridge,
+        delegation: request.delegation,
       });
       const input: unknown[] = useServerContinuation && request.continuation?.toolOutputs?.length
         ? request.continuation.toolOutputs.map((item) => ({ type: 'function_call_output', call_id: item.callId, output: item.output }))

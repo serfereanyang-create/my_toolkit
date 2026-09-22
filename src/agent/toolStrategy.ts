@@ -1,3 +1,4 @@
+import type { DelegationLevel } from '../config/types.js';
 import type { SessionRecord, ToolCallRecord } from '../session/store.js';
 
 export type ToolIntent = 'code_edit' | 'code_search' | 'disk_growth' | 'disk_capacity' | 'project_overview' | 'runtime_info' | 'unknown';
@@ -229,19 +230,13 @@ export function nextStepHint(tool: string, output: string, outputLength: number)
 }
 
 /**
- * Sub-agent strategy hint appended to the system tool-strategy block.
- * Tells the main agent when and how to delegate via spawn_subagent.
+ * The parts of the hint that do not depend on the level: the expert roster, the
+ * dependsOn rules, and what to do with the answers. Shared so a level can only
+ * change the *policy*, never the mechanics.
+ *
+ * Declared first because the level hints below interpolate it at module load.
  */
-export const SUBAGENT_STRATEGY_HINT = `
-## 子智能体委派（spawn_subagent）
-当遇到以下情况时，优先调用 spawn_subagent 工具而不是独自完成所有工作：
-
-**适合委派的场景：**
-- 任务可以分解为 2 个或以上相互独立的子目标（如：同时搜索多个模块、同时写多个文件）
-- 需要先调研再实现（code_search 子 agent 调研 → code_edit 子 agent 实现）
-- 实现代码 + 写测试 + 写文档可以独立完成（code_edit、test_verify、doc_generation 各自委派）
-- Git 操作与代码修改可以分离（code_edit 先改代码，git_ops 后提交）
-
+const DELEGATION_SHARED_TAIL = `
 **expert 角色选择指南：**
 - 只需读代码/查找符号 → code_search
 - 实现/修改/重构代码 → code_edit
@@ -258,4 +253,97 @@ export const SUBAGENT_STRATEGY_HINT = `
 
 **你的职责：** spawn_subagent 完成后，读取每个子 agent 的答案并整合给用户一个完整的最终回复。
 `.trim();
+
+/**
+ * Sub-agent strategy hint appended to the system tool-strategy block.
+ * Tells the main agent when and how to delegate via spawn_subagent.
+ *
+ * This is the `balanced` level, kept verbatim: it is the behaviour the CLI had
+ * before the delegation level existed, and it is what a user gets by choosing
+ * 均衡.
+ */
+export const SUBAGENT_STRATEGY_HINT = `
+## 子智能体委派（spawn_subagent）
+当遇到以下情况时，优先调用 spawn_subagent 工具而不是独自完成所有工作：
+
+**适合委派的场景：**
+- 任务可以分解为 2 个或以上相互独立的子目标（如：同时搜索多个模块、同时写多个文件）
+- 需要先调研再实现（code_search 子 agent 调研 → code_edit 子 agent 实现）
+- 实现代码 + 写测试 + 写文档可以独立完成（code_edit、test_verify、doc_generation 各自委派）
+- Git 操作与代码修改可以分离（code_edit 先改代码，git_ops 后提交）
+
+${DELEGATION_SHARED_TAIL}
+`.trim();
+
+/**
+ * `eager`: delegate by default, but keep writes on the main agent.
+ *
+ * The write restriction is not stylistic. `runSubAgent` hardcodes every
+ * approval to true (subagent/runner.ts) because a sub-agent has no channel to
+ * prompt the user — so a write performed by a sub-agent is a write the user
+ * never confirms. If delegation became the normal path for edits, the default
+ * 「每次询问」approval mode would be quietly bypassed for most changes.
+ *
+ * Delegating the *investigation* instead keeps the requested behaviour (almost
+ * every turn produces a sub-agent run) while every actual edit still surfaces
+ * in an approval card.
+ */
+const EAGER_DELEGATION_HINT = `
+## 子智能体委派（spawn_subagent）
+**默认委派。** 除非是纯闲聊、单步问答，或整个请求你自己一次工具调用就能答完，否则先派子智能体。
+
+**怎么做：**
+- 只要请求里存在任何一个可以独立完成的部分，就派一个子智能体去做。不要因为「我自己两下就做完了」而跳过委派。
+- 只读的调研、搜索、定位、解释、总结 → 交给 code_search 子智能体。
+- 需要看多个地方、多个文件、多种可能性 → 拆成多个子智能体并行。
+- 你负责把子智能体的答案整合成一个完整的最终回复。
+
+**写操作留在你自己手里（重要）：**
+子智能体没有向用户请求确认的通道，它们的写操作会直接执行、不弹确认框。所以：
+- 任何会修改文件、提交、推送、删除的工作，都由你自己调用工具完成，让用户能在确认框里看到。
+- 需要先调研再动手的：先派只读子智能体（code_search）把情况摸清楚，拿到结论后你自己改。
+- 不要派 code_edit / git_ops / shell_runtime 这类可写子智能体替用户改东西。
+
+${DELEGATION_SHARED_TAIL}
+`.trim();
+
+/**
+ * `off`: do the work in this conversation.
+ *
+ * Still names the tool, because the tool is injected into every turn whether or
+ * not this block mentions it — saying nothing would leave the model to decide
+ * on its own, which is the behaviour this level exists to switch off.
+ */
+const NO_DELEGATION_HINT = `
+## 子智能体（spawn_subagent）
+不要派子智能体：直接使用工具自己完成任务，并在最终回复里给出结果。
+`.trim();
+
+/**
+ * Delegation eagerness when nothing configured it.
+ *
+ * `eager`, because the feature is only useful if it fires: a level the user has
+ * to discover and switch on is indistinguishable from no feature. The cost is
+ * real (every sub-agent is a fresh session with a cold prompt cache), which is
+ * why `balanced` and `off` exist.
+ *
+ * Declared here rather than in config.ts because the prompt builder needs it
+ * too, and this module must not import config.ts (config.ts imports this one).
+ */
+export const DEFAULT_DELEGATION_LEVEL: DelegationLevel = 'eager';
+
+/**
+ * The delegation block for a level.
+ *
+ * The block lives in the STABLE part of the system prompt (protocol.ts), so it
+ * is inside the cached prefix. That is safe because the level is configuration,
+ * not per-turn state: it is byte-identical across the turns of a session. What
+ * it does mean is that changing the level invalidates the cache once, exactly
+ * like changing the tool scope does.
+ */
+export function delegationHint(level: DelegationLevel): string {
+  if (level === 'off') return NO_DELEGATION_HINT;
+  if (level === 'eager') return EAGER_DELEGATION_HINT;
+  return SUBAGENT_STRATEGY_HINT;
+}
 

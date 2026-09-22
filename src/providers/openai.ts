@@ -43,6 +43,7 @@ export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
       const systemParts = buildToolSystemPromptParts(request.tools, request.projectContext, request.toolStrategy, {
         workspaceRoot: request.workspaceRoot,
         desktopBridge: request.desktopBridge,
+        delegation: request.delegation,
       });
       const messages = buildAutoCacheMessages(
         systemParts.stable,

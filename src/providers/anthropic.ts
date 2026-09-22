@@ -28,6 +28,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
       const systemParts = buildToolSystemPromptParts(request.tools, request.projectContext, request.toolStrategy, {
         workspaceRoot: request.workspaceRoot,
         desktopBridge: request.desktopBridge,
+        delegation: request.delegation,
       });
       const buildBody = (thinking: ReturnType<typeof anthropicThinking>): Record<string, unknown> => {
         // When extended thinking is enabled, Anthropic requires temperature=1 and

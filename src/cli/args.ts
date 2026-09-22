@@ -1,11 +1,12 @@
 import { resolve } from 'node:path';
-import type { CliArgs } from '../config/types.js';
+import type { CliArgs, DelegationLevel } from '../config/types.js';
 import type { ApprovalMode, ProviderName } from '../providers/types.js';
 import type { ToolScope } from '../tools/scope.js';
 
 const providerNames = new Set(['mock', 'openai', 'openai-responses', 'anthropic', 'gemini', 'grok', 'glm', 'kimi', 'deepseek']);
 const approvalModes = new Set(['ask', 'auto', 'deny', 'plan']);
 const toolScopes = new Set(['auto', 'compact', 'standard', 'full']);
+const delegationLevels = new Set(['off', 'balanced', 'eager']);
 
 export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {};
@@ -74,6 +75,14 @@ export function parseArgs(argv: string[]): CliArgs {
         const value = readValue();
         if (!toolScopes.has(value)) throw new Error(`--tool-scope must be one of: auto, compact, standard, full`);
         args.toolScope = value as ToolScope;
+        break;
+      }
+      case '--delegation': {
+        const value = readValue();
+        // A typo must not silently pick a level: 'eager' costs real money per
+        // turn and 'off' silently disables a feature the user asked for.
+        if (!delegationLevels.has(value)) throw new Error(`--delegation must be one of: off, balanced, eager`);
+        args.delegation = value as DelegationLevel;
         break;
       }
       case '--workspace':

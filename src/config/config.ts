@@ -1,9 +1,21 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { AppConfig, CliArgs, FileConfig, FileProfileConfig } from './types.js';
+import type { AppConfig, CliArgs, DelegationLevel, FileConfig, FileProfileConfig } from './types.js';
 import type { ApprovalMode, ProviderName, ReasoningEffort } from '../providers/types.js';
 import type { ToolScope } from '../tools/scope.js';
 import { VENDOR_PROFILES, firstEnv, isVendorId } from '../providers/vendors.js';
+import { DEFAULT_DELEGATION_LEVEL } from '../agent/toolStrategy.js';
+
+/**
+ * Read a config's delegation level, applying the default for an absent value.
+ *
+ * Exists so an `AppConfig` assembled by hand — tests, embedding, an older
+ * persisted settings file — gets the documented default rather than reading as
+ * `undefined` and being treated as "off" by a truthiness check somewhere.
+ */
+export function delegationLevelOf(config: Pick<AppConfig, 'delegation'>): DelegationLevel {
+  return config.delegation ?? DEFAULT_DELEGATION_LEVEL;
+}
 
 const defaultModels: Record<ProviderName, string> = {
   mock: 'mock-code-agent-v1',
@@ -68,6 +80,7 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
     completionShell: args.completionShell,
     confirmPlan: args.confirmPlan ?? false,
     autoReview: args.autoReview ?? autoReviewFromEnv(env) ?? mergedFileConfig.autoReview ?? false,
+    delegation: args.delegation ?? delegationFromEnv(env) ?? mergedFileConfig.delegation ?? DEFAULT_DELEGATION_LEVEL,
     desktopBridge: args.desktopBridge ?? false,
     usageLog: args.usageLog ?? env.AICODE_USAGE_LOG,
     reasoningEffort: args.reasoningEffort ?? reasoningEffortFromEnv(env) ?? mergedFileConfig.reasoningEffort,
@@ -221,6 +234,20 @@ function autoReviewFromEnv(env: NodeJS.ProcessEnv): boolean | undefined {
   return undefined;
 }
 
+/**
+ * An unrecognized value is "unset", never a level.
+ *
+ * Same reasoning as autoReviewFromEnv: this knob decides both how much money a
+ * turn spends and whether writes go through the main agent's approval, so a
+ * typo must fall back to the default rather than pick a level by accident.
+ */
+function delegationFromEnv(env: NodeJS.ProcessEnv): DelegationLevel | undefined {
+  const raw = env.AICODE_DELEGATION;
+  if (raw === undefined || raw === '') return undefined;
+  const value = raw.trim().toLowerCase();
+  return value === 'off' || value === 'balanced' || value === 'eager' ? value : undefined;
+}
+
 async function readFileConfig(path: string): Promise<FileConfig> {
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
@@ -257,9 +284,14 @@ function normalizeProfile(input: Record<string, unknown>): FileProfileConfig {
     maxSteps: typeof input.maxSteps === 'number' && Number.isInteger(input.maxSteps) && input.maxSteps > 0 ? input.maxSteps : undefined,
     maxTokens: typeof input.maxTokens === 'number' && Number.isInteger(input.maxTokens) && input.maxTokens > 0 ? input.maxTokens : undefined,
     autoReview: typeof input.autoReview === 'boolean' ? input.autoReview : undefined,
+    delegation: delegationValue(input.delegation),
     toolScope: toolScopeValue(input.toolScope),
     network: normalizeNetwork(input.network),
   };
+}
+
+function delegationValue(value: unknown): DelegationLevel | undefined {
+  return value === 'off' || value === 'balanced' || value === 'eager' ? value : undefined;
 }
 
 function toolScopeValue(value: unknown): ToolScope | undefined {

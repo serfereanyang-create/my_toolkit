@@ -759,7 +759,14 @@ async function runAgentTurnCore(
         runtime.ui.info(`Context compacted for model: ${detail}`);
         warnedAboutCompaction = true;
       }
-      const promptCacheBasis = buildPromptCacheBasis(packed.messages, stepTools.specs(), projectContext, toolStrategy);
+      // The identity must match the real request's, or the predicted cache
+      // range is computed from a different system prompt than the one sent —
+      // the delegation block alone is ~600 chars and would skew the estimate.
+      const promptCacheBasis = buildPromptCacheBasis(packed.messages, stepTools.specs(), projectContext, toolStrategy, {
+        workspaceRoot: runtime.config.workspaceRoot,
+        desktopBridge: runtime.config.desktopBridge,
+        delegation: runtime.config.delegation,
+      });
       const predictedPromptCacheRate = predictPromptCacheReuse(runtime.lastPromptCacheBasis, promptCacheBasis);
       // Counted before the call: a model round-trip that throws still happened,
       // and a budget that ignores failed attempts would be a budget that leaks.
@@ -780,6 +787,7 @@ async function runAgentTurnCore(
           onThinkingDelta: (delta) => runtime.ui.thinkingDelta(delta),
           reasoningEffort: effectiveEffort,
           desktopBridge: runtime.config.desktopBridge,
+          delegation: runtime.config.delegation,
           customProvider: runtime.config.customProvider,
           continuation: runtime.session.providerContinuation,
         }),
@@ -1441,8 +1449,9 @@ function buildPromptCacheBasis(
   tools: import('../providers/types.js').ProviderToolSpec[],
   projectContext?: string,
   toolStrategy?: string,
+  identity?: import('../providers/protocol.js').PromptIdentity,
 ): PromptCacheBasis {
-  const stableParts = buildToolSystemPromptParts(tools, projectContext, toolStrategy);
+  const stableParts = buildToolSystemPromptParts(tools, projectContext, toolStrategy, identity);
   // The sliding breakpoint caches tools + system + ALL messages except the
   // last one (the newest message after the breakpoint is the only uncached
   // increment). Align the local prediction with that real cached range.
@@ -1657,8 +1666,14 @@ function buildContextStats(
     .filter((spec) => spec.name.startsWith('mcp_'))
     .reduce((sum, spec) => sum + specChars(spec), 0);
   // Base system instructions WITHOUT the tool list (tools counted separately),
-  // so no component is double-counted.
-  const systemPromptChars = buildToolSystemPrompt([], undefined, undefined).length;
+  // so no component is double-counted. The identity must match the real
+  // request's: the delegation block differs by level (~600 chars for eager vs
+  // ~100 for off), and measuring the wrong one misreports the context budget.
+  const systemPromptChars = buildToolSystemPrompt([], undefined, undefined, {
+    workspaceRoot: runtime.config.workspaceRoot,
+    desktopBridge: runtime.config.desktopBridge,
+    delegation: runtime.config.delegation,
+  }).length;
   // Skill instructions injected at step 0 live inside user messages wrapped in
   // <relevant-skills>…</relevant-skills>; measure their real char footprint and
   // exclude it from messageChars so the same bytes are not double-counted.

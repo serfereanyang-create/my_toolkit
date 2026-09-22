@@ -39,7 +39,7 @@ export function createGeminiProvider(options: GeminiProviderOptions): Provider {
       if (!options.apiKey) throw new Error('GEMINI_API_KEY is required for provider gemini');
       const base = (options.baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '');
       const url = `${base}/models/${encodeURIComponent(options.model)}:streamGenerateContent?alt=sse`;
-      const systemText = buildToolSystemPrompt(request.tools, request.projectContext, request.toolStrategy, { workspaceRoot: request.workspaceRoot, desktopBridge: request.desktopBridge });
+      const systemText = buildToolSystemPrompt(request.tools, request.projectContext, request.toolStrategy, { workspaceRoot: request.workspaceRoot, desktopBridge: request.desktopBridge, delegation: request.delegation });
       const declarations = request.tools.length > 0 ? [{ functionDeclarations: request.tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: geminiSchema(schemaFromInputHint(tool.inputHint)) })) }] : undefined;
       const body: Record<string, unknown> = {
         systemInstruction: { role: 'system', parts: [{ text: systemText }] },
