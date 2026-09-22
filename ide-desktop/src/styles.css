@@ -3476,8 +3476,14 @@ h1 {
 .msg-queue-actions { display:flex; align-items:center; gap:2px; flex:none; }
 .msg-queue-btn { display:inline-flex; align-items:center; gap:3px; padding:3px 6px; border:0; border-radius:var(--r-sm); background:transparent; color:var(--fg-dim); cursor:pointer; font-size:11px; }
 .msg-queue-btn:hover { background:var(--bg-hover); color:var(--fg); }
+/* 立即 on the first row: nothing to jump ahead of. Disabled rather than a live
+   button that no-ops, because an unresponsive click is indistinguishable from
+   a broken control. */
+.msg-queue-btn:disabled { cursor:default; opacity:.45; }
+.msg-queue-btn:disabled:hover { background:transparent; color:var(--fg-dim); }
 .msg-queue-now { border:1px solid color-mix(in srgb,var(--accent) 34%,var(--border)); color:var(--accent); }
 .msg-queue-now:hover { background:color-mix(in srgb,var(--accent) 14%,var(--bg-elevated)); color:var(--accent); }
+.msg-queue-now:disabled { border-color:var(--border-subtle); color:var(--fg-dim); }
 .msg-queue-index { flex:none; min-width:14px; color:var(--fg-dim); font:11px var(--font-mono); text-align:right; }
 
 .plugin-menu {

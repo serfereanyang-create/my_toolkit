@@ -16,6 +16,7 @@ export type AppAction =
   | { type: 'queue/remove'; id: string }
   | { type: 'queue/update'; id: string; text: string }
   | { type: 'queue/promote'; id: string }
+  | { type: 'queue/adopt'; id: string; sessionId: string }
   | { type: 'queue/clear'; sessionId?: string }
   | { type: 'turn/undo-state'; turnId: string; undo: 'idle' | 'undoing' | 'undone' | 'failed' }
   | { type: 'bottom/toggle' }
@@ -155,6 +156,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ],
       };
     }
+    case 'queue/adopt':
+      // Give an orphaned entry (queued before the session id was known) a real
+      // owner, so it stops counting as belonging to every conversation.
+      return {
+        ...state,
+        messageQueue: state.messageQueue.map((item) =>
+          item.id === action.id && !item.sessionId ? { ...item, sessionId: action.sessionId } : item),
+      };
     case 'queue/clear':
       // No sessionId clears everything (used when a workspace changes); with one,
       // only that conversation's entries — the others may still be waiting.

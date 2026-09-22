@@ -43,6 +43,7 @@ import { cueForEvent, playCue, soundVolume } from './lib/notifySounds';
 import { Welcome } from './components/Welcome';
 import { desktop } from './lib/ipc';
 import { appReducer, initialState, languageForPath, sessionChangeTotals, activeTurnProgress, sessionToChat } from './lib/state';
+import { nextQueued, queueForSession } from './lib/messageQueueSelect';
 import { setLanguageWorkspaceRoot } from './lib/languageProviders';
 import { transcriptFileName, transcriptToMarkdown } from './lib/transcriptExport';
 import { loadRecent, rankRecent, touchRecent, type RecentFile } from './lib/recentFiles';
@@ -930,8 +931,15 @@ export default function App() {
    */
   async function drainQueue(sessionId: string | null) {
     if (!sessionId) return;
-    const next = stateRef.current.messageQueue.find((item) => item.sessionId === sessionId);
+    // Same selection rule the composer displays with, so what the user sees
+    // queued is exactly what can go out.
+    const next = nextQueued(stateRef.current.messageQueue, sessionId);
     if (!next) return;
+    // Adopt an orphaned entry — queued while the bridge was still starting, so
+    // it carries no session id — into the conversation draining it. Until it is
+    // adopted it would count as belonging to EVERY conversation, so it would
+    // show up in all of them.
+    if (!next.sessionId) dispatch({ type: 'queue/adopt', id: next.id, sessionId });
     // Drop it before sending: a failure below must not leave it queued forever.
     dispatch({ type: 'queue/remove', id: next.id });
     dispatch({ type: 'chat/user', text: next.text });
@@ -1477,7 +1485,11 @@ export default function App() {
             prefill={prefill}
             onSubmit={submitPrompt}
             onCancel={cancelTurn}
-            queue={state.messageQueue.filter((item) => item.sessionId === (state.activeSessionId ?? ''))}
+            // Filtered through the same rule the drain uses (lib/messageQueueSelect),
+            // so a message can never be visible but unsendable, or sendable but
+            // invisible. Entries queued while the bridge was still starting carry
+            // an empty session id and belong to the active conversation.
+            queue={queueForSession(state.messageQueue, state.activeSessionId)}
             onQueueSendNow={(id) => {
               // Jump the line: move it to the front of its session's queue. It
               // still waits for the running turn — "立即" means "next", not
