@@ -8,12 +8,27 @@ const DEFAULT_KEEP_RECENT = 10;
 /** Keep this many oldest non-system messages as a stable cache-friendly prefix. */
 const DEFAULT_KEEP_PREFIX = 2;
 
+/**
+ * Per-message clip limits, applied by ROLE and by nothing else.
+ *
+ * These were two tiers — a generous limit for the newest N messages and a tight
+ * one for everything older — chosen by distance from the end of the array. That
+ * is a cache killer, and the reason is subtle: the boundary MOVES. Every step
+ * appends messages, so a message that was "recent" becomes "older", gets
+ * re-clipped at the tighter limit, and `truncateText` writes the omitted count
+ * into the body. The bytes of a message in the MIDDLE of the history change, and
+ * every message after it is a cache miss. Measured on a 20-message history: the
+ * first divergence appeared at message 10, with `truncated 3080 chars` becoming
+ * `truncated 6080 chars` purely because two messages were appended.
+ *
+ * Clipping by role alone makes a message's packed form a pure function of the
+ * message, so it is byte-identical no matter how much history surrounds it.
+ * That is the property the prompt cache needs, and it costs only a slightly
+ * smaller allowance for the newest messages.
+ */
 const DEFAULT_TOOL_CHARS = 4_000;
-const DEFAULT_TOOL_CHARS_SOFT = 2_000;
 const DEFAULT_ASSISTANT_CHARS = 6_000;
-const DEFAULT_ASSISTANT_CHARS_SOFT = 3_000;
 const DEFAULT_USER_CHARS = 8_000;
-const DEFAULT_USER_CHARS_SOFT = 4_000;
 
 export type ContextBudgetOptions = {
   budgetChars?: number;
@@ -21,11 +36,8 @@ export type ContextBudgetOptions = {
   keepRecent?: number;
   keepPrefix?: number;
   maxToolChars?: number;
-  maxToolCharsSoft?: number;
   maxAssistantChars?: number;
-  maxAssistantCharsSoft?: number;
   maxUserChars?: number;
-  maxUserCharsSoft?: number;
 };
 
 export type CompactResult = {
@@ -45,11 +57,8 @@ export type ContextBudgetConfig = {
   keepRecent: number;
   keepPrefix: number;
   maxToolChars: number;
-  maxToolCharsSoft: number;
   maxAssistantChars: number;
-  maxAssistantCharsSoft: number;
   maxUserChars: number;
-  maxUserCharsSoft: number;
 };
 
 export function resolveContextBudgetChars(env: NodeJS.ProcessEnv = process.env): number {
@@ -63,12 +72,23 @@ export function resolveContextBudgetConfig(env: NodeJS.ProcessEnv = process.env)
     keepRecent: readIntEnv(env, 'AICODE_CONTEXT_KEEP_RECENT', DEFAULT_KEEP_RECENT, 2),
     keepPrefix: readIntEnv(env, 'AICODE_CONTEXT_KEEP_PREFIX', DEFAULT_KEEP_PREFIX, 0),
     maxToolChars: readIntEnv(env, 'AICODE_CONTEXT_MAX_TOOL_CHARS', DEFAULT_TOOL_CHARS, 500),
-    maxToolCharsSoft: readIntEnv(env, 'AICODE_CONTEXT_MAX_TOOL_CHARS_SOFT', DEFAULT_TOOL_CHARS_SOFT, 300),
     maxAssistantChars: readIntEnv(env, 'AICODE_CONTEXT_MAX_ASSISTANT_CHARS', DEFAULT_ASSISTANT_CHARS, 500),
-    maxAssistantCharsSoft: readIntEnv(env, 'AICODE_CONTEXT_MAX_ASSISTANT_CHARS_SOFT', DEFAULT_ASSISTANT_CHARS_SOFT, 300),
     maxUserChars: readIntEnv(env, 'AICODE_CONTEXT_MAX_USER_CHARS', DEFAULT_USER_CHARS, 500),
-    maxUserCharsSoft: readIntEnv(env, 'AICODE_CONTEXT_MAX_USER_CHARS_SOFT', DEFAULT_USER_CHARS_SOFT, 300),
   };
+}
+
+/**
+ * Clip one message to its role's limit.
+ *
+ * Exported because it is the unit of cache stability: the packed form of a
+ * message must depend on that message alone, and a test asserts it directly.
+ */
+export function clipMessageByRole(message: AgentMessage, cfg: ContextBudgetConfig): AgentMessage {
+  return clipMessage(message, {
+    maxToolChars: cfg.maxToolChars,
+    maxAssistantChars: cfg.maxAssistantChars,
+    maxUserChars: cfg.maxUserChars,
+  });
 }
 
 export function compactMessagesForModel(
@@ -86,10 +106,14 @@ export function compactMessagesForModel(
   const { messages: withoutHistoryImages, imagesStripped } = stripHistoricalImages(messages);
   const afterStripChars = withoutHistoryImages.reduce((sum, message) => sum + messageChars(message), 0);
 
+  // Below the soft threshold, pack nothing. `clipMessageByRole` is still applied
+  // so a message's bytes do not CHANGE when the session later crosses the
+  // threshold — otherwise crossing it would rewrite the whole history at once.
   if (afterStripChars <= cfg.budgetChars * cfg.softRatio) {
-    const compactChars = withoutHistoryImages.reduce((sum, message) => sum + messageChars(message), 0);
+    const underThreshold = withoutHistoryImages.map((message) => clipMessageByRole(message, cfg));
+    const compactChars = underThreshold.reduce((sum, message) => sum + messageChars(message), 0);
     return {
-      messages: withoutHistoryImages,
+      messages: underThreshold,
       truncated: imagesStripped > 0 || compactChars !== originalChars,
       originalChars,
       compactChars,
@@ -100,29 +124,16 @@ export function compactMessagesForModel(
     };
   }
 
-  // Soft clip: shrink tool/assistant/user bodies but keep all messages (prefix-stable for cache).
-  const softClipped = withoutHistoryImages.map((message, index) => {
-    const isRecent = index >= withoutHistoryImages.length - cfg.keepRecent;
-    if (isRecent) {
-      return clipMessage(message, {
-        maxToolChars: cfg.maxToolChars,
-        maxAssistantChars: cfg.maxAssistantChars,
-        maxUserChars: cfg.maxUserChars,
-      });
-    }
-    return clipMessage(message, {
-      maxToolChars: cfg.maxToolCharsSoft,
-      maxAssistantChars: cfg.maxAssistantCharsSoft,
-      maxUserChars: cfg.maxUserCharsSoft,
-    });
-  });
-  const softChars = softClipped.reduce((sum, message) => sum + messageChars(message), 0);
-  if (softChars <= cfg.budgetChars) {
+  // Clip every message by role. Identical treatment for every position, which is
+  // what keeps the prefix byte-stable as the window slides.
+  const clipped = withoutHistoryImages.map((message) => clipMessageByRole(message, cfg));
+  const clippedChars = clipped.reduce((sum, message) => sum + messageChars(message), 0);
+  if (clippedChars <= cfg.budgetChars) {
     return {
-      messages: softClipped,
+      messages: clipped,
       truncated: true,
       originalChars,
-      compactChars: softChars,
+      compactChars: clippedChars,
       droppedMessages: 0,
       softTriggered: true,
       imagesStripped,
@@ -130,8 +141,8 @@ export function compactMessagesForModel(
     };
   }
 
-  // Hard pack: keep stable prefix + newest tail; summarize the dropped middle.
-  const packed = hardPack(softClipped, cfg);
+  // Hard pack: keep the newest messages that fit, and drop the older ones.
+  const packed = hardPack(clipped, cfg);
   return {
     ...packed,
     originalChars,
@@ -141,91 +152,59 @@ export function compactMessagesForModel(
   };
 }
 
-function hardPack(messages: AgentMessage[], cfg: ContextBudgetConfig): Omit<CompactResult, 'originalChars' | 'softTriggered' | 'imagesStripped' | 'mode'> & { mode?: never } {
+/**
+ * Keep the newest messages that fit, dropping the oldest.
+ *
+ * Deliberately does NOT inject a summary of the dropped middle. The previous
+ * version inserted `[compacted session history]` at position `keepPrefix` — early
+ * in the array — with text that was a live count of the messages being dropped
+ * ("tools=6" → "tools=7"). That message changed on every step, so every message
+ * after it was a cache miss: measured on a 24-message history, only 2 of 13 kept
+ * messages survived byte-identical between two consecutive steps.
+ *
+ * Dropping from the front instead means the retained messages keep their bytes,
+ * and it is honest: nothing is silently rewritten into a paraphrase.
+ *
+ * On quantizing the drop point: the boundary is NOT rounded to a block. That was
+ * tried, to make the window advance in coarse steps, and it broke the budget
+ * invariant outright — rounding down left the packed result over budget on 19 of
+ * 30 steps, which is the one thing this function exists to prevent. Cache
+ * stability comes from `clipMessageByRole` being a pure function of each message
+ * instead; the drop point is free to move exactly as far as the budget requires.
+ */
+function hardPack(clipped: AgentMessage[], cfg: ContextBudgetConfig): Omit<CompactResult, 'originalChars' | 'softTriggered' | 'imagesStripped' | 'mode'> {
   const budgetChars = cfg.budgetChars;
-  const keepRecent = Math.min(cfg.keepRecent, messages.length);
-  const keepPrefix = Math.min(cfg.keepPrefix, Math.max(0, messages.length - keepRecent));
+  const sizes = clipped.map((message) => messageChars(message) + 1);
+  const total = sizes.reduce((sum, size) => sum + size, 0);
 
-  const prefix = messages.slice(0, keepPrefix);
-  const tail = messages.slice(messages.length - keepRecent);
-  const middle = messages.slice(keepPrefix, messages.length - keepRecent);
-
-  // Clip prefix lightly so it stays cache-stable and small.
-  const prefixClipped = prefix.map((message) => clipMessage(message, {
-    maxToolChars: Math.min(cfg.maxToolCharsSoft, 1_200),
-    maxAssistantChars: Math.min(cfg.maxAssistantCharsSoft, 1_200),
-    maxUserChars: Math.min(cfg.maxUserCharsSoft, 1_500),
-  }));
-
-  const selected: AgentMessage[] = [];
-  let used = 0;
-
-  for (const message of prefixClipped) {
-    const size = messageChars(message) + 1;
-    if (used + size > budgetChars * 0.35 && selected.length > 0) break;
-    selected.push(message);
-    used += size;
+  // Drop exactly as many of the oldest as it takes, keeping at least the newest.
+  let start = 0;
+  let remaining = total;
+  while (remaining > budgetChars && start < clipped.length - 1) {
+    remaining -= sizes[start]!;
+    start += 1;
   }
 
-  // Reserve room for tail by packing from newest of the soft-clipped full list if prefix empty.
-  const tailSelected: AgentMessage[] = [];
-  let tailUsed = 0;
-  for (let index = tail.length - 1; index >= 0; index -= 1) {
-    const message = tail[index]!;
-    const size = messageChars(message) + 1;
-    if (tailSelected.length > 0 && used + tailUsed + size > budgetChars) break;
-    if (tailSelected.length === 0 && size > budgetChars - used) {
-      // Force-fit latest message by clipping harder.
-      const tight = clipMessage(message, {
-        maxToolChars: Math.min(1_500, cfg.maxToolCharsSoft),
-        maxAssistantChars: Math.min(1_500, cfg.maxAssistantCharsSoft),
-        maxUserChars: Math.min(2_000, cfg.maxUserCharsSoft),
-      });
-      tailSelected.unshift(tight);
-      tailUsed += messageChars(tight) + 1;
-      break;
-    }
-    tailSelected.unshift(message);
-    tailUsed += size;
-  }
+  let kept = clipped.slice(start);
+  let used = remaining;
 
-  const droppedMiddle = middle.length + (tail.length - tailSelected.length) + (prefix.length - selected.length);
-  let resultMessages = [...selected, ...tailSelected];
-  let compactChars = resultMessages.reduce((sum, message) => sum + messageChars(message), 0);
-
-  if (droppedMiddle > 0 && middle.length > 0) {
-    const summary = buildHistorySummary(middle);
-    const summaryMessage: AgentMessage = {
-      role: 'user',
-      content: summary,
-      createdAt: middle[0]?.createdAt ?? new Date().toISOString(),
-    };
-    const summarySize = messageChars(summaryMessage) + 1;
-    if (compactChars + summarySize <= budgetChars) {
-      // Insert summary between prefix and tail for readability; prefix stays first for cache.
-      resultMessages = [...selected, summaryMessage, ...tailSelected];
-      compactChars += summarySize;
-    }
-  }
-
-  // Final safety: if still over budget, drop from just after prefix.
-  while (resultMessages.length > 1 && compactChars > budgetChars) {
-    const dropIndex = Math.min(selected.length, resultMessages.length - 1);
-    if (dropIndex <= 0 && resultMessages.length > 1) {
-      resultMessages.splice(1, 1);
-    } else if (dropIndex < resultMessages.length - 1) {
-      resultMessages.splice(dropIndex, 1);
-    } else {
-      break;
-    }
-    compactChars = resultMessages.reduce((sum, message) => sum + messageChars(message), 0);
+  // A single message larger than the whole budget still has to fit: clip it
+  // harder rather than dropping it, or the model loses the newest input.
+  if (kept.length === 1 && used > budgetChars) {
+    const tight = clipMessage(kept[0]!, {
+      maxToolChars: Math.min(1_500, cfg.maxToolChars),
+      maxAssistantChars: Math.min(1_500, cfg.maxAssistantChars),
+      maxUserChars: Math.min(2_000, cfg.maxUserChars),
+    });
+    kept = [tight];
+    used = messageChars(tight) + 1;
   }
 
   return {
-    messages: resultMessages,
+    messages: kept,
     truncated: true,
-    compactChars,
-    droppedMessages: Math.max(0, messages.length - resultMessages.length + (resultMessages.some((m) => m.content.startsWith('[compacted session history]')) ? 1 : 0)),
+    compactChars: used,
+    droppedMessages: start,
   };
 }
 
@@ -294,35 +273,6 @@ function truncateText(content: string, maxChars: number, label: string): string 
   return `${content.slice(0, head)}\n...[${label} truncated ${omitted} chars]...\n${content.slice(-tail)}`;
 }
 
-function buildHistorySummary(messages: AgentMessage[]): string {
-  const tools = messages.filter((message) => message.role === 'tool');
-  const users = messages.filter((message) => message.role === 'user');
-  const assistants = messages.filter((message) => message.role === 'assistant');
-  const toolNames = countBy(tools.map((message) => message.name ?? 'tool'));
-  const failures = tools.filter((message) => /failed|error|blocked|ENOENT|AssertionError/i.test(message.content)).length;
-  const latestUser = [...users].reverse().find((message) => !message.content.startsWith('[compacted session history]'));
-
-  const toolSummary = Object.entries(toolNames)
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 12)
-    .map(([name, count]) => `${name}×${count}`)
-    .join(', ') || 'none';
-
-  const snippets = tools
-    .slice(-6)
-    .map((message) => `- ${message.name ?? 'tool'}: ${oneLine(message.content).slice(0, 120)}`)
-    .join('\n');
-
-  return [
-    '[compacted session history]',
-    `Older messages compacted: users=${users.length}, assistants=${assistants.length}, tools=${tools.length}, toolFailures≈${failures}.`,
-    `Tool mix: ${toolSummary}.`,
-    latestUser ? `Oldest retained context cue: ${oneLine(latestUser.content).slice(0, 200)}` : undefined,
-    snippets ? `Recent older tool tails:\n${snippets}` : undefined,
-    'Use this summary as background only; prefer newer messages for current task state.',
-  ].filter((line): line is string => typeof line === 'string').join('\n');
-}
-
 export function messageChars(message: AgentMessage): number {
   let total = (message.content?.length ?? 0) + (message.name?.length ?? 0) + message.role.length + 8;
   if (message.parts) {
@@ -365,11 +315,8 @@ function normalizeOptions(options: ContextBudgetOptions): Partial<ContextBudgetC
   if (options.keepRecent !== undefined) out.keepRecent = options.keepRecent;
   if (options.keepPrefix !== undefined) out.keepPrefix = options.keepPrefix;
   if (options.maxToolChars !== undefined) out.maxToolChars = options.maxToolChars;
-  if (options.maxToolCharsSoft !== undefined) out.maxToolCharsSoft = options.maxToolCharsSoft;
   if (options.maxAssistantChars !== undefined) out.maxAssistantChars = options.maxAssistantChars;
-  if (options.maxAssistantCharsSoft !== undefined) out.maxAssistantCharsSoft = options.maxAssistantCharsSoft;
   if (options.maxUserChars !== undefined) out.maxUserChars = options.maxUserChars;
-  if (options.maxUserCharsSoft !== undefined) out.maxUserCharsSoft = options.maxUserCharsSoft;
   return out;
 }
 

@@ -230,7 +230,29 @@ export function toToolAwareMessages(messages: AgentMessage[]) {
   });
 }
 
-export function toAnthropicAwareMessages(messages: AgentMessage[], options?: { slidingCacheBreakpoint?: boolean }) {
+export function toAnthropicAwareMessages(
+  messages: AgentMessage[],
+  options?: {
+    slidingCacheBreakpoint?: boolean;
+    /**
+     * Per-turn text to append AFTER the cached prefix (the tool strategy).
+     *
+     * It goes on the last message rather than into `system` because Anthropic
+     * evaluates the prefix in the order tools → system → messages, so anything
+     * in `system` is inside the range the sliding breakpoint covers. The strategy
+     * is regenerated every turn from the prompt and recent tool results, so
+     * putting it there invalidated the whole conversation history on every turn:
+     * the cache could only ever cover tools + the stable system block, which is
+     * exactly the ~70% plateau seen in real usage.
+     *
+     * The last message is new input on every request anyway, so appending there
+     * costs nothing and leaves the reusable prefix intact. The OpenAI path solves
+     * the same problem with `buildAutoCacheMessages`; this is its equivalent for
+     * a provider whose system prompt cannot come after the messages.
+     */
+    trailingStrategy?: string;
+  },
+) {
   const converted: Array<{ role: 'user' | 'assistant'; content: unknown }> = messages.map((message) => {
     const role = message.role === 'assistant' ? 'assistant' : 'user';
     if ((message.role === 'user' || message.role === 'tool') && message.parts && message.parts.some((part) => part.type === 'image')) {
@@ -265,17 +287,39 @@ export function toAnthropicAwareMessages(messages: AgentMessage[], options?: { s
   const result: Array<{ role: 'user' | 'assistant'; content: unknown }> = converted.length > 0
     ? converted
     : [{ role: 'user', content: 'Start.' }];
+
+  const strategy = options?.trailingStrategy?.trim();
+  if (strategy && result.length > 0) {
+    const last = result[result.length - 1]!;
+    const block = `Current-turn tool strategy (dynamic; do not treat as stable project instructions):\n${strategy}`;
+    // Always split into two blocks: the message's own content, then the
+    // strategy. Concatenating them into one string would put the strategy inside
+    // whatever block the breakpoint marks, defeating the point.
+    if (typeof last.content === 'string') {
+      last.content = [{ type: 'text', text: last.content }, { type: 'text', text: block }];
+    } else if (Array.isArray(last.content)) {
+      last.content.push({ type: 'text', text: block });
+    }
+  }
+
   if (options?.slidingCacheBreakpoint && result.length > 0) {
     // Sliding breakpoint: mark ONLY the last message so each request caches the
     // full prefix (tools + system + all prior messages) and the next request
     // reuses it — the breakpoint advances with the conversation. One message
     // breakpoint + system + tools breakpoints stays within Anthropic's 4-limit.
+    //
+    // With a trailing strategy the breakpoint must sit on the block BEFORE it,
+    // or the strategy — which changes every turn — would be inside the cached
+    // range and invalidate it. Marking the last message still caches everything
+    // up to and including it; only the strategy text appended after stays out.
     const last = result[result.length - 1]!;
     if (typeof last.content === 'string') {
       last.content = [{ type: 'text', text: last.content, cache_control: cacheControl() }];
     } else if (Array.isArray(last.content) && last.content.length > 0) {
-      const lastBlock = last.content[last.content.length - 1] as Record<string, unknown>;
-      lastBlock.cache_control = cacheControl();
+      // Mark the last block that is NOT the trailing strategy.
+      const index = strategy ? last.content.length - 2 : last.content.length - 1;
+      const block = last.content[Math.max(0, index)] as Record<string, unknown> | undefined;
+      if (block) block.cache_control = cacheControl();
     }
   }
   return result;

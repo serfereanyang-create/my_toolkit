@@ -57,7 +57,7 @@ test('compactMessagesForModel keeps recent messages and truncates huge tool outp
   assert.ok(packed.compactChars <= 12_000);
 });
 
-test('compactMessagesForModel inserts summary when older history cannot fit', () => {
+test('compactMessagesForModel drops the oldest messages when the history cannot fit', () => {
   const messages: AgentMessage[] = [];
   for (let index = 0; index < 40; index += 1) {
     messages.push(msg('user', `user turn ${index} ${'u'.repeat(500)}`));
@@ -78,13 +78,20 @@ test('compactMessagesForModel inserts summary when older history cannot fit', ()
   assert.ok(packed.truncated || packed.droppedMessages > 0);
   assert.ok(packed.compactChars <= 10_000);
   assert.ok(packed.messages.length < messages.length);
-  assert.ok(
-    packed.messages.some((message) => message.content.startsWith('[compacted session history]'))
-    || packed.messages[0]?.content.includes('user turn')
-    || packed.messages.at(-1)?.role === 'assistant',
-  );
   assert.equal(packed.messages.at(-1)?.role, 'assistant');
   assert.equal(packed.mode, 'hard-pack');
+  // The kept messages are the NEWEST ones: dropping happens at the front, so the
+  // retained suffix keeps its bytes and stays a cache hit.
+  const keptTurnNumbers = packed.messages
+    .map((message) => /turn (\d+)/.exec(message.content)?.[1])
+    .filter((value): value is string => value !== undefined)
+    .map(Number);
+  assert.ok(keptTurnNumbers.length > 0);
+  assert.ok(Math.min(...keptTurnNumbers) > 0, 'the oldest turns must be the ones dropped');
+  assert.ok(
+    !packed.messages.some((message) => message.content.startsWith('[compacted session history]')),
+    'no synthesized summary: its live counts changed every step and broke the cached prefix',
+  );
 });
 
 test('compactMessagesForModel preserves full history when under budget', () => {
@@ -142,11 +149,141 @@ test('soft threshold clips before hard drop when moderately over soft ratio', ()
     budgetChars: 12_000,
     softRatio: 0.5,
     maxToolChars: 4_000,
-    maxToolCharsSoft: 1_500,
     keepRecent: 3,
     keepPrefix: 1,
   });
   assert.ok(packed.compactChars <= 12_000);
   assert.ok(packed.softTriggered || packed.mode !== 'passthrough');
   assert.equal(packed.messages.at(-1)?.content, 'fresh');
+});
+
+/*
+ * Cache stability of the packed history.
+ *
+ * `compactMessagesForModel` runs on EVERY model step, so its output is the
+ * prefix the provider caches. If packing a message depends on anything other
+ * than that message, the prefix changes as the conversation grows and every
+ * step re-pays for the whole history.
+ *
+ * It did. Two separate mechanisms, both found in real usage data (hit rate
+ * pinned around 70% on an endpoint whose cache works):
+ *
+ *  1. Clip limits were chosen by distance from the END of the array. Every step
+ *     appends messages, so a message drifted out of the "recent" window, got
+ *     re-clipped tighter, and `truncateText` wrote a different omitted-count
+ *     into its body — changing bytes in the MIDDLE of the history.
+ *  2. Hard-pack injected a `[compacted session history]` summary near the front
+ *     whose text was a live count of the messages being dropped ("tools=6" →
+ *     "tools=7"). That message changed on every step.
+ *
+ * These tests assert the property directly, so a future change to the packing
+ * strategy cannot quietly reintroduce either.
+ */
+
+/** One turn's worth of history, as a growing conversation produces it. */
+function history(turns: number, bodyChars = 3_000): AgentMessage[] {
+  const messages: AgentMessage[] = [];
+  for (let index = 0; index < turns; index += 1) {
+    messages.push(msg('user', `user turn ${index} ${'u'.repeat(bodyChars)}`));
+    messages.push(msg('tool', `tool turn ${index} ${'t'.repeat(bodyChars)}`, 'search_text'));
+    messages.push(msg('assistant', `assistant turn ${index} ${'a'.repeat(bodyChars)}`));
+  }
+  return messages;
+}
+
+/** How many leading packed messages are byte-identical between two packings. */
+function sharedLeadingMessages(a: AgentMessage[], b: AgentMessage[]): number {
+  let same = 0;
+  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
+    if (a[index]!.content !== b[index]!.content) break;
+    same += 1;
+  }
+  return same;
+}
+
+test('packing a message does not depend on how much history follows it', () => {
+  // The property: clip(m) is a function of m alone. Appending newer messages
+  // must not rewrite the bytes of older ones.
+  const base = history(4);
+  const grown = [...base, ...history(4).map((m) => ({ ...m, content: m.content.replace('turn', 'later turn') }))];
+  const cfg = { budgetChars: 500_000 };
+
+  const packedBase = compactMessagesForModel(base, cfg);
+  const packedGrown = compactMessagesForModel(grown, cfg);
+  // Same messages at the same positions => identical bytes.
+  for (let index = 0; index < packedBase.messages.length; index += 1) {
+    assert.equal(
+      packedGrown.messages[index]!.content,
+      packedBase.messages[index]!.content,
+      `message ${index} changed when newer messages were appended`,
+    );
+  }
+});
+
+test('a growing conversation keeps its cached prefix as it crosses the soft threshold', () => {
+  // The regression: crossing the threshold used to rewrite the whole history at
+  // once, because the clip limits switched tier — so the turn that crossed it
+  // paid full price, and so did every turn after, since the boundary kept
+  // sliding.
+  //
+  // With clip limits fixed by role, a message's packed bytes no longer depend on
+  // position. The drop point still has to move to respect the budget (see the
+  // note on hardPack: quantizing it was tried and broke the budget invariant),
+  // so this asserts the achievable property — while the mode stays soft-clip,
+  // nothing is dropped and the prefix must be fully byte-stable.
+  const cfg = { budgetChars: 40_000, softRatio: 0.5 };
+
+  let messages = history(2);
+  let previous = compactMessagesForModel(messages, cfg);
+  for (let turn = 3; turn <= 12; turn += 1) {
+    messages = [...messages, ...history(1).map((m) => ({ ...m, content: m.content.replace('turn 0', `turn ${turn}`) }))];
+    const current = compactMessagesForModel(messages, cfg);
+    if (current.mode === 'soft-clip') {
+      const shared = sharedLeadingMessages(previous.messages, current.messages);
+      assert.equal(
+        shared,
+        Math.min(previous.messages.length, current.messages.length),
+        `turn ${turn}: soft-clip must keep every message byte-stable, not just the first ${shared}`,
+      );
+    }
+    previous = current;
+  }
+});
+
+test('hard-pack never exceeds the budget', () => {
+  // The invariant this function exists for. A version that quantized the drop
+  // point to a block boundary (to improve cache reuse) left the result OVER
+  // budget on 19 of 30 steps, which is worse than a cache miss: it risks the
+  // request being rejected for context length.
+  const cfg = { budgetChars: 20_000 };
+  let messages: AgentMessage[] = [];
+  for (let turn = 0; turn < 30; turn += 1) {
+    messages = [...messages, ...history(1, 2_000).map((m) => ({ ...m, content: m.content.replace('turn 0', `turn ${turn}`) }))];
+    const packed = compactMessagesForModel(messages, cfg);
+    assert.ok(
+      packed.compactChars <= cfg.budgetChars,
+      `turn ${turn}: packed ${packed.compactChars} chars exceeds the ${cfg.budgetChars} budget (mode ${packed.mode})`,
+    );
+  }
+});
+
+test('hard-pack keeps a suffix of the newest messages, not a rewritten middle', () => {
+  // Dropping from the front means the retained messages keep their bytes; the
+  // old implementation kept a 2-message prefix AND a summary whose counts
+  // changed, so almost nothing survived.
+  const cfg = { budgetChars: 12_000 };
+  const packed = compactMessagesForModel(history(20), cfg);
+  assert.equal(packed.mode, 'hard-pack');
+  assert.ok(packed.messages.length > 0);
+  // Every kept message is an original message, unmodified apart from clipping.
+  for (const message of packed.messages) {
+    assert.ok(!message.content.startsWith('[compacted session history]'));
+  }
+  // And they are the newest ones.
+  const numbers = packed.messages
+    .map((message) => /turn (\d+)/.exec(message.content)?.[1])
+    .filter((value): value is string => value !== undefined)
+    .map(Number);
+  assert.ok(numbers.length > 0);
+  assert.ok(Math.min(...numbers) >= 10, `expected the newest turns, got ${JSON.stringify(numbers)}`);
 });

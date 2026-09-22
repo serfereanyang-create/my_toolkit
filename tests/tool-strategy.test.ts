@@ -434,18 +434,29 @@ test('Anthropic serializes tool strategy into the outbound system prompt', async
   }
 
   assert.ok(outboundBody);
-  // System is an ordered block array. The stable block is the cache boundary;
-  // the dynamic strategy remains outside it so strategy changes do not reset the
+  // System carries ONLY the stable block. The strategy used to be a second
+  // system block, which put it inside the range the sliding message breakpoint
+  // covers — Anthropic evaluates tools → system → messages — so a per-turn
+  // change invalidated the whole conversation history. It now rides on the last
+  // message instead, outside the cached prefix. The property that matters is
+  // unchanged and is asserted below: changing the strategy must not reset the
   // reusable prefix.
   assert.ok(Array.isArray(outboundBody.system));
   const blocks = outboundBody.system as Array<{ type: string; text: string; cache_control?: unknown }>;
-  const stableBlock = blocks[0];
-  const dynamicBlock = blocks.at(-1);
-  // The stable system block owns the cache breakpoint; the dynamic strategy is
-  // intentionally outside the cached prefix so it can change between turns.
-  assert.deepEqual(stableBlock.cache_control, { type: 'ephemeral' });
-  assert.match(String(dynamicBlock?.text), /provider-marker=anthropic/);
-  assert.equal(dynamicBlock?.cache_control, undefined);
+  assert.equal(blocks.length, 1, 'only the stable block belongs in system');
+  assert.deepEqual(blocks[0]!.cache_control, { type: 'ephemeral' });
+  assert.doesNotMatch(String(blocks[0]!.text), /provider-marker=anthropic/);
+
+  // The strategy still reaches the model — appended to the last message.
+  const messages = outboundBody.messages as Array<{ content: unknown }>;
+  const lastContent = messages.at(-1)!.content;
+  assert.ok(Array.isArray(lastContent));
+  const lastBlocks = lastContent as Array<{ type: string; text: string; cache_control?: unknown }>;
+  const strategyBlock = lastBlocks.at(-1)!;
+  assert.match(String(strategyBlock.text), /provider-marker=anthropic/);
+  // And it is NOT inside the cached range.
+  assert.equal(strategyBlock.cache_control, undefined);
+  assert.deepEqual(lastBlocks[0]!.cache_control, { type: 'ephemeral' });
 });
 
 test('Anthropic keeps the stable cache prefix when strategy changes', async () => {
@@ -479,9 +490,37 @@ test('Anthropic keeps the stable cache prefix when strategy changes', async () =
   const secondSystem = bodies[1].system as Array<Record<string, unknown>>;
   assert.deepEqual(firstSystem[0], secondSystem[0]);
   assert.deepEqual(firstSystem[0].cache_control, { type: 'ephemeral' });
-  assert.notEqual(firstSystem.at(-1)?.text, secondSystem.at(-1)?.text);
-  assert.equal(firstSystem.at(-1)?.cache_control, undefined);
-  assert.equal(secondSystem.at(-1)?.cache_control, undefined);
+  assert.equal(firstSystem.length, 1, 'system is stable-only; the strategy is not here');
+
+  // The strategy really did differ between the two turns, so the assertion
+  // below is not vacuous.
+  const strategyOf = (body: Record<string, unknown>) => {
+    const messages = body.messages as Array<{ content: unknown }>;
+    const blocks = messages.at(-1)!.content as Array<{ text?: string; cache_control?: unknown }>;
+    return blocks.at(-1)!;
+  };
+  const first = strategyOf(bodies[0]);
+  const second = strategyOf(bodies[1]);
+  assert.notEqual(first.text, second.text);
+  assert.equal(first.cache_control, undefined);
+  assert.equal(second.cache_control, undefined);
+
+  // The property the whole arrangement exists for: the CACHED range is
+  // byte-identical across turns even though the strategy changed. Comparing
+  // only `system` would no longer prove anything, because system is now
+  // strategy-free by construction — the cached range also includes every prior
+  // message and the marked block of the newest one.
+  const cachedRange = (body: Record<string, unknown>) => {
+    const messages = body.messages as Array<{ content: unknown }>;
+    const lastBlocks = messages.at(-1)!.content as Array<Record<string, unknown>>;
+    return JSON.stringify([
+      body.tools ?? [],
+      body.system,
+      messages.slice(0, -1),
+      lastBlocks.slice(0, -1),
+    ]);
+  };
+  assert.equal(cachedRange(bodies[0]), cachedRange(bodies[1]));
 });
 test('recovery hints explain path and edit failures', () => {
   assert.match(recoveryHintForToolFailure('read_file', 'ENOENT: no such file or directory') ?? '', /locate the correct path/);

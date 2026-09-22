@@ -39,22 +39,26 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
           temperature: thinking ? 1 : 0.2,
           stream: true,
           // Anthropic evaluates the prompt prefix in order: tools → system →
-          // messages. Keep the breakpoint on the stable system block. The
-          // current-turn strategy is deliberately outside the cached segment;
-          // changing it must not invalidate the reusable tools + stable-system
-          // prefix on the next request.
-          system: systemParts.dynamic
-            ? [
-                { type: 'text', text: systemParts.stable, cache_control: cacheControl() },
-                { type: 'text', text: systemParts.dynamic },
-              ]
-            : [
-                { type: 'text', text: systemParts.stable, cache_control: cacheControl() },
-              ],
+          // messages. Everything in `system` is therefore INSIDE the range the
+          // sliding message breakpoint covers — so the per-turn tool strategy
+          // must not go here. It used to, and because the strategy is
+          // regenerated every turn, the conversation history could never be
+          // cached: the cache covered only tools + the stable system block, and
+          // every turn re-paid for the whole transcript. That is the ~70%
+          // plateau measured in the usage ledger.
+          //
+          // It now rides on the last message (see `trailingStrategy`), which is
+          // new input every request anyway.
+          system: [
+            { type: 'text', text: systemParts.stable, cache_control: cacheControl() },
+          ],
           // Sliding message breakpoint: cache the entire conversation prefix so
           // each turn only pays for the newest messages (Claude Code-style 97%+
           // hit rate on long sessions).
-          messages: toAnthropicAwareMessages(request.messages, { slidingCacheBreakpoint: true }),
+          messages: toAnthropicAwareMessages(request.messages, {
+            slidingCacheBreakpoint: true,
+            trailingStrategy: systemParts.dynamic,
+          }),
         };
         if (tools.length > 0) body.tools = tools;
         if (thinking) body.thinking = thinking;

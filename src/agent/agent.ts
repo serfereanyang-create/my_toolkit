@@ -704,22 +704,35 @@ async function runAgentTurnCore(
       const packed = compactMessagesForModel(runtime.session.messages, {
         budgetChars: resolveContextBudgetChars(),
       });
-      // Inject memory block as first user message if available (step 0 only, to avoid re-injecting on loops).
-      if (step === 0 && memoryBlock) {
+      // These blocks are injected on EVERY step, not just step 0.
+      //
+      // They used to be step-0-only "to avoid re-injecting on loops", which
+      // broke the prompt cache within a single turn: step 0's array began with
+      // <relevant-project-memories>, step 1's began with the first history
+      // message, so the two shared NO prefix bytes and every step after the
+      // first re-paid for the whole conversation. Measured on the ledger, turns
+      // that call tools sit at ~66% and turns that answer directly — a single
+      // step, where there is no later step to re-read the prefix — sit at ~1.5%,
+      // which is the signature of exactly this.
+      //
+      // Re-injecting is free: the blocks are constant for the duration of a
+      // turn, so from step 1 onward they are part of the cached prefix rather
+      // than new input.
+      if (memoryBlock) {
         packed.messages.unshift({
           role: 'user',
           content: `<relevant-project-memories>\n${memoryBlock}\n</relevant-project-memories>`,
           createdAt: new Date().toISOString(),
         });
       }
-      if (step === 0 && skillBlock) {
+      if (skillBlock) {
         packed.messages.unshift({
           role: 'user',
           content: skillBlock,
           createdAt: new Date().toISOString(),
         });
       }
-      if (step === 0 && reflectionBlock) {
+      if (reflectionBlock) {
         packed.messages.unshift({
           role: 'user',
           content: reflectionBlock,
