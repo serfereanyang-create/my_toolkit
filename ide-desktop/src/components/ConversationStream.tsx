@@ -4,7 +4,6 @@ import type { AppState, ChatItem } from '../types';
 import type { AppAction } from '../lib/state';
 import { ToolCard } from './ToolCard';
 import { TurnSummary } from './TurnSummary';
-import { ChatLauncher } from './ChatLauncher';
 import { Markdown } from './Markdown';
 import { MessageOutline } from './MessageOutline';
 import { activeTurnProgress } from '../lib/state';
@@ -12,18 +11,15 @@ import { desktop } from '../lib/ipc';
 import { TaskBoardCard } from './TaskBoardCard';
 import { ReviewReport } from './ReviewReport';
 
-export function ConversationStream({ state, onApprove, onEditUser, onLaunch, onUndo, onOpenFile, dispatch, expandAll, onPickCommand, onCancel }: {
+export function ConversationStream({ state, onApprove, onEditUser, onUndo, onOpenFile, dispatch, expandAll, onCancel }: {
   state: AppState;
   onApprove: (requestId: string, decision: 'allow_once' | 'allow_session' | 'deny') => void;
   onEditUser: (text: string) => void;
-  onLaunch: (id: string) => void;
   onUndo: (turnId: string) => void;
   onOpenFile?: (path: string) => void;
   dispatch: React.Dispatch<AppAction>;
   /** Ctrl+O global expand/collapse of all tool step details. */
   expandAll?: boolean;
-  /** Codex welcome screen: clicking a starter command prefills the composer. */
-  onPickCommand?: (command: string) => void;
   /** Codex status row: "esc to interrupt" — click or Esc cancels the turn. */
   onCancel?: () => void;
 }) {
@@ -69,18 +65,17 @@ export function ConversationStream({ state, onApprove, onEditUser, onLaunch, onU
 
   const progress = activeTurnProgress(state);
 
+  // An empty conversation stays empty. It used to render a first-run card
+  // (>_ YOYcode header, model/workspace, a "To get started" command list and a
+  // row of launcher buttons) whenever the transcript was empty — so it came
+  // back in every new conversation. That card is a first-run affordance, not
+  // something to re-show on every Ctrl+N.
+  //
+  // Nothing became unreachable: every action it offered is in the command
+  // palette (Ctrl+Shift+P) and the terminal it opened is the bottom panel
+  // (Ctrl+T). The floating terminal it also opened keeps its own palette entry.
   if (state.chat.length === 0) {
-    const activeProvider = state.settings?.providers.find((item) => item.id === state.settings?.activeProviderId);
-    return (
-      <div className="stream" ref={streamRef}>
-        <ChatLauncher
-          onPick={onLaunch}
-          onPickCommand={onPickCommand}
-          model={activeProvider?.model}
-          workspaceRoot={state.workspaceRoot}
-        />
-      </div>
-    );
+    return <div className="stream" ref={streamRef} />;
   }
 
   return (

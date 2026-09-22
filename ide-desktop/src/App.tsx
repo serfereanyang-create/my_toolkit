@@ -84,7 +84,7 @@ export default function App() {
   const [settingsPage, setSettingsPage] = useState<SettingsNavId | undefined>(undefined);
   // Terminal output ring-buffer for @terminal mention
   const [terminalOutput, setTerminalOutput] = useState<string>('');
-  // Floating terminal window (launched from ChatLauncher / left-area)
+  // Floating terminal window (command palette → "Toggle Floating Terminal").
   const [terminalFloatOpen, setTerminalFloatOpen] = useState(false);
   // Info panel visibility
   const [infoPanelOpen, setInfoPanelOpen] = useState(false);
@@ -1049,6 +1049,7 @@ export default function App() {
     go: (view) => setMainView(view as MainView),
     newChat: () => { dispatch({ type: 'chat/clear' }); setMainView('chat'); },
     toggleTerminal: () => dispatch({ type: 'bottom/toggle' }),
+    toggleTerminalFloat,
     toggleDetails: () => setDetailsExpanded((v) => !v),
     toggleSideChat: () => { setWorkspaceToolsOpen(false); dispatch({ type: 'sidechat/toggle' }); },
     toggleBrowser: () => { setWorkspaceToolsOpen(false); dispatch({ type: 'browser/toggle' }); },
@@ -1215,17 +1216,16 @@ export default function App() {
     }
   }
 
-  function handleLaunch(id: string) {
-    if (id === 'files') { setMainView('files'); return; }
-    // terminal from ChatLauncher → floating window
-    if (id === 'terminal') { setTerminalFloatOpen(true); return; }
-    if (id === 'side-chat') { setWorkspaceToolsOpen(false); dispatch({ type: 'sidechat/toggle' }); return; }
-    if (id === 'browser') { setWorkspaceToolsOpen(false); dispatch({ type: 'browser/toggle' }); return; }
-    if (id === 'workspace-tools') {
-      openWorkspaceTools();
-      return;
-    }
-    dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: `未知操作：${id}` } });
+  /**
+   * Floating terminal window (draggable, overlays the conversation).
+   *
+   * It used to be opened only by the empty-conversation launcher card. That
+   * card is gone — it reappeared in every new conversation — so the floating
+   * window now has its own command-palette entry rather than no entry at all.
+   * Distinct from the bottom terminal panel (Ctrl+T), which is the usual one.
+   */
+  function toggleTerminalFloat() {
+    setTerminalFloatOpen((open) => !open);
   }
 
   // During the brief startup restore, show a neutral splash instead of the
@@ -1369,12 +1369,10 @@ export default function App() {
             state={state}
             onApprove={approve}
             onEditUser={(text) => setPrefill({ text, nonce: Date.now() })}
-            onLaunch={handleLaunch}
             onUndo={undoTurn}
             onOpenFile={handleOpenFile}
             dispatch={dispatch}
             expandAll={detailsExpanded}
-            onPickCommand={(command) => setPrefill({ text: `${command} `, nonce: Date.now() })}
             onCancel={cancelTurn}
           />
         )}
@@ -1678,7 +1676,7 @@ export default function App() {
         />
       )}
 
-      {/* Floating terminal window — launched from ChatLauncher / Ctrl+T */}
+      {/* Floating terminal window — command palette → "Toggle Floating Terminal" */}
       {terminalFloatOpen && (
         <TerminalFloat
           cwd={state.workspaceRoot}

@@ -35,6 +35,8 @@ export function buildCommands(ctx: {
   go: (view: string) => void;
   newChat: () => void;
   toggleTerminal: () => void;
+  /** Floating terminal window (overlays the conversation) — distinct from the bottom panel. */
+  toggleTerminalFloat: () => void;
   toggleDetails: () => void;
   toggleSideChat: () => void;
   toggleBrowser: () => void;
@@ -72,6 +74,7 @@ export function buildCommands(ctx: {
     { id: 'chat.cancel', title: 'Cancel Current Turn', group: 'chat', shortcut: 'Esc', keywords: '停止 取消 stop cancel interrupt', enabled: running, run: ctx.cancelTurn },
     { id: 'editor.details', title: 'Expand / Collapse All Tool Details', group: 'editor', shortcut: 'Ctrl+O', keywords: '展开 折叠 工具详情 details expand collapse', run: ctx.toggleDetails },
     { id: 'editor.terminal', title: 'Toggle Terminal Panel', group: 'editor', shortcut: 'Ctrl+T', keywords: '终端 terminal bottom panel', run: ctx.toggleTerminal },
+    { id: 'editor.terminal-float', title: 'Toggle Floating Terminal', group: 'editor', keywords: '终端 浮动 浮窗 terminal floating window overlay', run: ctx.toggleTerminalFloat },
     { id: 'panels.sidechat', title: 'Toggle Side Chat', group: 'panels', shortcut: 'Alt+Ctrl+S', keywords: '侧边会话 side chat', run: ctx.toggleSideChat },
     { id: 'panels.browser', title: 'Toggle Browser', group: 'panels', shortcut: 'Alt+Ctrl+B', keywords: '浏览器 browser preview web', run: ctx.toggleBrowser },
     { id: 'panels.work', title: 'Toggle Work Details', group: 'panels', keywords: '工作日志 详情 work log details', run: ctx.toggleWorkDetails },

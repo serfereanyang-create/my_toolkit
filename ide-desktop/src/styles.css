@@ -5536,73 +5536,6 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 .settings-search-inline { margin: 0 0 var(--sp-6); }
 
 /* =========================================================================
-   Empty-chat launcher menu (files / side-chat / browser / terminal)
-   ========================================================================= */
-.launcher {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 48px;
-  width: 100%;
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 0 var(--sp-6);
-}
-
-.launcher-left {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.launcher-menu {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-  width: 100%;
-  max-width: 520px;
-  padding: 0 var(--sp-4);
-}
-
-.launcher-item {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  height: 44px;
-  padding: 0 var(--sp-3);
-  border: 0;
-  border-radius: var(--r-md);
-  background: transparent;
-  color: var(--fg);
-  font-size: var(--fs-md);
-  cursor: pointer;
-  transition: background var(--dur) var(--ease);
-}
-
-.launcher-item:hover { background: var(--bg-hover); }
-
-.launcher-item-icon {
-  flex: 0 0 auto;
-  display: inline-grid;
-  place-items: center;
-  color: var(--fg-muted);
-}
-
-.launcher-item-label { flex: 1 1 auto; text-align: left; }
-
-.launcher-item-shortcut {
-  flex: 0 0 auto;
-  padding: 3px var(--sp-2);
-  border-radius: var(--r-sm);
-  background: var(--bg-sel);
-  color: var(--fg-muted);
-  font-size: var(--fs-xs);
-  font-family: var(--font-mono);
-}
-
-/* =========================================================================
    Top-right window controls
    ========================================================================= */
 .window-controls {
@@ -8614,33 +8547,6 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 }
 
 /* session.rs welcome screen. */
-.codex-header-box {
-  align-self: stretch;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 10px 14px;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  color: var(--fg-muted);
-  margin-bottom: 18px;
-}
-.codex-header-title { color: var(--fg); font-weight: 700; margin-bottom: 8px; }
-.codex-header-label { color: var(--fg-dim); }
-.codex-welcome { margin-bottom: 22px; }
-.codex-welcome-intro { color: var(--fg-muted); font-size: 13px; margin: 0 0 10px; }
-.codex-command-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.codex-command-row {
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  padding: 2px 0;
-  font-size: 13px;
-  text-align: left;
-}
-.codex-command-name { color: var(--fg); font-family: var(--font-mono); }
-.codex-command-desc { color: var(--fg-dim); }
-.codex-command-row:hover .codex-command-name { color: var(--accent, #58a6ff); }
-
 /* chat_composer.rs prompt glyph + footer.rs hint row. */
 .composer-input-row {
   display: flex;
