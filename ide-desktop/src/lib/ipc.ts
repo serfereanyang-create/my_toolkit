@@ -99,6 +99,25 @@ export type SettingsBundle = {
   providers: Array<Record<string, unknown> & { id: string; hasApiKey: boolean }>;
 };
 
+/** Diagnostics snapshot for the settings about-panel. */
+export type SystemInfoSnapshot = {
+  collectedAt: string;
+  platform: string;
+  osRelease: string;
+  osType: string;
+  locale: string | null;
+  cpuModel: string | null;
+  cpuCores: number;
+  totalMemBytes: number;
+  freeMemBytes: number;
+  hostname: string;
+  nodeVersion: string;
+  electronVersion: string | null;
+  gitVersion: string | null;
+  driveFreeBytes: number | null;
+  uptimeSeconds: number;
+};
+
 type ZCodeDesktopApi = {
   workspace: {
     open(): Promise<{ canceled: boolean; root?: string }>;
@@ -181,6 +200,9 @@ type ZCodeDesktopApi = {
   settingsPortability: {
     exportBundle(): Promise<{ ok: boolean; bundle: SettingsBundle }>;
     importBundle(bundle: unknown): Promise<{ ok: boolean; report: { providersAdded: number; providersUpdated: number; skipped: number } }>;
+  };
+  system: {
+    info(): Promise<{ ok: boolean; info: SystemInfoSnapshot }>;
   };
   automation: {
     list(): Promise<AutomationTask[]>;

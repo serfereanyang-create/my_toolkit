@@ -82,6 +82,9 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     exportBundle: () => ipcRenderer.invoke('settings.exportBundle'),
     importBundle: (bundle) => ipcRenderer.invoke('settings.importBundle', bundle),
   },
+  system: {
+    info: () => ipcRenderer.invoke('system.info'),
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window.minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window.toggleMaximize'),

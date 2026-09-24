@@ -12,6 +12,7 @@ const { createResourceSampler } = require('./resource-sampler.cjs');
 const { createCommandsService } = require('./commands.cjs');
 const { exportSessionToFile, defaultExportPath } = require('./export-session.cjs');
 const { exportSettingsBundle, importSettingsBundle } = require('./settings-portable.cjs');
+const { collectSystemInfo } = require('./system-info.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
@@ -208,6 +209,15 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     const { settings: merged, report } = importSettingsBundle(bundle, current);
     await settings.set(merged);
     return { ok: true, report };
+  });
+
+  // Diagnostics snapshot (zcode systemService) for the settings "关于" panel.
+  ipcMain.handle('system.info', async () => {
+    const info = await collectSystemInfo({
+      electronVersion: process.versions.electron ?? null,
+      driveLetter: process.platform === 'win32' ? 'C:' : undefined,
+    });
+    return { ok: true, info };
   });
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));
