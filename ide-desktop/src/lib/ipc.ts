@@ -147,6 +147,10 @@ type ZCodeDesktopApi = {
   fileSearch: {
     search(query: string, limit?: number): Promise<{ ok: boolean; files: Array<{ name: string; path: string; relativePath: string; type: 'file' | 'directory' }> }>;
   };
+  resources: {
+    /** CPU% is whole-machine normalized (100% = all logical cores saturated). */
+    sample(): Promise<{ ok: boolean; usage: { pid: number; processCount: number; cpuPercent: number | null; rssKb: number; sampledAt: number } }>;
+  };
   automation: {
     list(): Promise<AutomationTask[]>;
     get(taskId: string): Promise<AutomationTask | null>;

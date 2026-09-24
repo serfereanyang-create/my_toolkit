@@ -69,6 +69,9 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
   fileSearch: {
     search: (query, limit) => ipcRenderer.invoke('files.search', query, limit),
   },
+  resources: {
+    sample: () => ipcRenderer.invoke('resources.sample'),
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window.minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window.toggleMaximize'),

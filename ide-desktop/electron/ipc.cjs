@@ -8,6 +8,7 @@ const { createQualityGateway } = require('./quality-gateway.cjs');
 const git = require('./git.cjs');
 const { createCheckpointBackend } = require('./checkpoints.cjs');
 const { createFileSearchService } = require('./file-search.cjs');
+const { createResourceSampler } = require('./resource-sampler.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
@@ -152,6 +153,14 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     const root = requireWorkspaceRoot();
     const files = await fileSearchService.search({ rootPath: root, query, limit });
     return { ok: true, files };
+  });
+
+  // Resource sampling for the agent bridge process tree (zcode
+  // processResourceSampler): whole-machine-normalized CPU% + RSS.
+  const resourceSampler = createResourceSampler({ rootPid: process.pid });
+  ipcMain.handle('resources.sample', async () => {
+    const usage = await resourceSampler.sample();
+    return { ok: true, usage };
   });
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));
