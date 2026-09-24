@@ -1,6 +1,7 @@
 import type { AgentMessage, ProviderRequest } from '../providers/types.js';
 import { withModelRetry } from '../providers/retry.js';
 import type { AgentRuntime } from './agent.js';
+import { autoCompactTokenLimit, resolveModelContextWindow } from './modelWindows.js';
 
 /**
  * Auto-compact, ported from openai/codex (codex-rs/core/src/compact.rs +
@@ -14,9 +15,16 @@ import type { AgentRuntime } from './agent.js';
  * - after compaction: summary stub + the most recent user messages
  *   (upstream keeps user messages within a 20k-token budget; we keep the
  *   latest two verbatim)
- * - window size comes from AICODE_CONTEXT_WINDOW (tokens). Upstream reads it
- *   from /models metadata; our multi-vendor CLI has no metadata endpoint, so
- *   without the knob compaction stays manual/char-budget as before.
+ * - window size: AICODE_CONTEXT_WINDOW, else the model table in modelWindows.ts,
+ *   else a conservative fallback. Upstream reads it from /models metadata; our
+ *   multi-vendor CLI has no metadata endpoint, so the table stands in.
+ *
+ * The window must never be unknown. It used to be: an unset
+ * AICODE_CONTEXT_WINDOW returned undefined and `shouldAutoCompact` then
+ * answered false forever. Because no model in the desktop's provider settings
+ * carried a contextWindow, the variable was never set and auto-compaction never
+ * fired once — the conversation just grew until the char budget silently
+ * discarded most of it.
  */
 
 export const AUTO_COMPACT_WINDOW_FRACTION = 0.9;
@@ -26,11 +34,8 @@ export const AUTO_COMPACT_MIN_MESSAGES = 8;
 /** compact.rs retains recent user messages after the summary stub. */
 export const AUTO_COMPACT_KEEP_RECENT_USER = 2;
 
-export function resolveContextWindowTokens(): number | undefined {
-  const raw = process.env.AICODE_CONTEXT_WINDOW;
-  if (!raw) return undefined;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+export function resolveContextWindowTokens(model?: string): number {
+  return resolveModelContextWindow(model);
 }
 
 export function estimateTokens(text: string): number {
@@ -44,7 +49,12 @@ export function shouldAutoCompact(
 ): boolean {
   if (!windowTokens) return false;
   if (messageCount < AUTO_COMPACT_MIN_MESSAGES) return false;
-  return estimatedTokens >= windowTokens * AUTO_COMPACT_WINDOW_FRACTION;
+  return estimatedTokens >= autoCompactTokenLimit(windowTokens);
+}
+
+/** Tokens currently held in the session, by the upstream bytes/4 estimate. */
+export function sessionTokens(messages: AgentMessage[]): number {
+  return estimateTokens(messages.map((message) => message.content).join('\n'));
 }
 
 /** upstream prompts/templates/compact/prompt.md (SUMMARIZATION_PROMPT). */
@@ -69,14 +79,42 @@ export function buildCompactRequestMessages(messages: AgentMessage[]): AgentMess
  * Pre-turn auto-compact (turn.rs:1231-1260 runs it before the new user input
  * enters history). Best-effort: a failed summarization never breaks the turn —
  * the per-request char-budget compaction still bounds the prompt size.
+ *
+ * Returns true when the history was replaced, so callers that run it mid-turn
+ * know whether the messages they were holding are still valid.
  */
-export async function maybeAutoCompact(runtime: AgentRuntime): Promise<void> {
-  const windowTokens = resolveContextWindowTokens();
-  if (!windowTokens) return;
+export async function maybeAutoCompact(runtime: AgentRuntime): Promise<boolean> {
   const messages = runtime.session.messages ?? [];
-  const estimatedTokens = estimateTokens(messages.map((message) => message.content).join('\n'));
-  if (!shouldAutoCompact(estimatedTokens, windowTokens, messages.length)) return;
+  const windowTokens = resolveContextWindowTokens(runtime.provider.model);
+  const estimatedTokens = sessionTokens(messages);
+  if (!shouldAutoCompact(estimatedTokens, windowTokens, messages.length)) return false;
+  return await runAutoCompact(runtime, messages, estimatedTokens, windowTokens);
+}
 
+/**
+ * Mid-turn auto-compact: the same compaction, but run between steps of a single
+ * turn rather than before the next user input.
+ *
+ * Upstream needs this because one turn can be long: a task that runs twenty
+ * tools never returns to `run_pre_sampling_compact`, so a pre-turn-only trigger
+ * would let that turn grow past the window entirely. codex fires it mid-turn
+ * (turn.rs:600-640, `CompactionPhase::MidTurn`) when the model asks for a
+ * follow-up and the token limit has been reached.
+ */
+export async function maybeMidTurnCompact(runtime: AgentRuntime): Promise<boolean> {
+  const messages = runtime.session.messages ?? [];
+  const windowTokens = resolveContextWindowTokens(runtime.provider.model);
+  const estimatedTokens = sessionTokens(messages);
+  if (!shouldAutoCompact(estimatedTokens, windowTokens, messages.length)) return false;
+  return await runAutoCompact(runtime, messages, estimatedTokens, windowTokens);
+}
+
+async function runAutoCompact(
+  runtime: AgentRuntime,
+  messages: AgentMessage[],
+  estimatedTokens: number,
+  windowTokens: number,
+): Promise<boolean> {
   runtime.ui.info(
     `Context ≈${estimatedTokens} tokens (≥90% of the ${windowTokens}-token window) — auto-compacting…`,
   );
@@ -107,14 +145,22 @@ export async function maybeAutoCompact(runtime: AgentRuntime): Promise<void> {
       { role: 'user', content: `${SUMMARY_PREFIX}\n\n${summary}`, createdAt: new Date().toISOString() },
       ...recentUser,
     ];
+    // The server-side continuation chain (Responses API `previous_response_id`)
+    // still refers to the pre-compaction history. Keeping it would make the
+    // provider continue from the history we just replaced, so the compacted
+    // messages would never reach the model at all. codex clears the reference
+    // context item in `replace_compacted_history` for the same reason.
+    runtime.session.providerContinuation = undefined;
     runtime.ui.info(
       `Auto-compact complete: ${messages.length} → ${runtime.session.messages.length} messages (summary stub + ${recentUser.length} recent user messages).`,
     );
     emitCompact?.({ phase: 'completed', auto: true, before: messages.length, after: runtime.session.messages.length });
+    return true;
   } catch (error) {
     runtime.ui.info(
       `Auto-compact failed (${error instanceof Error ? error.message : String(error)}); keeping full history — char-budget compaction still applies.`,
     );
     emitCompact?.({ phase: 'failed', auto: true, reason: error instanceof Error ? error.message : String(error) });
+    return false;
   }
 }

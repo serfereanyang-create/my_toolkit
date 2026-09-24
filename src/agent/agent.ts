@@ -9,7 +9,7 @@ import type { GitUnitContext, GitUnitOutcome, GitUnitResult } from '../git-safet
 import { askForApproval } from '../safety/policy.js';
 import type { AgentAction, Provider } from '../providers/types.js';
 import { withModelRetry } from '../providers/retry.js';
-import { maybeAutoCompact } from './autoCompact.js';
+import { maybeAutoCompact, maybeMidTurnCompact } from './autoCompact.js';
 import type { HookRegistry } from '../hooks/hooks.js';
 import type { CheckpointStore } from '../session/checkpoint.js';
 import type { SessionRecord, SessionStore } from '../session/store.js';
@@ -21,7 +21,7 @@ import { executeCommandPlan, extractCommand, formatCommandStrategy, planCommand 
 import { formatProjectContext, readProjectContext } from './context.js';
 import { formatMemories } from '../memory/format.js';
 import { selectRelevantMemories } from '../memory/select.js';
-import { compactMessagesForModel, resolveContextBudgetChars } from './contextBudget.js';
+import { compactMessagesForModel } from './contextBudget.js';
 import { globalToolHealth } from './toolHealth.js';
 import { buildToolSystemPrompt, buildToolSystemPromptParts } from '../providers/protocol.js';
 import { planLocalFallback } from './fallback.js';
@@ -692,6 +692,17 @@ async function runAgentTurnCore(
       stoppedBy = 'tokens';
       break;
     }
+    // Mid-turn compaction (codex turn.rs:600-640, CompactionPhase::MidTurn).
+    //
+    // A pre-turn-only trigger never fires for a long single turn: twenty tool
+    // calls in one turn never return to the pre-turn check, so that turn grows
+    // past the window and the char budget starts discarding the middle of its
+    // own history. Upstream fires this between steps when the model asks for a
+    // follow-up and the limit is reached; step 0 is skipped because the pre-turn
+    // pass just ran.
+    if (step > 0) {
+      await maybeMidTurnCompact(runtime);
+    }
     // Last budgeted step, still nothing proposed: withdraw everything except
     // propose_plan so the only way forward is to write the plan.
     const lastCall = planningStepBudget !== undefined
@@ -701,8 +712,10 @@ async function runAgentTurnCore(
     let response;
     try {
       runtime.ui.modelStart();
+      // The budget is derived from THIS model's context window, not a fixed
+      // number: see contextBudget.resolveContextBudgetConfig.
       const packed = compactMessagesForModel(runtime.session.messages, {
-        budgetChars: resolveContextBudgetChars(),
+        model: runtime.provider.model,
       });
       // These blocks are injected on EVERY step, not just step 0.
       //

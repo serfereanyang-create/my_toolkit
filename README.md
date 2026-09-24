@@ -230,17 +230,28 @@ Hosted providers now send native tool definitions and stream assistant text:
 Assistant text deltas render live in the terminal (`assistant_delta` events in `--json` mode).
 If the model does not return native tool calls, aicode still accepts the older text JSON tool protocol as fallback.
 
-## Context budget
+## Context budget and compaction
 
-Before each model call, aicode packs session messages into a char budget so large tool transcripts do not blow the context window.
+Before each model call, aicode packs session messages into a char budget so large tool transcripts do not blow the context window. When the conversation itself outgrows the window, it is summarized instead — the strategy is ported from openai/codex (`compact.rs`, `session/context_window.rs`, `models-manager/models.json`).
 
-- Default hard budget: `80000` characters (`AICODE_CONTEXT_BUDGET_CHARS`)
+**The budget is derived from the model's context window**, not a fixed number:
+
+- Window resolution: `AICODE_CONTEXT_WINDOW` (tokens) → the model table in `src/agent/modelWindows.ts` → a conservative 128k fallback. Unknown models still get a window, because "unknown" must not mean "never compact".
+- Budget = effective window (`window × 95%`) × 4 bytes/token, so a full pack still leaves output headroom. A 272k model gets ~1.03M chars; a 128k model ~486k.
+- Override with `AICODE_CONTEXT_BUDGET_CHARS` (always wins). A value below `4000` is rejected in favour of the derived budget.
 - Soft threshold: start clipping at **72%** of budget (`AICODE_CONTEXT_SOFT_RATIO=0.72`)
 - Keep newest `AICODE_CONTEXT_KEEP_RECENT` (default 10) and a stable oldest prefix `AICODE_CONTEXT_KEEP_PREFIX` (default 2) for better prompt-cache hits
-- Soft/hard per-role clip sizes: `AICODE_CONTEXT_MAX_TOOL_CHARS[_SOFT]`, `..._ASSISTANT...`, `..._USER...`
+- Per-role clip sizes: `AICODE_CONTEXT_MAX_TOOL_CHARS` (default 40000, matching codex's `truncation_policy` token limit), `..._ASSISTANT_CHARS`, `..._USER_CHARS`
 - Historical vision images are stripped from packed history (latest user images kept)
 - Project instruction context (`AGENTS.md` etc.) is memory-cached by mtime signature (`cacheKey=…` stable while files unchanged)
 - On-disk session JSON still stores full outputs for resume/export
+
+**Auto-compaction** fires when the session reaches 90% of the window (`auto_compact_token_limit = window × 9/10`), at two points:
+
+- **Pre-turn** — before a new user message enters history.
+- **Mid-turn** — between steps of one turn, because a turn that runs twenty tools never returns to the pre-turn check.
+
+Compaction asks the model for a handoff summary, then replaces history with that summary plus the most recent user messages. A failed summarization never breaks the turn; the char budget still bounds the prompt.
 
 ## Codebase navigation
 

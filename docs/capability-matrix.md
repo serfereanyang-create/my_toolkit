@@ -17,7 +17,7 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Shell execution | Implemented MVP | approved shell command execution via process sandbox (timeout tree-kill, max buffer, secret env scrub) |
 | Diff/patch/undo | Implemented MVP | diff preview for write approval, apply patch, checkpoints, `/undo` |
 | Session resume/export | Implemented | session JSON store, `--resume`, `/sessions`, `/summary`, `/plan`, `/export` |
-| Context budget / compaction | Implemented MVP | Soft/hard packing (`AICODE_CONTEXT_SOFT_RATIO`, keep-recent/prefix), tool/user/assistant clip, strip historical images, project-context mtime cache for stable `cacheKey`; disk session keeps full history |
+| Context budget / compaction | Implemented | Budget derived from the model's context window (`src/agent/modelWindows.ts`, codex's models.json analogue) with an `AICODE_CONTEXT_BUDGET_CHARS` override; soft/hard packing (`AICODE_CONTEXT_SOFT_RATIO`, keep-recent/prefix), tool/user/assistant clip (tool cap matches codex `truncation_policy`), strip historical images, project-context mtime cache for stable `cacheKey`; auto-compaction at 90% of the window, pre-turn AND mid-turn, with a handoff summary; disk session keeps full history |
 | Cache probe | Implemented MVP | `/cache` (`/probe`) reports average hit rate across project-context + nav-index; also shown in `/status` and `--doctor` |
 | Long-task planning / task board | Implemented MVP | Durable `.aicode/tasks` boards, `/plan` controls, confirm-then-auto-run, blocked resume |
 | Task verify loop | Implemented MVP | After textual done, run package `typecheck`/`test`/`build` when present; one repair retry; fail blocks board |

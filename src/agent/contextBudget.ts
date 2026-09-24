@@ -1,5 +1,23 @@
 import type { AgentMessage, MessagePart } from '../providers/types.js';
+import {
+  APPROX_BYTES_PER_TOKEN,
+  effectiveContextWindow,
+  resolveModelContextWindow,
+} from './modelWindows.js';
 
+/**
+ * Fallback hard budget, used only when no context window can be resolved.
+ *
+ * The real budget is DERIVED from the model's window (see
+ * `resolveContextBudgetConfig`), because a fixed char budget is wrong by
+ * construction: it is the same number for a 128k model and a 1M model, and on a
+ * large-window model it silently discards much of the conversation.
+ *
+ * Measured against the real usage ledger (~/.aicode/usage.jsonl, 103 non-mock
+ * turns): the median request carried ~43k tokens and the p90 ~76k, against a
+ * fixed 80_000-char (~20k token) budget. 97 of 103 requests were over it, and
+ * the median request had ~53% of its context that the budget could not carry.
+ */
 const DEFAULT_BUDGET_CHARS = 80_000;
 /** Start aggressive clip when packed size exceeds this ratio of budget (soft threshold). */
 const DEFAULT_SOFT_RATIO = 0.72;
@@ -25,8 +43,16 @@ const DEFAULT_KEEP_PREFIX = 2;
  * message, so it is byte-identical no matter how much history surrounds it.
  * That is the property the prompt cache needs, and it costs only a slightly
  * smaller allowance for the newest messages.
+ *
+ * The tool limit follows codex's `truncation_policy` (models.json:
+ * `{ "mode": "tokens", "limit": 10000 }`, and the fallback metadata's
+ * `bytes(10_000)`), converted at APPROX_BYTES_PER_TOKEN. At 4_000 chars it was
+ * ten times tighter than that, which is why tool output — 276k of the 277k
+ * chars in the largest real session — arrived at the model as a few hundred
+ * characters per call. Assistant and user messages are model- and human-
+ * produced and naturally bounded, so they keep a smaller cap.
  */
-const DEFAULT_TOOL_CHARS = 4_000;
+const DEFAULT_TOOL_CHARS = 40_000;
 const DEFAULT_ASSISTANT_CHARS = 6_000;
 const DEFAULT_USER_CHARS = 8_000;
 
@@ -38,6 +64,8 @@ export type ContextBudgetOptions = {
   maxToolChars?: number;
   maxAssistantChars?: number;
   maxUserChars?: number;
+  /** Model id used to derive the budget when `budgetChars` is not given. */
+  model?: string;
 };
 
 export type CompactResult = {
@@ -59,21 +87,49 @@ export type ContextBudgetConfig = {
   maxToolChars: number;
   maxAssistantChars: number;
   maxUserChars: number;
+  /** The context window the budget was derived from, in tokens. */
+  windowTokens: number;
 };
 
-export function resolveContextBudgetChars(env: NodeJS.ProcessEnv = process.env): number {
-  return resolveContextBudgetConfig(env).budgetChars;
+export function resolveContextBudgetChars(env: NodeJS.ProcessEnv = process.env, model?: string): number {
+  return resolveContextBudgetConfig(env, model).budgetChars;
 }
 
-export function resolveContextBudgetConfig(env: NodeJS.ProcessEnv = process.env): ContextBudgetConfig {
+/**
+ * Resolve the packing budget.
+ *
+ * Resolution order:
+ *   1. `AICODE_CONTEXT_BUDGET_CHARS` — an explicit override, always wins.
+ *   2. the model's context window (see modelWindows.ts), converted to chars.
+ *
+ * Deriving from the window is the whole point. The previous fixed 80_000-char
+ * default is ~20k tokens, which is 1/14th of a 272k-token model's window and
+ * 1/6th of a 128k one: the same number for every model, and far below all of
+ * them. On the real ledger the median request carried ~43k tokens, so the old
+ * budget could not hold roughly half of a typical request's context — and it
+ * discarded that half silently, from the middle of the conversation.
+ *
+ * The conversion uses codex's 4-bytes-per-token estimate
+ * (`APPROX_BYTES_PER_TOKEN`, utils/string/src/truncate.rs). The budget is the
+ * EFFECTIVE window — the window minus the output headroom
+ * (`effective_context_window_percent`) — so a full pack still leaves room for
+ * the reply and for the tool definitions that ride outside the message array.
+ */
+export function resolveContextBudgetConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  model?: string,
+): ContextBudgetConfig {
+  const windowTokens = resolveModelContextWindow(model, env);
+  const derivedChars = effectiveContextWindow(windowTokens) * APPROX_BYTES_PER_TOKEN;
   return {
-    budgetChars: readIntEnv(env, 'AICODE_CONTEXT_BUDGET_CHARS', DEFAULT_BUDGET_CHARS, 4_000),
+    budgetChars: readIntEnv(env, 'AICODE_CONTEXT_BUDGET_CHARS', derivedChars, 4_000),
     softRatio: readFloatEnv(env, 'AICODE_CONTEXT_SOFT_RATIO', DEFAULT_SOFT_RATIO, 0.4, 0.95),
     keepRecent: readIntEnv(env, 'AICODE_CONTEXT_KEEP_RECENT', DEFAULT_KEEP_RECENT, 2),
     keepPrefix: readIntEnv(env, 'AICODE_CONTEXT_KEEP_PREFIX', DEFAULT_KEEP_PREFIX, 0),
     maxToolChars: readIntEnv(env, 'AICODE_CONTEXT_MAX_TOOL_CHARS', DEFAULT_TOOL_CHARS, 500),
     maxAssistantChars: readIntEnv(env, 'AICODE_CONTEXT_MAX_ASSISTANT_CHARS', DEFAULT_ASSISTANT_CHARS, 500),
     maxUserChars: readIntEnv(env, 'AICODE_CONTEXT_MAX_USER_CHARS', DEFAULT_USER_CHARS, 500),
+    windowTokens,
   };
 }
 
@@ -96,7 +152,7 @@ export function compactMessagesForModel(
   options: ContextBudgetOptions = {},
   env: NodeJS.ProcessEnv = process.env,
 ): CompactResult {
-  const cfg = { ...resolveContextBudgetConfig(env), ...normalizeOptions(options) };
+  const cfg = { ...resolveContextBudgetConfig(env, options.model), ...normalizeOptions(options) };
   const originalChars = messages.reduce((sum, message) => sum + messageChars(message), 0);
   if (messages.length === 0) {
     return emptyResult(0);

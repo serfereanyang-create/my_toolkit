@@ -9,6 +9,7 @@ import {
   resolveContextWindowTokens,
   shouldAutoCompact,
 } from '../src/agent/autoCompact.js';
+import { FALLBACK_CONTEXT_WINDOW_TOKENS } from '../src/agent/modelWindows.js';
 
 test('estimateTokens uses the upstream bytes/4 heuristic', () => {
   assert.equal(estimateTokens('abcd'), 1);
@@ -17,17 +18,26 @@ test('estimateTokens uses the upstream bytes/4 heuristic', () => {
   assert.equal(estimateTokens('中文中文'), 3);
 });
 
-test('resolveContextWindowTokens reads AICODE_CONTEXT_WINDOW with validation', () => {
+test('resolveContextWindowTokens never returns "unknown"', () => {
+  // The regression: an unset AICODE_CONTEXT_WINDOW returned undefined, and
+  // shouldAutoCompact answers false for an undefined window — so compaction was
+  // silently off for every session. Since the desktop's provider settings
+  // carried no contextWindow, the variable was never set and this never ran.
   const previous = process.env.AICODE_CONTEXT_WINDOW;
   try {
     delete process.env.AICODE_CONTEXT_WINDOW;
-    assert.equal(resolveContextWindowTokens(), undefined, 'unknown window disables auto-compact');
+    const fallback = resolveContextWindowTokens('some-unknown-model');
+    assert.ok(fallback > 0, 'an unknown model must still yield a usable window');
+    assert.equal(fallback, FALLBACK_CONTEXT_WINDOW_TOKENS);
+
     process.env.AICODE_CONTEXT_WINDOW = '128000';
-    assert.equal(resolveContextWindowTokens(), 128000);
+    assert.equal(resolveContextWindowTokens('gpt-5.5'), 128_000, 'the explicit override wins');
+
+    // A junk override must fall back to the table, not to "no window".
     process.env.AICODE_CONTEXT_WINDOW = 'nope';
-    assert.equal(resolveContextWindowTokens(), undefined);
+    assert.equal(resolveContextWindowTokens('gpt-5.5'), 272_000);
     process.env.AICODE_CONTEXT_WINDOW = '-5';
-    assert.equal(resolveContextWindowTokens(), undefined);
+    assert.equal(resolveContextWindowTokens('gpt-5.5'), 272_000);
   } finally {
     if (previous === undefined) delete process.env.AICODE_CONTEXT_WINDOW;
     else process.env.AICODE_CONTEXT_WINDOW = previous;

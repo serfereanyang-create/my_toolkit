@@ -12,10 +12,26 @@ function msg(role: AgentMessage['role'], content: string, name?: string): AgentM
   return { role, content, name, createdAt: new Date().toISOString() };
 }
 
-test('resolveContextBudgetChars reads env and rejects tiny values', () => {
-  assert.equal(resolveContextBudgetChars({}), 80_000);
-  assert.equal(resolveContextBudgetChars({ AICODE_CONTEXT_BUDGET_CHARS: '12000' }), 12_000);
-  assert.equal(resolveContextBudgetChars({ AICODE_CONTEXT_BUDGET_CHARS: '100' }), 80_000);
+test('the budget is derived from the model window, not a fixed number', () => {
+  // The regression: 80_000 chars (~20k tokens) was the budget for EVERY model,
+  // which is 1/14th of a 272k window. Real turns measured 100k–145k tokens, so
+  // hard-pack dropped ~86% of the conversation on every step.
+  const gpt5 = resolveContextBudgetChars({}, 'gpt-5.5');
+  const deepseek = resolveContextBudgetChars({}, 'deepseek-v4.1-flash');
+  assert.ok(gpt5 > deepseek, 'a larger window must yield a larger budget');
+  // effective window (95%) × 4 bytes/token.
+  assert.equal(gpt5, Math.floor(272_000 * 0.95) * 4);
+  assert.equal(deepseek, Math.floor(128_000 * 0.95) * 4);
+  assert.ok(gpt5 > 80_000, 'the old fixed default must no longer be the budget');
+});
+
+test('an explicit AICODE_CONTEXT_BUDGET_CHARS overrides the derived budget', () => {
+  assert.equal(resolveContextBudgetChars({ AICODE_CONTEXT_BUDGET_CHARS: '12000' }, 'gpt-5.5'), 12_000);
+  // Tiny values are still rejected in favour of the derived budget.
+  assert.equal(
+    resolveContextBudgetChars({ AICODE_CONTEXT_BUDGET_CHARS: '100' }, 'gpt-5.5'),
+    Math.floor(272_000 * 0.95) * 4,
+  );
 });
 
 test('resolveContextBudgetConfig reads soft ratio and keep windows', () => {
