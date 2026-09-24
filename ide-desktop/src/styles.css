@@ -62,7 +62,7 @@
 .workspace-tools-tab { display: inline-flex; align-items: center; gap: 6px; padding: 9px 11px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: var(--r-sm) var(--r-sm) 0 0; color: var(--fg-muted); background: transparent; cursor: pointer; font-size: 12px; flex: 0 0 auto; white-space: nowrap; }
 .workspace-tools-tab:hover { color: var(--fg); background: var(--bg-hover); }
 .workspace-tools-tab.active { color: var(--accent); border-bottom-color: var(--blue); background: var(--bg-sel); font-weight: 650; }
-.workspace-tools-tab-badge { min-width: 17px; padding: 1px 5px; border-radius: var(--r-pill); color: #ffffff; background: var(--blue); font-size: 10px; font-weight: 700; line-height: 14px; }
+.workspace-tools-tab-badge { min-width: 17px; padding: 1px 5px; border-radius: var(--r-pill); color: var(--blue); background: color-mix(in srgb, var(--blue) 12%, transparent); font-size: 10px; font-weight: 700; line-height: 14px; }
 .workspace-tools-body { flex: 1; overflow: auto; padding: 20px 20px 24px 24px; }
 .workspace-tools-stack { display: grid; gap: 12px; }
 .workspace-tools-hero { display: flex; align-items: center; gap: 12px; padding: 16px; border: 1px solid color-mix(in srgb, var(--ok) 32%, transparent); border-radius: var(--r-md); background: color-mix(in srgb, var(--ok) 6%, var(--bg-elevated)); color: var(--ok); }
@@ -1828,7 +1828,7 @@ h1 {
 .task-board-actions { display:flex; flex-wrap:wrap; gap:8px; padding-top:12px; border-top:1px solid var(--border-subtle); }
 .task-board-actions button { display:inline-flex; align-items:center; gap:5px; padding:7px 11px; border:1px solid var(--border-strong); border-radius:7px; background:var(--bg-elevated); color:var(--fg); cursor:pointer; font-size:12px; }
 .task-board-actions button:hover { background:var(--bg-hover); }
-.task-board-actions .task-board-primary { border-color:var(--accent); background:var(--accent); color:#fff; font-weight:600; }
+.task-board-actions .task-board-primary { border-color:var(--accent); background:var(--accent); color:var(--accent-fg); font-weight:600; }
 .task-board-actions .task-board-primary:hover { opacity:.88; }
 /* The in-progress icon asked for this class but no rule existed, so the spinner
    never turned. Shares review-spin with the other rotating indicators. */
@@ -7485,7 +7485,7 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 }
 .gtx-btn:hover:not(:disabled) { background: var(--bg-hover); }
 .gtx-btn:disabled { opacity: .45; cursor: default; }
-.gtx-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.gtx-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
 .gtx-btn.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
 .gtx-btn.danger { color: var(--danger); }
 .gtx-btn.ghost { background: none; border-color: transparent; color: var(--fg-muted); }
@@ -7634,7 +7634,7 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 }
 .approval-modal-actions .approval-btn { width: 100%; justify-content: center; }
 .approval-modal-actions .approval-btn.primary {
-  background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+  background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600;
 }
 .approval-modal-hint { font-size: 11px; color: var(--fg-dim); text-align: center; }
 .approval-auto-reason { margin-left: 6px; font-weight: 400; opacity: 0.85; }
