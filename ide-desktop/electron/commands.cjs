@@ -10,6 +10,7 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { atomicWriteText } = require('./atomic-file.cjs');
 
 const REPLACED_FRONTMATTER_KEYS = new Set(['description', 'argument-hint']);
 
@@ -167,7 +168,7 @@ function createCommandsService(options = {}) {
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       const existing = await fs.readFile(filePath, 'utf-8').catch(() => undefined);
       const content = generateCommandFileContent({ prompt, description, argumentHint }, existing);
-      await fs.writeFile(filePath, content, 'utf-8');
+      await atomicWriteText(filePath, content);
       return { name, filePath };
     },
 
