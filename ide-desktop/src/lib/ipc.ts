@@ -148,6 +148,8 @@ type ZCodeDesktopApi = {
     pin(id: string, pinned: boolean): Promise<{ ok: boolean; id: string; pinned: boolean }>;
     archive(id: string, archived: boolean): Promise<{ ok: boolean; id: string; archived: boolean }>;
     reveal(id: string): Promise<{ ok: boolean }>;
+    /** Export the transcript as markdown; returns the written file path. */
+    export(id: string): Promise<{ ok: boolean; path: string; sha256: string; messageCount: number; unsupportedKinds: string[] }>;
   };
   checkpoints: {
     create(): Promise<{ ok: boolean; meta: CheckpointMeta }>;

@@ -10,6 +10,7 @@ const { createCheckpointBackend } = require('./checkpoints.cjs');
 const { createFileSearchService } = require('./file-search.cjs');
 const { createResourceSampler } = require('./resource-sampler.cjs');
 const { createCommandsService } = require('./commands.cjs');
+const { exportSessionToFile, defaultExportPath } = require('./export-session.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
@@ -184,6 +185,15 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('commands.delete', async (_event, name) => {
     await commandsServiceForCurrentRoot().deleteCommand({ name });
     return { ok: true };
+  });
+
+  // Markdown session export (zcode conversation-share formatter semantics).
+  ipcMain.handle('sessions.export', async (_event, id) => {
+    const record = await workspace.loadSession(id);
+    if (!record) throw new Error(`Session not found: ${id}`);
+    const outPath = defaultExportPath(workspace.getRoot ? workspace.getRoot() : null, id);
+    const formatted = await exportSessionToFile(record, outPath);
+    return { ok: true, path: outPath, sha256: formatted.markdownSha256, messageCount: formatted.messageCount, unsupportedKinds: formatted.unsupportedKinds };
   });
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));
