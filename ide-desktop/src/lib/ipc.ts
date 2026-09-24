@@ -118,6 +118,19 @@ export type SystemInfoSnapshot = {
   uptimeSeconds: number;
 };
 
+/** Read-only statistics for one sessions directory (empty-session cleanup). */
+export type SessionCleanupAnalysis = {
+  dir: string;
+  total: number;
+  empty: number;
+  systemOnly: number;
+  withContent: number;
+  parseFailed: number;
+  pinnedEmpty: number;
+  candidateBytes: number;
+  candidates: Array<{ id: string; file: string; title: string | null; createdAt: number | null; bytes: number; messageCount: number }>;
+};
+
 type ZCodeDesktopApi = {
   workspace: {
     open(): Promise<{ canceled: boolean; root?: string }>;
@@ -203,6 +216,10 @@ type ZCodeDesktopApi = {
   };
   system: {
     info(): Promise<{ ok: boolean; info: SystemInfoSnapshot }>;
+  };
+  sessionCleanup: {
+    analyze(dirs?: string[]): Promise<{ ok: boolean; analyses: SessionCleanupAnalysis[] }>;
+    deleteFiles(dir: string, ids: string[]): Promise<{ ok: boolean; deleted: string[]; skipped: Array<{ id: string; reason: string }>; freedBytes: number }>;
   };
   automation: {
     list(): Promise<AutomationTask[]>;

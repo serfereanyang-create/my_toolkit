@@ -85,6 +85,10 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
   system: {
     info: () => ipcRenderer.invoke('system.info'),
   },
+  sessionCleanup: {
+    analyze: (dirs) => ipcRenderer.invoke('sessions.analyzeCleanup', dirs),
+    deleteFiles: (dir, ids) => ipcRenderer.invoke('sessions.cleanupDelete', dir, ids),
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window.minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window.toggleMaximize'),

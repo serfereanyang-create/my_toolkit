@@ -13,6 +13,7 @@ const { createCommandsService } = require('./commands.cjs');
 const { exportSessionToFile, defaultExportPath } = require('./export-session.cjs');
 const { exportSettingsBundle, importSettingsBundle } = require('./settings-portable.cjs');
 const { collectSystemInfo } = require('./system-info.cjs');
+const { analyzeSessionsDir, deleteSessionFiles } = require('./session-cleanup.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
@@ -218,6 +219,25 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
       driveLetter: process.platform === 'win32' ? 'C:' : undefined,
     });
     return { ok: true, info };
+  });
+
+  // Empty-session cleanup backend (user-approved plan): analyze is read-only;
+  // deletion requires explicit ids and re-validates every candidate at delete
+  // time, so numbers shown to the user can never go stale dangerously.
+  ipcMain.handle('sessions.analyzeCleanup', async (_event, dirs) => {
+    const targetDirs = Array.isArray(dirs) && dirs.length > 0
+      ? dirs
+      : [workspace.sessionsDir?.() ?? path.join(os.homedir(), '.aicode', 'sessions')];
+    const analyses = [];
+    for (const dir of targetDirs) {
+      analyses.push(await analyzeSessionsDir(dir));
+    }
+    return { ok: true, analyses };
+  });
+  ipcMain.handle('sessions.cleanupDelete', async (_event, dir, ids) => {
+    if (!Array.isArray(ids)) throw new Error('cleanupDelete expects an array of session ids');
+    const result = await deleteSessionFiles(dir, ids);
+    return { ok: true, ...result };
   });
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));
