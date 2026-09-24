@@ -59,6 +59,13 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     archive: (id, archived) => ipcRenderer.invoke('sessions.archive', id, archived),
     reveal: (id) => ipcRenderer.invoke('sessions.reveal', id),
   },
+  checkpoints: {
+    create: () => ipcRenderer.invoke('checkpoints.create'),
+    list: () => ipcRenderer.invoke('checkpoints.list'),
+    diff: (fromCheckpointId, toCheckpointId) => ipcRenderer.invoke('checkpoints.diff', fromCheckpointId, toCheckpointId),
+    restore: (fromCheckpointId, toCheckpointId, force) => ipcRenderer.invoke('checkpoints.restore', fromCheckpointId, toCheckpointId, force),
+    delete: (checkpointId) => ipcRenderer.invoke('checkpoints.delete', checkpointId),
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window.minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window.toggleMaximize'),

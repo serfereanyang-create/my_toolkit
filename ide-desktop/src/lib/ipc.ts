@@ -40,6 +40,45 @@ export type AttachedFile = {
   mediaType?: string;
 };
 
+/** Immutable workspace snapshot pinned by a hidden git ref (see checkpoints.cjs). */
+export type CheckpointMeta = {
+  checkpointId: string;
+  workspacePath: string;
+  repoRoot: string;
+  workspaceInRepoPath: string;
+  createdAt: number;
+  refName: string;
+  commitOid: string;
+  scope: 'workspace';
+};
+
+export type CheckpointConflict = {
+  path: string;
+  repoRelativePath: string;
+  workspaceRelativePath: string;
+  reason: 'unexpected-file-in-worktree' | 'missing-in-worktree' | 'type-mismatch' | 'content-mismatch';
+};
+
+export type CheckpointFileDiff = {
+  path: string;
+  repoRelativePath: string;
+  workspaceRelativePath: string;
+  originalPath: string | null;
+  kind: 'added' | 'deleted' | 'modified' | 'renamed';
+  added: number;
+  removed: number;
+};
+
+export type CheckpointDiff = {
+  fromCheckpointId: string;
+  toCheckpointId: string;
+  files: CheckpointFileDiff[];
+};
+
+export type CheckpointRestoreResult =
+  | { success: true; restoredPaths: string[] }
+  | { success: false; conflicts: CheckpointConflict[] };
+
 type ZCodeDesktopApi = {
   workspace: {
     open(): Promise<{ canceled: boolean; root?: string }>;
@@ -97,6 +136,13 @@ type ZCodeDesktopApi = {
     pin(id: string, pinned: boolean): Promise<{ ok: boolean; id: string; pinned: boolean }>;
     archive(id: string, archived: boolean): Promise<{ ok: boolean; id: string; archived: boolean }>;
     reveal(id: string): Promise<{ ok: boolean }>;
+  };
+  checkpoints: {
+    create(): Promise<{ ok: boolean; meta: CheckpointMeta }>;
+    list(): Promise<{ ok: boolean; metas: CheckpointMeta[] }>;
+    diff(fromCheckpointId: string, toCheckpointId: string): Promise<{ ok: boolean; diff: CheckpointDiff }>;
+    restore(fromCheckpointId: string, toCheckpointId: string, force?: boolean): Promise<{ ok: boolean; result: CheckpointRestoreResult }>;
+    delete(checkpointId: string): Promise<{ ok: boolean }>;
   };
   automation: {
     list(): Promise<AutomationTask[]>;

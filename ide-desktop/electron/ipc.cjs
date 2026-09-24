@@ -6,6 +6,7 @@ const { assertInsideRoot, describeFile, inspectProject, resolveWorkspacePath } =
 const { describePathError } = require('./path-error.cjs');
 const { createQualityGateway } = require('./quality-gateway.cjs');
 const git = require('./git.cjs');
+const { createCheckpointBackend } = require('./checkpoints.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
@@ -103,6 +104,43 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('sessions.archive', async (_event, id, archived) => await workspace.archiveSession(id, archived));
   ipcMain.handle('sessions.reveal', async (_event, id) => {
     shell.showItemInFolder(workspace.sessionAbsolutePath(id));
+    return { ok: true };
+  });
+
+  // Workspace checkpoints (ported from zcode's gitCheckpointService): hidden
+  // git refs + three-way restore with conflict detection. All operations are
+  // scoped to the currently open workspace root.
+  const checkpointBackend = createCheckpointBackend({
+    storeRootDir: path.join(app.getPath('userData'), 'checkpoints'),
+  });
+  function requireWorkspaceRoot() {
+    const root = workspace.getRoot && workspace.getRoot();
+    if (!root) throw new Error('No workspace is open.');
+    return root;
+  }
+  ipcMain.handle('checkpoints.create', async () => {
+    const meta = await checkpointBackend.createCheckpoint({ workspacePath: requireWorkspaceRoot() });
+    return { ok: true, meta };
+  });
+  ipcMain.handle('checkpoints.list', async () => {
+    const metas = await checkpointBackend.listCheckpoints({ workspacePath: requireWorkspaceRoot() });
+    return { ok: true, metas };
+  });
+  ipcMain.handle('checkpoints.diff', async (_event, fromCheckpointId, toCheckpointId) => {
+    const diff = await checkpointBackend.diffCheckpoints({ workspacePath: requireWorkspaceRoot(), fromCheckpointId, toCheckpointId });
+    return { ok: true, diff };
+  });
+  ipcMain.handle('checkpoints.restore', async (_event, fromCheckpointId, toCheckpointId, force) => {
+    const result = await checkpointBackend.restoreBetweenCheckpoints({
+      workspacePath: requireWorkspaceRoot(),
+      fromCheckpointId,
+      toCheckpointId,
+      force: force === true,
+    });
+    return { ok: true, result };
+  });
+  ipcMain.handle('checkpoints.delete', async (_event, checkpointId) => {
+    await checkpointBackend.deleteCheckpoint({ workspacePath: requireWorkspaceRoot(), checkpointId });
     return { ok: true };
   });
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
