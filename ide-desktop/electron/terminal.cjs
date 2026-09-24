@@ -2,6 +2,8 @@
 const { EventEmitter } = require('node:events');
 const { spawn } = require('node:child_process');
 const os = require('node:os');
+const { terminateProcessTree } = require('./process-tree.cjs');
+const { listShellProfiles } = require('./terminal-profile.cjs');
 
 /*
  * Terminal manager (pipe-based fallback).
@@ -93,18 +95,21 @@ class TerminalManager extends EventEmitter {
 
   kill(id) {
     const child = this.sessions.get(id);
-    if (!child) return { ok: false };
+    if (!child) return Promise.resolve({ ok: false });
     this.sessions.delete(id);
-    try { child.kill(); } catch { /* already gone */ }
-    return { ok: true };
+    // child.kill() alone orphans everything the user started inside the
+    // terminal (dev servers, watchers...). Terminate the whole tree instead.
+    return terminateProcessTree(child, { forceAfterMs: 2000 }).then((result) => ({ ok: true, forced: result.forced }));
   }
 
   disposeAll() {
+    const terminations = [];
     for (const [, child] of this.sessions) {
-      try { child.kill(); } catch { /* ignore */ }
+      terminations.push(terminateProcessTree(child, { forceAfterMs: 1000 }).catch(() => {}));
     }
     this.sessions.clear();
+    return Promise.all(terminations);
   }
 }
 
-module.exports = { TerminalManager };
+module.exports = { TerminalManager, defaultShell, listShellProfiles };
