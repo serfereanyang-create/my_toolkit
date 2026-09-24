@@ -66,6 +66,9 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     restore: (fromCheckpointId, toCheckpointId, force) => ipcRenderer.invoke('checkpoints.restore', fromCheckpointId, toCheckpointId, force),
     delete: (checkpointId) => ipcRenderer.invoke('checkpoints.delete', checkpointId),
   },
+  fileSearch: {
+    search: (query, limit) => ipcRenderer.invoke('files.search', query, limit),
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window.minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window.toggleMaximize'),

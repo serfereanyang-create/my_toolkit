@@ -7,6 +7,7 @@ const { describePathError } = require('./path-error.cjs');
 const { createQualityGateway } = require('./quality-gateway.cjs');
 const git = require('./git.cjs');
 const { createCheckpointBackend } = require('./checkpoints.cjs');
+const { createFileSearchService } = require('./file-search.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
@@ -142,6 +143,15 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('checkpoints.delete', async (_event, checkpointId) => {
     await checkpointBackend.deleteCheckpoint({ workspacePath: requireWorkspaceRoot(), checkpointId });
     return { ok: true };
+  });
+
+  // Fuzzy file quickpick search (ported from zcode's workspaceFileSearch).
+  // Index is cached for 2s per workspace root; invalidate on writes below.
+  const fileSearchService = createFileSearchService();
+  ipcMain.handle('files.search', async (_event, query, limit) => {
+    const root = requireWorkspaceRoot();
+    const files = await fileSearchService.search({ rootPath: root, query, limit });
+    return { ok: true, files };
   });
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));

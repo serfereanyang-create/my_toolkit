@@ -144,6 +144,9 @@ type ZCodeDesktopApi = {
     restore(fromCheckpointId: string, toCheckpointId: string, force?: boolean): Promise<{ ok: boolean; result: CheckpointRestoreResult }>;
     delete(checkpointId: string): Promise<{ ok: boolean }>;
   };
+  fileSearch: {
+    search(query: string, limit?: number): Promise<{ ok: boolean; files: Array<{ name: string; path: string; relativePath: string; type: 'file' | 'directory' }> }>;
+  };
   automation: {
     list(): Promise<AutomationTask[]>;
     get(taskId: string): Promise<AutomationTask | null>;
