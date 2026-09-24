@@ -79,6 +79,18 @@ export type CheckpointRestoreResult =
   | { success: true; restoredPaths: string[] }
   | { success: false; conflicts: CheckpointConflict[] };
 
+/** A user-defined slash command backed by a markdown file with frontmatter. */
+export type CustomCommand = {
+  name: string;
+  prompt: string;
+  content: string;
+  filePath: string;
+  description?: string;
+  argumentHint?: string;
+  source: string;
+  scope: 'user' | 'workspace';
+};
+
 type ZCodeDesktopApi = {
   workspace: {
     open(): Promise<{ canceled: boolean; root?: string }>;
@@ -150,6 +162,11 @@ type ZCodeDesktopApi = {
   resources: {
     /** CPU% is whole-machine normalized (100% = all logical cores saturated). */
     sample(): Promise<{ ok: boolean; usage: { pid: number; processCount: number; cpuPercent: number | null; rssKb: number; sampledAt: number } }>;
+  };
+  commands: {
+    list(): Promise<{ ok: boolean; commands: CustomCommand[] }>;
+    save(name: string, config: { prompt: string; description?: string; argumentHint?: string }): Promise<{ ok: boolean; name: string; filePath: string }>;
+    delete(name: string): Promise<{ ok: boolean }>;
   };
   automation: {
     list(): Promise<AutomationTask[]>;

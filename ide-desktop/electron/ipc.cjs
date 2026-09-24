@@ -9,6 +9,7 @@ const git = require('./git.cjs');
 const { createCheckpointBackend } = require('./checkpoints.cjs');
 const { createFileSearchService } = require('./file-search.cjs');
 const { createResourceSampler } = require('./resource-sampler.cjs');
+const { createCommandsService } = require('./commands.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
@@ -161,6 +162,28 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('resources.sample', async () => {
     const usage = await resourceSampler.sample();
     return { ok: true, usage };
+  });
+
+  // Custom slash commands (zcode commandFileParser): markdown files with
+  // frontmatter in userData/commands plus <workspace>/.zcode/commands.
+  function commandsServiceForCurrentRoot() {
+    const root = workspace.getRoot ? workspace.getRoot() : null;
+    return createCommandsService({
+      userCommandsDir: path.join(app.getPath('userData'), 'commands'),
+      workspaceCommandsDir: root ? path.join(root, '.zcode', 'commands') : null,
+    });
+  }
+  ipcMain.handle('commands.list', async () => {
+    const commands = await commandsServiceForCurrentRoot().listCommands();
+    return { ok: true, commands };
+  });
+  ipcMain.handle('commands.save', async (_event, name, config) => {
+    const result = await commandsServiceForCurrentRoot().saveCommand({ name, ...config });
+    return { ok: true, ...result };
+  });
+  ipcMain.handle('commands.delete', async (_event, name) => {
+    await commandsServiceForCurrentRoot().deleteCommand({ name });
+    return { ok: true };
   });
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));

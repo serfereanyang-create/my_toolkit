@@ -72,6 +72,11 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
   resources: {
     sample: () => ipcRenderer.invoke('resources.sample'),
   },
+  commands: {
+    list: () => ipcRenderer.invoke('commands.list'),
+    save: (name, config) => ipcRenderer.invoke('commands.save', name, config),
+    delete: (name) => ipcRenderer.invoke('commands.delete', name),
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window.minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window.toggleMaximize'),
