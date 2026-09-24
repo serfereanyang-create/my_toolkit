@@ -5336,18 +5336,21 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 
 .msg-user-group {
   align-self: stretch;
+  position: relative;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: flex-end;
   gap: 2px;
 }
 
-.msg-user-group .msg-user {
-  align-self: stretch;
-  max-width: 100%;
-}
+/* The bubble keeps the shared .msg-user shape (right-aligned, max-width 85%);
+   the hover meta row is absolutely positioned so it reserves no space while
+   hidden — an opacity-only reveal used to leave a full invisible gap row. */
 
 .msg-user-meta {
+  position: absolute;
+  top: 100%;
+  right: 0;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -8562,7 +8565,8 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 .codex-bullet.ok { color: var(--success, #3fb950); }
 .codex-bullet.failed { color: var(--danger, #f85149); }
 
-/* messages.rs user block: bold `›` prefix inside a tinted full-width panel. */
+/* messages.rs user block: bold `›` prefix; the bubble surface itself comes
+   from the .msg-user rule near the user-turn styles (right-aligned card). */
 .msg-user {
   display: flex;
   gap: 8px;
@@ -8572,9 +8576,6 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
   font-weight: 700;
   color: var(--fg-muted);
   font-family: var(--font-mono);
-}
-.msg-user {
-  background: var(--bg-side);
 }
 
 /* status_indicator_widget.rs working row. */
