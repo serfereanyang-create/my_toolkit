@@ -78,6 +78,10 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     save: (name, config) => ipcRenderer.invoke('commands.save', name, config),
     delete: (name) => ipcRenderer.invoke('commands.delete', name),
   },
+  settingsPortability: {
+    exportBundle: () => ipcRenderer.invoke('settings.exportBundle'),
+    importBundle: (bundle) => ipcRenderer.invoke('settings.importBundle', bundle),
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window.minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window.toggleMaximize'),

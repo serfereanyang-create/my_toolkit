@@ -91,6 +91,14 @@ export type CustomCommand = {
   scope: 'user' | 'workspace';
 };
 
+/** Portable settings bundle — providers carry hasApiKey flags, never keys. */
+export type SettingsBundle = {
+  bundleVersion: 1;
+  exportedAt: string;
+  preferences: Record<string, unknown>;
+  providers: Array<Record<string, unknown> & { id: string; hasApiKey: boolean }>;
+};
+
 type ZCodeDesktopApi = {
   workspace: {
     open(): Promise<{ canceled: boolean; root?: string }>;
@@ -169,6 +177,10 @@ type ZCodeDesktopApi = {
     list(): Promise<{ ok: boolean; commands: CustomCommand[] }>;
     save(name: string, config: { prompt: string; description?: string; argumentHint?: string }): Promise<{ ok: boolean; name: string; filePath: string }>;
     delete(name: string): Promise<{ ok: boolean }>;
+  };
+  settingsPortability: {
+    exportBundle(): Promise<{ ok: boolean; bundle: SettingsBundle }>;
+    importBundle(bundle: unknown): Promise<{ ok: boolean; report: { providersAdded: number; providersUpdated: number; skipped: number } }>;
   };
   automation: {
     list(): Promise<AutomationTask[]>;

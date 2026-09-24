@@ -11,6 +11,7 @@ const { createFileSearchService } = require('./file-search.cjs');
 const { createResourceSampler } = require('./resource-sampler.cjs');
 const { createCommandsService } = require('./commands.cjs');
 const { exportSessionToFile, defaultExportPath } = require('./export-session.cjs');
+const { exportSettingsBundle, importSettingsBundle } = require('./settings-portable.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
@@ -194,6 +195,19 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     const outPath = defaultExportPath(workspace.getRoot ? workspace.getRoot() : null, id);
     const formatted = await exportSessionToFile(record, outPath);
     return { ok: true, path: outPath, sha256: formatted.markdownSha256, messageCount: formatted.messageCount, unsupportedKinds: formatted.unsupportedKinds };
+  });
+
+  // Portable settings (zcode settings-sync semantics): keys never leave the
+  // machine; import matches providers by id and keeps local API keys.
+  ipcMain.handle('settings.exportBundle', async () => {
+    const settings = await settings.get();
+    return { ok: true, bundle: exportSettingsBundle(settings) };
+  });
+  ipcMain.handle('settings.importBundle', async (_event, bundle) => {
+    const current = await settings.get();
+    const { settings: merged, report } = importSettingsBundle(bundle, current);
+    await settings.set(merged);
+    return { ok: true, report };
   });
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));
