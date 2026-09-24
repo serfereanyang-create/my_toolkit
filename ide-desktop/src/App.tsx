@@ -304,6 +304,13 @@ export default function App() {
 
   // Apply persisted font-size preferences as CSS custom properties so the whole
   // UI scales. Falls back to the stylesheet defaults when unset.
+  //
+  // --fs-base is the single knob for the whole interface scale: every other
+  // step (--fs-sm/-xs/-md/-lg/-xl) is expressed relative to it in styles.css.
+  // Writing just this one variable is what makes the 界面字号 preference move
+  // the whole UI rather than only the styles that happened to read --fs-base.
+  // It deliberately does NOT touch the root font-size, which would scale icons,
+  // spacing and radii along with it.
   const uiFontSize = Number(state.settings?.preferences?.uiFontSize) || undefined;
   const codeFontSize = Number(state.settings?.preferences?.codeFontSize) || undefined;
   const chineseFont = String(state.settings?.preferences?.uiChineseFont || 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif');

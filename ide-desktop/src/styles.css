@@ -390,7 +390,9 @@ html[data-reduce-motion='on'] *::after {
    ========================================================================= */
 .toast-layer {
   position: fixed;
-  top: 52px;
+  /* Aligned to the 48px header band, so a toast lands just under the title row
+     rather than overlapping it. */
+  top: 56px;
   right: 16px;
   z-index: 950;
   display: flex;
@@ -404,8 +406,8 @@ html[data-reduce-motion='on'] *::after {
   display: flex;
   align-items: stretch;
   overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
   pointer-events: auto;
@@ -492,50 +494,70 @@ html[data-reduce-motion='on'] *::after {
 :root {
   color-scheme: light;
 
-  /* Surfaces — codex neutral ramp: white content, cool-grey chrome, no tint.
-     The `-solid` values are the opaque palette; the public tokens alias them so
-     the custom-background feature can swap in translucent versions without
-     losing the originals (see "Custom background image" below). */
-  --bg-app-solid: #ffffff;
-  --bg-side-solid: #f7f7f8;
+  /* ---------------------------------------------------------------------
+     Palette — ported from Z.ai's ZCode desktop app (github.com/zai-org/ZCode,
+     packages/ui/src/styles.css `.theme-zai-light` / `.theme-zai-dark`). The
+     values below are their literal hex/alpha values, re-keyed onto this
+     stylesheet's token names so every existing `var(--…)` picks them up.
+
+     Their names in brackets, for whoever compares the two:
+       --bg-app-solid     [--color-background]
+       --bg-side-solid    [--color-sidebar]
+       --bg-elevated      [--color-card / --color-popover]
+       --bg-hover         [--color-hover]
+       --bg-sel           [--color-selected]
+       --border           [--color-border]
+       --fg/-muted/-dim   [--color-foreground / -subtle / -subtlest]
+       --blue             [--color-icon-blue / --color-terminal-bright-blue]
+       --ok/--warn/--danger [--color-success / -warning / -destructive]
+     --------------------------------------------------------------------- */
+
+  /* Surfaces. ZCode's chrome is a three-tone arrangement: a page tone, a
+     slightly darker sidebar tone, and white for anything that floats. */
+  --bg-app-solid: #f8f8f8;
+  --bg-side-solid: #f0f0f0;
   --bg-elevated-solid: #ffffff;
   --bg-input-solid: #ffffff;
   --bg-app: var(--bg-app-solid);
   --bg-side: var(--bg-side-solid);
-  --bg-hover: #ececee;
-  --bg-sel: #e3e4e8;
+  --bg-hover: rgba(13, 13, 13, 0.05);
+  --bg-sel: rgba(13, 13, 13, 0.07);
   --bg-elevated: var(--bg-elevated-solid);
   --bg-input: var(--bg-input-solid);
   /* Dim tint for the background image: light theme fades toward white so dark
      text keeps its contrast, dark theme toward black. */
   --bg-dim-rgb: 255 255 255;
 
-  /* Borders */
-  --border: #e3e3e6;
-  --border-strong: #cfced4;
-  --border-subtle: #efeff1;
+  /* Borders. ZCode expresses these as alpha over the surface rather than flat
+     greys, so one value sits correctly on all three background tones. */
+  --border: rgba(13, 13, 13, 0.1);
+  --border-strong: rgba(13, 13, 13, 0.15);
+  --border-subtle: rgba(13, 13, 13, 0.06);
 
-  /* Text */
-  --fg: #2f2f33;
-  --fg-muted: #5e5e66;
-  --fg-dim: #8b8b94;
+  /* Text. ZCode builds its ramp by mixing one ink colour with transparency, so
+     the three levels stay in step across themes. */
+  --fg: #262626;
+  --fg-muted: rgba(38, 38, 38, 0.6);
+  --fg-dim: rgba(38, 38, 38, 0.4);
 
-  /* Accent — functional only (links, selection, focus); never decorative */
-  --accent: #2f6fed;
-  --accent-hover: #2558bd;
-  --blue: #2f6fed;
-  --orange: #c8753d;
+  /* Brand. ZCode uses ink-black for brand actions rather than a saturated fill,
+     and keeps blue for links and browser-style affordances. */
+  --accent: #000000;
+  --accent-hover: #262626;
+  --blue: #0066dd;
+  --orange: #e07b00;
 
-  /* Status */
-  --ok: #3f8f52;
-  --warn: #b8860b;
-  --danger: #c0453c;
-  --danger-soft: #c0453c12;
+  /* Status — ZCode's literal success/warning/destructive values. */
+  --ok: #1e8a3e;
+  --warn: #e07b00;
+  --danger: #e03131;
+  --danger-soft: rgba(224, 49, 49, 0.07);
 
-  /* Radii */
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 20px;
+  /* Radii — ZCode steps the radius down with nesting depth: an outer container,
+     then a card inside it, then a control inside that. */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
   --r-pill: 999px;
 
   /* Spacing */
@@ -551,25 +573,29 @@ html[data-reduce-motion='on'] *::after {
   --font-ui-en: 'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --font-ui: var(--font-ui-en);
   --font-mono: 'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', 'Noto Sans Mono CJK SC', Consolas, monospace;
-  --fs-xs: 11px;
-  --fs-sm: 12px;
+
+  /* One knob for the whole scale, as in ZCode: the appearance setting writes
+     --fs-base and every other step is expressed relative to it. An absolute px
+     ladder meant changing the UI font size moved exactly one of the six steps. */
   --fs-base: 14px;
-  --fs-md: 15px;
-  --fs-lg: 20px;
-  --fs-xl: 28px;
+  --fs-xs: calc(var(--fs-base) - 4px);
+  --fs-sm: calc(var(--fs-base) - 2px);
+  --fs-md: calc(var(--fs-base) + 1px);
+  --fs-lg: calc(var(--fs-base) + 6px);
+  --fs-xl: calc(var(--fs-base) + 14px);
 
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --dur: 140ms;
-  --shadow-composer: 0 2px 12px rgba(41, 67, 101, 0.08);
-  --shadow-pop: 0 8px 28px rgba(41, 67, 101, 0.14);
+  --shadow-composer: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-pop: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
 
   /* Text drawn on top of --accent / --blue fills. Hardcoding #fff breaks
      contrast in dark, where the accent flips to a light color. */
   --accent-fg: #ffffff;
-  --scroll-thumb: #d9d8d4;
-  --scroll-thumb-hover: #c4c3be;
+  --scroll-thumb: rgba(13, 13, 13, 0.15);
+  --scroll-thumb-hover: rgba(13, 13, 13, 0.28);
 
-  /* Legacy aliases — older rules predate the codex ramp; alias them onto the
+  /* Legacy aliases — older rules predate this ramp; alias them onto the
      real tokens so they flip with the theme instead of falling back to none. */
   --bg: var(--bg-app);
   --bg-2: var(--bg-side);
@@ -587,45 +613,46 @@ html[data-reduce-motion='on'] *::after {
 }
 
 /* Dark theme: override the same tokens the whole stylesheet consumes via
-   var(), so a single [data-theme="dark"] on <html> recolors everything. */
+   var(), so a single [data-theme="dark"] on <html> recolors everything.
+   Values are ZCode's `.theme-zai-dark`. */
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  --bg-app-solid: #1c1c1e;
-  --bg-side-solid: #202022;
-  --bg-elevated-solid: #28282b;
-  --bg-input-solid: #28282b;
+  --bg-app-solid: #161616;
+  --bg-side-solid: #161616;
+  --bg-elevated-solid: #2b2b2b;
+  --bg-input-solid: #2b2b2b;
   --bg-app: var(--bg-app-solid);
   --bg-side: var(--bg-side-solid);
-  --bg-hover: #2e2e31;
-  --bg-sel: #38383c;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-sel: rgba(255, 255, 255, 0.1);
   --bg-elevated: var(--bg-elevated-solid);
   --bg-input: var(--bg-input-solid);
   --bg-dim-rgb: 0 0 0;
 
-  --border: #45454a;
-  --border-strong: #5c5c62;
-  --border-subtle: #333336;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --border-subtle: rgba(255, 255, 255, 0.06);
 
-  --fg: #f5f5f5;
-  --fg-muted: #c4c4c2;
-  --fg-dim: #92929a;
+  --fg: #d4d4d4;
+  --fg-muted: rgba(212, 212, 212, 0.6);
+  --fg-dim: rgba(212, 212, 212, 0.3);
 
-  --accent: #ededed;
-  --accent-hover: #ffffff;
-  --accent-fg: #1c1c1e;
-  --blue: #4c86ff;
-  --orange: #e08a63;
+  --accent: #ffffff;
+  --accent-hover: #f8f8f8;
+  --accent-fg: #000000;
+  --blue: #80beff;
+  --orange: #ff8a30;
 
-  --ok: #5fae62;
-  --warn: #d0a132;
-  --danger: #e0655c;
-  --danger-soft: #e0655c1f;
+  --ok: #46bf72;
+  --warn: #ff8a30;
+  --danger: #ff5c5c;
+  --danger-soft: rgba(255, 92, 92, 0.12);
 
-  --shadow-composer: 0 2px 12px rgba(0, 0, 0, 0.4);
-  --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.5);
-  --scroll-thumb: #3a3a3e;
-  --scroll-thumb-hover: #4a4a4f;
+  --shadow-composer: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  --scroll-thumb: rgba(255, 255, 255, 0.15);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.28);
 }
 
 * { box-sizing: border-box; }
@@ -860,15 +887,20 @@ button, input, select, textarea { font: inherit; }
   .automation-segments { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
+/* Track inset via a transparent border, as in ZCode: the thumb then reads as a
+   floating pill rather than a bar welded to the edge of the pane. */
+::-webkit-scrollbar { width: 14px; height: 14px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  min-width: 32px;
   background: var(--scroll-thumb);
   border-radius: var(--r-pill);
-  border: 2px solid transparent;
+  border: 3px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* =========================================================================
    Welcome screen
@@ -916,19 +948,24 @@ h1 {
 
 .primary-button {
   margin-top: var(--sp-5);
-  height: 40px;
+  height: 32px;
   border: 0;
-  border-radius: var(--r-pill);
+  /* ZCode's default button: `rounded-md`, not a pill. The pill is reserved for
+     tags and filters, which is what keeps a filled black button from reading
+     as a filter chip. */
+  border-radius: var(--r-md);
   background: var(--accent);
   color: var(--accent-fg);
   font-weight: 600;
-  padding: 0 var(--sp-5);
+  font-size: var(--fs-base);
+  padding: 0 var(--sp-4);
   cursor: pointer;
-  transition: background var(--dur) var(--ease), transform var(--dur) var(--ease);
+  transition: background var(--dur) var(--ease);
 }
 
+/* No translateY on press: ZCode deliberately animates colour only, so a click
+   never shifts the layout underneath the pointer. */
 .primary-button:hover { background: var(--accent-hover); }
-.primary-button:active { transform: translateY(1px); }
 
 /* =========================================================================
    Conversation shell: [rail | main]
@@ -938,7 +975,9 @@ h1 {
   width: 100vw;
   height: 100vh;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) auto;
+  /* ZCode's sidebar is a fixed 264px. The rail had drifted wider than this one
+     and the wider of the two reads as wasted space on a 1080p window. */
+  grid-template-columns: 264px minmax(0, 1fr) auto;
   grid-template-rows: minmax(0, 1fr) auto;
   background: var(--bg-app);
   color: var(--fg);
@@ -961,7 +1000,9 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-2);
-  height: 52px;
+  /* ZCode's header is 48px (h-12). Matching it makes the rail head and the
+     topbar the same band, so the two borders form one line across the top. */
+  height: 48px;
   padding: 0 var(--sp-3);
 }
 
@@ -969,25 +1010,27 @@ h1 {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  font-weight: 650;
-  font-size: var(--fs-md);
+  font-weight: 600;
+  font-size: var(--fs-base);
   color: var(--fg);
 }
 
-.rail-brand svg { color: var(--orange); }
+.rail-brand svg { color: var(--fg-muted); }
 
 .rail-head-actions {
   display: flex;
   gap: var(--sp-1);
 }
 
+/* ZCode's icon buttons are 28px with a 6px radius, which is what lets them sit
+   in a 32px-tall control without crowding. */
 .icon-button {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
@@ -1006,11 +1049,13 @@ h1 {
 .rail-item {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
-  height: 36px;
-  padding: 0 var(--sp-3);
+  gap: var(--sp-2);
+  /* 28px rows with 4px gaps, as in ZCode's sidebar: the list stays scannable
+     when the rail holds twenty-odd entries. */
+  height: 28px;
+  padding: 0 var(--sp-2);
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--fg);
   font-size: var(--fs-base);
@@ -1024,11 +1069,10 @@ h1 {
 .rail-item svg { color: var(--fg-muted); flex: 0 0 auto; }
 
 .rail-section {
-  margin: var(--sp-4) var(--sp-3) var(--sp-1);
+  margin: var(--sp-3) var(--sp-3) var(--sp-1);
   font-size: var(--fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-weight: 500;
+  letter-spacing: 0.04em;
   color: var(--fg-dim);
 }
 
@@ -1043,11 +1087,11 @@ h1 {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  height: 34px;
+  height: 28px;
   margin: 0 var(--sp-2);
-  padding: 0 var(--sp-3);
+  padding: 0 var(--sp-2);
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--fg);
   font-size: var(--fs-base);
@@ -1108,7 +1152,7 @@ h1 {
 .main {
   grid-column: 2;
   display: grid;
-  grid-template-rows: 52px minmax(0, 1fr) auto;
+  grid-template-rows: 48px minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
   background: var(--bg-app);
@@ -1206,7 +1250,7 @@ h1 {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  font-size: var(--fs-md);
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--fg);
   min-width: 0;
@@ -1220,38 +1264,45 @@ h1 {
   text-overflow: ellipsis;
 }
 
+/* ZCode's badge language: `rounded-md`, hairline border, no fill. The pill +
+   solid-grey treatment here made an ambient counter the loudest thing in the
+   topbar. */
 .topbar-changes {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-1, 4px);
-  padding: 3px var(--sp-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-pill);
-  font-size: var(--fs-sm);
+  height: 22px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
   font-family: var(--font-mono);
+  color: var(--fg-muted);
   flex: 0 0 auto;
 }
 .topbar-changes svg { color: var(--fg-muted); }
 .topbar-changes-label { color: var(--fg-muted); margin-right: 2px; }
-.topbar-add { color: var(--success, #3fb950); font-weight: 600; }
-.topbar-del { color: var(--danger, #f85149); font-weight: 600; }
+.topbar-add { color: var(--ok); font-weight: 600; }
+.topbar-del { color: var(--danger); font-weight: 600; }
 
 .topbar-timer {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-1, 4px);
-  padding: 3px var(--sp-2);
+  height: 22px;
+  padding: 0 var(--sp-2);
   margin-right: var(--sp-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-pill);
-  font-size: var(--fs-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
   font-family: var(--font-mono);
+  color: var(--fg-muted);
   flex: 0 0 auto;
-  background: var(--bg-hover);
+  background: transparent;
 }
 .topbar-timer svg { color: var(--fg-muted); }
 .topbar-timer-label { color: var(--fg-muted); margin-right: 2px; }
-.topbar-timer-value { color: var(--fg-primary); font-weight: 600; }
+.topbar-timer-value { color: var(--fg); font-weight: 600; }
 
 .main-topbar-spacer { flex: 1 1 auto; }
 
@@ -1805,11 +1856,14 @@ h1 {
 
 .stream-inner {
   width: 100%;
-  max-width: 768px;
+  /* ZCode's reading column is `max-w-2xl` (672px) for the draft composer and
+     widens to `max-w-4xl` once a status panel is present. 768px is between the
+     two and needs no layout switching, so the column keeps one measure. */
+  max-width: 720px;
   padding: var(--sp-6) var(--sp-5) var(--sp-4);
   display: flex;
   flex-direction: column;
-  gap: var(--sp-6);
+  gap: var(--sp-5);
 }
 
 .status-line {
@@ -1821,23 +1875,31 @@ h1 {
   font-size: var(--fs-sm);
 }
 
+/* User turns: ZCode right-aligns a bordered bubble whose top-right corner is
+   pinched (`rounded-xl rounded-tr-xs`), so the speaker reads at a glance
+   without a filled accent block. The old full-width grey slab sat flush to the
+   column and was easy to mistake for a system banner. */
 .msg-user {
-  align-self: stretch;
-  max-width: 100%;
-  padding: 10px 16px;
-  border-radius: 14px;
-  background: var(--bg-side);
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px 4px 12px 12px;
+  background: var(--bg-elevated);
   color: var(--fg);
   font-size: var(--fs-base);
-  line-height: 1.55;
+  line-height: 1.6;
   white-space: pre-wrap;
 }
 
+/* Assistant turns carry no bubble at all — full-width prose, as in ZCode. The
+   1.75 leading is theirs; it is what makes a long answer readable next to the
+   denser tool rows. */
 .msg-assistant {
   align-self: stretch;
   color: var(--fg);
   font-size: var(--fs-base);
-  line-height: 1.65;
+  line-height: 1.75;
   white-space: pre-wrap;
 }
 
@@ -1955,17 +2017,18 @@ h1 {
 }
 
 /* --- Tool cards + approvals (inline in stream) --- */
-/* codex exec_cell: step rows carry no card chrome; only expanded details and
-   pending approvals get a bounded surface. */
+/* ZCode gives a tool's expanded body a `rounded-xl border-border bg-panel`
+   surface, and running tools a left rule rather than a coloured outline. The
+   outline drew a box around every row and made a step list look like a form. */
 .tool-card {
   align-self: stretch;
   border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--bg-side);
+  border-radius: var(--r-md);
+  background: var(--bg-elevated);
   padding: 10px 12px;
 }
 
-.tool-card.running { border-color: var(--orange); }
+.tool-card.running { border-color: var(--border); border-left: 2px solid var(--ok); }
 .tool-card.done { border-color: var(--border); }
 .tool-card.failed,
 .approval-card {
@@ -2091,7 +2154,9 @@ h1 {
   margin: var(--sp-2) 0;
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-sm);
-  background: var(--bg-base);
+  /* Was var(--bg-base), a token this stylesheet never defined, so the rule
+     resolved to nothing and images sat on whatever was behind them. */
+  background: var(--bg-side);
 }
 
 .turn-summary {
@@ -2451,16 +2516,19 @@ h1 {
 
 .composer {
   width: 100%;
-  max-width: 768px;
-  border: 1px solid var(--border-strong);
-  border-radius: 26px;
+  max-width: 720px;
+  border: 1px solid var(--border);
+  /* ZCode's composer is one of the four documented `rounded-2xl` (16px)
+     surfaces; 26px was rounder than anything else in the app. */
+  border-radius: 16px;
   background: var(--bg-input);
-  box-shadow: 0 4px 20px rgba(20, 22, 28, 0.06);
-  padding: var(--sp-3) var(--sp-3);
-  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  box-shadow: var(--shadow-composer);
+  padding: var(--sp-3);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 
-.composer:focus-within { border-color: var(--border-strong); box-shadow: var(--shadow-composer); }
+/* ZCode signals focus with a border + surface change, not a glow. */
+.composer:focus-within { border-color: var(--border-strong); }
 
 .composer textarea {
   width: 100%;
@@ -2468,8 +2536,8 @@ h1 {
   resize: none;
   background: transparent;
   color: var(--fg);
-  font-size: var(--fs-md);
-  line-height: 1.55;
+  font-size: var(--fs-base);
+  line-height: 1.6;
   min-height: 24px;
   max-height: 180px;
   outline: none;
@@ -2495,10 +2563,10 @@ h1 {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 var(--sp-3);
+  height: 28px;
+  padding: 0 var(--sp-2);
   border: 0;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--orange);
   font-size: var(--fs-sm);
@@ -3622,26 +3690,29 @@ h1 {
    Conversation context menu (right-click a session)
    ========================================================================= */
 
+/* ZCode menu shell: `rounded-lg border bg-menu p-1`, then `rounded-md min-h-7`
+   rows inside it. Menu items are 28px, not 34 — a right-click menu with eleven
+   entries was taller than the viewport on a short window. */
 .ctx-menu {
   position: fixed;
-  min-width: 220px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-md);
+  min-width: 200px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
-  padding: var(--sp-2);
+  padding: var(--sp-1);
   z-index: 60;
 }
 
 .ctx-row {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
+  gap: var(--sp-2);
   width: 100%;
-  height: 34px;
+  height: 28px;
   padding: 0 var(--sp-2);
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--fg);
   font-size: var(--fs-base);
@@ -7554,7 +7625,7 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 }
 .approval-modal-diff { font-size: 12px; color: var(--fg-muted); }
 .approval-modal-diff-path {
-  font-family: var(--mono, monospace);
+  font-family: var(--font-mono, monospace);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   padding: 2px 7px; border-radius: 6px;
 }
