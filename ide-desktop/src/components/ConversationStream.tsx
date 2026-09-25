@@ -74,8 +74,29 @@ export function ConversationStream({ state, onApprove, onEditUser, onUndo, onOpe
   // Nothing became unreachable: every action it offered is in the command
   // palette (Ctrl+Shift+P) and the terminal it opened is the bottom panel
   // (Ctrl+T). The floating terminal it also opened keeps its own palette entry.
+  // An empty conversation shows the ZCode-style welcome — greeting plus a few
+  // suggestion chips that prefill the composer. The old first-run card came
+  // back on every Ctrl+N because it mixed first-run affordances (launcher
+  // buttons, command lists) into it; this one is deliberately just text and
+  // three chips, all of which only prefill the input.
   if (state.chat.length === 0) {
-    return <div className="stream" ref={streamRef} />;
+    const suggestions = ['梳理这个项目的结构', '解释最近改动的代码', '帮我修一个 bug'];
+    return (
+      <div className="stream" ref={streamRef}>
+        <div className="chat-welcome">
+          <div className="chat-welcome-mark" aria-hidden="true">Y</div>
+          <h2 className="chat-welcome-title">今天从哪里开始？</h2>
+          <p className="chat-welcome-hint">输入 @ 引用文件，输入 / 使用指令，随时纠正我</p>
+          <div className="chat-welcome-chips">
+            {suggestions.map((text) => (
+              <button key={text} type="button" className="chat-welcome-chip" onClick={() => onEditUser(text)}>
+                {text}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

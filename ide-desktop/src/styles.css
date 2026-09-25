@@ -1081,6 +1081,104 @@ h1 {
 .rail-view-new { color: var(--fg); }
 .rail-view-new:hover { color: var(--accent); }
 
+/* Brand tile + labeled primary actions, as in the host sidebar. */
+.rail-logo {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 14px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.rail-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 var(--sp-2);
+  margin-bottom: var(--sp-1);
+}
+
+.rail-primary-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 36px;
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--fs-base);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+
+.rail-primary-row:hover { background: var(--bg-hover); }
+.rail-primary-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg-muted);
+  flex: 0 0 auto;
+}
+
+/* Empty-conversation welcome (ChatEmptyState tone): centered, quiet. */
+.chat-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--sp-6) var(--sp-4);
+  text-align: center;
+}
+.chat-welcome-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: var(--sp-3);
+}
+.chat-welcome-title {
+  margin: 0 0 var(--sp-1);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--fg);
+}
+.chat-welcome-hint {
+  margin: 0 0 var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--fg-dim);
+}
+.chat-welcome-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.chat-welcome-chip {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.chat-welcome-chip:hover { color: var(--fg); border-color: var(--border-strong); background: var(--bg-hover); }
+
 .rail-item {
   display: flex;
   align-items: center;

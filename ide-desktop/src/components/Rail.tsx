@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FilePlus, MessageSquare, Clock, Files, Settings, PanelLeft, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, BarChart3, FileClock } from 'lucide-react';
+import { FilePlus, MessageSquare, Clock, Files, Settings, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, BarChart3, FileClock } from 'lucide-react';
 import type { AppState, SessionMeta } from '../types';
 import { HelpMenu, type HelpAction } from './HelpMenu';
 import { ConversationContextMenu, type ConvoAction } from './ConversationContextMenu';
@@ -204,12 +204,25 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, onNe
     <aside className="rail">
       <div className="rail-head">
         <div className="rail-brand">
-          <PanelLeft size={18} />
+          {/* ZCode marks the sidebar with a solid brand tile, not just text. */}
+          <span className="rail-logo" aria-hidden="true">Y</span>
           <span>YOYcode</span>
         </div>
         <div className="rail-head-actions">
           <button className="icon-button" title="搜索（全文检索工作区）" onClick={() => onSelectView('search')}><Search size={17} /></button>
         </div>
+      </div>
+
+      {/* Host sidebar leads with labeled primary actions before the list. */}
+      <div className="rail-primary">
+        <button className="rail-primary-row" onClick={onNewChat}>
+          <span className="rail-primary-icon"><FilePlus size={15} /></span>
+          <span>新对话</span>
+        </button>
+        <button className="rail-primary-row" onClick={() => onSelectView('search')}>
+          <span className="rail-primary-icon"><Search size={15} /></span>
+          <span>搜索</span>
+        </button>
       </div>
 
       {/* ZCode side-pane style: views are 28px icon toggles, not a list of
