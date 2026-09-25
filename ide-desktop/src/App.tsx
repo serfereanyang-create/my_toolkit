@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { matchAction, resolveBindings } from './lib/keybindings';
 import { applyBackground, normalizeBlur, normalizeDim, normalizeScope, readBackground } from './lib/background';
-import { MessageSquare, Files as FilesIcon, Settings as SettingsIcon, CalendarClock, GitBranch, FileCode, Gauge, Search, Braces, BookmarkCheck, History, BarChart3 } from 'lucide-react';
+import { FolderOpen, MessageSquare, Files as FilesIcon, Settings as SettingsIcon, CalendarClock, GitBranch, FileCode, Gauge, Search, Braces, BookmarkCheck, History, BarChart3 } from 'lucide-react';
 import { AutomationPanel } from './components/AutomationPanel';
 import { CodeReviewPanel } from './components/CodeReviewPanel';
 import { Composer } from './components/Composer';
@@ -1358,7 +1358,16 @@ export default function App() {
             paints above it. Inert to pointer events. */}
         {backgroundEnabled && backgroundImage && <div className="app-background" aria-hidden="true" />}
         <div className="main-topbar">
-          <div className="main-title">{titleMap[mainView].icon}<span>{titleMap[mainView].label}</span></div>
+          {/* ZCode WorkspaceHeader: the chat header shows the workspace (with
+              a folder glyph), other views keep their own icon + label. */}
+          {mainView === 'chat' ? (
+            <div className="main-title">
+              <FolderOpen size={16} />
+              <span>{(state.workspaceRoot ? state.workspaceRoot.split(/[\\/]/).filter(Boolean).pop() : null) ?? '对话'}</span>
+            </div>
+          ) : (
+            <div className="main-title">{titleMap[mainView].icon}<span>{titleMap[mainView].label}</span></div>
+          )}
           {mainView === 'chat' && state.taskSummary && (
             <TaskCard 
               summary={state.taskSummary}

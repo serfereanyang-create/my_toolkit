@@ -1,9 +1,26 @@
 import { useEffect, useState } from 'react';
 import {
-  ChevronRight, Clock, Undo2, FileEdit, Check,
+  Brain, ChevronRight, Clock, FileEdit, FileText, FolderTree, ListTree,
+  Search, Settings2, SquareTerminal, Undo2, Wrench, Check,
 } from 'lucide-react';
 import type { ChatItem, ToolChatItem } from '../types';
 import { ToolCard } from './ToolCard';
+
+// ZCode renders one quiet outline icon per tool lane (terminal / read /
+// think ...). Map our tool ids onto the same vocabulary; unknown tools get a
+// generic wrench so nothing ever renders as a bare bullet.
+function toolLane(tool: string): { icon: typeof SquareTerminal; label: string } {
+  const t = tool.toLowerCase();
+  if (/(terminal|shell|exec|command|run_command)/.test(t)) return { icon: SquareTerminal, label: '终端' };
+  if (/(think|reason|plan|reflect)/.test(t)) return { icon: Brain, label: '思考' };
+  if (/(read|file_info|open|cat)/.test(t)) return { icon: FileText, label: '读取' };
+  if (/(list|tree|directory|glob|ls)/.test(t)) return { icon: FolderTree, label: '目录' };
+  if (/(search|grep|find_symbol|find_references)/.test(t)) return { icon: Search, label: '搜索' };
+  if (/(write|edit|patch|apply)/.test(t)) return { icon: FileEdit, label: '写入' };
+  if (/(index|map|stats|config)/.test(t)) return { icon: ListTree, label: '索引' };
+  if (/(server|service|setting|lsp|fim)/.test(t)) return { icon: Settings2, label: '服务' };
+  return { icon: Wrench, label: '工具' };
+}
 
 /** status_indicator_widget.rs fmt_elapsed_compact: 42s / 3m 05s / 1h 02m 03s. */
 function fmtElapsedCompact(ms: number): string {
@@ -140,7 +157,7 @@ function StepRow({ step, onApprove, expandAll }: {
   const summary = stepSummary(step);
   const dur = formatDuration(step.durationMs);
   const hasDetail = step.input !== undefined || step.output;
-  const actionLabel = step.status === 'running' ? 'Running' : 'Ran';
+  const lane = toolLane(step.tool ?? '');
 
   return (
     <div className={`step-row ${step.status}`}>
@@ -150,10 +167,11 @@ function StepRow({ step, onApprove, expandAll }: {
         style={{ cursor: hasDetail ? 'pointer' : 'default' }}
         aria-expanded={expanded}
       >
-        <span className={`codex-bullet ${step.status === 'running' ? 'blink' : step.status === 'failed' ? 'failed' : 'ok'}`}>•</span>
-        <span className="step-action">{actionLabel}</span>
+        {/* ZCode lane row: icon + Chinese lane label + muted detail. */}
+        <lane.icon size={14} className={`step-icon ${step.status === 'running' ? 'blink' : step.status === 'failed' ? 'failed' : 'ok'}`} />
+        <span className="step-label">{lane.label}</span>
         {summary && <span className="step-summary">{summary}</span>}
-        {dur && step.status !== 'running' && <span className="step-dur">{dur}</span>}
+        {dur && step.status !== 'running' && <span className="step-dur">· {dur}</span>}
         {(step.added || step.removed) && step.status !== 'running' && (
           <span className="step-changes">
             {step.added ? <span className="turn-add">+{step.added}</span> : null}
@@ -205,8 +223,8 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile, expandAl
               ))
             : (
               <div className="step-row running">
-                <span className="codex-bullet blink">•</span>
-                <span className="step-action">Running</span>
+                <Brain size={14} className="step-icon blink" />
+                <span className="step-label">思考</span>
                 <span className="step-summary">思考中…</span>
               </div>
             )}

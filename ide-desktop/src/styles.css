@@ -592,6 +592,9 @@ html[data-reduce-motion='on'] *::after {
   /* Text drawn on top of --accent / --blue fills. Hardcoding #fff breaks
      contrast in dark, where the accent flips to a light color. */
   --accent-fg: #ffffff;
+  /* User bubble fill from the live ZCode reference: slightly darker than the
+     page, no border. */
+  --bubble-user: #eceeef;
   --scroll-thumb: rgba(13, 13, 13, 0.15);
   --scroll-thumb-hover: rgba(13, 13, 13, 0.28);
 
@@ -648,6 +651,7 @@ html[data-reduce-motion='on'] *::after {
   --warn: #ff8a30;
   --danger: #ff5c5c;
   --danger-soft: rgba(255, 92, 92, 0.12);
+  --bubble-user: #2b2b2b;
 
   --shadow-composer: 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow-pop: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
@@ -1140,7 +1144,20 @@ h1 {
 }
 
 .rail-convo:hover { background: var(--bg-hover); }
-.rail-convo.active { background: var(--bg-sel); }
+/* Right-aligned relative time, as in the live ZCode task list. */
+.rail-convo-time {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  color: var(--fg-dim);
+  padding-left: var(--sp-2);
+}
+/* Active task = a white card on the gray sidebar (live ZCode reference):
+   elevated fill + hairline, not a darker gray pill. */
+.rail-convo.active {
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 1px var(--border), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
 .rail-convo span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1910,17 +1927,17 @@ h1 {
   font-size: var(--fs-sm);
 }
 
-/* User turns: ZCode right-aligns a bordered bubble whose top-right corner is
-   pinched (`rounded-xl rounded-tr-xs`), so the speaker reads at a glance
-   without a filled accent block. The old full-width grey slab sat flush to the
-   column and was easy to mistake for a system banner. */
+/* User turns: ZCode right-aligns a BORDERLESS light-gray bubble (verified
+   against the live desktop app screenshot) whose top-right corner is pinched
+   (`rounded-xl rounded-tr-xs`). No border, no white card — just a quiet gray
+   block on the page background. */
 .msg-user {
   align-self: flex-end;
   max-width: 85%;
-  padding: 12px 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px 4px 12px 12px;
-  background: var(--bg-elevated);
+  padding: 10px 16px;
+  border: none;
+  border-radius: 14px 4px 14px 14px;
+  background: var(--bubble-user);
   color: var(--fg);
   font-size: var(--fs-base);
   line-height: 1.6;
@@ -2306,6 +2323,12 @@ h1 {
 .step-row.running .step-row-head { color: var(--fg-muted); }
 .step-row.failed  .step-row-head { color: var(--danger); }
 
+/* ZCode lane icon: quiet outline glyph; status only tints it, never a bullet. */
+.step-icon { color: var(--fg-dim); flex: 0 0 auto; }
+.step-row.running .step-icon { color: var(--fg-muted); }
+.step-row.done .step-icon { color: var(--fg-dim); }
+.step-row.failed .step-icon { color: var(--danger); }
+
 /* Icon color per category */
 .step-icon-search  { color: var(--fg-dim); }
 .step-icon-read    { color: var(--fg-dim); }
@@ -2598,13 +2621,14 @@ h1 {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 var(--sp-2);
-  border: 0;
-  border-radius: var(--r-md);
-  background: transparent;
-  color: var(--orange);
-  font-size: var(--fs-sm);
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+  border-radius: var(--r-pill);
+  /* ZCode interaction chips: tinted surface + colored text, quiet not loud. */
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  color: var(--warn);
+  font-size: var(--fs-xs);
   font-weight: 500;
   cursor: pointer;
   transition: background var(--dur) var(--ease);
@@ -2666,13 +2690,13 @@ h1 {
   align-items: center;
   gap: 6px;
   max-width: 260px;
-  height: 30px;
-  padding: 0 var(--sp-2);
-  border: 0;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
   border-radius: var(--r-pill);
   background: transparent;
   color: var(--fg-muted);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   white-space: nowrap;
   cursor: pointer;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
@@ -2687,16 +2711,16 @@ h1 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 30px;
-  border: 0;
+  height: 26px;
+  border: 1px solid var(--border);
   border-radius: var(--r-pill);
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.composer-context { width: 30px; flex: 0 0 30px; padding: 0; }
-.composer-effort { gap: 5px; padding: 0 var(--sp-2); font-size: var(--fs-sm); white-space: nowrap; }
+.composer-context { width: 26px; flex: 0 0 26px; padding: 0; }
+.composer-effort { gap: 5px; padding: 0 10px; font-size: var(--fs-xs); white-space: nowrap; }
 .composer-context:hover,
 .composer-context.active,
 .composer-effort:hover,

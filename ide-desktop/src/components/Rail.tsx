@@ -116,8 +116,11 @@ function SessionItem({ session, active, tags, onOpen, onContextMenu, onRename }:
       onDoubleClick={() => setEditing(true)}
       onContextMenu={onContextMenu}
     >
-      {session.pinned ? <Pin size={14} /> : <Clock size={15} />}
+      {/* ZCode task rows have no leading time icon — only a pin for pinned
+          tasks; the title carries the row. */}
+      {session.pinned ? <Pin size={13} /> : null}
       <span>{session.title}</span>
+      <span className="rail-convo-time">{formatAgo(Date.parse(session.updatedAt))}</span>
       {tags.length > 0 && (
         <span className="rail-tags" aria-label={`标签：${tags.join('、')}`}>
           {tags.slice(0, 2).map((tag) => (

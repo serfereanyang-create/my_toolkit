@@ -66,7 +66,17 @@ ws.addEventListener('open', async () => {
       });
       await new Promise((r) => setTimeout(r, 350));
     }
-    const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    // A minimized/occluded window never produces frames for
+    // Page.captureScreenshot — raise the page first (best effort).
+    try { await send('Page.bringToFront', {}); await new Promise((r) => setTimeout(r, 250)); } catch { /* optional */ }
+    let shot;
+    try {
+      shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    } catch (error) {
+      // Minimized windows stop compositing the surface; read from the renderer
+      // backing store instead.
+      shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, fromSurface: false });
+    }
     writeFileSync(out, Buffer.from(shot.data, 'base64'));
     console.log('saved', out);
 
