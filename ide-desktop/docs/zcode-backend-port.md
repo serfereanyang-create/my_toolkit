@@ -21,6 +21,11 @@
 | 13 | 终端会话树终止 + shell profile 探测 | terminal/terminalService + terminalProfile | `terminal-profile.cjs`、`terminal.cjs` kill 升级 | （R13 提交） |
 | 14 | 系统诊断快照（版本/CPU/内存/盘余量/git） | system/systemService | `system-info.cjs` + IPC `system.info` | （R14 提交） |
 | 15 | 空会话清理后端（分析只读；删除时重校验候选资格，防数字过期） | （对应清理计划） | `session-cleanup.cjs` + IPC `sessions.analyzeCleanup/cleanupDelete` | （R15 提交） |
+| 16 | 提交信息建议接入 git 胶囊（status+numstat → 会话范围过滤 → 生成器） | R10+R11 的组合 | `git-suggest.cjs` + IPC `git.suggestCommitMessage` | （R16 提交） |
+| 17 | `.zcodeignore` 搜索规则（gitignore 语法，`ignore` 参考实现解析；首用自动从 .gitignore/模板生成） | file/workspaceFileIgnore | `workspace-ignore.cjs`（file-search walker 已接入） | （R17 提交） |
+| 18 | 项目记忆浏览器（读 CLI 同款 memory store，只读 + 路径校验） | memory/memoryService | `memory-service.cjs` + IPC `memory.*` | （R18 提交） |
+| 19 | 音视频预览准备（格式表 + local-url/inline，8MB inline 上限） | media-preview + shared media-preview.ts | `media-preview.cjs` + IPC `media.prepare` | （R19 提交） |
+| 20 | 运行时进程监督器（ready 探测、stderr 环形缓冲、expected/unexpected/watchdog_recycle 退出分类、退避重启） | process/runtimeProcessLifecycle | `runtime-lifecycle.cjs` | （R20 提交） |
 
 ## 有意的偏差（都写了注释）
 
@@ -40,6 +45,6 @@
 
 ## 验证
 
-- node --test 全量 374/374 绿（含每个移植模块的专属测试）。
-- vitest 全量 374/374 绿 + typecheck 干净。
+- 2026-09-25 R20 后全量：node --test 与 vitest 共 392/392 绿（含每个移植模块的专属测试）。
+- typecheck 干净。
 - IPC 通道对齐守卫（`tests/ipc-channel-parity.test.cjs`）覆盖全部新增通道。
