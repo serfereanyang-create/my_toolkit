@@ -13,6 +13,7 @@ const {
   walkWorkspace,
   createFileSearchService,
 } = require('../electron/file-search.cjs');
+const { ensureIgnoreRules } = require('../electron/workspace-ignore.cjs');
 
 const entries = mapEntriesToCandidates([
   { name: 'policy.ts', path: '/w/src/safety/policy.ts', relativePath: 'src/safety/policy.ts', type: 'file' },
@@ -66,7 +67,8 @@ test('walker skips ignored dirs and dotfiles at the root', async () => {
     await writeFile(join(root, '.secret'), '');
     await writeFile(join(root, 'top.ts'), '');
 
-    const walked = await walkWorkspace(root);
+    const { matcher } = await ensureIgnoreRules(root);
+    const walked = await walkWorkspace(root, matcher);
     const rels = walked.map((e) => e.relativePath);
     assert.ok(!rels.some((r) => r.startsWith('node_modules')), 'node_modules ignored');
     assert.ok(!rels.includes('.secret'), 'root dotfiles ignored');

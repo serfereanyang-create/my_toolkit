@@ -8,7 +8,8 @@
  */
 
 const { readdir } = require('node:fs/promises');
-const { join } = require('node:path');
+const { join, relative } = require('node:path');
+const { ensureIgnoreRules } = require('./workspace-ignore.cjs');
 
 const WORKSPACE_FILE_SEARCH_DISPLAY_CAP = 1000;
 const MAX_CANDIDATES = 100_000;
@@ -133,10 +134,18 @@ function filterCandidates(candidates, query, options = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Candidate collection: recursive walk with ignore rules and a hard cap.
+// Candidate collection: recursive walk. `.zcodeignore` (gitignore syntax,
+// auto-created from .gitignore or the builtin template) decides what is
+// skipped; `.git` is hard-skipped regardless because it is git metadata.
 // ---------------------------------------------------------------------------
 
-async function walkWorkspace(rootPath, relativePath = '') {
+function makeRulePredicate(matcher) {
+  if (!matcher) return () => false;
+  return (relativePath, isDir) => matcher.ignores(isDir ? `${relativePath}/` : relativePath);
+}
+
+async function walkWorkspace(rootPath, rulesMatcher, relativePath = '') {
+  const ignored = makeRulePredicate(rulesMatcher);
   const entries = [];
   let dirEntries;
   try {
@@ -149,14 +158,16 @@ async function walkWorkspace(rootPath, relativePath = '') {
     const name = dirEntry.name;
     if (relativePath === '' && name.startsWith('.')) continue;
     if (dirEntry.isDirectory()) {
-      if (IGNORED_DIRS.has(name)) continue;
       const relativeChild = relativePath ? `${relativePath}/${name}` : name;
+      if (name === '.git') continue;
+      if (ignored(relativeChild, true)) continue;
       entries.push({ name, path: join(rootPath, relativeChild), relativePath: relativeChild, type: 'directory' });
-      entries.push(...await walkWorkspace(rootPath, relativeChild));
+      entries.push(...await walkWorkspace(rootPath, rulesMatcher, relativeChild));
       continue;
     }
     if (!dirEntry.isFile() && !dirEntry.isSymbolicLink()) continue;
     const relativeChild = relativePath ? `${relativePath}/${name}` : name;
+    if (ignored(relativeChild, false)) continue;
     entries.push({ name, path: join(rootPath, relativeChild), relativePath: relativeChild, type: 'file' });
   }
   return entries;
@@ -165,13 +176,24 @@ async function walkWorkspace(rootPath, relativePath = '') {
 function createFileSearchService(options = {}) {
   const ttlMs = options.cacheTtlMs ?? 2000;
   let cache = { rootPath: null, builtAt: 0, candidates: [] };
+  let rules = { matcher: null, builtAt: 0 };
+
+  async function getRules(rootPath) {
+    // Re-resolve rules hourly (or on cache invalidation) so edits to
+    // .zcodeignore get picked up without leaking fs churn per keystroke.
+    if (rules.matcher && Date.now() - rules.builtAt < 3_600_000) return rules.matcher;
+    const { matcher } = await ensureIgnoreRules(rootPath);
+    rules = { matcher, builtAt: Date.now() };
+    return matcher;
+  }
 
   async function getCandidates(rootPath) {
     const now = Date.now();
     if (cache.rootPath === rootPath && now - cache.builtAt < ttlMs) {
       return cache.candidates;
     }
-    const candidates = mapEntriesToCandidates(await walkWorkspace(rootPath));
+    const matcher = await getRules(rootPath);
+    const candidates = mapEntriesToCandidates(await walkWorkspace(rootPath, matcher));
     cache = { rootPath, builtAt: now, candidates };
     return candidates;
   }
@@ -187,6 +209,7 @@ function createFileSearchService(options = {}) {
     },
     invalidate() {
       cache = { rootPath: null, builtAt: 0, candidates: [] };
+      rules = { matcher: null, builtAt: 0 };
     },
   };
 }
