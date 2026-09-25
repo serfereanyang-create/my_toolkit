@@ -126,6 +126,11 @@ export type ProjectMemorySummary = {
   files: Array<{ name: string; path: string; kind: 'index' | 'item'; size: number; updatedAt: number }>;
 };
 
+/** Renderer-facing audio/video preview payload (see media-preview.cjs). */
+export type MediaPreviewPreparation =
+  | { kind: 'local-url'; mediaType: string; path: string; size: number; url: string }
+  | { kind: 'inline'; dataBase64: string; mediaType: string; path: string; size: number };
+
 /** Read-only statistics for one sessions directory (empty-session cleanup). */
 export type SessionCleanupAnalysis = {
   dir: string;
@@ -235,6 +240,9 @@ type ZCodeDesktopApi = {
   memory: {
     listProjects(): Promise<{ ok: boolean; projects: ProjectMemorySummary[] }>;
     read(workspaceId: string, fileName: string): Promise<{ ok: boolean; content: string; updatedAt: number }>;
+  };
+  media: {
+    prepare(relativePath: string, expectedKind: 'audio' | 'video'): Promise<{ ok: boolean; preparation: MediaPreviewPreparation }>;
   };
   automation: {
     list(): Promise<AutomationTask[]>;

@@ -16,6 +16,7 @@ const { collectSystemInfo } = require('./system-info.cjs');
 const { analyzeSessionsDir, deleteSessionFiles } = require('./session-cleanup.cjs');
 const { suggestCommitMessage, collectNumstat } = require('./git-suggest.cjs');
 const { listProjectMemories, readProjectMemoryFile } = require('./memory-service.cjs');
+const { prepareMediaPreview } = require('./media-preview.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
@@ -275,6 +276,16 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('memory.read', async (_event, workspaceId, fileName) => {
     const file = await readProjectMemoryFile({ memoriesRoot, workspaceId, fileName });
     return { ok: true, ...file };
+  });
+
+  // Audio/video preview preparation (zcode media-preview). Paths are confined
+  // to the workspace like every other fs handler.
+  ipcMain.handle('media.prepare', async (_event, relativePath, expectedKind) => {
+    const root = requireWorkspaceRoot();
+    const absolutePath = resolveWorkspacePath(root, relativePath);
+    assertInsideRoot(root, absolutePath);
+    const preparation = await prepareMediaPreview({ filePath: absolutePath, expectedKind });
+    return { ok: true, preparation };
   });
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));

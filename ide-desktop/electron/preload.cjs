@@ -96,6 +96,9 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     listProjects: () => ipcRenderer.invoke('memory.listProjects'),
     read: (workspaceId, fileName) => ipcRenderer.invoke('memory.read', workspaceId, fileName),
   },
+  media: {
+    prepare: (relativePath, expectedKind) => ipcRenderer.invoke('media.prepare', relativePath, expectedKind),
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window.minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window.toggleMaximize'),
