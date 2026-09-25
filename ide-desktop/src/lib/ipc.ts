@@ -221,6 +221,9 @@ type ZCodeDesktopApi = {
     analyze(dirs?: string[]): Promise<{ ok: boolean; analyses: SessionCleanupAnalysis[] }>;
     deleteFiles(dir: string, ids: string[]): Promise<{ ok: boolean; deleted: string[]; skipped: Array<{ id: string; reason: string }>; freedBytes: number }>;
   };
+  gitSuggest: {
+    suggestCommitMessage(sessionId?: string): Promise<{ ok: boolean; message: { subject: string; body: string; full: string; type: string; scope: string | null; changedFileCount: number; scopedFileCount: number; sessionFileCount: number } }>;
+  };
   automation: {
     list(): Promise<AutomationTask[]>;
     get(taskId: string): Promise<AutomationTask | null>;

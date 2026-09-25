@@ -89,6 +89,9 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     analyze: (dirs) => ipcRenderer.invoke('sessions.analyzeCleanup', dirs),
     deleteFiles: (dir, ids) => ipcRenderer.invoke('sessions.cleanupDelete', dir, ids),
   },
+  gitSuggest: {
+    suggestCommitMessage: (sessionId) => ipcRenderer.invoke('git.suggestCommitMessage', sessionId),
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window.minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window.toggleMaximize'),

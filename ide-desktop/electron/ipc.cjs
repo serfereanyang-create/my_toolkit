@@ -14,6 +14,7 @@ const { exportSessionToFile, defaultExportPath } = require('./export-session.cjs
 const { exportSettingsBundle, importSettingsBundle } = require('./settings-portable.cjs');
 const { collectSystemInfo } = require('./system-info.cjs');
 const { analyzeSessionsDir, deleteSessionFiles } = require('./session-cleanup.cjs');
+const { suggestCommitMessage, collectNumstat } = require('./git-suggest.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
@@ -238,6 +239,29 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     if (!Array.isArray(ids)) throw new Error('cleanupDelete expects an array of session ids');
     const result = await deleteSessionFiles(dir, ids);
     return { ok: true, ...result };
+  });
+
+  // Commit message suggestion: whole change set narrowed to files the session
+  // actually touched (when a sessionId is given), then the heuristic
+  // conventional-commit generator runs on the scoped set.
+  ipcMain.handle('git.suggestCommitMessage', async (_event, sessionId) => {
+    const root = requireWorkspaceRoot();
+    const [status, numstat] = await Promise.all([git.getStatus(root), collectNumstat(root)]);
+    if (!status.ok) throw new Error(status.error || 'git status failed');
+    let toolCalls = [];
+    if (sessionId) {
+      const record = await workspace.loadSession(sessionId);
+      toolCalls = record?.toolCalls ?? [];
+    }
+    const message = suggestCommitMessage({
+      status,
+      numstat,
+      toolCalls,
+      workspacePath: root,
+      repoRoot: root,
+      workspaceInRepoPath: '.',
+    });
+    return { ok: true, message };
   });
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));
