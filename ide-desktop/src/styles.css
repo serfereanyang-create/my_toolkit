@@ -1046,6 +1046,38 @@ h1 {
   gap: 1px;
 }
 
+/* ZCode side-pane toggle row: compact 28px icon buttons in a pill strip. */
+.rail-viewbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: var(--sp-2) var(--sp-2) var(--sp-1);
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg, 8px);
+  background: var(--bg-side);
+}
+
+.rail-view {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.rail-view:hover { background: var(--bg-hover); color: var(--fg); }
+.rail-view.active { background: var(--bg-sel); color: var(--accent); }
+.rail-viewbar-gap { flex: 1 1 auto; }
+.rail-view-new { color: var(--fg); }
+.rail-view-new:hover { color: var(--accent); }
+
 .rail-item {
   display: flex;
   align-items: center;
@@ -1075,6 +1107,9 @@ h1 {
   letter-spacing: 0.04em;
   color: var(--fg-dim);
 }
+
+.rail-group { display: flex; flex-direction: column; }
+.rail-group .rail-section { margin-top: var(--sp-2); }
 
 .rail-scroll {
   flex: 1 1 auto;

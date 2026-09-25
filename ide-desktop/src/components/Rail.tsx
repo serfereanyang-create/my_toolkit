@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FilePlus, MessageSquare, Clock, Files, Settings, PanelLeft, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, Braces, BookmarkCheck, History, BarChart3, FileClock } from 'lucide-react';
+import { FilePlus, MessageSquare, Clock, Files, Settings, PanelLeft, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, BarChart3, FileClock } from 'lucide-react';
 import type { AppState, SessionMeta } from '../types';
 import { HelpMenu, type HelpAction } from './HelpMenu';
 import { ConversationContextMenu, type ConvoAction } from './ConversationContextMenu';
@@ -158,6 +158,45 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, onNe
   const visibleSessions = sessions.filter((s) => sessionMatchesTag(sessionTags, s.id, tagFilter));
   const editTarget = tagEdit ? sessions.find((s) => s.id === tagEdit.id) : null;
 
+  // ZCode-style time grouping: pinned first, then 今天/昨天/7 天内/更早.
+  const groups = (() => {
+    const pinned: SessionMeta[] = [];
+    const today: SessionMeta[] = [];
+    const yesterday: SessionMeta[] = [];
+    const week: SessionMeta[] = [];
+    const older: SessionMeta[] = [];
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 86_400_000;
+    const weekAgo = startOfToday - 6 * 86_400_000;
+    for (const session of visibleSessions) {
+      const t = Date.parse(session.updatedAt);
+      if (session.pinned) pinned.push(session);
+      else if (!Number.isFinite(t) || t >= startOfToday) today.push(session);
+      else if (t >= startOfYesterday) yesterday.push(session);
+      else if (t >= weekAgo) week.push(session);
+      else older.push(session);
+    }
+    return ([
+      ['置顶', pinned], ['今天', today], ['昨天', yesterday], ['7 天内', week], ['更早', older],
+    ] as const).filter(([, list]) => list.length > 0);
+  })();
+
+  const renderSession = (session: SessionMeta) => (
+    <SessionItem
+      key={session.id}
+      session={session}
+      tags={sessionTags[session.id] ?? []}
+      active={state.activeSessionId === session.id}
+      onOpen={() => onOpenSession(session.id)}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setCtx({ x: event.clientX, y: event.clientY, session: session.id });
+      }}
+      onRename={(title) => onConvoAction('rename' as ConvoAction, session.id + '::' + title)}
+    />
+  );
+
   return (
     <aside className="rail">
       <div className="rail-head">
@@ -170,87 +209,112 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, onNe
         </div>
       </div>
 
-      <nav className="rail-nav">
-        {/* UX-1 fix: give the chat view its own nav item with active state.
-            Previously "新对话" had no active indicator, so users couldn't tell
-            which view was active when in the chat view. */}
+      {/* ZCode side-pane style: views are 28px icon toggles, not a list of
+          label buttons — the session list is the sidebar's main content. */}
+      <nav className="rail-viewbar" aria-label="视图切换">
         <button
-          className={`rail-item ${mainView === 'chat' ? 'active' : ''}`}
+          className={`rail-view ${mainView === 'chat' ? 'active' : ''}`}
+          title="对话"
+          aria-label="对话"
           onClick={() => onSelectView('chat')}
         >
-          <MessageSquare size={17} /> 对话
+          <MessageSquare size={15} />
         </button>
-        <button className="rail-item" title="开始新对话" onClick={onNewChat}><FilePlus size={17} /> 新对话</button>
-        <button className={`rail-item ${mainView === 'files' ? 'active' : ''}`} onClick={() => onSelectView('files')}><Files size={17} /> 文件</button>
-        <button className={`rail-item ${mainView === 'snippets' ? 'active' : ''}`} onClick={() => onSelectView('snippets')}><Braces size={17} /> 片段库</button>
-        <button className={`rail-item ${mainView === 'bookmarks' ? 'active' : ''}`} onClick={() => onSelectView('bookmarks')}><BookmarkCheck size={17} /> 书签</button>
-        <button className={`rail-item ${mainView === 'history' ? 'active' : ''}`} onClick={() => onSelectView('history')}><History size={17} /> 保存历史</button>
-        <button className={`rail-item ${mainView === 'stats' ? 'active' : ''}`} onClick={() => onSelectView('stats')}><BarChart3 size={17} /> 代码普查</button>
-        {/* 编辑器 / 质量入口只在顶栏 main-tabs 提供，左栏不再重复。 */}
-        <button className={`rail-item ${mainView === 'automation' ? 'active' : ''}`} onClick={() => onSelectView('automation')}><CalendarClock size={17} /> 自动化</button>
-        <button className={`rail-item ${mainView === 'settings' ? 'active' : ''}`} onClick={() => onSelectView('settings')}><Settings size={17} /> 设置</button>
+        <button
+          className={`rail-view ${mainView === 'files' ? 'active' : ''}`}
+          title="文件"
+          aria-label="文件"
+          onClick={() => onSelectView('files')}
+        >
+          <Files size={15} />
+        </button>
+        <button
+          className={`rail-view ${mainView === 'stats' ? 'active' : ''}`}
+          title="代码普查"
+          aria-label="代码普查"
+          onClick={() => onSelectView('stats')}
+        >
+          <BarChart3 size={15} />
+        </button>
+        {/* 编辑器 / 质量 / 片段库 / 书签 / 保存历史 都不在左栏：编辑器随文件打开，
+            其余走命令面板（Ctrl+Shift+P）或输入框的插件菜单。这里曾写着「顶栏
+            main-tabs 提供」，但那个控件并不存在，照它找入口会找不到。 */}
+        <button
+          className={`rail-view ${mainView === 'automation' ? 'active' : ''}`}
+          title="自动化"
+          aria-label="自动化"
+          onClick={() => onSelectView('automation')}
+        >
+          <CalendarClock size={15} />
+        </button>
+        <button
+          className={`rail-view ${mainView === 'settings' ? 'active' : ''}`}
+          title="设置"
+          aria-label="设置"
+          onClick={() => onSelectView('settings')}
+        >
+          <Settings size={15} />
+        </button>
+        <span className="rail-viewbar-gap" />
+        <button className="rail-view rail-view-new" title="开始新对话（新建会话）" aria-label="开始新对话" onClick={onNewChat}>
+          <FilePlus size={15} />
+        </button>
       </nav>
 
-        <div className="rail-section">项目</div>
-        <div className="rail-scroll">
-          <button className="rail-convo" onClick={onOpenWorkspace} title={state.workspaceRoot || '打开文件夹'}>
-            <FolderOpen size={16} />
-            <span>{workspaceName}</span>
-          </button>
-
-          {recentFiles.length > 0 && (
-            <>
-              <div className="rail-section">最近文件</div>
-              {recentFiles.slice(0, 6).map((file) => (
-                <button
-                  key={file.path}
-                  className="rail-convo rail-recent"
-                  title={file.path}
-                  onClick={() => onOpenRecent(file.path)}
-                >
-                  <FileClock size={14} />
-                  <span>{recentLabel(file.path)}</span>
-                  <span className="rail-recent-ago">{formatAgo(file.lastOpenedAt)}</span>
-                </button>
-              ))}
-            </>
-          )}
-
-          <div className="rail-section">会话</div>
-          {cloud.length > 0 && (
-            <div className="rail-tagbar">
-              {cloud.map(({ tag, count }) => (
-                <button
-                  key={tag}
-                  type="button"
-                  className={`tag-chip filter small c${tagColorIndex(tag)}${tagFilter === tag ? ' active' : ''}`}
-                  title={tagFilter === tag ? '取消筛选' : `只显示带「${tag}」的会话`}
-                  onClick={() => setTagFilter((prev) => (prev === tag ? null : tag))}
-                >
-                  {tag}<span className="tag-count">{count}</span>
-                </button>
-              ))}
-              {tagFilter && (
-                <button type="button" className="tag-filter-clear" onClick={() => setTagFilter(null)} title="清除筛选"><X size={11} /></button>
-              )}
-            </div>
-          )}
+      <div className="rail-scroll">
+        {/* Sessions are the sidebar's primary content, grouped like ZCode's
+            task list (pinned / today / yesterday / older). Project and recent
+            files move below the list. */}
+        {cloud.length > 0 && (
+          <div className="rail-tagbar">
+            {cloud.map(({ tag, count }) => (
+              <button
+                key={tag}
+                type="button"
+                className={`tag-chip filter small c${tagColorIndex(tag)}${tagFilter === tag ? ' active' : ''}`}
+                title={tagFilter === tag ? '取消筛选' : `只显示带「${tag}」的会话`}
+                onClick={() => setTagFilter((prev) => (prev === tag ? null : tag))}
+              >
+                {tag}<span className="tag-count">{count}</span>
+              </button>
+            ))}
+            {tagFilter && (
+              <button type="button" className="tag-filter-clear" onClick={() => setTagFilter(null)} title="清除筛选"><X size={11} /></button>
+            )}
+          </div>
+        )}
         {visibleSessions.length === 0
           ? <div className="pane-title" style={{ textTransform: 'none', letterSpacing: 0 }}>{sessions.length === 0 ? '暂无会话' : '没有匹配该标签的会话'}</div>
-          : visibleSessions.map((session) => (
-            <SessionItem
-              key={session.id}
-              session={session}
-              tags={sessionTags[session.id] ?? []}
-              active={state.activeSessionId === session.id}
-              onOpen={() => onOpenSession(session.id)}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                setCtx({ x: event.clientX, y: event.clientY, session: session.id });
-              }}
-              onRename={(title) => onConvoAction('rename' as ConvoAction, session.id + '::' + title)}
-            />
+          : groups.map(([label, list]) => (
+            <div key={label} className="rail-group">
+              <div className="rail-section">{label}</div>
+              {list.map(renderSession)}
+            </div>
           ))}
+
+        <div className="rail-section">项目</div>
+        <button className="rail-convo" onClick={onOpenWorkspace} title={state.workspaceRoot || '打开文件夹'}>
+          <FolderOpen size={16} />
+          <span>{workspaceName}</span>
+        </button>
+
+        {recentFiles.length > 0 && (
+          <>
+            <div className="rail-section">最近文件</div>
+            {recentFiles.slice(0, 6).map((file) => (
+              <button
+                key={file.path}
+                className="rail-convo rail-recent"
+                title={file.path}
+                onClick={() => onOpenRecent(file.path)}
+              >
+                <FileClock size={14} />
+                <span>{recentLabel(file.path)}</span>
+                <span className="rail-recent-ago">{formatAgo(file.lastOpenedAt)}</span>
+              </button>
+            ))}
+          </>
+        )}
       </div>
 
       {ctx && (
