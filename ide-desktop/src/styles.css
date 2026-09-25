@@ -1120,16 +1120,24 @@ h1 {
 }
 
 .rail-primary-row:hover { background: var(--bg-hover); }
-.rail-primary-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--fg) 6%, transparent);
-  color: var(--fg-muted);
+.rail-primary-row svg { color: var(--fg-muted); flex: 0 0 auto; }
+.rail-primary-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Right-aligned kbd hints on the primary rows, like the host nav. */
+.rail-kbd {
+  margin-left: auto;
   flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
 }
 
 /* Empty-conversation welcome (ChatEmptyState tone): centered, quiet. */

@@ -133,13 +133,15 @@ function SessionItem({ session, active, tags, onOpen, onContextMenu, onRename }:
   );
 }
 
-export function Rail({ state, sessions, sessionTags, recentFiles, mainView, onNewChat, onOpenWorkspace, onSelectView, onHelpAction, onConvoAction, onOpenSession, onOpenRecent, onSetTags }: {
+export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shortcuts, onNewChat, onOpenWorkspace, onSelectView, onHelpAction, onConvoAction, onOpenSession, onOpenRecent, onSetTags }: {
   state: AppState;
   sessions: SessionMeta[];
   /** sessionId -> tags, from the workspace sidecar store (iteration 18). */
   sessionTags: Record<string, string[]>;
   recentFiles: RecentFile[];
   mainView: MainView;
+  /** Real resolved chords for the primary rows' kbd hints. */
+  shortcuts?: { newChat?: string; search?: string };
   onNewChat: () => void;
   onOpenWorkspace: () => void;
   onSelectView: (view: MainView) => void;
@@ -213,15 +215,18 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, onNe
         </div>
       </div>
 
-      {/* Host sidebar leads with labeled primary actions before the list. */}
+      {/* Host sidebar leads with labeled primary actions before the list;
+          kbd hints show the app's REAL resolved bindings. */}
       <div className="rail-primary">
         <button className="rail-primary-row" onClick={onNewChat}>
-          <span className="rail-primary-icon"><FilePlus size={15} /></span>
+          <FilePlus size={16} />
           <span>新对话</span>
+          {shortcuts?.newChat && <kbd className="rail-kbd">{shortcuts.newChat}</kbd>}
         </button>
         <button className="rail-primary-row" onClick={() => onSelectView('search')}>
-          <span className="rail-primary-icon"><Search size={15} /></span>
+          <Search size={16} />
           <span>搜索</span>
+          {shortcuts?.search && <kbd className="rail-kbd">{shortcuts.search}</kbd>}
         </button>
       </div>
 

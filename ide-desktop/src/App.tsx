@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { matchAction, resolveBindings } from './lib/keybindings';
+import { matchAction, resolveBindings, serializeChord } from './lib/keybindings';
 import { applyBackground, normalizeBlur, normalizeDim, normalizeScope, readBackground } from './lib/background';
 import { FolderOpen, MessageSquare, Files as FilesIcon, Settings as SettingsIcon, CalendarClock, GitBranch, FileCode, Gauge, Search, Braces, BookmarkCheck, History, BarChart3 } from 'lucide-react';
 import { AutomationPanel } from './components/AutomationPanel';
@@ -1338,6 +1338,10 @@ export default function App() {
         sessionTags={sessionTags}
         recentFiles={recentFiles}
         mainView={mainView}
+        shortcuts={{
+          newChat: keyBindings['new-chat'] ? serializeChord(keyBindings['new-chat']) : undefined,
+          search: keyBindings['search-workspace'] ? serializeChord(keyBindings['search-workspace']) : undefined,
+        }}
         onNewChat={newChat}
         onOpenWorkspace={openWorkspace}
         onSelectView={setMainView}
