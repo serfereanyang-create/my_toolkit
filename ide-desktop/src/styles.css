@@ -981,7 +981,7 @@ h1 {
   display: grid;
   /* ZCode's sidebar is a fixed 264px. The rail had drifted wider than this one
      and the wider of the two reads as wasted space on a 1080p window. */
-  grid-template-columns: 264px minmax(0, 1fr) auto;
+  grid-template-columns: 300px minmax(0, 1fr) auto;
   grid-template-rows: minmax(0, 1fr) auto;
   background: var(--bg-app);
   color: var(--fg);
@@ -1004,9 +1004,8 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-2);
-  /* ZCode's header is 48px (h-12). Matching it makes the rail head and the
-     topbar the same band, so the two borders form one line across the top. */
-  height: 48px;
+  /* Host reference header band is ~56px; keep rail head and topbar equal. */
+  height: 56px;
   padding: 0 var(--sp-3);
 }
 
@@ -1066,8 +1065,8 @@ h1 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 24px;
+  width: 34px;
+  height: 30px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -1086,9 +1085,8 @@ h1 {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  /* 28px rows with 4px gaps, as in ZCode's sidebar: the list stays scannable
-     when the rail holds twenty-odd entries. */
-  height: 28px;
+  /* 38px rows match the host task-list density. */
+  height: 38px;
   padding: 0 var(--sp-2);
   border: 0;
   border-radius: var(--r-md);
@@ -1126,11 +1124,11 @@ h1 {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  height: 28px;
+  height: 38px;
   margin: 0 var(--sp-2);
   padding: 0 var(--sp-2);
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: 8px;
   background: transparent;
   color: var(--fg);
   font-size: var(--fs-base);
@@ -1204,7 +1202,7 @@ h1 {
 .main {
   grid-column: 2;
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr) auto;
+  grid-template-rows: 56px minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
   background: var(--bg-app);
@@ -1302,7 +1300,7 @@ h1 {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  font-size: var(--fs-base);
+  font-size: 16px;
   font-weight: 600;
   color: var(--fg);
   min-width: 0;
@@ -1497,12 +1495,12 @@ h1 {
 }
 
 /* ── Session Git capsule (conversation top-right) ───────────────────────── */
-.git-capsule { display: inline-flex; align-items: center; gap: 2px; flex: none; padding: 2px; border: 1px solid var(--border-subtle); border-radius: var(--r-pill); background: var(--bg-side); }
+.git-capsule { display: inline-flex; align-items: center; gap: 2px; flex: none; padding: 3px; border: 1px solid transparent; border-radius: var(--r-pill); background: var(--bg-elevated); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); }
 .git-capsule.active { border-color: color-mix(in srgb, var(--blue) 46%, transparent); background: var(--bg-sel); }
-.git-capsule-seg { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border: 0; border-radius: var(--r-pill); color: var(--fg-muted); background: transparent; font-size: 11px; white-space: nowrap; cursor: pointer; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
+.git-capsule-seg { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 11px; border: 0; border-radius: var(--r-pill); color: var(--fg-muted); background: transparent; font-size: 12px; white-space: nowrap; cursor: pointer; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
 .git-capsule-seg:hover { color: var(--fg); background: var(--bg-hover); }
 .git-capsule-label { color: var(--fg-dim); }
-.git-capsule-nums { display: inline-flex; gap: 5px; font: 11px var(--font-mono); font-variant-numeric: tabular-nums; }
+.git-capsule-nums { display: inline-flex; gap: 5px; font: 12px var(--font-mono); font-variant-numeric: tabular-nums; }
 .git-capsule-branch { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 .git-capsule-muted { color: var(--fg-dim); }
 .git-capsule-badge { padding: 0 4px; border-radius: var(--r-pill); background: var(--bg-hover); color: var(--fg-muted); font-size: 10px; }
@@ -1934,9 +1932,9 @@ h1 {
 .msg-user {
   align-self: flex-end;
   max-width: 85%;
-  padding: 10px 16px;
+  padding: 12px 18px;
   border: none;
-  border-radius: 14px 4px 14px 14px;
+  border-radius: 12px;
   background: var(--bubble-user);
   color: var(--fg);
   font-size: var(--fs-base);
@@ -2309,11 +2307,11 @@ h1 {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 4px 8px;
+  padding: 5px 8px;
   background: transparent;
   border: none;
   text-align: left;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-base);
   color: var(--fg-dim);
   transition: background var(--dur) var(--ease);
 }
