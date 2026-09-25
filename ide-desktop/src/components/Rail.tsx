@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FilePlus, MessageSquare, Clock, Files, Settings, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, BarChart3, FileClock } from 'lucide-react';
+import { FilePlus, LoaderCircle, MessageSquare, Clock, Files, Settings, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, BarChart3, FileClock } from 'lucide-react';
 import type { AppState, SessionMeta } from '../types';
 import { HelpMenu, type HelpAction } from './HelpMenu';
 import { ConversationContextMenu, type ConvoAction } from './ConversationContextMenu';
@@ -56,10 +56,14 @@ function RenameDialog({ initialTitle, onConfirm, onCancel }: {
   );
 }
 
-function SessionItem({ session, active, tags, onOpen, onContextMenu, onRename }: {
+function SessionItem({ session, active, tags, running, approvals, onOpen, onContextMenu, onRename }: {
   session: SessionMeta;
   active: boolean;
   tags: string[];
+  /** The session has a live turn — host shows a spinning ✳ lane glyph. */
+  running: boolean;
+  /** Count of unresolved approvals — host shows a blue attention dot. */
+  approvals: number;
   onOpen: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onRename: (title: string) => void;
@@ -116,9 +120,15 @@ function SessionItem({ session, active, tags, onOpen, onContextMenu, onRename }:
       onDoubleClick={() => setEditing(true)}
       onContextMenu={onContextMenu}
     >
-      {/* ZCode task rows have no leading time icon — only a pin for pinned
-          tasks; the title carries the row. */}
-      {session.pinned ? <Pin size={13} /> : null}
+      {/* Status glyph first (host: ✳ for running, blue dot for waiting
+          approvals), then pin, then the title. */}
+      {approvals > 0 ? (
+        <span className="rail-status-dot" title={`${approvals} 个待审批`} />
+      ) : running ? (
+        <LoaderCircle size={14} className="rail-status-spin" />
+      ) : session.pinned ? (
+        <Pin size={13} />
+      ) : null}
       <span>{session.title}</span>
       <span className="rail-convo-time">{formatAgo(Date.parse(session.updatedAt))}</span>
       {tags.length > 0 && (
@@ -133,7 +143,7 @@ function SessionItem({ session, active, tags, onOpen, onContextMenu, onRename }:
   );
 }
 
-export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shortcuts, onNewChat, onOpenWorkspace, onSelectView, onHelpAction, onConvoAction, onOpenSession, onOpenRecent, onSetTags }: {
+export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shortcuts, runningIds, approvals, onNewChat, onOpenWorkspace, onSelectView, onHelpAction, onConvoAction, onOpenSession, onOpenRecent, onSetTags }: {
   state: AppState;
   sessions: SessionMeta[];
   /** sessionId -> tags, from the workspace sidecar store (iteration 18). */
@@ -142,6 +152,10 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
   mainView: MainView;
   /** Real resolved chords for the primary rows' kbd hints. */
   shortcuts?: { newChat?: string; search?: string };
+  /** Sessions with a live turn (drives the ✳ status glyph). */
+  runningIds?: string[];
+  /** Unresolved approval counts per session (drives the blue dot). */
+  approvals?: Record<string, number>;
   onNewChat: () => void;
   onOpenWorkspace: () => void;
   onSelectView: (view: MainView) => void;
@@ -162,6 +176,8 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
   const cloud = tagCloud(sessionTags);
   const visibleSessions = sessions.filter((s) => sessionMatchesTag(sessionTags, s.id, tagFilter));
   const editTarget = tagEdit ? sessions.find((s) => s.id === tagEdit.id) : null;
+  const runningSet = runningIds ?? [];
+  const approvalCounts = approvals ?? {};
 
   // ZCode-style time grouping: pinned first, then 今天/昨天/7 天内/更早.
   const groups = (() => {
@@ -193,6 +209,8 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
       session={session}
       tags={sessionTags[session.id] ?? []}
       active={state.activeSessionId === session.id}
+      running={runningSet.includes(session.id)}
+      approvals={approvalCounts[session.id] ?? 0}
       onOpen={() => onOpenSession(session.id)}
       onContextMenu={(event) => {
         event.preventDefault();

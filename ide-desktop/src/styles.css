@@ -1127,6 +1127,22 @@ h1 {
   white-space: nowrap;
 }
 
+/* Per-task status glyphs (host: ✳ spinner for running, blue dot for
+   sessions waiting on an approval). */
+.rail-status-spin {
+  color: var(--fg-muted);
+  flex: 0 0 auto;
+  animation: rail-status-rotate 1.1s linear infinite;
+}
+@keyframes rail-status-rotate { to { transform: rotate(360deg); } }
+.rail-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--blue);
+  flex: 0 0 auto;
+}
+
 /* Right-aligned kbd hints on the primary rows, like the host nav. */
 .rail-kbd {
   margin-left: auto;

@@ -1342,6 +1342,8 @@ export default function App() {
           newChat: keyBindings['new-chat'] ? serializeChord(keyBindings['new-chat']) : undefined,
           search: keyBindings['search-workspace'] ? serializeChord(keyBindings['search-workspace']) : undefined,
         }}
+        runningIds={state.runningSessions}
+        approvals={state.sessionApprovals}
         onNewChat={newChat}
         onOpenWorkspace={openWorkspace}
         onSelectView={setMainView}
