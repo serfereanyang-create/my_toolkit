@@ -92,6 +92,10 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
   gitSuggest: {
     suggestCommitMessage: (sessionId) => ipcRenderer.invoke('git.suggestCommitMessage', sessionId),
   },
+  memory: {
+    listProjects: () => ipcRenderer.invoke('memory.listProjects'),
+    read: (workspaceId, fileName) => ipcRenderer.invoke('memory.read', workspaceId, fileName),
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window.minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window.toggleMaximize'),

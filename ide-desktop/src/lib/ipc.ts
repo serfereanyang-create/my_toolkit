@@ -118,6 +118,14 @@ export type SystemInfoSnapshot = {
   uptimeSeconds: number;
 };
 
+/** A project-memory entry from the CLI's shared memory store (read-only). */
+export type ProjectMemorySummary = {
+  id: string;
+  label: string;
+  updatedAt: number;
+  files: Array<{ name: string; path: string; kind: 'index' | 'item'; size: number; updatedAt: number }>;
+};
+
 /** Read-only statistics for one sessions directory (empty-session cleanup). */
 export type SessionCleanupAnalysis = {
   dir: string;
@@ -223,6 +231,10 @@ type ZCodeDesktopApi = {
   };
   gitSuggest: {
     suggestCommitMessage(sessionId?: string): Promise<{ ok: boolean; message: { subject: string; body: string; full: string; type: string; scope: string | null; changedFileCount: number; scopedFileCount: number; sessionFileCount: number } }>;
+  };
+  memory: {
+    listProjects(): Promise<{ ok: boolean; projects: ProjectMemorySummary[] }>;
+    read(workspaceId: string, fileName: string): Promise<{ ok: boolean; content: string; updatedAt: number }>;
   };
   automation: {
     list(): Promise<AutomationTask[]>;

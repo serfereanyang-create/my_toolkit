@@ -15,6 +15,7 @@ const { exportSettingsBundle, importSettingsBundle } = require('./settings-porta
 const { collectSystemInfo } = require('./system-info.cjs');
 const { analyzeSessionsDir, deleteSessionFiles } = require('./session-cleanup.cjs');
 const { suggestCommitMessage, collectNumstat } = require('./git-suggest.cjs');
+const { listProjectMemories, readProjectMemoryFile } = require('./memory-service.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
 
@@ -262,6 +263,18 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
       workspaceInRepoPath: '.',
     });
     return { ok: true, message };
+  });
+
+  // Project memory browser: read-only view of the SAME store the CLI writes
+  // (~/.zcode/cli/memories/projects/<id>/MEMORY.md + memory/*.md).
+  const memoriesRoot = path.join(os.homedir(), '.zcode', 'cli', 'memories', 'projects');
+  ipcMain.handle('memory.listProjects', async () => {
+    const projects = await listProjectMemories(memoriesRoot);
+    return { ok: true, projects };
+  });
+  ipcMain.handle('memory.read', async (_event, workspaceId, fileName) => {
+    const file = await readProjectMemoryFile({ memoriesRoot, workspaceId, fileName });
+    return { ok: true, ...file };
   });
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));
