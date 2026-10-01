@@ -1,6 +1,8 @@
 import { safeConfig } from '../config/config.js';
 import type { AppConfig } from '../config/types.js';
 import { archiveCurrentRequirement, cancelCurrentRequirement, ensureLazyDevGuard, resumeBlockedRequirement } from '../guard/lazyDevGuard.js';
+import { describeTier, resolveTiers } from '../dispatch/tierRouter.js';
+import { readDispatchHistory } from '../dispatch/dispatchLedger.js';
 import { clampMaxAttempts, parseStrictness } from '../guard/config.js';
 import type { LazyDevGuardState, LazyDevRequirement } from '../guard/types.js';
 import { formatMemoryList } from '../memory/format.js';
@@ -193,6 +195,10 @@ export async function handleSlashCommand(options: {
   const command = options.line.trim();
   if (command === '/不准偷懒开发' || command.startsWith('/不准偷懒开发 ')) {
     return handleLazyDevGuardCommand(command, options.session, options.sessions);
+  }
+  // Tiered model dispatch: /省钱分级 贵=<model> 便宜=<model>
+  if (command === '/省钱分级' || command.startsWith('/省钱分级 ')) {
+    return handleDispatchCommand(command, options.session, options.sessions);
   }
   // ── New commands ────────────────────────────────────────────────────────────
   if (command === '/compact' || command.startsWith('/compact ')) {
@@ -768,6 +774,52 @@ function sessionPlan(session: SessionRecord) {
 
 function truncate(value: string, max: number) {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+async function handleDispatchCommand(command: string, session: SessionRecord, sessions: SessionStore) {
+  const args = command.slice('/省钱分级'.length).trim();
+  if (!args) {
+    const current = session.dispatch;
+    if (!current?.expensive || !current?.cheap) {
+      return [
+        '当前会话未配置分级调度。用法：',
+        '  /省钱分级 贵=GLM-5.3 便宜=GLM-5.3-Flash',
+        '配置只作用于本会话，新会话需重新配置。',
+      ].join('\n');
+    }
+    const tiers = resolveTiers(current);
+    if ('error' in tiers) return `分级配置无法解析：${tiers.error}`;
+    return [
+      '当前分级：',
+      `  贵档：${describeTier(tiers.expensive)}（上下文 ${tiers.expensive.contextWindow ?? '未知'}）`,
+      `  便宜档：${describeTier(tiers.cheap)}`,
+    ].join('\n');
+  }
+  return applyDispatchSelection(args, session, sessions);
+}
+
+async function applyDispatchSelection(args: string, session: SessionRecord, sessions: SessionStore) {
+  const pairs = new Map<string, string>();
+  for (const token of args.split(/\s+/).filter(Boolean)) {
+    const eq = token.indexOf('=');
+    if (eq <= 0) continue;
+    pairs.set(token.slice(0, eq), token.slice(eq + 1));
+  }
+  const expensive = pairs.get('贵');
+  const cheap = pairs.get('便宜');
+  if (!expensive || !cheap) {
+    return '需要同时给出两档：/省钱分级 贵=<模型名> 便宜=<模型名>';
+  }
+  const tiers = resolveTiers({ expensive, cheap });
+  if ('error' in tiers) return `分级配置无效：${tiers.error}`;
+  session.dispatch = { expensive, cheap };
+  await sessions.save(session);
+  return [
+    '分级调度已启用（本会话）：',
+    `  贵档：${describeTier(tiers.expensive)}`,
+    `  便宜档：${describeTier(tiers.cheap)}`,
+    '子任务派发时用 tier 指定档位，例如 spawn_subagent 的 tier="cheap"。',
+  ].join('\n');
 }
 
 async function handleLazyDevGuardCommand(command: string, session: SessionRecord, sessions: SessionStore) {
