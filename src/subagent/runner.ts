@@ -1,10 +1,56 @@
 import type { AgentRuntime } from '../agent/agent.js';
 import { supervisorFor } from '../agent/agent.js';
+import { createProvider } from '../providers/index.js';
+import { resolveTiers } from '../dispatch/tierRouter.js';
 import { allExperts, expertById } from '../experts/profiles.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { TerminalUI } from '../ui/terminal.js';
 import { formatHandoff, runSubAgentWithRollover, type RolloverSegment } from './rollover.js';
 import type { SubAgentResult, SubAgentSpec } from './types.js';
+
+/**
+ * Swap the sub-runtime onto another dispatch tier's provider.
+ *
+ * Returns the overrides to spread into the sub-runtime. Undefined when the
+ * request carries no tier (inherit the parent model), when the session has no
+ * dispatch selection, or when the tier cannot be resolved — in every failure
+ * case we fall back to inheriting rather than failing the delegation, but we
+ * say so instead of pretending the cheap model ran.
+ */
+function applyTierOverride(
+  tier: 'expensive' | 'cheap' | undefined,
+  parentRuntime: AgentRuntime,
+): { provider?: AgentRuntime['provider']; config?: AgentRuntime['config']; note?: string } {
+  if (!tier) return {};
+  const selection = parentRuntime.session.dispatch;
+  if (!selection) {
+    return { note: `[dispatch] 未配置分级（会话未执行 /省钱分级），${tier} 档回落到父模型 ${parentRuntime.config.model}` };
+  }
+  let resolved;
+  try {
+    const tiers = resolveTiers(selection);
+    // resolveTiers reports a bad selection as `{ error }` rather than throwing.
+    if ('error' in tiers) {
+      return { note: `[dispatch] ${tier} 档解析失败（${tiers.error}），回落到父模型 ${parentRuntime.config.model}` };
+    }
+    resolved = tiers[tier];
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { note: `[dispatch] ${tier} 档解析失败（${msg}），回落到父模型 ${parentRuntime.config.model}` };
+  }
+  const providerConfig = {
+    ...parentRuntime.config,
+    provider: resolved.provider as AgentRuntime['config']['provider'],
+    model: resolved.model,
+    ...(resolved.baseUrl ? { baseUrl: resolved.baseUrl } : {}),
+    ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
+  };
+  return {
+    provider: createProvider(providerConfig),
+    config: providerConfig,
+    note: `[dispatch] ${tier} 档 → ${resolved.providerName}/${resolved.model}`,
+  };
+}
 
 /**
  * Steps one sub-agent **segment** may take before it rolls over into a fresh
@@ -142,8 +188,16 @@ export async function runSubAgent(
 
     // ── 4. 组装轻量子运行时（继承 provider/config/sessions，覆盖 session/tools）──
     const subUI = new TerminalUI({ quiet: true });
+    // Tier override: a 'cheap' sub-agent runs on the router's cheap provider
+    // instead of inheriting the parent model. This is the single point where
+    // /省钱分级 turns from a prompt convention into an actual dispatch.
+    const tierOverride = applyTierOverride(spec.tier, parentRuntime);
     const subRuntime: AgentRuntime = {
       ...parentRuntime,
+      // Spread the tier's provider/config over the parent's so the whole
+      // sub-turn (and any nested delegation) runs on the cheap model.
+      ...(tierOverride.provider ? { provider: tierOverride.provider } : {}),
+      ...(tierOverride.config ? { config: tierOverride.config } : {}),
       session: subSession,
       tools: filteredTools,
       allTools: filteredTools,

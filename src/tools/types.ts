@@ -28,6 +28,12 @@ export type SubAgentOptions = {
   readonly?: boolean;
   /** Max tool-call steps before the sub-agent is cut off. Default 20. */
   maxSteps?: number;
+  /**
+   * Dispatch tier for this sub-agent. Undefined inherits the parent model;
+   * 'cheap' swaps in the tier router's cheap provider so a delegated
+   * mechanical task costs less than running it on the main model.
+   */
+  tier?: 'expensive' | 'cheap';
 };
 
 export type ParallelSafety = 'safe' | 'unsafe';

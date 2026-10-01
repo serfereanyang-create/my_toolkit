@@ -58,6 +58,15 @@ export type SessionRecord = {
   guard?: {
     lazyDev?: LazyDevGuardState;
   };
+  /**
+   * Tiered-dispatch selection for this session (/省钱分级). Persisted so a
+   * resumed session keeps spending the same way, and so sub-agents can read
+   * which provider each tier maps to. Model names, not credentials.
+   */
+  dispatch?: {
+    expensive?: string;
+    cheap?: string;
+  };
   taskRuntime?: TaskRuntimeState;
   /** Persistent session goal set via /goal */
   goal?: string;

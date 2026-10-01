@@ -21,6 +21,13 @@ type SpawnSubAgentInput = {
   readonly: boolean;
   maxSteps: number;
   label: string;
+  /**
+   * Which dispatch tier runs this sub-agent. Absent = inherit the parent
+   * model (the previous behaviour). 'cheap' routes the sub-agent onto the
+   * cheaper provider resolved by the tier router, which is what makes
+   * /省钱分级 a real dispatch instead of a prompt convention.
+   */
+  tier?: 'expensive' | 'cheap';
 };
 
 export const spawnSubAgentTool: ToolDefinition<SpawnSubAgentInput> = {
@@ -55,6 +62,7 @@ export const spawnSubAgentTool: ToolDefinition<SpawnSubAgentInput> = {
       label: typeof obj.label === 'string' && obj.label.trim()
         ? obj.label.trim()
         : 'subagent',
+      tier: obj.tier === 'expensive' || obj.tier === 'cheap' ? obj.tier : undefined,
     };
   },
 
@@ -70,6 +78,7 @@ export const spawnSubAgentTool: ToolDefinition<SpawnSubAgentInput> = {
     const opts: SubAgentOptions = {
       readonly: input.readonly,
       maxSteps: input.maxSteps,
+      tier: input.tier,
     };
 
     try {
