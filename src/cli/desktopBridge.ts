@@ -3,6 +3,7 @@ import type { AgentRuntime } from '../agent/agent.js';
 import { supervisorFor } from '../agent/agent.js';
 import { prepareSubmittedUserTurn, runAutomationGoal, runGuardedAgentTurn, runPromptMode } from './repl.js';
 import { DesktopApprovalBroker } from './approvalBroker.js';
+import { createGuardConfirmationBroker } from './guardConfirmationBroker.js';
 import type { ReasoningEffort } from '../providers/types.js';
 import type { ToolScope } from '../tools/scope.js';
 
@@ -10,6 +11,7 @@ type BridgeCommand =
   | { type: 'user_message'; text: string; sessionId?: string; reasoningEffort?: ReasoningEffort; toolScope?: ToolScope; files?: Array<{ path: string; name: string; size: number }> }
   | { type: 'automation_task'; taskId: string; goal: string }
   | { type: 'approval_response'; requestId: string; decision: 'allow_once' | 'allow_session' | 'deny' }
+  | { type: 'guard_confirmation_response'; requestId: string; selectedLabel: string }
   | { type: 'set_effort'; reasoningEffort: ReasoningEffort }
   | { type: 'set_tool_scope'; toolScope: ToolScope }
   | { type: 'cancel'; sessionId?: string }
@@ -93,6 +95,10 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
   const emitEvent = options.emit ?? emit;
   const broker = new DesktopApprovalBroker(runtime.session.id, { emit: emitEvent, timeoutMs: options.approvalTimeoutMs });
   runtime.toolConfirm = broker.confirm.bind(broker);
+  // The lazy-dev guard asks the same way: popup first, terminal fallback. The
+  // channel stays undefined for headless runs so the guard degrades to text.
+  const guardBroker = createGuardConfirmationBroker({ sessionId: runtime.session.id, emit: emitEvent });
+  runtime.guardConfirmation = guardBroker;
   // Cooperative cancel. A denied approval is NOT a terminal failure (the model
   // may propose another way), so a turn cannot be stopped by the deny itself.
   // Turn-level aborts — an explicit `cancel`, or EOF while a turn is in flight —
@@ -184,6 +190,12 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
       }
       if (command.type === 'approval_response') {
         broker.resolve(command.requestId, command.decision);
+        continue;
+      }
+      if (command.type === 'guard_confirmation_response') {
+        // Same round-trip as approvals: the renderer answers the guard dialog
+        // and the pending confirm() promise resolves with the picked label.
+        guardBroker.resolveFromDesktop(command.requestId, command.selectedLabel);
         continue;
       }
       if (command.type === 'set_effort') {

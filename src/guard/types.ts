@@ -117,3 +117,45 @@ export type LazyDevGuardState = {
   metrics: GuardMetrics;
   masteredConcepts: LearningCredit[];
 };
+
+/**
+ * Confirmation channel types (design: popup first, terminal menu fallback).
+ * They live here so both the guard core and the confirm module share one
+ * definition; confirm.ts owns the transport, not the shape.
+ */
+export type GuardConfirmationOption = { label: string; description: string };
+
+export type GuardConfirmationRequest = {
+  title: string;
+  question: string;
+  options: GuardConfirmationOption[];
+  /** How long to wait for a popup answer before falling back to the terminal. */
+  popupTimeoutMs?: number;
+};
+
+export type GuardConfirmationResult = {
+  selectedLabel: string;
+  source: 'popup' | 'terminal' | 'auto';
+};
+
+/** Popup transport: emit a request, resolve with the picked option label. */
+export type GuardConfirmationTransport = (
+  request: GuardConfirmationRequest,
+) => Promise<GuardConfirmationResult | null>;
+
+export type GuardConfirmationChannelOptions = {
+  /** Popup transport (desktop bridge). Absent in a plain terminal session. */
+  popup?: GuardConfirmationTransport;
+  /** Terminal reader: shows numbered options, resolves with the raw answer. */
+  terminal?: (text: string) => Promise<string | null>;
+  /** How long the popup may take before the terminal fallback takes over. */
+  timeoutMs?: number;
+  /** When true, unanswered popups resolve with the first option (default). */
+  autoSelectFirstOnTimeout?: boolean;
+};
+
+/** Ask the user to pick one option; popup first, terminal as the fallback. */
+export type GuardConfirmationChannel = {
+  /** Resolves null when the popup went unanswered — the caller falls back. */
+  confirm(request: GuardConfirmationRequest): Promise<GuardConfirmationResult | null>;
+};

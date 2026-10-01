@@ -134,6 +134,12 @@ export type AgentRuntime = {
    * Set to undefined when subAgentDepth >= MAX_SUBAGENT_DEPTH.
    */
   runSubAgentTurn?: (runtime: AgentRuntime, goal: string) => Promise<string>;
+  /**
+   * Popup-first confirmation channel for the lazy-dev guard. Desktop sessions
+   * inject one so the translation confirm can be answered in a dialog; the
+   * plain REPL leaves it undefined and keeps the numbered-text flow.
+   */
+  guardConfirmation?: import('../guard/types.js').GuardConfirmationChannel;
   taskBoardEmit?: (board: unknown) => void;
   /**
    * The user's original request for the planning turn currently in flight.

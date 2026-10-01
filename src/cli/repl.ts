@@ -4,7 +4,7 @@ import { execSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { runAgentTurn, type AgentRuntime, type AgentTurnResult } from '../agent/agent.js';
-import { handleLazyDevInput } from '../guard/lazyDevGuard.js';
+import { handleLazyDevInputWithChannel } from '../guard/lazyDevGuard.js';
 import { GitProcess } from '../git-safety/git.js';
 import { formatMemories } from '../memory/format.js';
 import { selectRelevantMemories } from '../memory/select.js';
@@ -185,7 +185,9 @@ export async function runGuardedAgentTurn(runtime: AgentRuntime, line: string, e
 
   const guard = runtime.session.guard?.lazyDev;
   if (guard?.enabled) {
-    const guardResult = handleLazyDevInput(guard, line);
+    // Desktop sessions can answer the translation confirm in a popup; the
+    // plain REPL keeps the numbered-text flow (channel is undefined there).
+    const guardResult = await handleLazyDevInputWithChannel(guard, line, runtime.guardConfirmation);
     if (guardResult.message) runtime.ui.info(guardResult.message);
     await runtime.sessions.save(runtime.session);
     if (!guardResult.allowDevelopment) {

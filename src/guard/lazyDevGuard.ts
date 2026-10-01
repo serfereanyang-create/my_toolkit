@@ -3,7 +3,7 @@ import type { SessionRecord } from '../session/store.js';
 import { createInitialLazyDevGuardState } from './config.js';
 import { createDefaultDomainRegistry } from './domainRegistry.js';
 import { addLearningCredit, evaluateAnswer, generateQuestion, isDevelopmentRequest, scoreRisk, translateRequirement } from './rules.js';
-import type { GuardQuestion, LazyDevGuardState, LazyDevRequirement, LazyDevRequirementSummary } from './types.js';
+import type { GuardConfirmationChannel, GuardQuestion, LazyDevGuardState, LazyDevRequirement, LazyDevRequirementSummary } from './types.js';
 
 export type GuardInputResult = {
   allowDevelopment: boolean;
@@ -16,6 +16,36 @@ export function ensureLazyDevGuard(session: SessionRecord): LazyDevGuardState {
   session.guard ??= {};
   session.guard.lazyDev ??= createInitialLazyDevGuardState();
   return session.guard.lazyDev;
+}
+
+/**
+ * Async variant used when a confirmation channel is available (desktop popup
+ * first, terminal menu as the fallback). The state machine is shared with the
+ * sync path: only the translation-confirmation step swaps its input source.
+ */
+export async function handleLazyDevInputWithChannel(
+  state: LazyDevGuardState,
+  input: string,
+  channel: GuardConfirmationChannel | undefined,
+): Promise<GuardInputResult> {
+  if (!channel) return handleLazyDevInput(state, input);
+  if (!state.enabled || state.paused) return handleLazyDevInput(state, input);
+  const current = state.currentRequirement;
+  if (current?.status !== 'awaiting_translation_confirm') return handleLazyDevInput(state, input);
+
+  const choice = await channel.confirm({
+    title: '需求翻译确认',
+    question: '这份专业需求表达准确吗？',
+    options: [
+      { label: '准确，继续', description: '按此需求进入检查或开发' },
+      { label: '补充信息', description: '我会补充更多细节' },
+      { label: '重新描述', description: '我会重新描述需求' },
+    ],
+  });
+  // No answer in the popup (timeout / closed): fall through to the sync path
+  // so the user still sees the numbered menu and nothing is auto-selected.
+  if (!choice) return handleLazyDevInput(state, input);
+  return handleTranslationConfirmation(state, choice.selectedLabel);
 }
 
 export function handleLazyDevInput(state: LazyDevGuardState, input: string): GuardInputResult {
