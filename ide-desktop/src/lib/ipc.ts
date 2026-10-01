@@ -118,6 +118,14 @@ export type SystemInfoSnapshot = {
   uptimeSeconds: number;
 };
 
+/** One resolved dispatch tier, as shown in the settings panel. */
+export type DispatchTierInfo = {
+  provider: string;
+  model: string;
+  contextWindow: number | null;
+  hasKey: boolean;
+};
+
 /** A project-memory entry from the CLI's shared memory store (read-only). */
 export type ProjectMemorySummary = {
   id: string;
@@ -236,6 +244,10 @@ type ZCodeDesktopApi = {
   };
   gitSuggest: {
     suggestCommitMessage(sessionId?: string): Promise<{ ok: boolean; message: { subject: string; body: string; full: string; type: string; scope: string | null; changedFileCount: number; scopedFileCount: number; sessionFileCount: number } }>;
+  };
+  dispatch: {
+    /** Resolve the session's 贵/便宜 tiers to real providers for the UI. */
+    status(sessionId?: string): Promise<{ ok: boolean; configured: boolean; tiers?: { expensive: DispatchTierInfo; cheap: DispatchTierInfo }; error?: string }>;
   };
   memory: {
     listProjects(): Promise<{ ok: boolean; projects: ProjectMemorySummary[] }>;

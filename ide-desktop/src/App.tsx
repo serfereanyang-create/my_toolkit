@@ -1276,6 +1276,7 @@ export default function App() {
           onSave={saveSettings}
           onSaveKey={saveApiKey}
           initialPage={settingsPage}
+          sessionId={state.activeSessionId ?? undefined}
         />
         {paletteOpen && (
           <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />

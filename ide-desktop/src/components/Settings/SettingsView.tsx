@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   ArrowLeft, Search, Settings as SettingsIcon, Sun,
   Sparkles, Keyboard, Puzzle, Globe, MousePointer2,
-  Anchor, Network, GitBranch, TerminalSquare, GitFork, Archive, Boxes, BarChart3,
+  Anchor, Network, GitBranch, TerminalSquare, GitFork, Archive, Boxes, BarChart3, Coins,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { DesktopSettings, DesktopPreferences } from '../../types';
@@ -20,6 +20,7 @@ import { EnvironmentSettings } from './EnvironmentSettings';
 import { WorktreesSettings } from './WorktreesSettings';
 import { ArchivedSettings } from './ArchivedSettings';
 import { ModelSettings } from './ModelSettings';
+import { DispatchSettings } from './DispatchSettings';
 import { UsageSettings } from './UsageSettings';
 import { searchNavIds } from '../../lib/settingsSearch';
 
@@ -27,7 +28,7 @@ const CHINESE_FONT_DEFAULT = 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, 
 const ENGLISH_FONT_DEFAULT = 'Inter, Segoe UI, system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
 
 export type SettingsNavId =
-  | 'general' | 'appearance' | 'model' | 'usage' | 'personalize' | 'shortcuts'
+  | 'general' | 'appearance' | 'model' | 'dispatch' | 'usage' | 'personalize' | 'shortcuts'
   | 'plugins' | 'browser' | 'computer'
   | 'hooks' | 'connections' | 'git' | 'environment' | 'worktrees'
   | 'archived';
@@ -44,6 +45,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'general', label: '常规', icon: <SettingsIcon size={17} /> },
       { id: 'appearance', label: '外观', icon: <Sun size={17} /> },
       { id: 'model', label: '模型', icon: <Boxes size={17} /> },
+      { id: 'dispatch', label: '省钱分级', icon: <Coins size={17} /> },
       { id: 'usage', label: '用量统计', icon: <BarChart3 size={17} /> },
       { id: 'personalize', label: '个性化', icon: <Sparkles size={17} /> },
       { id: 'shortcuts', label: '键盘快捷键', icon: <Keyboard size={17} /> },
@@ -75,12 +77,14 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-export function SettingsView({ settings, onBack, onSave, onSaveKey, initialPage }: {
+export function SettingsView({ settings, onBack, onSave, onSaveKey, initialPage, sessionId }: {
   settings: DesktopSettings;
   onBack: () => void;
   onSave: (settings: DesktopSettings) => void;
   onSaveKey: (providerId: string, apiKey: string) => Promise<void>;
   initialPage?: SettingsNavId;
+  /** Active session, so session-scoped panels (省钱分级) read the right one. */
+  sessionId?: string;
 }) {
   const [active, setActive] = useState<NavId>(initialPage ?? 'general');
   const [query, setQuery] = useState('');
@@ -166,6 +170,7 @@ export function SettingsView({ settings, onBack, onSave, onSaveKey, initialPage 
           />
         )}
         {active === 'model' && <ModelSettings settings={settings} onSave={onSave} onSaveKey={onSaveKey} />}
+        {active === 'dispatch' && <DispatchSettings sessionId={sessionId} />}
         {active === 'usage' && <UsageSettings activeProviderId={settings.activeProviderId} />}
         {active === 'personalize' && <PersonalizeSettings prefs={prefs} savePref={savePref} />}
         {active === 'shortcuts' && <ShortcutsSettings />}

@@ -8,6 +8,7 @@ const { createQualityGateway } = require('./quality-gateway.cjs');
 const git = require('./git.cjs');
 const { createCheckpointBackend } = require('./checkpoints.cjs');
 const { createFileSearchService } = require('./file-search.cjs');
+const { readSelection, resolveForUi } = require('./dispatch-ipc.cjs');
 const { createResourceSampler } = require('./resource-sampler.cjs');
 const { createCommandsService } = require('./commands.cjs');
 const { exportSessionToFile, defaultExportPath } = require('./export-session.cjs');
@@ -102,6 +103,21 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
       }
     });
   }
+
+  ipcMain.handle('dispatch.status', async (_event, sessionId) => {
+    // Resolve the tiers for a session so the UI shows the same provider/model
+    // the CLI would dispatch to, instead of re-deriving it in the renderer.
+    const id = typeof sessionId === 'string' ? sessionId : '';
+    if (!id) return { ok: false, configured: false, error: '缺少会话 ID' };
+    const sessionPath = typeof workspace.sessionAbsolutePath === 'function'
+      ? workspace.sessionAbsolutePath(id)
+      : null;
+    if (!sessionPath) return { ok: false, configured: false, error: '找不到会话文件' };
+    const selection = readSelection(sessionPath);
+    if (!selection) return { ok: false, configured: false, error: '该会话未配置分级调度' };
+    // resolveForUi awaits a dynamic import of the CLI's ESM router.
+    return await resolveForUi(selection);
+  });
 
   ipcMain.handle('workspace.getTree', async (_event, relativePath) => await workspace.tree(relativePath || '.'));
   ipcMain.handle('sessions.list', async () => await workspace.listSessions());

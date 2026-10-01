@@ -3251,7 +3251,9 @@ h1 {
   transition: background var(--dur) var(--ease);
 }
 .settings-nav-item:hover { background: var(--bg-hover); }
-.settings-nav-item.active { background: var(--bg-sel); }
+/* Upstream active nav = neutral surface-hover with foreground text, never a
+   colored selection. */
+.settings-nav-item.active { background: var(--bg-hover); color: var(--fg); }
 .settings-nav-icon { display: inline-flex; color: var(--fg-muted); }
 .settings-nav-label { flex: 1 1 auto; }
 .settings-nav-external { color: var(--fg-dim); display: inline-flex; }
@@ -3285,10 +3287,36 @@ h1 {
   color: var(--fg);
 }
 
-.settings-card {
+/* ── 省钱分级 panel ─────────────────────────────────────────────────────── */
+.dispatch-panel { display: flex; flex-direction: column; gap: var(--sp-4); }
+.dispatch-lead { margin: 0; color: var(--fg-muted); font-size: var(--fs-sm); line-height: 1.6; }
+.dispatch-flow { display: flex; align-items: center; gap: var(--sp-3); }
+.dispatch-flow > svg { color: var(--fg-dim); flex: 0 0 auto; }
+.dispatch-tier {
+  flex: 1 1 0; min-width: 0;
+  padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--bg-elevated);
+  border-radius: 12px;
+  background: var(--bg-app);
+}
+.dispatch-tier-head { display: flex; align-items: center; gap: 6px; color: var(--fg-dim); font-size: var(--fs-xs); }
+.dispatch-tier-model { margin-top: 6px; color: var(--fg); font-size: var(--fs-base); font-weight: 600; }
+.dispatch-tier-meta { margin-top: 3px; color: var(--fg-muted); font-size: var(--fs-xs); }
+.dispatch-tier-hint { margin-top: 8px; color: var(--fg-dim); font-size: var(--fs-xs); line-height: 1.5; }
+.dispatch-tier-warn { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; color: var(--warn); font-size: var(--fs-xs); }
+.dispatch-empty, .dispatch-error { margin: 0; color: var(--fg-muted); font-size: var(--fs-sm); }
+.dispatch-error { color: var(--danger); }
+.dispatch-hint code {
+  padding: 2px 6px; border-radius: 6px; background: var(--bg-hover);
+  font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--fg);
+}
+
+.settings-card {
+  /* Upstream settings cards: page-colored surface + hairline (rounded-xl),
+     flat — not elevated white. */
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-app);
   overflow: hidden;
 }
 
