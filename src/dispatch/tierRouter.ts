@@ -13,7 +13,21 @@ import { homedir } from 'node:os';
  * (~/.zcode/v2/config.json) and returning a ready-to-use override.
  */
 
-export type DispatchTier = 'expensive' | 'cheap';
+/**
+ * Dispatch tiers, ordered from most to least capable.
+ *
+ * `standard` sits between them for work that is neither an architecture
+ * decision (expensive) nor pure mechanical labour (cheap): ordinary feature
+ * work that needs some judgement but not the top model.
+ */
+export type DispatchTier = 'expensive' | 'standard' | 'cheap';
+
+/** Human-facing names, used in status lines and the settings UI. */
+export const DISPATCH_TIER_LABELS: Record<DispatchTier, string> = {
+  expensive: '贵档',
+  standard: '中档',
+  cheap: '便宜档',
+};
 
 /** One provider entry as stored in the v2 config file. */
 type V2ProviderEntry = {
@@ -37,10 +51,27 @@ export type ResolvedTier = {
   contextWindow?: number;
 };
 
+/**
+ * One tier's configured models, in preference order.
+ *
+ * The first entry is the primary; the rest are fallbacks used when the
+ * primary fails (rate limit, quota exhausted, auth error). A single string is
+ * accepted anywhere for backwards compatibility with the older one-model form.
+ */
+export type TierModelList = string | string[];
+
 export type TierSelection = {
-  expensive?: string;
-  cheap?: string;
+  expensive?: TierModelList;
+  standard?: TierModelList;
+  cheap?: TierModelList;
 };
+
+/** Normalize the accepted shapes into a plain ordered list. */
+export function tierModelList(value: TierModelList | undefined): string[] {
+  if (!value) return [];
+  const list = Array.isArray(value) ? value : [value];
+  return list.map((entry) => String(entry).trim()).filter(Boolean);
+}
 
 const V2_CONFIG_PATH = join(homedir(), '.zcode', 'v2', 'config.json');
 
@@ -133,8 +164,16 @@ export function resolveTierSelector(
     // label (three "新供应商" entries is normal), so the id is the only
     // unambiguous handle. Both forms are accepted so a selector copied from
     // the UI keeps working.
-    pool = pool.filter((c) => normalizeModelId(c.providerName) === pKey || normalizeModelId(c.providerId ?? '') === pKey);
-    if (pool.length === 0) return { error: `找不到提供商「${wantedProvider}」。` };
+    pool = pool.filter((c) => normalizeModelId(c.providerName) === pKey || normalizeModelId(c.providerId) === pKey);
+    // A stale prefix must not sink the whole tier: earlier versions stored the
+    // DESKTOP provider label ("新供应商"), which never matches a v2 entry. If
+    // the model name alone resolves unambiguously, use it and let the caller
+    // report the substitution rather than failing the dispatch.
+    if (pool.length === 0) {
+      const byModel = all.filter((c) => normalizeModelId(c.model) === modelKey);
+      if (byModel.length === 0) return { error: `找不到提供商「${wantedProvider}」。` };
+      pool = byModel;
+    }
   }
 
   let match = pool.find((c) => normalizeModelId(c.model) === modelKey);
@@ -160,30 +199,56 @@ export function resolveTierSelector(
   };
 }
 
-export type ResolvedTiers = { expensive: ResolvedTier; cheap: ResolvedTier };
+export type ResolvedTiers = Partial<Record<DispatchTier, ResolvedTier[]>>;
+
+/** Tiers in capability order — used for validation and display. */
+export const TIER_ORDER: DispatchTier[] = ['expensive', 'standard', 'cheap'];
+
+/** Chinese short key accepted on the command line → tier id. */
+export const TIER_KEY_TO_ID: Record<string, DispatchTier> = {
+  贵: 'expensive',
+  中: 'standard',
+  便宜: 'cheap',
+};
 
 /**
- * Resolve both tiers, refusing combinations that defeat the point: the cheap
- * tier must not be the same model as the expensive one, otherwise the dispatch
- * only adds overhead without saving anything.
+ * Resolve every configured tier.
+ *
+ * Each tier accepts one model or an ordered list (primary first, then
+ * fallbacks). A tier with no configuration is simply absent from the result —
+ * callers fall back to the parent model rather than failing, because a user
+ * may legitimately only fill in two of the three tiers.
  */
 export function resolveTiers(
   selection: TierSelection,
   configPath?: string,
 ): ResolvedTiers | { error: string } {
-  if (!selection.expensive) return { error: '缺少贵档配置：请给 贵=<模型名> 或 贵=<提供商>/<模型名>。' };
-  if (!selection.cheap) return { error: '缺少便宜档配置：请给 便宜=<模型名> 或 便宜=<提供商>/<模型名>。' };
+  const resolved: Partial<Record<DispatchTier, ResolvedTier[]>> = {};
 
-  const expensive = resolveTierSelector(selection.expensive, 'expensive', configPath);
-  if ('error' in expensive) return { error: `贵档：${expensive.error}` };
-  const cheap = resolveTierSelector(selection.cheap, 'cheap', configPath);
-  if ('error' in cheap) return { error: `便宜档：${cheap.error}` };
+  for (const tier of TIER_ORDER) {
+    const raw = selection[tier];
+    if (!raw) continue;
+    const selectors = Array.isArray(raw) ? raw.filter(Boolean) : [raw];
+    if (selectors.length === 0) continue;
 
-  if (normalizeModelId(expensive.model) === normalizeModelId(cheap.model)
-    && expensive.providerName === cheap.providerName) {
-    return { error: '贵档和便宜档指向同一个模型，分级调度没有意义。' };
+    const chain: ResolvedTier[] = [];
+    for (const selector of selectors) {
+      const one = resolveTierSelector(selector, tier, configPath);
+      if ('error' in one) {
+        // A broken fallback must not sink the whole tier: the primary may
+        // still work, and silently dropping the tier would be worse.
+        if (chain.length === 0) return { error: `${DISPATCH_TIER_LABELS[tier]}：${one.error}` };
+        continue;
+      }
+      chain.push(one);
+    }
+    if (chain.length > 0) resolved[tier] = chain;
   }
-  return { expensive, cheap };
+
+  if (Object.keys(resolved).length === 0) {
+    return { error: '至少配置一个档位：贵=<模型> / 中=<模型> / 便宜=<模型>。' };
+  }
+  return resolved as ResolvedTiers;
 }
 
 /** One line for the status row the command prints before dispatching. */
@@ -243,8 +308,15 @@ export function readGlobalDispatchDefault(settingsPath?: string): TierSelection 
       preferences?: { dispatchDefault?: TierSelection };
     };
     const selection = parsed.preferences?.dispatchDefault;
-    if (!selection?.expensive || !selection?.cheap) return null;
-    return { expensive: selection.expensive, cheap: selection.cheap };
+    if (!selection) return null;
+    // Keep every tier that has at least one model. A partially filled default
+    // is legitimate: the user may only have configured two of the three.
+    const out: TierSelection = {};
+    for (const tier of TIER_ORDER) {
+      const chain = selection[tier];
+      if (Array.isArray(chain) ? chain.length > 0 : Boolean(chain)) out[tier] = chain;
+    }
+    return Object.keys(out).length > 0 ? out : null;
   } catch {
     return null;
   }

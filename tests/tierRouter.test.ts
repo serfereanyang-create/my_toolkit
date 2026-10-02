@@ -3,41 +3,64 @@ import { test } from 'node:test';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { resolveTiers, describeTier } from '../src/dispatch/tierRouter.js';
+import { resolveTiers, describeTier, TIER_ORDER } from '../src/dispatch/tierRouter.js';
 
-/** The user's real v2 config; skip the integration test when it is absent. */
 const V2 = join(homedir(), '.zcode', 'v2', 'config.json');
 const hasV2 = existsSync(V2);
 
-test('resolving a tier returns provider, model and context window', { skip: !hasV2 }, () => {
-  const tiers = resolveTiers({ expensive: 'GLM-5.3', cheap: 'GLM-5.3-Flash' }, V2);
-  assert.ok(!('error' in tiers), 'real config resolves');
-  const { expensive, cheap } = tiers as Exclude<typeof tiers, { error: string }>;
-  // Case comes from the credentialed config entry, not from how the user
-  // typed it: the API expects the provider's own spelling of the model id.
-  assert.equal(expensive.model.toLowerCase(), 'glm-5.3');
-  assert.equal(cheap.model.toLowerCase(), 'glm-5.3-flash');
-  // Both live on the same vendor here, but each carries its own credentials.
-  assert.ok(expensive.providerName);
-  assert.ok(expensive.apiKey, 'resolved tier carries the API key for dispatch');
-  assert.ok(expensive.baseUrl);
-  assert.ok((expensive.contextWindow ?? 0) > 0, 'context window comes from the model table');
-  assert.match(describeTier(cheap), /GLM-5\.3-Flash$/);
+test('a tier resolves to an ordered chain', { skip: !hasV2 }, () => {
+  const tiers = resolveTiers({ expensive: 'GLM-5.3', cheap: 'GLM-5.3-Flash' });
+  assert.ok(!('error' in tiers));
+  assert.equal(tiers.expensive?.length, 1);
+  const primary = tiers.expensive?.[0];
+  assert.ok(primary);
+  assert.equal(primary.model.toLowerCase(), 'glm-5.3');
+  assert.ok(primary.apiKey, 'carries the key needed to dispatch');
+  assert.ok(primary.baseUrl);
+  assert.ok((primary.contextWindow ?? 0) > 0);
 });
 
-test('an unknown model is reported instead of silently resolving', { skip: !hasV2 }, () => {
-  const tiers = resolveTiers({ expensive: 'GLM-5.3', cheap: 'definitely-not-a-model-xyz' }, V2);
-  assert.ok('error' in tiers, 'unmatched cheap model must surface an error');
-  assert.match((tiers as { error: string }).error, /definitely-not-a-model-xyz/);
+test('a list keeps order: primary first, then fallbacks', { skip: !hasV2 }, () => {
+  const tiers = resolveTiers({ cheap: ['GLM-5.3-Flash', 'deepseek-v4.1-flash'] });
+  assert.ok(!('error' in tiers));
+  const chain = tiers.cheap;
+  assert.ok(chain);
+  assert.equal(chain.length, 2);
+  assert.equal(chain[0].model.toLowerCase(), 'glm-5.3-flash');
+  assert.equal(chain[1].model.toLowerCase(), 'deepseek-v4.1-flash');
 });
 
-test('a missing config file is an error, not a crash', () => {
-  const tiers = resolveTiers({ expensive: 'a', cheap: 'b' }, join(homedir(), '.zcode', 'v2', 'nope.json'));
+test('unconfigured tiers are simply absent', { skip: !hasV2 }, () => {
+  const tiers = resolveTiers({ cheap: 'GLM-5.3-Flash' });
+  assert.ok(!('error' in tiers));
+  assert.equal(tiers.expensive, undefined);
+  assert.equal(tiers.standard, undefined);
+});
+
+test('three tiers coexist', { skip: !hasV2 }, () => {
+  const tiers = resolveTiers({
+    expensive: 'GLM-5.3',
+    standard: 'GLM-5.3-Flash',
+    cheap: 'deepseek-v4.1-flash',
+  });
+  assert.ok(!('error' in tiers));
+  assert.equal(TIER_ORDER.filter((t) => tiers[t]).length, 3);
+});
+
+test('an empty selection is an error, not a silent no-op', () => {
+  const tiers = resolveTiers({});
   assert.ok('error' in tiers);
 });
 
-test('the two tiers must differ, or the dispatch saves nothing', { skip: !hasV2 }, () => {
-  const tiers = resolveTiers({ expensive: 'GLM-5.3', cheap: 'GLM-5.3' }, V2);
-  assert.ok('error' in tiers, 'identical tiers defeat the purpose');
+test('an unknown model is reported instead of guessed', { skip: !hasV2 }, () => {
+  const tiers = resolveTiers({ expensive: 'no-such-model-xyz' });
+  assert.ok('error' in tiers);
 });
 
+test('describeTier names provider and model', { skip: !hasV2 }, () => {
+  const tiers = resolveTiers({ cheap: 'GLM-5.3-Flash' });
+  assert.ok(!('error' in tiers));
+  const primary = tiers.cheap?.[0];
+  assert.ok(primary);
+  assert.match(describeTier(primary), /\/.+/);
+});

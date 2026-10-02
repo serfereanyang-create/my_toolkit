@@ -1,7 +1,8 @@
 import { safeConfig } from '../config/config.js';
 import type { AppConfig } from '../config/types.js';
 import { archiveCurrentRequirement, cancelCurrentRequirement, ensureLazyDevGuard, resumeBlockedRequirement } from '../guard/lazyDevGuard.js';
-import { describeTier, resolveTiers } from '../dispatch/tierRouter.js';
+import { describeTier, resolveTiers, TIER_ORDER, DISPATCH_TIER_LABELS, TIER_KEY_TO_ID } from '../dispatch/tierRouter.js';
+import type { TierSelection } from '../dispatch/tierRouter.js';
 import { readDispatchHistory } from '../dispatch/dispatchLedger.js';
 import { clampMaxAttempts, parseStrictness } from '../guard/config.js';
 import type { LazyDevGuardState, LazyDevRequirement } from '../guard/types.js';
@@ -789,37 +790,49 @@ async function handleDispatchCommand(command: string, session: SessionRecord, se
     }
     const tiers = resolveTiers(current);
     if ('error' in tiers) return `分级配置无法解析：${tiers.error}`;
-    return [
-      '当前分级：',
-      `  贵档：${describeTier(tiers.expensive)}（上下文 ${tiers.expensive.contextWindow ?? '未知'}）`,
-      `  便宜档：${describeTier(tiers.cheap)}`,
-    ].join('\n');
+    // One line per configured tier; the first model is the primary and the
+    // rest are fallbacks, so the order is meaningful and shown as-is.
+    const lines = ['当前分级：'];
+    for (const tier of TIER_ORDER) {
+      const chain = tiers[tier];
+      if (!chain || chain.length === 0) continue;
+      const [primary, ...fallbacks] = chain;
+      const suffix = fallbacks.length > 0 ? `（备选 ${fallbacks.map((f) => f.model).join(' → ')}）` : '';
+      lines.push(`  ${DISPATCH_TIER_LABELS[tier]}：${describeTier(primary)}${suffix}`);
+    }
+    return lines.join('\n');
   }
   return applyDispatchSelection(args, session, sessions);
 }
 
 async function applyDispatchSelection(args: string, session: SessionRecord, sessions: SessionStore) {
-  const pairs = new Map<string, string>();
+  // Each tier takes a comma-separated list: /省钱分级 贵=a,b 中=c 便宜=d
+  // The first entry is the primary, the rest are fallbacks in order.
+  const parsed: TierSelection = {};
   for (const token of args.split(/\s+/).filter(Boolean)) {
     const eq = token.indexOf('=');
     if (eq <= 0) continue;
-    pairs.set(token.slice(0, eq), token.slice(eq + 1));
+    const tier = TIER_KEY_TO_ID[token.slice(0, eq)];
+    if (!tier) continue;
+    const models = token.slice(eq + 1).split(',').map((m) => m.trim()).filter(Boolean);
+    if (models.length > 0) parsed[tier] = models;
   }
-  const expensive = pairs.get('贵');
-  const cheap = pairs.get('便宜');
-  if (!expensive || !cheap) {
-    return '需要同时给出两档：/省钱分级 贵=<模型名> 便宜=<模型名>';
+  if (Object.keys(parsed).length === 0) {
+    return '至少要配置一个档位：/省钱分级 贵=<模型> 中=<模型> 便宜=<模型>（可用逗号给同档多个模型做降级备选）';
   }
-  const tiers = resolveTiers({ expensive, cheap });
+
+  const tiers = resolveTiers(parsed);
   if ('error' in tiers) return `分级配置无效：${tiers.error}`;
-  session.dispatch = { expensive, cheap };
+  session.dispatch = parsed;
   await sessions.save(session);
-  return [
-    '分级调度已启用（本会话）：',
-    `  贵档：${describeTier(tiers.expensive)}`,
-    `  便宜档：${describeTier(tiers.cheap)}`,
-    '子任务派发时用 tier 指定档位，例如 spawn_subagent 的 tier="cheap"。',
-  ].join('\n');
+  const lines = ['分级调度已启用（本会话）：'];
+  for (const tier of TIER_ORDER) {
+    const chain = tiers[tier];
+    if (!chain?.length) continue;
+    lines.push(`  ${DISPATCH_TIER_LABELS[tier]}：${chain.map(describeTier).join(' → ')}`);
+  }
+  lines.push('子任务派发时用 tier 指定档位，例如 spawn_subagent 的 tier="cheap"。');
+  return lines.join('\n');
 }
 
 async function handleLazyDevGuardCommand(command: string, session: SessionRecord, sessions: SessionStore) {

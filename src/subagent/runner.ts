@@ -18,7 +18,7 @@ import type { SubAgentResult, SubAgentSpec } from './types.js';
  * say so instead of pretending the cheap model ran.
  */
 function applyTierOverride(
-  tier: 'expensive' | 'cheap' | undefined,
+  tier: 'expensive' | 'standard' | 'cheap' | undefined,
   parentRuntime: AgentRuntime,
 ): { provider?: AgentRuntime['provider']; config?: AgentRuntime['config']; note?: string } {
   if (!tier) return {};
@@ -28,18 +28,24 @@ function applyTierOverride(
   if (!selection) {
     return { note: `[dispatch] 未配置分级（会话未执行 /省钱分级，也没有全局默认），${tier} 档回落到父模型 ${parentRuntime.config.model}` };
   }
-  let resolved;
+  let chain;
   try {
     const tiers = resolveTiers(selection);
     // resolveTiers reports a bad selection as `{ error }` rather than throwing.
     if ('error' in tiers) {
       return { note: `[dispatch] ${tier} 档解析失败（${tiers.error}），回落到父模型 ${parentRuntime.config.model}` };
     }
-    resolved = tiers[tier];
+    chain = tiers[tier];
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     return { note: `[dispatch] ${tier} 档解析失败（${msg}），回落到父模型 ${parentRuntime.config.model}` };
   }
+  if (!chain || chain.length === 0) {
+    return { note: `[dispatch] ${tier} 档未配置，回落到父模型 ${parentRuntime.config.model}` };
+  }
+  // The first model in the chain is the primary; the rest are fallbacks the
+  // caller can retry with when the primary is rate limited or unavailable.
+  const resolved = chain[0];
   const providerConfig = {
     ...parentRuntime.config,
     provider: resolved.provider as AgentRuntime['config']['provider'],

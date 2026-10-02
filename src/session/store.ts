@@ -64,8 +64,9 @@ export type SessionRecord = {
    * which provider each tier maps to. Model names, not credentials.
    */
   dispatch?: {
-    expensive?: string;
-    cheap?: string;
+    expensive?: string | string[];
+    standard?: string | string[];
+    cheap?: string | string[];
   };
   taskRuntime?: TaskRuntimeState;
   /** Persistent session goal set via /goal */
