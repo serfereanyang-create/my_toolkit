@@ -31,6 +31,7 @@ import { detectLocale, resolveSessionLocale, type Locale } from '../i18n/locale.
 import { isBlockedOutput } from '../i18n/messages.js';
 import { formatResultCard, isMetaTranslatedDone } from '../ui/resultCard.js';
 import { appendUsage, resolveUsageLogPath } from '../usage/ledger.js';
+import { recordTrajectory, TRAJECTORY_TAIL } from '../session/modelTrajectory.js';
 import { buildLowCacheHint, collectCacheProbe } from '../probe/cacheProbe.js';
 import { MAX_SUBAGENT_DEPTH } from '../tools/subagent.js';
 import type { SubAgentOptions } from '../tools/types.js';
@@ -805,6 +806,7 @@ async function runAgentTurnCore(
       // Published on the runtime as we go so every return path reports it.
       stepsTaken += 1;
       runtime.lastTurnSteps = stepsTaken;
+      const callStartedAt = Date.now();
       // codex-rs two-tier retry collapsed onto the single complete() entry:
       // transport-class failures (5xx/network/timeout) back off exponentially
       // and re-issue the whole request; 429/4xx and user cancels propagate.
@@ -829,6 +831,41 @@ async function runAgentTurnCore(
           },
         },
       );
+      // Record this round-trip for the trajectory viewer: what was sent, what
+      // came back, and how long it took. Best-effort — a trace failure must
+      // never break the turn.
+      const responseText = response.actions
+        .filter((action) => action.type === 'message')
+        .map((action) => (action.type === 'message' ? action.content : ''))
+        .join('\n');
+      const promptChars = packed.messages.reduce(
+        (sum, message) => sum + (typeof message.content === 'string' ? message.content.length : 0),
+        0,
+      );
+      recordTrajectory(runtime, {
+        requestId: `${runtime.session.id}-${stepsTaken}`,
+        startedAt: new Date(callStartedAt).toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - callStartedAt,
+        model: runtime.config.model,
+        provider: String(runtime.config.provider),
+        step: stepsTaken,
+        // A round-trip that reached the model has succeeded at this point —
+        // retryable transport failures threw before here.
+        ok: true,
+        turnId: `${runtime.session.id}#${stepsTaken}`,
+        requestMessageCount: packed.messages.length,
+        requestTail: packed.messages.slice(-TRAJECTORY_TAIL).map((message) => ({
+          role: String(message.role),
+          content: typeof message.content === 'string' ? message.content : '',
+        })),
+        responseText,
+        toolNames: response.actions.filter((action) => action.type === 'tool').map((action) => action.tool ?? ''),
+        promptChars,
+        usage: response.usage
+          ? { inputTokens: response.usage.inputTokens, outputTokens: response.usage.outputTokens }
+          : undefined,
+      });
       // Accumulate the real token usage this step reported (if any).
       if (response.usage) {
         response.usage.localCachePredictedRate = predictedPromptCacheRate;
