@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, ChevronDown, Check, SlidersHorizontal } from 'lucide-react';
 import type { ProviderConfig } from '../types';
 
@@ -21,7 +21,7 @@ export const TIER_BADGES = [
 
 export type TierBadgeId = typeof TIER_BADGES[number]['id'];
 
-export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDefault, onPick, onToggleTier, onManage, onClose }: {
+export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDefault, onPick, onToggleTier, onTogglePick, onManage, onClose }: {
   providers: ProviderConfig[];
   activeProviderId: string;
   activeModel: string;
@@ -33,10 +33,25 @@ export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDe
    * "provider/model"; an empty string removes it.
    */
   onToggleTier?: (tier: TierBadgeId, value: string) => void;
+  /**
+   * Add or remove one model in the dispatch set. The set is derived from the
+   * tier chains themselves, so there is no second list to keep in sync: a
+   * model is "picked" while it appears in any tier.
+   */
+  onTogglePick?: (value: string) => void;
   onManage: () => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  // The dispatch set is the union of every tier chain, so the blue check and
+  // the tier badges can never disagree about what is selected.
+  const picked = useMemo(
+    () => Array.from(new Set(
+      Object.values(dispatchDefault ?? {}).flatMap((chain) => chain ?? []),
+    )),
+    [dispatchDefault],
+  );
+  const inChain = (chain?: string[], value?: string) => Boolean(value && chain?.includes(value));
   // Expand the active provider by default so the current model is visible.
   const [expanded, setExpanded] = useState<string | null>(activeProviderId);
 
@@ -77,7 +92,7 @@ export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDe
                 {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
               </button>
               {isOpen && models.map((model) => {
-                const selected = provider.id === activeProviderId && model === activeModel;
+                const active = provider.id === activeProviderId && model === activeModel;
                 // Tier membership: a model can belong to several tiers, so
                 // Tier membership: matched on "providerId/model" ONLY.
                 // The id is the handle, not the label: several providers share
@@ -86,21 +101,26 @@ export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDe
                 // the click looked like a no-op. Legacy label/bare-name
                 // values are migrated on load (see normalizeChains).
                 const qualified = `${provider.id}/${model}`;
-                const inChain = (chain?: string[]) => Boolean(chain?.includes(qualified));
+                // Two independent states per row:
+                //   checked = this model takes part in 省钱分级 at all
+                //   tier badges = which chain it sits in (only meaningful once
+                //     checked, and a model may sit in several tiers)
+                // Keeping them separate is what lets the user tick several
+                // models first and assign tiers afterwards.
+                const checked = picked.includes(qualified);
+                const onTier = (tierId: TierBadgeId) => inChain(dispatchDefault?.[tierId], qualified);
                 return (
                   <button
                     key={model}
-                    className={`model-menu-item ${selected ? 'selected' : ''}`}
+                    className={`model-menu-item ${active ? 'selected' : ''} ${checked ? 'picked' : ''}`}
                     onClick={() => { onPick(provider.id, model); onClose(); }}
                   >
                     <span className="model-menu-item-name">{model}</span>
-                    {/* Tier toggles: each badge flips this model's membership in
-                        that tier without switching the active model, so one
-                        pass over the menu can fill several tiers. Spans, not
-                        buttons — nesting buttons inside the row is invalid
-                        HTML and React warns about it. */}
                     {TIER_BADGES.map(({ id, glyph, title, tone }) => {
-                      const on = inChain(dispatchDefault?.[id]);
+                      // Tier badges only appear for picked rows: assigning a
+                      // tier to an unpicked model would silently pick it too.
+                      if (!checked) return null;
+                      const on = onTier(id);
                       return (
                         <span
                           key={id}
@@ -110,16 +130,28 @@ export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDe
                           title={on ? `已在${title}（点击移出）` : `加入${title}`}
                           onClick={(event) => {
                             event.stopPropagation();
-                            // Always send the qualified value and let the
-                            // helper decide add-vs-remove from membership.
-                            // Sending '' for removal was a no-op: the helper
-                            // treats an empty value as "nothing to do".
                             onToggleTier?.(id, qualified);
                           }}
                         >{glyph}</span>
                       );
                     })}
-                    {selected && <Check size={15} className="model-menu-check" />}
+                    {/* The blue check is the multi-select switch: it marks a
+                        model as part of the dispatch set and stays on until
+                        clicked again. It no longer means "the active model" —
+                        that is the row's selected background. */}
+                    <span
+                      role="checkbox"
+                      aria-checked={checked}
+                      tabIndex={-1}
+                      className={`model-menu-pick ${checked ? 'on' : ''}`}
+                      title={checked ? '已加入省钱分级（点击移出）' : '加入省钱分级'}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onTogglePick?.(qualified);
+                      }}
+                    >
+                      {checked ? <Check size={15} /> : null}
+                    </span>
                   </button>
                 );
               })}

@@ -53,3 +53,34 @@ export function toggleChain(
     : [...chain, value];
   return { ...chains, [tier]: next };
 }
+
+/** Every model that takes part in dispatch, in first-seen order. */
+export function selectedModels(chains: DispatchChains): string[] {
+  const out: string[] = [];
+  for (const { id } of DISPATCH_TIERS) {
+    for (const value of chains[id] ?? []) if (!out.includes(value)) out.push(value);
+  }
+  return out;
+}
+
+/**
+ * Add or remove a model everywhere at once.
+ *
+ * The checkbox is the "participates in 省钱分级" switch: unchecking must drop
+ * the model from every tier, otherwise it would linger in a chain the user can
+ * no longer see as selected.
+ */
+export function toggleSelectedModel(chains: DispatchChains, value: string): DispatchChains {
+  if (!value) return chains;
+  const isOn = selectedModels(chains).includes(value);
+  const next: DispatchChains = {};
+  for (const { id } of DISPATCH_TIERS) {
+    const chain = chains[id] ?? [];
+    const filtered = chain.filter((entry) => entry !== value);
+    if (filtered.length) next[id] = filtered;
+  }
+  if (isOn) return next;
+  // Newly checked: park it in the cheap tier so the chain is never empty and
+  // the user can immediately move it with a tier badge.
+  return { ...next, cheap: [...(next.cheap ?? []), value] };
+}

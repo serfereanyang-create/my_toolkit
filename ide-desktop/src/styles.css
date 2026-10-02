@@ -6185,6 +6185,19 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 .model-menu-item.selected { color: var(--fg); font-weight: 500; }
 .model-menu-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 .model-menu-check { color: var(--blue); flex: 0 0 auto; }
+/* Multi-select switch for the dispatch set. A dashed outline invites a click;
+   checked it becomes the solid blue check and stays until clicked again. */
+.model-menu-pick {
+  display: grid; place-items: center; flex: 0 0 auto;
+  width: 18px; height: 18px; margin-left: 4px;
+  border: 1px dashed var(--border-strong); border-radius: 5px;
+  color: var(--blue);
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.model-menu-pick:hover { border-color: var(--blue); }
+.model-menu-pick.on { border-style: solid; border-color: transparent; background: transparent; }
+.model-menu-item.picked .model-menu-item-name { font-weight: 600; }
 .model-menu-empty { padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-5); color: var(--fg-dim); font-size: var(--fs-sm); }
 
 .model-menu-divider { height: 1px; background: var(--border-subtle); margin: var(--sp-2) 0; }

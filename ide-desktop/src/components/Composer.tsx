@@ -22,7 +22,7 @@ import { contextBudget, estimateTokens, tokenBreakdown } from '../lib/tokenEstim
 // approvalLabel is imported from ApprovalMenu and used via approvalMenuLabel below.
 // No local duplicate needed.
 
-export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, onPickPlugin, onPickModel, onPickEffort, onPickToolScope, onToggleDispatchTier, onManageModels, terminalOutput, queue, onQueueSendNow, onQueueEdit, onQueueRemove }: {
+export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, onPickPlugin, onPickModel, onPickEffort, onPickToolScope, onToggleDispatchTier, onToggleDispatchPick, onManageModels, terminalOutput, queue, onQueueSendNow, onQueueEdit, onQueueRemove }: {
   state: AppState;
   prefill?: { text: string; nonce: number } | null;
   onSubmit: (text: string, files?: DetectedFile[], mentions?: MentionItem[]) => void;
@@ -34,6 +34,8 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   onPickToolScope: (toolScope: ToolScope) => void;
   /** Assign a model to a 省钱分级 tier (empty string clears it). */
   onToggleDispatchTier?: (tier: 'expensive' | 'standard' | 'cheap', value: string) => void;
+  /** Check / uncheck a model in the dispatch set (multi-select). */
+  onToggleDispatchPick?: (value: string) => void;
   onManageModels: () => void;
   terminalOutput?: string;
   /** Messages submitted while the agent was busy, oldest first. */
@@ -326,6 +328,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
             activeModel={model} onPick={onPickModel} onManage={onManageModels}
             dispatchDefault={normalizeChains(state.settings.preferences?.dispatchDefault)}
             onToggleTier={onToggleDispatchTier}
+            onTogglePick={onToggleDispatchPick}
             onClose={() => setModelMenuOpen(false)} />
         )}
         {thinkingMenuOpen && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeChains, toggleChain } from './dispatchChains';
+import { normalizeChains, toggleChain, selectedModels, toggleSelectedModel } from './dispatchChains';
 
 const A = 'vendor-1/model-a';
 const B = 'vendor-2/model-b';
@@ -41,6 +41,38 @@ describe('normalizeChains', () => {
   it('ignores unknown tier ids and empty input', () => {
     expect(normalizeChains(undefined)).toEqual({});
     expect(normalizeChains({ nonsense: [A] } as never)).toEqual({});
+  });
+});
+
+describe('selectedModels / toggleSelectedModel', () => {
+  it('reports every model in the dispatch set, once', () => {
+    expect(selectedModels({ expensive: [A], standard: [A, B], cheap: [B] }).sort())
+      .toEqual([A, B].sort());
+  });
+
+  it('checks a model on first toggle and off on the second', () => {
+    const on = toggleSelectedModel({}, A);
+    expect(selectedModels(on)).toEqual([A]);
+
+    const off = toggleSelectedModel(on, A);
+    expect(selectedModels(off)).toEqual([]);
+  });
+
+  it('unticking removes the model from every tier at once', () => {
+    // A model can sit in several tiers; unticking must not leave it behind in
+    // one of them, which would make the checkbox lie about its own state.
+    const chains = { expensive: [A], standard: [A], cheap: [A, B] };
+    const after = toggleSelectedModel(chains, A);
+    expect(selectedModels(after)).toEqual([B]);
+    expect(after.expensive).toBeUndefined();
+    expect(after.standard).toBeUndefined();
+    expect(after.cheap).toEqual([B]);
+  });
+
+  it('keeps several models checked at the same time', () => {
+    let chains = toggleSelectedModel({}, A);
+    chains = toggleSelectedModel(chains, B);
+    expect(selectedModels(chains).sort()).toEqual([A, B].sort());
   });
 });
 
