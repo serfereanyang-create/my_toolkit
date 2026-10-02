@@ -170,7 +170,19 @@ export function SettingsView({ settings, onBack, onSave, onSaveKey, initialPage,
           />
         )}
         {active === 'model' && <ModelSettings settings={settings} onSave={onSave} onSaveKey={onSaveKey} />}
-        {active === 'dispatch' && <DispatchSettings sessionId={sessionId} />}
+        {active === 'dispatch' && (
+          <DispatchSettings
+            sessionId={sessionId}
+            providers={settings.providers}
+            dispatchDefault={settings.preferences?.dispatchDefault}
+            onSaveDefault={(next) => {
+              onSave({
+                ...settings,
+                preferences: { ...settings.preferences, dispatchDefault: next },
+              });
+            }}
+          />
+        )}
         {active === 'usage' && <UsageSettings activeProviderId={settings.activeProviderId} />}
         {active === 'personalize' && <PersonalizeSettings prefs={prefs} savePref={savePref} />}
         {active === 'shortcuts' && <ShortcutsSettings />}

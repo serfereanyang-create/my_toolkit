@@ -38,8 +38,30 @@ function TierCard({ label, hint, tier }: { label: string; hint: string; tier: Di
  * panel reports what the next dispatch will actually do rather than keeping a
  * second copy that could disagree.
  */
-export function DispatchSettings({ sessionId }: { sessionId?: string }) {
+export function DispatchSettings({ sessionId, providers, dispatchDefault, onSaveDefault }: {
+  sessionId?: string;
+  /** Providers + their models, so the pickers offer what actually exists. */
+  providers?: Array<{ id: string; label: string; models?: Array<{ id: string }>; model?: string }>;
+  /** Current global default (settings.preferences.dispatchDefault). */
+  dispatchDefault?: { expensive?: string; cheap?: string };
+  /** Persist the global default; the parent owns settings writes. */
+  onSaveDefault?: (next: { expensive?: string; cheap?: string }) => void;
+}) {
   const [status, setStatus] = useState<Status | null>(null);
+  const [draft, setDraft] = useState<{ expensive: string; cheap: string }>({
+    expensive: dispatchDefault?.expensive ?? '',
+    cheap: dispatchDefault?.cheap ?? '',
+  });
+  const [saved, setSaved] = useState(false);
+
+  // Every model the configured providers expose, de-duplicated by name: the
+  // same model can be listed under several providers, and the global default
+  // stores names (credentials are resolved at dispatch time).
+  const modelOptions = Array.from(new Set(
+    (providers ?? []).flatMap((provider) => (
+      provider.models?.length ? provider.models.map((m) => m.id) : (provider.model ? [provider.model] : [])
+    )),
+  )).sort();
 
   useEffect(() => {
     let alive = true;
@@ -51,33 +73,68 @@ export function DispatchSettings({ sessionId }: { sessionId?: string }) {
 
   if (!status) return <div className="dispatch-panel">正在读取分级配置…</div>;
 
-  if (!status.configured || !status.tiers) {    return (
-      <div className="dispatch-panel">
-        <div className="dispatch-empty">
-          <Coins size={16} />
-          <div>
-            <div className="dispatch-empty-title">本会话尚未配置分级调度</div>
-            <div className="dispatch-empty-hint">
-              在对话里输入 <code>/省钱分级 贵=&lt;模型&gt; 便宜=&lt;模型&gt;</code> 即可启用。
-              贵档只做方案与裁决，便宜档承担实现与排查。
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="dispatch-panel">
-      <div className="dispatch-flow">
-        <TierCard label="贵档" tier={status.tiers.expensive} hint="只出方案与终审裁决" />
-        <ArrowRight size={16} className="dispatch-arrow" />
-        <TierCard label="便宜档" tier={status.tiers.cheap} hint="承担实现、写文档与找 bug" />
+      {/* Editable pickers: choosing two models here writes the GLOBAL default,
+          which new sessions inherit. A session can still override with
+          /省钱分级. */}
+      <div className="dispatch-edit">
+        <label className="dispatch-field">
+          <span className="dispatch-field-label">贵档模型</span>
+          <select
+            className="dispatch-select"
+            value={draft.expensive}
+            onChange={(event) => setDraft((d) => ({ ...d, expensive: event.target.value }))}
+          >
+            <option value="">（未设置）</option>
+            {modelOptions.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          <span className="dispatch-field-hint">只出方案与终审裁决</span>
+        </label>
+        <label className="dispatch-field">
+          <span className="dispatch-field-label">便宜档模型</span>
+          <select
+            className="dispatch-select"
+            value={draft.cheap}
+            onChange={(event) => setDraft((d) => ({ ...d, cheap: event.target.value }))}
+          >
+            <option value="">（未设置）</option>
+            {modelOptions.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          <span className="dispatch-field-hint">承担实现、写文档与找 bug</span>
+        </label>
+        <button
+          type="button"
+          className="dispatch-save"
+          disabled={!onSaveDefault || (!draft.expensive && !draft.cheap)}
+          onClick={() => onSaveDefault?.({ expensive: draft.expensive || undefined, cheap: draft.cheap || undefined })}
+        >
+          保存为全局默认
+        </button>
       </div>
-      <div className="dispatch-note">
-        子任务派发时由 <code>spawn_subagent</code> 的 <code>tier</code> 指定档位；
-        每次调用的模型与 token 都记入 <code>~/.aicode/dispatch.jsonl</code>。
-      </div>
+
+      {status?.configured && status.tiers ? (
+        <>
+          <div className="dispatch-flow">
+            <TierCard label="贵档" tier={status.tiers.expensive} hint="只出方案与终审裁决" />
+            <ArrowRight size={16} className="dispatch-arrow" />
+            <TierCard label="便宜档" tier={status.tiers.cheap} hint="承担实现、写文档与找 bug" />
+          </div>
+          <div className="dispatch-note">
+            子任务派发时由 <code>spawn_subagent</code> 的 <code>tier</code> 指定档位；
+            每次调用的模型与 token 都记入 <code>~/.aicode/dispatch.jsonl</code>。
+          </div>
+        </>
+      ) : (
+        <div className="dispatch-note">
+          选好两个档位并保存后，新会话默认按这套分级派发；也可以随时在对话里用
+          <code> /省钱分级 贵=&lt;模型&gt; 便宜=&lt;模型&gt; </code> 覆盖当前会话。
+        </div>
+      )}
     </div>
   );
 }

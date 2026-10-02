@@ -8,11 +8,15 @@ import type { ProviderConfig } from '../types';
  * A "管理模型" row at the bottom deep-links to the model settings page.
  */
 
-export function ModelMenu({ providers, activeProviderId, activeModel, onPick, onManage, onClose }: {
+export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDefault, onPick, onAssignTier, onManage, onClose }: {
   providers: ProviderConfig[];
   activeProviderId: string;
   activeModel: string;
+  /** Global default pair (省钱分级) shown as badges on each model row. */
+  dispatchDefault?: { expensive?: string; cheap?: string };
   onPick: (providerId: string, model: string) => void;
+  /** Assign this model to a dispatch tier (global default). */
+  onAssignTier?: (tier: 'expensive' | 'cheap', model: string) => void;
   onManage: () => void;
   onClose: () => void;
 }) {
@@ -58,6 +62,11 @@ export function ModelMenu({ providers, activeProviderId, activeModel, onPick, on
               </button>
               {isOpen && models.map((model) => {
                 const selected = provider.id === activeProviderId && model === activeModel;
+                // Tier membership is matched on the bare model name: the
+                // global default stores names, and the same model can appear
+                // under several providers.
+                const isExpensive = dispatchDefault?.expensive === model;
+                const isCheap = dispatchDefault?.cheap === model;
                 return (
                   <button
                     key={model}
@@ -65,6 +74,25 @@ export function ModelMenu({ providers, activeProviderId, activeModel, onPick, on
                     onClick={() => { onPick(provider.id, model); onClose(); }}
                   >
                     <span className="model-menu-item-name">{model}</span>
+                    {/* Tier assignment: clicking a badge sets the global
+                        default for that tier without switching the active
+                        model, so one pass over the menu can fill both.
+                        These are spans, not buttons: nesting a button inside
+                        the row button is invalid HTML and React warns about it. */}
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      className={`model-menu-tier ${isExpensive ? 'tier-expensive on' : ''}`}
+                      title={isExpensive ? '已是贵档（点击取消）' : '设为贵档：只出方案与终审'}
+                      onClick={(event) => { event.stopPropagation(); onAssignTier?.('expensive', isExpensive ? '' : model); }}
+                    >贵</span>
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      className={`model-menu-tier ${isCheap ? 'tier-cheap on' : ''}`}
+                      title={isCheap ? '已是便宜档（点击取消）' : '设为便宜档：承担实现与排查'}
+                      onClick={(event) => { event.stopPropagation(); onAssignTier?.('cheap', isCheap ? '' : model); }}
+                    >省</span>
                     {selected && <Check size={15} className="model-menu-check" />}
                   </button>
                 );

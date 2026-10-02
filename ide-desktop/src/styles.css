@@ -3289,6 +3289,15 @@ h1 {
 
 /* ── 省钱分级 panel ─────────────────────────────────────────────────────── */
 .dispatch-panel { display: flex; flex-direction: column; gap: var(--sp-4); }
+/* Editable global-default pickers: two labelled selects on one row. */
+.dispatch-fields { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); border: 1px solid var(--border); border-radius: 12px; background: var(--bg-app); }
+.dispatch-field { display: flex; flex-direction: column; gap: 5px; }
+.dispatch-field-label { font-size: var(--fs-sm); font-weight: 600; color: var(--fg); }
+.dispatch-select { height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); color: var(--fg); font-size: var(--fs-sm); }
+.dispatch-select:focus { outline: none; border-color: var(--accent); }
+.dispatch-field-hint { font-size: var(--fs-xs); color: var(--fg-dim); }
+.dispatch-save { align-self: flex-start; height: 30px; padding: 0 14px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--accent-fg); font-size: var(--fs-sm); font-weight: 600; cursor: pointer; }
+.dispatch-save:disabled { opacity: .45; cursor: default; }
 .dispatch-lead { margin: 0; color: var(--fg-muted); font-size: var(--fs-sm); line-height: 1.6; }
 .dispatch-flow { display: flex; align-items: center; gap: var(--sp-3); }
 .dispatch-flow > svg { color: var(--fg-dim); flex: 0 0 auto; }
@@ -6031,6 +6040,29 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 }
 .model-menu-provider:hover { background: var(--bg-hover); }
 .model-menu-provider-name { font-weight: 500; }
+
+/* Tier badges in the model menu: quiet by default so they never compete with
+   the model name; filled when assigned. Clicking one assigns that tier
+   without switching the active model. */
+.model-menu-tier {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.model-menu-item:hover .model-menu-tier { opacity: 1; }
+.model-menu-tier.on { opacity: 1; }
+.model-menu-tier.tier-expensive.on { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.model-menu-tier.tier-cheap.on { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
 
 .model-menu-item {
   display: flex;

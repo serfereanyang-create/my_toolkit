@@ -83,6 +83,16 @@ export type DesktopPreferences = {
   reasoningEffort?: ReasoningEffort;
   reasoningEffortByModel?: Record<string, ReasoningEffort>;
   toolScope?: ToolScope;
+  /**
+   * Global default for tiered dispatch (省钱分级): the expensive/cheap model
+   * pair. A session can still override it via /省钱分级; this is what new
+   * sessions start from. Model names only — credentials come from the
+   * provider config at dispatch time.
+   */
+  dispatchDefault?: {
+    expensive?: string;
+    cheap?: string;
+  };
   taskExecutionMode?: 'auto' | 'plan';
   /**
    * Auto-review risky actions with a second model call instead of prompting the

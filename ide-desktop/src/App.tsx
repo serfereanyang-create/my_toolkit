@@ -1636,6 +1636,15 @@ export default function App() {
             }}
             onPickEffort={(effort) => { void setReasoningEffort(effort); }}
             onPickToolScope={(toolScope) => { void setToolScope(toolScope); }}
+            onAssignDispatchTier={async (tier, model) => {
+              if (!state.settings) return;
+              const current = state.settings.preferences?.dispatchDefault ?? {};
+              const nextDefault = { ...current, [tier]: model || undefined };
+              await saveSettings({
+                ...state.settings,
+                preferences: { ...state.settings.preferences, dispatchDefault: nextDefault },
+              });
+            }}
             onManageModels={() => { setSettingsPage('model'); setMainView('settings'); }}
           />
         )}
