@@ -1,7 +1,7 @@
 import type { AgentRuntime } from '../agent/agent.js';
 import { supervisorFor } from '../agent/agent.js';
 import { createProvider } from '../providers/index.js';
-import { resolveTiers } from '../dispatch/tierRouter.js';
+import { resolveTiers, readGlobalDispatchDefault } from '../dispatch/tierRouter.js';
 import { allExperts, expertById } from '../experts/profiles.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { TerminalUI } from '../ui/terminal.js';
@@ -22,9 +22,11 @@ function applyTierOverride(
   parentRuntime: AgentRuntime,
 ): { provider?: AgentRuntime['provider']; config?: AgentRuntime['config']; note?: string } {
   if (!tier) return {};
-  const selection = parentRuntime.session.dispatch;
+  // Session selection wins; a session that never ran /省钱分级 falls back to
+  // the global default the desktop settings panel writes.
+  const selection = parentRuntime.session.dispatch ?? readGlobalDispatchDefault();
   if (!selection) {
-    return { note: `[dispatch] 未配置分级（会话未执行 /省钱分级），${tier} 档回落到父模型 ${parentRuntime.config.model}` };
+    return { note: `[dispatch] 未配置分级（会话未执行 /省钱分级，也没有全局默认），${tier} 档回落到父模型 ${parentRuntime.config.model}` };
   }
   let resolved;
   try {

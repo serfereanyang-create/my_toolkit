@@ -186,3 +186,26 @@ export function resolveTiers(
 export function describeTier(tier: ResolvedTier): string {
   return `${tier.providerName}/${tier.model}`;
 }
+
+/**
+ * Global default tier selection, as saved by the desktop settings page.
+ *
+ * Read from the desktop app's settings.json: it is the same machine and the
+ * same user, and keeping one file means the two surfaces cannot disagree
+ * about what "the default" is. A malformed or missing file simply means no
+ * default — never an error the caller has to handle.
+ */
+export function readGlobalDispatchDefault(settingsPath?: string): TierSelection | null {
+  const file = settingsPath ?? join(homedir(), 'AppData', 'Roaming', 'cc-desktop-ide', 'settings.json');
+  if (!existsSync(file)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf-8')) as {
+      preferences?: { dispatchDefault?: TierSelection };
+    };
+    const selection = parsed.preferences?.dispatchDefault;
+    if (!selection?.expensive || !selection?.cheap) return null;
+    return { expensive: selection.expensive, cheap: selection.cheap };
+  } catch {
+    return null;
+  }
+}
