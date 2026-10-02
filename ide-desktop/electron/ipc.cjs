@@ -8,7 +8,7 @@ const { createQualityGateway } = require('./quality-gateway.cjs');
 const git = require('./git.cjs');
 const { createCheckpointBackend } = require('./checkpoints.cjs');
 const { createFileSearchService } = require('./file-search.cjs');
-const { readSelection, resolveForUi } = require('./dispatch-ipc.cjs');
+const { readSelection, resolveForUi, listOptions } = require('./dispatch-ipc.cjs');
 const { createResourceSampler } = require('./resource-sampler.cjs');
 const { createCommandsService } = require('./commands.cjs');
 const { exportSessionToFile, defaultExportPath } = require('./export-session.cjs');
@@ -117,6 +117,17 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     if (!selection) return { ok: false, configured: false, error: '该会话未配置分级调度' };
     // resolveForUi awaits a dynamic import of the CLI's ESM router.
     return await resolveForUi(selection);
+  });
+
+  ipcMain.handle('dispatch.options', async () => {
+    // The pickable provider/model pairs come from the CLI resolver, because
+    // the desktop's own provider labels don't match the v2 config names the
+    // dispatch actually resolves against.
+    try {
+      return { ok: true, options: await listOptions() };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   ipcMain.handle('workspace.getTree', async (_event, relativePath) => await workspace.tree(relativePath || '.'));

@@ -62,11 +62,14 @@ export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDe
               </button>
               {isOpen && models.map((model) => {
                 const selected = provider.id === activeProviderId && model === activeModel;
-                // Tier membership is matched on the bare model name: the
-                // global default stores names, and the same model can appear
-                // under several providers.
-                const isExpensive = dispatchDefault?.expensive === model;
-                const isCheap = dispatchDefault?.cheap === model;
+                // Match on the fully-qualified "provider/model" so a model
+                // that exists under several providers only gets the badge on
+                // the provider actually assigned to that tier.
+                const qualified = `${provider.label}/${model}`;
+                const isExpensive = dispatchDefault?.expensive === qualified
+                  || dispatchDefault?.expensive === model;
+                const isCheap = dispatchDefault?.cheap === qualified
+                  || dispatchDefault?.cheap === model;
                 return (
                   <button
                     key={model}
@@ -84,14 +87,14 @@ export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDe
                       tabIndex={-1}
                       className={`model-menu-tier ${isExpensive ? 'tier-expensive on' : ''}`}
                       title={isExpensive ? '已是贵档（点击取消）' : '设为贵档：只出方案与终审'}
-                      onClick={(event) => { event.stopPropagation(); onAssignTier?.('expensive', isExpensive ? '' : model); }}
+                      onClick={(event) => { event.stopPropagation(); onAssignTier?.('expensive', isExpensive ? '' : qualified); }}
                     >贵</span>
                     <span
                       role="button"
                       tabIndex={-1}
                       className={`model-menu-tier ${isCheap ? 'tier-cheap on' : ''}`}
                       title={isCheap ? '已是便宜档（点击取消）' : '设为便宜档：承担实现与排查'}
-                      onClick={(event) => { event.stopPropagation(); onAssignTier?.('cheap', isCheap ? '' : model); }}
+                      onClick={(event) => { event.stopPropagation(); onAssignTier?.('cheap', isCheap ? '' : qualified); }}
                     >省</span>
                     {selected && <Check size={15} className="model-menu-check" />}
                   </button>

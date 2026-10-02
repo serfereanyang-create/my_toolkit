@@ -118,6 +118,19 @@ export type SystemInfoSnapshot = {
   uptimeSeconds: number;
 };
 
+/** One pickable provider/model pair for the 省钱分级 dropdowns. */
+export type DispatchOption = {
+  /** `providerId/model` — the unambiguous value stored in settings. */
+  value: string;
+  /** `providerName · model` — what the user reads. */
+  label: string;
+  providerId: string;
+  providerName: string;
+  model: string;
+  contextWindow?: number;
+  hasKey: boolean;
+};
+
 /** One resolved dispatch tier, as shown in the settings panel. */
 export type DispatchTierInfo = {
   provider: string;
@@ -248,6 +261,12 @@ type ZCodeDesktopApi = {
   dispatch: {
     /** Resolve the session's 贵/便宜 tiers to real providers for the UI. */
     status(sessionId?: string): Promise<{ ok: boolean; configured: boolean; tiers?: { expensive: DispatchTierInfo; cheap: DispatchTierInfo }; error?: string }>;
+    /**
+     * Every dispatchable provider/model pair, from the CLI's own resolver.
+     * The desktop's provider list uses different labels, so the pickers must
+     * offer these instead.
+     */
+    options(): Promise<{ ok: boolean; options: DispatchOption[]; error?: string }>;
   };
   memory: {
     listProjects(): Promise<{ ok: boolean; projects: ProjectMemorySummary[] }>;

@@ -60,4 +60,14 @@ function summarize(tier) {
   };
 }
 
-module.exports = { readSelection, resolveForUi };
+module.exports = { readSelection, resolveForUi, listOptions };
+
+/**
+ * Every dispatchable provider/model pair, from the CLI's own resolver — so the
+ * pickers offer what the CLI will actually accept, not the desktop's separate
+ * provider list (their labels don't match the v2 config names).
+ */
+async function listOptions() {
+  const { listTierOptions } = await router();
+  return listTierOptions();
+}

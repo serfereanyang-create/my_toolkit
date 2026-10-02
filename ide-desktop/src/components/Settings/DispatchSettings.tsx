@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, Coins, TriangleAlert } from 'lucide-react';
 import { desktop } from '../../lib/ipc';
-import type { DispatchTierInfo } from '../../lib/ipc';
+import type { DispatchOption, DispatchTierInfo } from '../../lib/ipc';
 
 type Status = {
   ok: boolean;
@@ -22,7 +22,9 @@ function TierField({ tone, role, hint, value, options, onChange }: {
   role: string;
   hint: string;
   value: string;
-  options: string[];
+  /** "provider/model" pairs — the provider is shown so the same model served
+      by two vendors is distinguishable. */
+  options: Array<{ value: string; label: string }>;
   onChange: (next: string) => void;
 }) {
   return (
@@ -37,8 +39,8 @@ function TierField({ tone, role, hint, value, options, onChange }: {
         onChange={(event) => onChange(event.target.value)}
       >
         <option value="">（未设置 — 该档会回落到当前模型）</option>
-        {options.map((name) => (
-          <option key={name} value={name}>{name}</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
         ))}
       </select>
     </div>
@@ -80,6 +82,8 @@ export function DispatchSettings({ sessionId, providers, dispatchDefault, onSave
   const [draft, setDraft] = useState({ expensive: dispatchDefault?.expensive ?? '', cheap: dispatchDefault?.cheap ?? '' });
   const [saved, setSaved] = useState(false);
 
+  const [options, setOptions] = useState<DispatchOption[]>([]);
+
   useEffect(() => {
     let alive = true;
     void desktop.dispatch.status(sessionId).then((next) => { if (alive) setStatus(next); });
@@ -87,18 +91,26 @@ export function DispatchSettings({ sessionId, providers, dispatchDefault, onSave
   }, [sessionId]);
 
   useEffect(() => {
+    let alive = true;
+    void desktop.dispatch.options().then((next) => {
+      if (alive && next.ok && next.options) setOptions(next.options);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
     setDraft({ expensive: dispatchDefault?.expensive ?? '', cheap: dispatchDefault?.cheap ?? '' });
   }, [dispatchDefault?.expensive, dispatchDefault?.cheap]);
 
-  const modelOptions = Array.from(new Set(
-    (providers ?? []).flatMap((p) => (p.models?.length ? p.models.map((m) => m.id) : (p.model ? [p.model] : []))),
-  )).sort();
-
+  // Options come from the CLI resolver, not the desktop provider list: the
+  // two are separate stores (desktop labels like 新供应商 do not match the v2
+  // config names the dispatch resolves against), and only the v2 side knows
+  // which entries actually carry credentials.
+  const modelOptions = options.map((o) => ({ value: o.value, label: o.hasKey ? o.label : `${o.label}（无密钥）` }));
   const dirty = draft.expensive !== (dispatchDefault?.expensive ?? '')
     || draft.cheap !== (dispatchDefault?.cheap ?? '');
   const bothPicked = Boolean(draft.expensive && draft.cheap);
   const sameModel = Boolean(draft.expensive && draft.expensive === draft.cheap);
-
   return (
     <div className="dispatch-panel">
       <p className="dispatch-intro">

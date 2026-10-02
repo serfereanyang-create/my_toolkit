@@ -94,6 +94,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
   },
   dispatch: {
     status: (sessionId) => ipcRenderer.invoke('dispatch.status', sessionId),
+    options: () => ipcRenderer.invoke('dispatch.options'),
   },
   memory: {
     listProjects: () => ipcRenderer.invoke('memory.listProjects'),
