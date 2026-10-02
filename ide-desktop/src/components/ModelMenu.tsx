@@ -79,13 +79,14 @@ export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDe
               {isOpen && models.map((model) => {
                 const selected = provider.id === activeProviderId && model === activeModel;
                 // Tier membership: a model can belong to several tiers, so
-                // each badge is an independent toggle. Match on the qualified
-                // "provider/model" first, then the bare name, so chains saved
-                // by older versions still light up the right row.
-                const qualified = `${provider.label}/${model}`;
-                const inChain = (chain?: string[]) => Boolean(chain?.some(
-                  (entry) => entry === qualified || entry === model,
-                ));
+                // Tier membership: matched on "providerId/model" ONLY.
+                // The id is the handle, not the label: several providers share
+                // the label "新供应商", so a label-qualified value matches
+                // rows it does not belong to — every badge lit up at once and
+                // the click looked like a no-op. Legacy label/bare-name
+                // values are migrated on load (see normalizeChains).
+                const qualified = `${provider.id}/${model}`;
+                const inChain = (chain?: string[]) => Boolean(chain?.includes(qualified));
                 return (
                   <button
                     key={model}
@@ -109,7 +110,11 @@ export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDe
                           title={on ? `已在${title}（点击移出）` : `加入${title}`}
                           onClick={(event) => {
                             event.stopPropagation();
-                            onToggleTier?.(id, on ? '' : qualified);
+                            // Always send the qualified value and let the
+                            // helper decide add-vs-remove from membership.
+                            // Sending '' for removal was a no-op: the helper
+                            // treats an empty value as "nothing to do".
+                            onToggleTier?.(id, qualified);
                           }}
                         >{glyph}</span>
                       );

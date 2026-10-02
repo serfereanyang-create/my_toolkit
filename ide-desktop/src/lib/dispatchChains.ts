@@ -22,7 +22,11 @@ export function normalizeChains(raw: Stored): DispatchChains {
   for (const { id } of DISPATCH_TIERS) {
     const value = raw?.[id];
     if (Array.isArray(value)) {
-      const clean = value.filter((v): v is string => typeof v === 'string' && v.length > 0);
+      // De-duplicate: a chain with the same entry twice would make the first
+      // click on its badge add a third copy instead of toggling.
+      const clean = [...new Set(value.filter(
+        (v): v is string => typeof v === 'string' && v.length > 0,
+      ))];
       if (clean.length) out[id] = clean;
     } else if (typeof value === 'string' && value) {
       out[id] = [value];
@@ -34,9 +38,8 @@ export function normalizeChains(raw: Stored): DispatchChains {
 /**
  * Add or remove one model in a tier's chain.
  *
- * Adding appends, so the chain's order stays the order the user clicked:
- * first pick is the primary, later picks are fallbacks. An empty `value`
- * means "remove this model" (the menus pass '' for an active badge).
+ * Toggling: the caller passes the model value and the helper flips it, so
+ * there is no separate "remove" sentinel to get wrong.
  */
 export function toggleChain(
   chains: DispatchChains,
