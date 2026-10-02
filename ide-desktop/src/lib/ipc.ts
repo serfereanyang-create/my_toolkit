@@ -118,6 +118,27 @@ export type SystemInfoSnapshot = {
   uptimeSeconds: number;
 };
 
+/** One model round-trip, as written by the CLI's trajectory recorder. */
+export type TrajectoryRecord = {
+  requestId: string;
+  turnId: string;
+  step: number;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  ok: boolean;
+  model: string;
+  provider: string;
+  /** Message count of the full context sent (not just the tail). */
+  requestMessageCount: number;
+  /** The real prompt tail: last few messages as actually sent. */
+  requestTail: Array<{ role: string; content: string }>;
+  responseText: string;
+  toolNames: string[];
+  promptChars: number;
+  usage?: { inputTokens?: number; outputTokens?: number };
+};
+
 /** One pickable provider/model pair for the 省钱分级 dropdowns. */
 export type DispatchOption = {
   /** `providerId/model` — the unambiguous value stored in settings. */
@@ -224,6 +245,8 @@ type ZCodeDesktopApi = {
     reveal(id: string): Promise<{ ok: boolean }>;
     /** Export the transcript as markdown; returns the written file path. */
     export(id: string): Promise<{ ok: boolean; path: string; sha256: string; messageCount: number; unsupportedKinds: string[] }>;
+    /** Per-call model trajectory: what each round-trip sent and returned. */
+    trajectory(id: string): Promise<{ ok: boolean; records?: TrajectoryRecord[]; error?: string }>;
   };
   checkpoints: {
     create(): Promise<{ ok: boolean; meta: CheckpointMeta }>;

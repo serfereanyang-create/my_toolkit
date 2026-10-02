@@ -9136,3 +9136,34 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
 .compaction-divider.running .compaction-divider-label { animation: compaction-pulse 1.6s ease-in-out infinite; }
 .compaction-divider.failed .compaction-divider-label { color: var(--danger); }
 @keyframes compaction-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+
+/* ── Model trajectory viewer (ported from zcode ModelTrajectoryPane) ────── */
+.trajectory-panel { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.trajectory-toolbar { display: flex; flex-direction: column; gap: var(--sp-2); flex: none; padding: var(--sp-3); border-bottom: 1px solid var(--border-subtle); }
+.trajectory-search { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); color: var(--fg-dim); }
+.trajectory-search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--fg); font-size: var(--fs-xs); outline: none; }
+.trajectory-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--fg-dim); font-size: var(--fs-xs); }
+.trajectory-list { flex: 1; min-height: 0; overflow: auto; padding: var(--sp-2); display: flex; flex-direction: column; gap: 6px; }
+.trajectory-empty { padding: var(--sp-5) var(--sp-3); color: var(--fg-dim); font-size: var(--fs-xs); line-height: 1.6; text-align: center; }
+.traj-row { border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-elevated); overflow: hidden; }
+.traj-row.open { border-color: var(--border); }
+.traj-head { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 10px; border: 0; background: transparent; color: var(--fg); text-align: left; cursor: pointer; }
+.traj-head:hover { background: var(--bg-hover); }
+.traj-chevron { flex: none; color: var(--fg-dim); transition: transform var(--dur) var(--ease); }
+.traj-row.open .traj-chevron { transform: rotate(90deg); }
+.traj-step { flex: none; color: var(--fg-dim); font: 11px var(--font-mono); }
+/* Failed round-trips read as problems at a glance. */
+.traj-row.failed .traj-step { color: var(--danger); }
+.traj-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); font-weight: 600; }
+.traj-meta { margin-left: auto; flex: none; color: var(--fg-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.traj-tools { display: inline-flex; align-items: center; gap: 3px; color: var(--fg-muted); font-size: var(--fs-xs); }
+.traj-dur { color: var(--fg-dim); font-size: var(--fs-xs); }
+.traj-body { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 10px; }
+.traj-section-label { color: var(--fg-dim); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.traj-msg { padding: 6px 8px; border-radius: 7px; background: var(--bg-hover); font-size: var(--fs-xs); line-height: 1.55; }
+.traj-msg-role { margin-right: 6px; color: var(--fg-dim); font: 10px var(--font-mono); text-transform: uppercase; }
+.traj-msg-text { color: var(--fg-muted); white-space: pre-wrap; word-break: break-word; }
+.traj-msg.role-user { background: color-mix(in srgb, var(--blue) 8%, transparent); }
+.traj-msg.role-assistant { background: color-mix(in srgb, var(--ok) 8%, transparent); }
+.traj-response { padding: 7px 9px; border: 1px solid var(--border-subtle); border-radius: 7px; color: var(--fg); font-size: var(--fs-xs); line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; }
+

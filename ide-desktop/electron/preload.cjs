@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     archive: (id, archived) => ipcRenderer.invoke('sessions.archive', id, archived),
     reveal: (id) => ipcRenderer.invoke('sessions.reveal', id),
     export: (id) => ipcRenderer.invoke('sessions.export', id),
+    trajectory: (id) => ipcRenderer.invoke('sessions.trajectory', id),
   },
   checkpoints: {
     create: () => ipcRenderer.invoke('checkpoints.create'),

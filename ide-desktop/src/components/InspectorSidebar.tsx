@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  AlertTriangle, ArrowLeft, Bot, ChevronRight, FileCode2, FileDiff, GitBranch,
+  AlertTriangle, ArrowLeft, Activity, Bot, ChevronRight, FileCode2, FileDiff, GitBranch,
   GitCommitHorizontal, ListTodo, Loader2, PanelRightClose, RefreshCw, X,
 } from 'lucide-react';
 import { desktop } from '../lib/ipc';
@@ -8,6 +8,7 @@ import type { GitCommitDetail, GitFileDiffResult, GitFileStat, GitGraphCommit, G
 import type { AppState } from '../types';
 import { countDiffRows, parseUnifiedDiff } from '../lib/gitDiffParse';
 import { layoutGraph, laneColorIndex } from '../lib/gitGraph';
+import { ModelTrajectoryPanel } from './ModelTrajectoryPanel';
 import { formatGoalElapsed, taskProgress } from '../lib/gitPanelFormat';
 import { sessionChangeTotals } from '../lib/state';
 import {
@@ -145,6 +146,12 @@ function OverviewLevel({ state, push, gitStatus, totals }: {
         name="子智能体"
         onClick={() => push({ kind: 'subagents' })}
         title="查看子智能体运行记录"
+      />
+      <DrillRow
+        icon={<Activity size={14} />}
+        name="模型轨迹"
+        onClick={() => push({ kind: 'trajectory' })}
+        title="每次模型调用的请求上下文与返回内容"
       />
     </div>
   );
@@ -731,6 +738,7 @@ export function InspectorSidebar({
         {current.level.kind === 'commit' && <CommitLevel hash={current.level.hash} push={push} />}
         {current.level.kind === 'plan' && <PlanLevel state={state} />}
         {current.level.kind === 'subagents' && <SubagentsLevel sessionId={state.activeSessionId ?? undefined} />}
+        {current.level.kind === 'trajectory' && <ModelTrajectoryPanel sessionId={state.activeSessionId ?? undefined} />}
       </div>
     </aside>
   );

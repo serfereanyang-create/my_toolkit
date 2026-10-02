@@ -22,7 +22,9 @@ export type InspectorLevel =
   | { kind: 'graph' }
   | { kind: 'commit'; hash: string }
   | { kind: 'plan' }
-  | { kind: 'subagents' };
+  | { kind: 'subagents' }
+  /** Per-call model trajectory: what each round-trip sent and returned. */
+  | { kind: 'trajectory' };
 
 export type InspectorEntry = {
   level: InspectorLevel;
@@ -58,6 +60,7 @@ export function levelLabel(level: InspectorLevel): string {
     case 'graph': return '提交图谱';
     case 'plan': return '计划';
     case 'subagents': return '子智能体';
+    case 'trajectory': return '模型轨迹';
     case 'commit': return level.hash.slice(0, 7);
     case 'file': {
       const normalized = level.path.replace(/\\/g, '/');

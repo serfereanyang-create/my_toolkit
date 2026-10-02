@@ -2,6 +2,7 @@ const { dialog, ipcMain, shell, clipboard, app } = require('electron');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { assertInsideRoot, describeFile, inspectProject, resolveWorkspacePath } = require('./preview-policy.cjs');
 const { describePathError } = require('./path-error.cjs');
 const { createQualityGateway } = require('./quality-gateway.cjs');
@@ -227,6 +228,24 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     const outPath = defaultExportPath(workspace.getRoot ? workspace.getRoot() : null, id);
     const formatted = await exportSessionToFile(record, outPath);
     return { ok: true, path: outPath, sha256: formatted.markdownSha256, messageCount: formatted.messageCount, unsupportedKinds: formatted.unsupportedKinds };
+  });
+
+  // Model trajectory: the per-call record the CLI writes next to each session
+  // (<id>.trajectory.jsonl). Read through the same resolver the CLI uses, so
+  // the viewer can never disagree with what was actually sent.
+  ipcMain.handle('sessions.trajectory', async (_event, id) => {
+    const safeId = typeof id === 'string' ? id : '';
+    if (!safeId) return { ok: false, error: '缺少会话 ID' };
+    try {
+      const { readTrajectoryRecords } = await import(
+        pathToFileURL(path.join(__dirname, '..', '..', 'cli', 'dist', 'src', 'session', 'modelTrajectory.js')).href
+      );
+      const sessionPath = workspace.sessionAbsolutePath(safeId);
+      const records = readTrajectoryRecords(sessionPath);
+      return { ok: true, records };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   // Portable settings (zcode settings-sync semantics): keys never leave the
