@@ -21,6 +21,7 @@ import { WorktreesSettings } from './WorktreesSettings';
 import { ArchivedSettings } from './ArchivedSettings';
 import { ModelSettings } from './ModelSettings';
 import { DispatchSettings } from './DispatchSettings';
+import { normalizeChains } from '../../lib/dispatchChains';
 import { UsageSettings } from './UsageSettings';
 import { searchNavIds } from '../../lib/settingsSearch';
 
@@ -172,9 +173,7 @@ export function SettingsView({ settings, onBack, onSave, onSaveKey, initialPage,
         {active === 'model' && <ModelSettings settings={settings} onSave={onSave} onSaveKey={onSaveKey} />}
         {active === 'dispatch' && (
           <DispatchSettings
-            sessionId={sessionId}
-            providers={settings.providers}
-            dispatchDefault={settings.preferences?.dispatchDefault}
+            dispatchDefault={normalizeChains(settings.preferences?.dispatchDefault)}
             onSaveDefault={(next) => {
               onSave({
                 ...settings,

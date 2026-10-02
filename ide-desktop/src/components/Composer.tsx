@@ -16,12 +16,13 @@ import { categorizeFile, getMediaType, getCategoryIcon, generateSmartPrompt, val
 import { sessionChangeTotals } from '../lib/state';
 import { loadInputHistory, pushInputHistory } from '../lib/inputHistory';
 import { modelReasoningCapability } from '../lib/modelCapabilities';
+import { normalizeChains } from '../lib/dispatchChains';
 import { contextBudget, estimateTokens, tokenBreakdown } from '../lib/tokenEstimate';
 
 // approvalLabel is imported from ApprovalMenu and used via approvalMenuLabel below.
 // No local duplicate needed.
 
-export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, onPickPlugin, onPickModel, onPickEffort, onPickToolScope, onAssignDispatchTier, onManageModels, terminalOutput, queue, onQueueSendNow, onQueueEdit, onQueueRemove }: {
+export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, onPickPlugin, onPickModel, onPickEffort, onPickToolScope, onToggleDispatchTier, onManageModels, terminalOutput, queue, onQueueSendNow, onQueueEdit, onQueueRemove }: {
   state: AppState;
   prefill?: { text: string; nonce: number } | null;
   onSubmit: (text: string, files?: DetectedFile[], mentions?: MentionItem[]) => void;
@@ -32,7 +33,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   onPickEffort: (effort: ReasoningEffort) => void;
   onPickToolScope: (toolScope: ToolScope) => void;
   /** Assign a model to a 省钱分级 tier (empty string clears it). */
-  onAssignDispatchTier?: (tier: 'expensive' | 'cheap', model: string) => void;
+  onToggleDispatchTier?: (tier: 'expensive' | 'standard' | 'cheap', value: string) => void;
   onManageModels: () => void;
   terminalOutput?: string;
   /** Messages submitted while the agent was busy, oldest first. */
@@ -323,8 +324,8 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
         {modelMenuOpen && state.settings && (
           <ModelMenu providers={state.settings.providers} activeProviderId={state.settings.activeProviderId}
             activeModel={model} onPick={onPickModel} onManage={onManageModels}
-            dispatchDefault={state.settings.preferences?.dispatchDefault}
-            onAssignTier={onAssignDispatchTier}
+            dispatchDefault={normalizeChains(state.settings.preferences?.dispatchDefault)}
+            onToggleTier={onToggleDispatchTier}
             onClose={() => setModelMenuOpen(false)} />
         )}
         {thinkingMenuOpen && (

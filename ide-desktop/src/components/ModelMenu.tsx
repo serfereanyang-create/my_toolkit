@@ -8,15 +8,31 @@ import type { ProviderConfig } from '../types';
  * A "管理模型" row at the bottom deep-links to the model settings page.
  */
 
-export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDefault, onPick, onAssignTier, onManage, onClose }: {
+/**
+ * The three dispatch tiers, in capability order. Each renders as a toggle
+ * badge on every model row; membership is per-tier, so one model can be the
+ * 中档 primary and a 贵档 fallback at the same time.
+ */
+export const TIER_BADGES = [
+  { id: 'expensive', glyph: '贵', title: '贵档', tone: 'expensive' },
+  { id: 'standard', glyph: '中', title: '中档', tone: 'standard' },
+  { id: 'cheap', glyph: '省', title: '便宜档', tone: 'cheap' },
+] as const;
+
+export type TierBadgeId = typeof TIER_BADGES[number]['id'];
+
+export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDefault, onPick, onToggleTier, onManage, onClose }: {
   providers: ProviderConfig[];
   activeProviderId: string;
   activeModel: string;
-  /** Global default pair (省钱分级) shown as badges on each model row. */
-  dispatchDefault?: { expensive?: string; cheap?: string };
+  /** Per-tier model chains (省钱分级) shown as toggle badges on each row. */
+  dispatchDefault?: Partial<Record<TierBadgeId, string[]>>;
   onPick: (providerId: string, model: string) => void;
-  /** Assign this model to a dispatch tier (global default). */
-  onAssignTier?: (tier: 'expensive' | 'cheap', model: string) => void;
+  /**
+   * Toggle a model's membership in a tier. `value` is the qualified
+   * "provider/model"; an empty string removes it.
+   */
+  onToggleTier?: (tier: TierBadgeId, value: string) => void;
   onManage: () => void;
   onClose: () => void;
 }) {
@@ -62,14 +78,14 @@ export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDe
               </button>
               {isOpen && models.map((model) => {
                 const selected = provider.id === activeProviderId && model === activeModel;
-                // Match on the fully-qualified "provider/model" so a model
-                // that exists under several providers only gets the badge on
-                // the provider actually assigned to that tier.
+                // Tier membership: a model can belong to several tiers, so
+                // each badge is an independent toggle. Match on the qualified
+                // "provider/model" first, then the bare name, so chains saved
+                // by older versions still light up the right row.
                 const qualified = `${provider.label}/${model}`;
-                const isExpensive = dispatchDefault?.expensive === qualified
-                  || dispatchDefault?.expensive === model;
-                const isCheap = dispatchDefault?.cheap === qualified
-                  || dispatchDefault?.cheap === model;
+                const inChain = (chain?: string[]) => Boolean(chain?.some(
+                  (entry) => entry === qualified || entry === model,
+                ));
                 return (
                   <button
                     key={model}
@@ -77,25 +93,27 @@ export function ModelMenu({ providers, activeProviderId, activeModel, dispatchDe
                     onClick={() => { onPick(provider.id, model); onClose(); }}
                   >
                     <span className="model-menu-item-name">{model}</span>
-                    {/* Tier assignment: clicking a badge sets the global
-                        default for that tier without switching the active
-                        model, so one pass over the menu can fill both.
-                        These are spans, not buttons: nesting a button inside
-                        the row button is invalid HTML and React warns about it. */}
-                    <span
-                      role="button"
-                      tabIndex={-1}
-                      className={`model-menu-tier ${isExpensive ? 'tier-expensive on' : ''}`}
-                      title={isExpensive ? '已是贵档（点击取消）' : '设为贵档：只出方案与终审'}
-                      onClick={(event) => { event.stopPropagation(); onAssignTier?.('expensive', isExpensive ? '' : qualified); }}
-                    >贵</span>
-                    <span
-                      role="button"
-                      tabIndex={-1}
-                      className={`model-menu-tier ${isCheap ? 'tier-cheap on' : ''}`}
-                      title={isCheap ? '已是便宜档（点击取消）' : '设为便宜档：承担实现与排查'}
-                      onClick={(event) => { event.stopPropagation(); onAssignTier?.('cheap', isCheap ? '' : qualified); }}
-                    >省</span>
+                    {/* Tier toggles: each badge flips this model's membership in
+                        that tier without switching the active model, so one
+                        pass over the menu can fill several tiers. Spans, not
+                        buttons — nesting buttons inside the row is invalid
+                        HTML and React warns about it. */}
+                    {TIER_BADGES.map(({ id, glyph, title, tone }) => {
+                      const on = inChain(dispatchDefault?.[id]);
+                      return (
+                        <span
+                          key={id}
+                          role="button"
+                          tabIndex={-1}
+                          className={`model-menu-tier tone-${tone} ${on ? 'on' : ''}`}
+                          title={on ? `已在${title}（点击移出）` : `加入${title}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleTier?.(id, on ? '' : qualified);
+                          }}
+                        >{glyph}</span>
+                      );
+                    })}
                     {selected && <Check size={15} className="model-menu-check" />}
                   </button>
                 );

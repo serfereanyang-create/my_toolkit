@@ -3289,6 +3289,82 @@ h1 {
 
 /* ── 省钱分级 panel ─────────────────────────────────────────────────────── */
 .dispatch-panel { display: flex; flex-direction: column; gap: var(--sp-4); }
+
+/* ── Model × tier matrix ───────────────────────────────────────────────── */
+.dispatch-matrix {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-app);
+  overflow: hidden;
+}
+/* Header and model rows share one grid so the three tier columns line up. */
+.dispatch-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px 88px 88px;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-4);
+}
+.dispatch-row-head {
+  height: 40px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-size: var(--fs-xs);
+}
+.dispatch-row:not(.dispatch-row-head) {
+  height: 36px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.dispatch-row:not(.dispatch-row-head):last-child { border-bottom: 0; }
+.dispatch-row:not(.dispatch-row-head):hover { background: var(--bg-hover); }
+.dispatch-col-model { min-width: 0; display: flex; align-items: baseline; gap: 6px; overflow: hidden; }
+.dispatch-model-vendor { flex: 0 0 auto; color: var(--fg-dim); font-size: var(--fs-xs); }
+.dispatch-model-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fg); font-size: var(--fs-sm);
+}
+/* Tier header cell: name plus a one-line reminder of what it is for. */
+.dispatch-col-tier {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; text-align: center;
+}
+.dispatch-col-tier .dispatch-tier-name { font-weight: 600; font-size: var(--fs-xs); }
+.dispatch-col-tier .dispatch-tier-hint { font-size: 10px; opacity: .7; white-space: nowrap; }
+.dispatch-col-tier.tone-expensive .dispatch-tier-name { color: var(--warn); }
+.dispatch-col-tier.tone-standard .dispatch-tier-name { color: var(--blue); }
+.dispatch-col-tier.tone-cheap .dispatch-tier-name { color: var(--ok); }
+.dispatch-body { max-height: 340px; overflow: auto; }
+/* The checkbox doubles as an order badge once a tier holds several models. */
+.dispatch-check {
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--bg-app);
+  font-size: 11px; font-weight: 700;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.dispatch-check:hover { border-color: var(--fg-dim); }
+.dispatch-check svg { opacity: 0; }
+.dispatch-check.on { border-color: transparent; }
+.dispatch-check.on svg { opacity: 1; }
+.dispatch-col-tier .dispatch-check.tone-expensive.on { color: var(--bg-app); }
+/* Tier fills: amber = judgement work, blue = ordinary, green = mechanical. */
+.dispatch-check.tone-expensive.on { background: var(--warn); }
+.dispatch-check.tone-standard.on { background: var(--blue); }
+.dispatch-check.tone-cheap.on { background: var(--ok); }
+.dispatch-search {
+  display: flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-elevated);
+}
+.dispatch-search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--fg); font-size: var(--fs-sm); outline: none; }
+.dispatch-empty { padding: var(--sp-4); color: var(--fg-dim); font-size: var(--fs-sm); text-align: center; }
+/* Tier badge on a model row in the composer's model menu. */
+.model-menu-tier.tone-standard.on { background: color-mix(in srgb, var(--blue) 16%, transparent); color: var(--blue); }
 /* Editable global-default pickers: two labelled selects on one row. */
 .dispatch-fields { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); border: 1px solid var(--border); border-radius: 12px; background: var(--bg-app); }
 .dispatch-field { display: flex; flex-direction: column; gap: 5px; }

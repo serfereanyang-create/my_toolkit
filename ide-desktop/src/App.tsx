@@ -48,6 +48,7 @@ import { decideQueuePump, pumpSessionId } from './lib/queuePump';
 import { setLanguageWorkspaceRoot } from './lib/languageProviders';
 import { transcriptFileName, transcriptToMarkdown } from './lib/transcriptExport';
 import { loadRecent, rankRecent, touchRecent, type RecentFile } from './lib/recentFiles';
+import { normalizeChains, toggleChain } from './lib/dispatchChains';
 import type { MentionItem } from './components/MentionPicker';
 import type { ApprovalMode, ChatItem, PreviewFileDescriptor, ProjectDescriptor, ReasoningEffort, SessionMeta, ThemeMode, ToolScope } from './types';
 
@@ -1636,10 +1637,10 @@ export default function App() {
             }}
             onPickEffort={(effort) => { void setReasoningEffort(effort); }}
             onPickToolScope={(toolScope) => { void setToolScope(toolScope); }}
-            onAssignDispatchTier={async (tier, model) => {
+            onToggleDispatchTier={async (tier, value) => {
               if (!state.settings) return;
-              const current = state.settings.preferences?.dispatchDefault ?? {};
-              const nextDefault = { ...current, [tier]: model || undefined };
+              const current = normalizeChains(state.settings.preferences?.dispatchDefault);
+              const nextDefault = toggleChain(current, tier, value);
               await saveSettings({
                 ...state.settings,
                 preferences: { ...state.settings.preferences, dispatchDefault: nextDefault },
