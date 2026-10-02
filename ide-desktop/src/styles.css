@@ -3320,6 +3320,32 @@ h1 {
   font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--fg);
 }
 
+/* ── Panel v2: role badge + hint on one head row, colour-coded per tier ──── */
+.dispatch-field { display: flex; flex-direction: column; gap: 6px; }
+.dispatch-field-head { display: flex; align-items: baseline; gap: 8px; }
+.dispatch-field-badge {
+  flex: 0 0 auto;
+  padding: 1px 8px; border-radius: var(--r-pill);
+  font-size: var(--fs-xs); font-weight: 600;
+}
+/* Colour carries the meaning (expensive = amber, cheap = blue) so the two
+   cards are distinguishable at a glance, not just by their label text. */
+.dispatch-field.tone-expensive .dispatch-field-badge { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.dispatch-field.tone-cheap .dispatch-field-badge { background: color-mix(in srgb, var(--blue) 14%, transparent); color: var(--blue); }
+.dispatch-field.tone-expensive { border-left: 2px solid color-mix(in srgb, var(--warn) 55%, transparent); padding-left: 12px; }
+.dispatch-field.tone-cheap { border-left: 2px solid color-mix(in srgb, var(--blue) 50%, transparent); padding-left: 12px; }
+
+.dispatch-live { display: flex; flex-direction: column; gap: 6px; }
+.dispatch-live-head { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--fg); }
+.dispatch-live-rows { display: flex; flex-direction: column; gap: 4px; }
+.dispatch-status-line { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); }
+.dispatch-status-dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; background: var(--ok); }
+.dispatch-status-dot.warn { background: var(--warn); }
+.dispatch-status-label { color: var(--fg-dim); flex: 0 0 auto; }
+.dispatch-status-model { color: var(--fg); font-family: var(--font-mono); }
+.dispatch-status-provider { color: var(--fg-dim); }
+.dispatch-live-hint { color: var(--fg-dim); font-size: var(--fs-xs); line-height: 1.6; }
+
 .settings-card {
   /* Upstream settings cards: page-colored surface + hairline (rounded-xl),
      flat — not elevated white. */
