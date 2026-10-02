@@ -79,7 +79,7 @@ function normalizeModelId(value: string): string {
   return value.toLowerCase().replace(/[_.]/g, '-');
 }
 
-type Candidate = { providerName: string; entry: V2ProviderEntry; model: string };
+type Candidate = { providerId: string; providerName: string; entry: V2ProviderEntry; model: string };
 
 function candidates(providers: Record<string, V2ProviderEntry>): Candidate[] {
   const out: Candidate[] = [];
@@ -87,7 +87,7 @@ function candidates(providers: Record<string, V2ProviderEntry>): Candidate[] {
     if (entry.enabled === false) continue;
     const providerName = entry.name ?? id;
     const models = entry.models ? Object.keys(entry.models) : [];
-    for (const model of models) out.push({ providerName, entry, model });
+    for (const model of models) out.push({ providerId: id, providerName, entry, model });
   }
   // A model name often exists under several providers and some of them have no
   // credentials (e.g. GLM-5.3 under both BigModel-Coding-Plan with an empty
@@ -129,7 +129,11 @@ export function resolveTierSelector(
   let pool = all;
   if (wantedProvider) {
     const pKey = normalizeModelId(wantedProvider);
-    pool = pool.filter((c) => normalizeModelId(c.providerName) === pKey);
+    // Match the display label OR the config id: several providers can share a
+    // label (three "新供应商" entries is normal), so the id is the only
+    // unambiguous handle. Both forms are accepted so a selector copied from
+    // the UI keeps working.
+    pool = pool.filter((c) => normalizeModelId(c.providerName) === pKey || normalizeModelId(c.providerId ?? '') === pKey);
     if (pool.length === 0) return { error: `找不到提供商「${wantedProvider}」。` };
   }
 
@@ -185,6 +189,42 @@ export function resolveTiers(
 /** One line for the status row the command prints before dispatching. */
 export function describeTier(tier: ResolvedTier): string {
   return `${tier.providerName}/${tier.model}`;
+}
+
+export type TierOption = {
+  /** Value to store and pass back: "providerId/model". */
+  value: string;
+  /** Human label for the picker: "provider name · model". */
+  label: string;
+  providerId: string;
+  providerName: string;
+  model: string;
+  contextWindow?: number;
+  hasKey: boolean;
+};
+
+/**
+ * Every model the tier router can actually dispatch to, for the UI pickers.
+ *
+ * Sourced from the same v2 config the resolver reads, so an option shown in
+ * the UI is guaranteed to resolve. This is deliberately NOT the desktop
+ * settings provider list: that is a separate registry whose labels
+ * ("新供应商") do not correspond to anything the router can look up.
+ */
+export function listTierOptions(configPath?: string): TierOption[] {
+  const providers = readV2Providers(configPath);
+  return candidates(providers).map((c) => {
+    const modelMeta = (c.entry.models?.[c.model] ?? {}) as { limit?: { context?: number } };
+    return {
+      value: `${c.providerId}/${c.model}`,
+      label: `${c.providerName} · ${c.model}`,
+      providerId: c.providerId,
+      providerName: c.providerName,
+      model: c.model,
+      contextWindow: modelMeta.limit?.context,
+      hasKey: Boolean(c.entry.options?.apiKey),
+    };
+  });
 }
 
 /**
