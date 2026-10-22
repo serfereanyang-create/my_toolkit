@@ -1,4 +1,5 @@
 import type { AgentEvent, AutomationRun, AutomationTask, DesktopSettings, TreeNode, SessionMeta, SessionRecord, ReasoningEffort, ToolScope } from '../types';
+import type { SettingsPatch } from './settingsPatch';
 
 export type LanguageRange = { line: number; column: number; endLine: number; endColumn: number };
 
@@ -147,8 +148,16 @@ export type DispatchOption = {
   label: string;
   providerId: string;
   providerName: string;
+  providerBaseUrl?: string;
   model: string;
   contextWindow?: number;
+  hasKey: boolean;
+};
+
+/** One model in a tier's resolved chain, primary first. */
+export type DispatchChainEntry = {
+  provider: string;
+  model: string;
   hasKey: boolean;
 };
 
@@ -158,6 +167,8 @@ export type DispatchTierInfo = {
   model: string;
   contextWindow: number | null;
   hasKey: boolean;
+  /** Every model the tier will try, primary first (see the fallback chain). */
+  chain?: DispatchChainEntry[];
 };
 
 /** A project-memory entry from the CLI's shared memory store (read-only). */
@@ -166,6 +177,53 @@ export type ProjectMemorySummary = {
   label: string;
   updatedAt: number;
   files: Array<{ name: string; path: string; kind: 'index' | 'item'; size: number; updatedAt: number }>;
+};
+
+/** One file in the global edit record. */
+export type GlobalMemoryFile = {
+  path: string;
+  /** ISO timestamp of the last edit to this file. */
+  at: string;
+  count: number;
+  created: boolean;
+  /** The most recent action on this path was a rename. */
+  renamed?: boolean;
+  /** The most recent action on this path was a deletion. */
+  deleted?: boolean;
+};
+
+/** One workspace's slice of the global edit record. */
+export type GlobalMemoryProject = {
+  project: string;
+  workspace: string;
+  edits: number;
+  lastAt: string;
+  files: GlobalMemoryFile[];
+};
+
+/** One raw edit, oldest first (the panel shows these as a timeline). */
+export type GlobalMemoryEdit = {
+  at: string;
+  project: string;
+  workspace: string;
+  action: 'write' | 'rename' | 'delete';
+  path: string;
+  from?: string;
+  created: boolean;
+};
+
+/** The cross-session, cross-project memory snapshot (see memory-global.cjs). */
+export type GlobalMemorySnapshot = {
+  ok: boolean;
+  root?: string;
+  indexPath?: string;
+  /** The MEMORY.md index exactly as written by the CLI. */
+  markdown?: string;
+  updatedAt?: number;
+  totalEdits?: number;
+  projects?: GlobalMemoryProject[];
+  records?: GlobalMemoryEdit[];
+  error?: string;
 };
 
 /** Renderer-facing audio/video preview payload (see media-preview.cjs). */
@@ -186,12 +244,63 @@ export type SessionCleanupAnalysis = {
   candidates: Array<{ id: string; file: string; title: string | null; createdAt: number | null; bytes: number; messageCount: number }>;
 };
 
+/** One spreadsheet cell, as parsed by electron/xlsx-read.cjs. */
+export type ParsedCell = {
+  text: string;
+  /**
+   * The formula in `=A1+B1` form, when the cell holds one. Present even when
+   * `text` is empty — the CLI's own writer emits formulas with no cached value,
+   * and showing "=B2-C2" beats showing a cell that looks blank.
+   */
+  formula?: string;
+};
+
+/** One worksheet. `rows` is sparse: a gap is an absent cell, not an empty one. */
+export type ParsedSheet = {
+  name: string;
+  rows: Array<Array<ParsedCell | undefined>>;
+  maxCol: number;
+  truncatedRows?: boolean;
+};
+
+export type ParsedWorkbook = {
+  sheets: ParsedSheet[];
+  truncated?: boolean;
+};
+
+/** One run of text in a shape; `level` is the PowerPoint outline depth. */
+export type ParsedParagraph = { text: string; level: number };
+
+export type ParsedShape = {
+  kind: 'text' | 'table' | 'picture';
+  /** Placeholder type: 'title', 'ctrTitle', 'subTitle', … empty for a plain box. */
+  type: string;
+  paragraphs: ParsedParagraph[];
+  table?: string[][];
+};
+
+export type ParsedSlide = {
+  index: number;
+  title: string;
+  shapes: ParsedShape[];
+  notes: string;
+  hasPicture: boolean;
+  /** Index into `shapes` of the shape used as the title, or -1. */
+  titleShapeIndex: number;
+};
+
+export type ParsedDeck = {
+  slides: ParsedSlide[];
+  truncated?: boolean;
+};
+
 type ZCodeDesktopApi = {
   workspace: {
     open(): Promise<{ canceled: boolean; root?: string }>;
     setRoot(root: string): Promise<{ root: string }>;
     restore(): Promise<{ root: string | null; restored: boolean; reason?: string }>;
     getTree(relativePath?: string): Promise<TreeNode[]>;
+    reveal(relativePath: string): Promise<{ ok: boolean; error?: string }>;
   };
   fs: {
     read(relativePath: string): Promise<string>;
@@ -208,7 +317,7 @@ type ZCodeDesktopApi = {
   };
   settings: {
     get(): Promise<DesktopSettings>;
-    set(next: Partial<DesktopSettings>): Promise<DesktopSettings>;
+    set(next: SettingsPatch): Promise<DesktopSettings>;
   };
   appearance: {
     pickBackground(): Promise<{ ok: boolean; canceled?: boolean; version?: number; error?: string }>;
@@ -282,8 +391,16 @@ type ZCodeDesktopApi = {
     suggestCommitMessage(sessionId?: string): Promise<{ ok: boolean; message: { subject: string; body: string; full: string; type: string; scope: string | null; changedFileCount: number; scopedFileCount: number; sessionFileCount: number } }>;
   };
   dispatch: {
-    /** Resolve the session's 贵/便宜 tiers to real providers for the UI. */
-    status(sessionId?: string): Promise<{ ok: boolean; configured: boolean; tiers?: { expensive: DispatchTierInfo; cheap: DispatchTierInfo }; error?: string }>;
+    /** Resolve the session's configured tiers to real providers for the UI. */
+    status(sessionId?: string): Promise<{
+      ok: boolean;
+      configured: boolean;
+      /** Every configured tier, keyed by id; unconfigured tiers are absent. */
+      tiers?: Partial<Record<'expensive' | 'standard' | 'cheap', DispatchTierInfo>>;
+      /** The first configured tier, for a one-line headline. */
+      primary?: 'expensive' | 'standard' | 'cheap' | null;
+      error?: string;
+    }>;
     /**
      * Every dispatchable provider/model pair, from the CLI's own resolver.
      * The desktop's provider list uses different labels, so the pickers must
@@ -294,6 +411,8 @@ type ZCodeDesktopApi = {
   memory: {
     listProjects(): Promise<{ ok: boolean; projects: ProjectMemorySummary[] }>;
     read(workspaceId: string, fileName: string): Promise<{ ok: boolean; content: string; updatedAt: number }>;
+    /** Every file ever edited, across projects and sessions. */
+    global(): Promise<GlobalMemorySnapshot>;
   };
   media: {
     prepare(relativePath: string, expectedKind: 'audio' | 'video'): Promise<{ ok: boolean; preparation: MediaPreviewPreparation }>;
@@ -311,8 +430,12 @@ type ZCodeDesktopApi = {
     active(): Promise<Array<{ id: string; type: AutomationTask['trigger']['type'] }>>;
     onChanged(handler: () => void): () => void;
   };
+  messageQueue: {
+    load(root: string): Promise<{ messages: import('../types').QueuedMessage[]; pausedSessions: string[] }>;
+    save(root: string, state: { messages: import('../types').QueuedMessage[]; pausedSessions: string[] }): Promise<{ ok: boolean }>;
+  };
   agent: {
-    start(resumeSessionId?: string): Promise<{ ok: boolean }>;
+    start(resumeSessionId?: string): Promise<{ ok: boolean; sessionId: string; reused?: boolean; running?: boolean }>;
     /**
      * The trailing sessionId addresses one conversation's CLI child. Several can
      * be running at once, so omitting it may reach the wrong one.
@@ -322,7 +445,8 @@ type ZCodeDesktopApi = {
     setEffort(reasoningEffort: ReasoningEffort, sessionId?: string): Promise<{ ok: boolean; reasoningEffort: ReasoningEffort }>;
     setToolScope(toolScope: ToolScope, sessionId?: string): Promise<{ ok: boolean; toolScope: ToolScope }>;
     cancel(sessionId?: string): Promise<{ ok: boolean }>;
-    restart(resumeSessionId?: string): Promise<{ ok: boolean }>;
+    restart(resumeSessionId?: string): Promise<{ ok: boolean; sessionId: string }>;
+    guardConfirmation(requestId: string, selectedLabel: string, sessionId: string): Promise<{ ok: boolean }>;
     /** Close one session's CLI child, leaving any others running. */
     stopSession(sessionId: string): Promise<{ ok: boolean }>;
     approve(requestId: string, decision: 'allow_once' | 'allow_session' | 'deny', sessionId?: string): Promise<{ ok: boolean }>;
@@ -352,8 +476,22 @@ type ZCodeDesktopApi = {
   clipboard: {
     write(text: string): Promise<{ ok: boolean }>;
   };
+  backgroundApp: {
+    execute(tool: string, input: Record<string, unknown>): Promise<BackgroundBrowserResult>;
+    close(): Promise<{ ok: boolean }>;
+  };
+  backgroundBrowser: {
+    execute(tool: string, input: Record<string, unknown>, sessionId?: string): Promise<BackgroundBrowserResult>;
+    close(sessionId?: string): Promise<{ ok: boolean }>;
+    status(): Promise<{ sessions: Array<{ sessionId: string; browserId?: string; url?: string; hidden?: boolean }> }>;
+  };
   computer: {
     detectBrowserExtension(): Promise<{ installed: boolean; extensions: Array<{ browser: string; extensionId: string; name: string }> }>;
+  };
+  /** 电脑操控面板：每次调用执行一个 computer_* 工具（无需模型）。 */
+  guiControl: {
+    status(): Promise<{ ok: boolean; platform: string; built: boolean; reason?: string }>;
+    invoke(tool: string, input?: Record<string, unknown>): Promise<GuiToolResult>;
   };
   /**
    * Typed quality tool gateway: invokes a read-only CLI analysis tool through
@@ -393,6 +531,8 @@ type ZCodeDesktopApi = {
     canNavigate(): Promise<{ canGoBack: boolean; canGoForward: boolean }>;
     openExternal(url: string): Promise<{ ok: boolean }>;
     readDocx(relativePath: string, token: string): Promise<{ ok: boolean; buffer?: ArrayBuffer; byteOffset?: number; byteLength?: number; error?: string }>;
+    readXlsx(relativePath: string, token: string): Promise<{ ok: boolean; workbook?: ParsedWorkbook; size?: number; error?: string }>;
+    readPptx(relativePath: string, token: string): Promise<{ ok: boolean; deck?: ParsedDeck; size?: number; error?: string }>;
     onState(handler: (state: PreviewGuestState) => void): () => void;
     onLog(handler: (payload: { token: string; line: string }) => void): () => void;
   };
@@ -476,6 +616,8 @@ type ZCodeDesktopApi = {
   };
   git: {
     status(): Promise<GitStatus>;
+    /** `git init` for a folder that is not a repository yet. */
+    init(options?: { branch?: string }): Promise<GitInitResult>;
     branches(): Promise<GitBranchList>;
     log(n?: number): Promise<GitLogResult>;
     graph(n?: number): Promise<GitGraphResult>;
@@ -489,12 +631,51 @@ type ZCodeDesktopApi = {
     unstage(paths: string[]): Promise<{ ok: boolean; unstaged?: string[]; error?: string }>;
     discard(paths: string[]): Promise<{ ok: boolean; discarded?: string[]; error?: string }>;
     commit(message: string): Promise<{ ok: boolean; shortHash?: string; message?: string; output?: string; error?: string }>;
-    push(remote?: string, branch?: string, force?: boolean): Promise<{ ok: boolean; output?: string; error?: string }>;
-    pull(remote?: string, branch?: string): Promise<{ ok: boolean; output?: string; error?: string }>;
+    push(remote?: string, branch?: string, force?: boolean, setUpstream?: boolean): Promise<{ ok: boolean; output?: string; error?: string }>;
+    pull(remote?: string, branch?: string, strategy?: GitPullStrategy): Promise<{ ok: boolean; output?: string; error?: string }>;
     checkout(branch: string): Promise<{ ok: boolean; branch?: string; error?: string }>;
     createBranch(name: string): Promise<{ ok: boolean; branch?: string; error?: string }>;
     deleteBranch(name: string, force?: boolean): Promise<{ ok: boolean; branch?: string; error?: string }>;
     createPr(opts: { title: string; body?: string; draft?: boolean; base?: string }): Promise<{ ok: boolean; url?: string; number?: number | null; title?: string; output?: string; error?: string }>;
+  };
+};
+
+export type BackgroundBrowserResult = {
+  ok: boolean;
+  output: string;
+  data?: {
+    browserId?: string;
+    url?: string;
+    hidden?: boolean;
+    computerImage?: { mediaType: string; data: string; path: string };
+    [key: string]: unknown;
+  };
+};
+
+/**
+ * One computer_* tool result from the 电脑操控 panel. `output` is the same
+ * human-readable text the agent sees; `data` carries the machine-readable
+ * extras the panel needs (window geometry, the screenshot payload).
+ */
+export type GuiToolResult = {
+  ok: boolean;
+  output: string;
+  error?: string;
+  data?: {
+    computerImage?: { mediaType: string; data: string; path: string };
+    windows?: Array<{
+      pid: number;
+      appPid: number;
+      class: string;
+      cloaked: boolean;
+      title: string;
+      left: number;
+      top: number;
+      right: number;
+      bottom: number;
+    }>;
+    screen?: { left: number; top: number; width: number; height: number } | null;
+    [key: string]: unknown;
   };
 };
 
@@ -508,7 +689,7 @@ export type ConnectivityResult = {
 
 // ── Git types (mirrored from electron/git.cjs return shapes) ─────────────────
 
-export type GitFileStatus = { path: string; index: string; working: string };
+export type GitFileStatus = { path: string; index: string; working: string; originalPath?: string };
 
 export type GitStatus = {
   ok: boolean;
@@ -520,7 +701,28 @@ export type GitStatus = {
   unstaged?: GitFileStatus[];
   untracked?: string[];
   hasConflicts?: boolean;
+  unborn?: boolean;
+  detached?: boolean;
+  /** The folder has never been through `git init` — offer to create a repo. */
+  notRepo?: boolean;
   error?: string;
+};
+
+/** Result of `git init`; `alreadyRepo` means the folder already has a repository. */
+export type GitInitResult = {
+  ok: boolean;
+  branch?: string;
+  alreadyRepo?: boolean;
+  error?: string;
+};
+
+export type GitPullStrategy = 'configured' | 'ff-only' | 'merge' | 'rebase';
+export type GitSyncInfo = {
+  remotes: string[];
+  tracking: { remote: string; branch: string } | null;
+  pushDefault: string | null;
+  invalidTracking?: boolean;
+  invalidPushDefault?: boolean;
 };
 
 export type GitBranchList = {
@@ -528,6 +730,7 @@ export type GitBranchList = {
   current?: string;
   local?: string[];
   remote?: string[];
+  sync?: GitSyncInfo;
   error?: string;
 };
 
@@ -557,6 +760,7 @@ export type GitLogResult = {
 /** One file's working-tree delta, for the review list's per-row +N −M. */
 export type GitFileStat = {
   path: string;
+  originalPath?: string;
   added: number;
   removed: number;
   status: 'staged' | 'unstaged' | 'untracked';
@@ -581,15 +785,21 @@ export type GitGraphResult = {
 export type GitFileDiffResult = {
   ok: boolean;
   file?: string;
+  workspacePath?: string;
+  originalPath?: string;
+  outsideWorkspace?: boolean;
   diff?: string;
   staged?: boolean;
   /** True when the file is untracked, so the diff is a synthetic listing. */
   untracked?: boolean;
+  binary?: boolean;
+  truncated?: boolean;
   error?: string;
 };
 
 export type GitCommitFile = {
   path: string;
+  originalPath?: string;
   added: number;
   removed: number;
 };

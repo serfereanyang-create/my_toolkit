@@ -41,12 +41,22 @@ const MAX_DIFF_BYTES = 512 * 1024; // 512 KB
  */
 async function git(cwd, args, opts = {}) {
   if (!cwd) throw new Error('No workspace open');
-  const { stdout, stderr } = await execAsync('git', args, {
+  const gitEnv = { ...process.env };
+  for (const variable of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES']) delete gitEnv[variable];
+  const pending = execAsync('git', ['--no-pager', '--literal-pathspecs', '-c', 'core.quotepath=false', '-c', 'color.ui=false', ...args], {
     cwd,
+    env: gitEnv,
     maxBuffer: opts.maxBuffer ?? MAX_DIFF_BYTES,
     windowsHide: true,
   });
-  return { stdout: (stdout || '').trimEnd(), stderr: (stderr || '').trimEnd() };
+  let inputError;
+  if (opts.input !== undefined) {
+    pending.child.stdin.on('error', (error) => { inputError = error; });
+    pending.child.stdin.end(opts.input);
+  }
+  const { stdout, stderr } = await pending;
+  if (inputError) throw inputError;
+  return { stdout: opts.preserveWhitespace ? stdout || '' : (stdout || '').trimEnd(), stderr: (stderr || '').trimEnd() };
 }
 
 /**
@@ -60,8 +70,18 @@ async function safeGit(cwd, args, opts = {}) {
   } catch (err) {
     const stderr = err && err.stderr ? String(err.stderr).trimEnd() : '';
     const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, stdout: '', stderr, error: message };
+    const diagnostic = err?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'Git 返回内容超过预览限制，请缩小查看范围' : stderr || message;
+    return { ok: false, stdout: '', stderr, error: diagnostic };
   }
+}
+
+/**
+ * Is this directory inside a git work tree? Only called on the failure path of
+ * getStatus, so a healthy repo pays nothing for it.
+ */
+async function probeRepository(root) {
+  const res = await safeGit(root, ['rev-parse', '--show-toplevel']);
+  return res.ok ? { ok: true, toplevel: res.stdout } : { ok: false };
 }
 
 // ── public API ────────────────────────────────────────────────────────────────
@@ -85,15 +105,24 @@ async function safeGit(cwd, args, opts = {}) {
  */
 async function getStatus(root) {
   // --porcelain=v1 -b gives us branch info + per-file status in one call
-  const res = await safeGit(root, ['status', '--porcelain=v1', '-b', '--untracked-files=all']);
-  if (!res.ok) return { ok: false, error: res.error };
+  const res = await safeGit(root, ['status', '--porcelain=v1', '-b', '-z', '--untracked-files=all'], { preserveWhitespace: true });
+  if (!res.ok) {
+    // A folder that has never been through `git init` is not a broken repo —
+    // the panel offers to create one instead of repeating git's fatal message.
+    const probe = await probeRepository(root);
+    if (!probe.ok) return { ok: false, notRepo: true, error: '这个文件夹还不是 git 仓库' };
+    return { ok: false, error: res.error };
+  }
 
-  const lines = res.stdout.split('\n');
+  const lines = res.stdout.split('\0');
   const branch_line = lines[0] || '';   // ## main...origin/main [ahead 1]
 
   // Parse branch / upstream / ahead / behind from the header
   const branchMatch = branch_line.match(/^## (.+?)(?:\.\.\.(.+?))?(?:\s+\[([^\]]+)\])?$/);
-  const branchName  = branchMatch ? branchMatch[1] : 'HEAD';
+  const rawBranch = branchMatch ? branchMatch[1] : 'HEAD';
+  const unborn = /^(No commits yet on |Initial commit on )/.test(rawBranch);
+  const detached = rawBranch === 'HEAD (no branch)';
+  const branchName = detached ? 'HEAD' : rawBranch.replace(/^(No commits yet on |Initial commit on )/, '');
   const upstream    = branchMatch && branchMatch[2] ? branchMatch[2] : null;
   let ahead = 0, behind = 0;
   if (branchMatch && branchMatch[3]) {
@@ -112,6 +141,7 @@ async function getStatus(root) {
     const X = line[0];   // index status
     const Y = line[1];   // working-tree status
     const filePath = line.slice(3);
+    const originalPath = X === 'R' || X === 'C' || Y === 'R' || Y === 'C' ? lines[++i] : undefined;
 
     if (X === '?' && Y === '?') {
       untracked.push(filePath);
@@ -121,11 +151,47 @@ async function getStatus(root) {
     if ((X === 'U' || Y === 'U') || (X === 'A' && Y === 'A') || (X === 'D' && Y === 'D')) {
       hasConflicts = true;
     }
-    if (X !== ' ' && X !== '?') staged.push({ path: filePath, index: X, working: Y });
-    if (Y !== ' ' && Y !== '?') unstaged.push({ path: filePath, index: X, working: Y });
+    const file = { path: filePath, index: X, working: Y, ...(originalPath ? { originalPath } : {}) };
+    if (X !== ' ' && X !== '?') staged.push(file);
+    if (Y !== ' ' && Y !== '?') unstaged.push(file);
   }
 
-  return { ok: true, branch: branchName, upstream, ahead, behind, staged, unstaged, untracked, hasConflicts };
+  return { ok: true, branch: branchName, upstream, ahead, behind, staged, unstaged, untracked, hasConflicts, unborn, detached };
+}
+
+/** Branch a brand-new repository starts on. */
+const DEFAULT_INIT_BRANCH = 'main';
+
+/**
+ * Turn the workspace folder into a git repository (`git init`).
+ *
+ * Refused when the folder already belongs to a repository — a nested repo
+ * inside a parent work tree is never what the caller meant. Nothing is staged,
+ * committed or written besides the .git directory itself.
+ */
+async function initRepo(root, options = {}) {
+  if (!root) return { ok: false, error: 'No workspace open' };
+  let branch = DEFAULT_INIT_BRANCH;
+  const requested = typeof options.branch === 'string' ? options.branch.trim() : '';
+  if (requested) {
+    try {
+      branch = sanitiseBranchName(requested);
+    } catch {
+      return { ok: false, error: '分支名称只能包含字母、数字、点、下划线、短横线和斜杠' };
+    }
+  }
+  const existing = await probeRepository(root);
+  if (existing.ok) return { ok: false, alreadyRepo: true, error: '这个文件夹已经在 git 仓库里了', toplevel: existing.toplevel };
+
+  let res = await safeGit(root, ['init', '-b', branch]);
+  if (!res.ok) {
+    // git older than 2.28 has no `init -b`; create the repo, then name HEAD.
+    res = await safeGit(root, ['init']);
+    if (!res.ok) return { ok: false, error: res.error };
+    const head = await safeGit(root, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
+    if (!head.ok) return { ok: false, error: head.error };
+  }
+  return { ok: true, branch, root };
 }
 
 /**
@@ -133,20 +199,33 @@ async function getStatus(root) {
  * Returns { ok, current: string, local: string[], remote: string[] }
  */
 async function getBranches(root) {
-  const [localRes, remoteRes] = await Promise.all([
+  const [localRes, remoteRes, namesRes] = await Promise.all([
     safeGit(root, ['branch', '--format=%(refname:short)']),
     safeGit(root, ['branch', '-r', '--format=%(refname:short)']),
+    safeGit(root, ['remote']),
   ]);
   if (!localRes.ok) return { ok: false, error: localRes.error };
+  if (!remoteRes.ok || !namesRes.ok) return { ok: false, error: remoteRes.error || namesRes.error };
 
   // Find current branch
   const currentRes = await safeGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
-  const current = currentRes.ok ? currentRes.stdout : 'HEAD';
+  const symbolic = currentRes.ok ? null : await safeGit(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  const current = currentRes.ok ? currentRes.stdout : symbolic?.ok ? symbolic.stdout : 'HEAD';
 
   const local  = localRes.stdout  ? localRes.stdout.split('\n').filter(Boolean)  : [];
   const remote = remoteRes.stdout ? remoteRes.stdout.split('\n').filter(Boolean) : [];
-
-  return { ok: true, current, local, remote };
+  const remotes = namesRes.stdout.split('\n').filter(Boolean);
+  const keys = [`branch.${current}.remote`, `branch.${current}.merge`, `branch.${current}.pushRemote`, 'remote.pushDefault'];
+  const values = await Promise.all(keys.map((key) => safeGit(root, ['config', '--get', key])));
+  const [trackingRemote, trackingMerge, branchPush, globalPush] = values.map((value) => value.ok ? value.stdout : '');
+  const knownRemote = (name) => name === '.' || remotes.includes(name);
+  const trackingName = trackingMerge.startsWith('refs/heads/') ? trackingMerge.slice(11) : '';
+  const trackingValid = knownRemote(trackingRemote) && trackingName && (await validateSyncBranch(root, trackingName)).ok;
+  const tracking = trackingValid ? { remote: trackingRemote, branch: trackingName } : null;
+  const configuredPush = branchPush || globalPush;
+  const pushDefault = configuredPush ? knownRemote(configuredPush) ? configuredPush : null : tracking?.remote ?? null;
+  const sync = { remotes, tracking, pushDefault, invalidTracking: Boolean((trackingRemote || trackingMerge) && !tracking), invalidPushDefault: Boolean(configuredPush && !knownRemote(configuredPush)) };
+  return { ok: true, current, local, remote, sync };
 }
 
 /**
@@ -178,7 +257,7 @@ async function getLog(root, n = 20) {
  */
 async function getDiff(root, staged = false) {
   const args = staged ? ['diff', '--staged'] : ['diff'];
-  const res = await safeGit(root, args, { maxBuffer: MAX_DIFF_BYTES });
+  const res = await safeGit(root, args, { maxBuffer: MAX_DIFF_BYTES, preserveWhitespace: true });
   if (!res.ok) return { ok: false, error: res.error };
   // Truncate if giant — caller should paginate in practice
   const text = res.stdout.length > MAX_DIFF_BYTES
@@ -200,11 +279,52 @@ async function getDiff(root, staged = false) {
 const UNTRACKED_LINE_CAP = 200000;   // stop counting lines past this point
 const UNTRACKED_FILE_CAP = 2000;     // stop enumerating untracked files past this count
 
+function parseNumstatRecords(text) {
+  const parts = text.split('\0');
+  const files = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const record = parts[index];
+    const first = record.indexOf('\t');
+    const second = record.indexOf('\t', first + 1);
+    if (first < 0 || second < 0) continue;
+    let name = record.slice(second + 1);
+    let originalPath;
+    if (!name) { originalPath = parts[++index]; name = parts[++index]; }
+    if (!name) continue;
+    const added = Number(record.slice(0, first));
+    const removed = Number(record.slice(first + 1, second));
+    files.push({ path: name, added: Number.isFinite(added) ? added : 0, removed: Number.isFinite(removed) ? removed : 0, ...(originalPath ? { originalPath } : {}) });
+  }
+  return files;
+}
+
+function countUntrackedLines(root, relative, limit) {
+  try {
+    const actualRoot = fs.realpathSync(root);
+    const absolute = fs.realpathSync(path.resolve(root, relative));
+    const contained = path.relative(actualRoot, absolute);
+    if (contained === '..' || contained.startsWith(`..${path.sep}`) || path.isAbsolute(contained)) return 0;
+    const stat = fs.statSync(absolute);
+    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) return 0;
+    const buffer = fs.readFileSync(absolute);
+    if (buffer.subarray(0, 8000).includes(0)) return 0;
+    let lines = 0;
+    for (const value of buffer) {
+      if (value === 10 && ++lines >= limit) return limit;
+    }
+    if (buffer.length > 0 && buffer[buffer.length - 1] !== 10) lines += 1;
+    return Math.min(lines, limit);
+  } catch { return 0; }
+}
+
 async function getDiffStats(root) {
+  const repository = await safeGit(root, ['rev-parse', '--show-toplevel']);
+  if (!repository.ok) return { ok: false, error: repository.error };
+  const base = repository.stdout;
   const [stagedRes, unstagedRes, untrackedRes] = await Promise.all([
-    safeGit(root, ['diff', '--cached', '--numstat']),
-    safeGit(root, ['diff', '--numstat']),
-    safeGit(root, ['ls-files', '--others', '--exclude-standard']),
+    safeGit(base, ['diff', '--cached', '--numstat', '-z', '-M']),
+    safeGit(base, ['diff', '--numstat', '-z', '-M']),
+    safeGit(base, ['ls-files', '--others', '--exclude-standard', '-z']),
   ]);
   if (!stagedRes.ok) return { ok: false, error: stagedRes.error };
 
@@ -212,16 +332,9 @@ async function getDiffStats(root) {
   const parseNumstat = (text) => {
     let added = 0;
     let removed = 0;
-    for (const line of text.split('\n')) {
-      if (!line) continue;
-      const tab1 = line.indexOf('\t');
-      if (tab1 < 0) continue;
-      const tab2 = line.indexOf('\t', tab1 + 1);
-      if (tab2 < 0) continue;
-      const a = Number(line.slice(0, tab1));
-      const r = Number(line.slice(tab1 + 1, tab2));
-      if (Number.isFinite(a)) added += a;
-      if (Number.isFinite(r)) removed += r;
+    for (const file of parseNumstatRecords(text)) {
+      added += file.added;
+      removed += file.removed;
     }
     return { added, removed };
   };
@@ -233,30 +346,19 @@ async function getDiffStats(root) {
   // A path is only counted once even if it appears in both lists (git
   // numstat never reports untracked, but staged renames can overlap).
   let untrackedAdded = 0;
-  const untrackedFiles = (untrackedRes.ok ? untrackedRes.stdout.split('\n').filter(Boolean) : [])
+  const untrackedFiles = (untrackedRes.ok ? untrackedRes.stdout.split('\0').filter(Boolean) : [])
     .slice(0, UNTRACKED_FILE_CAP);
   let budget = UNTRACKED_LINE_CAP;
   for (const rel of untrackedFiles) {
     if (budget <= 0) break;
-    try {
-      const abs = path.resolve(root, rel);
-      const stat = fs.statSync(abs);
-      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue;
-      const text = fs.readFileSync(abs, 'utf8');
-      // Count newline-terminated lines; a trailing final line without a
-      // newline still counts as one line if non-empty.
-      let n = 0;
-      for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
-      if (text.length > 0 && text.charCodeAt(text.length - 1) !== 10) n++;
-      const capped = Math.min(n, budget);
-      untrackedAdded += capped;
-      budget -= capped;
-    } catch { /* unreadable or vanished — skip */ }
+    const counted = countUntrackedLines(base, rel, budget);
+    untrackedAdded += counted;
+    budget -= counted;
   }
 
   const fileCount = new Set([
-    ...stagedRes.stdout.split('\n').map((l) => l.split('\t')[2]).filter(Boolean),
-    ...unstagedRes.stdout.split('\n').map((l) => l.split('\t')[2]).filter(Boolean),
+    ...parseNumstatRecords(stagedRes.stdout).map((file) => file.path),
+    ...parseNumstatRecords(unstagedRes.stdout).map((file) => file.path),
     ...untrackedFiles,
   ]).size;
 
@@ -333,39 +435,72 @@ async function getFileDiff(root, filePath, staged = false, ref = '') {
     return { ok: false, error: 'Invalid commit ref' };
   }
 
-  const abs = await toRepoPath(root, rel);
+  const repository = await safeGit(root, ['rev-parse', '--show-toplevel']);
+  if (!repository.ok) return { ok: false, error: repository.error };
+  const repoRoot = repository.stdout;
+  const abs = path.resolve(repoRoot, rel);
+  const workspaceRelative = path.relative(path.resolve(root), abs);
+  const outsideWorkspace = workspaceRelative === '..' || workspaceRelative.startsWith(`..${path.sep}`) || path.isAbsolute(workspaceRelative);
+  const pathInfo = { workspacePath: outsideWorkspace ? undefined : workspaceRelative.split(path.sep).join('/'), outsideWorkspace };
+  let originalPath;
+  if (staged || commitRef) {
+    const summary = await safeGit(repoRoot, commitRef ? ['show', '--numstat', '-z', '-M', '--format=', commitRef] : ['diff', '--cached', '--numstat', '-z', '-M']);
+    if (!summary.ok) return { ok: false, error: summary.error };
+    const selected = path.relative(repoRoot, abs).split(path.sep).join('/');
+    originalPath = parseNumstatRecords(summary.stdout).find((file) => file.path === selected)?.originalPath;
+  }
+  if (originalPath) pathInfo.originalPath = originalPath;
+  const paths = [...(originalPath ? [path.resolve(repoRoot, originalPath)] : []), abs];
   const args = commitRef
-    ? ['show', '--format=', commitRef, '--', abs]
-    : staged ? ['diff', '--cached', '--', abs] : ['diff', '--', abs];
+    ? ['show', '-M', '--format=', commitRef, '--', ...paths]
+    : staged ? ['diff', '--cached', '-M', '--', ...paths] : ['diff', '--', ...paths];
 
-  const res = await safeGit(root, args, { maxBuffer: MAX_DIFF_BYTES });
+  const res = await safeGit(root, args, { maxBuffer: MAX_DIFF_BYTES, preserveWhitespace: true });
   if (!res.ok) return { ok: false, error: res.error };
 
   if (res.stdout.trim()) {
-    return { ok: true, file: rel, diff: res.stdout, staged, untracked: false, ref: commitRef };
+    return { ...pathInfo, ok: true, file: rel, diff: res.stdout, staged, untracked: false, ref: commitRef, binary: /^(Binary files .* differ|GIT binary patch)$/m.test(res.stdout) };
   }
   // A commit that did not touch the file legitimately has no diff; only look
   // for an untracked listing in the working-tree case.
-  if (commitRef) {
-    return { ok: true, file: rel, diff: '', staged, untracked: false, ref: commitRef };
+  if (commitRef || staged) {
+    return { ...pathInfo, ok: true, file: rel, diff: '', staged, untracked: false, ref: commitRef };
   }
 
   // No tracked diff: the path may be untracked, in which case show its
   // contents as additions (matching how the review list counts it).
   const untrackedRes = await safeGit(root, ['ls-files', '--others', '--exclude-standard', '--', abs]);
   if (!untrackedRes.ok || !untrackedRes.stdout.trim()) {
-    return { ok: true, file: rel, diff: '', staged, untracked: false };
+    return { ...pathInfo, ok: true, file: rel, diff: '', staged, untracked: false };
   }
   try {
-    const stat = fs.statSync(abs);
-    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) {
-      return { ok: true, file: rel, diff: '', staged, untracked: true };
+    const actualFile = fs.realpathSync(abs);
+    const actualRoot = fs.realpathSync(repoRoot);
+    const relative = path.relative(actualRoot, actualFile);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      return { ok: false, error: '文件路径超出 Git 仓库范围' };
     }
-    const text = fs.readFileSync(abs, 'utf8');
-    const body = text.split(/\r?\n/).slice(0, 2000).map((line) => `+${line}`).join('\n');
-    return { ok: true, file: rel, diff: `--- /dev/null\n+++ b/${rel}\n${body}`, staged, untracked: true };
-  } catch {
-    return { ok: true, file: rel, diff: '', staged, untracked: true };
+    const stat = fs.statSync(actualFile);
+    if (!stat.isFile()) return { ok: false, error: '所选路径不是普通文件' };
+    if (stat.size > 2 * 1024 * 1024) return { ...pathInfo, ok: true, file: rel, diff: '', staged, untracked: true, truncated: true };
+    const buffer = fs.readFileSync(actualFile);
+    if (buffer.subarray(0, 8000).includes(0)) return { ...pathInfo, ok: true, file: rel, diff: '', staged, untracked: true, binary: true };
+    const text = buffer.toString('utf8');
+    if (!text) return { ...pathInfo, ok: true, file: rel, diff: '', staged, untracked: true };
+    const lines = text.split(/\r?\n/);
+    if (text.endsWith('\n')) lines.pop();
+    const rows = [];
+    let bytes = 0;
+    for (const line of lines.slice(0, 2000)) {
+      const size = Buffer.byteLength(line, 'utf8') + 2;
+      if (bytes + size > MAX_DIFF_BYTES - 4096) break;
+      rows.push(`+${line}`); bytes += size;
+    }
+    const truncated = rows.length < lines.length;
+    const diff = rows.length ? `--- /dev/null\n+++ b/${rel}\n@@ -0,0 +1,${rows.length} @@\n${rows.join('\n')}` : '';
+    return { ...pathInfo, ok: true, file: rel, diff, staged, untracked: true, truncated };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -389,23 +524,8 @@ async function getCommitDetail(root, ref) {
   if (!metaRes.ok) return { ok: false, error: metaRes.error };
   const [hash, shortHash, author, date, subject, ...bodyParts] = metaRes.stdout.split(sep);
 
-  const statRes = await safeGit(root, ['show', '--numstat', '--format=', safeRef]);
-  const files = [];
-  if (statRes.ok) {
-    for (const line of statRes.stdout.split('\n')) {
-      if (!line) continue;
-      const tab1 = line.indexOf('\t');
-      if (tab1 < 0) continue;
-      const tab2 = line.indexOf('\t', tab1 + 1);
-      if (tab2 < 0) continue;
-      const rel = line.slice(tab2 + 1);
-      if (!rel) continue;
-      const a = Number(line.slice(0, tab1));
-      const r = Number(line.slice(tab1 + 1, tab2));
-      // Binary files report "-"; keep the row, contribute no line counts.
-      files.push({ path: rel, added: Number.isFinite(a) ? a : 0, removed: Number.isFinite(r) ? r : 0 });
-    }
-  }
+  const statRes = await safeGit(root, ['show', '--numstat', '-z', '-M', '--format=', safeRef]);
+  const files = statRes.ok ? parseNumstatRecords(statRes.stdout) : [];
 
   return {
     ok: true,
@@ -422,14 +542,32 @@ async function getCommitDetail(root, ref) {
 }
 
 /**
- * Stage one or more paths (relative to workspace root).
+ * Stage one or more repository-relative file selections.
  * Returns { ok, staged: string[] }
  */
+function normaliseRepoSelection(repoRoot, paths) {
+  if (!Array.isArray(paths) || paths.length === 0) return { ok: false, error: '请选择要操作的文件' };
+  const selected = new Set();
+  for (const value of paths) {
+    if (typeof value !== 'string' || !value.trim() || value.includes('\0') || value.split(/[\\/]/).includes('..')) return { ok: false, error: '文件选择包含无效路径，操作已中止' };
+    const relative = path.relative(repoRoot, path.resolve(repoRoot, value));
+    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return { ok: false, error: '文件选择超出当前 Git 仓库，操作已中止' };
+    selected.add(relative.split(path.sep).join('/'));
+  }
+  return { ok: true, root: repoRoot, paths: [...selected] };
+}
+
+async function prepareRepoSelection(root, paths) {
+  const repository = await safeGit(root, ['rev-parse', '--show-toplevel']);
+  if (!repository.ok) return { ok: false, error: repository.error };
+  return normaliseRepoSelection(repository.stdout, paths);
+}
+
 async function stage(root, paths) {
-  const safe = sanitisePaths(paths);
-  if (safe.length === 0) return { ok: false, error: 'No paths provided' };
-  const res = await safeGit(root, ['add', '--', ...safe]);
-  return res.ok ? { ok: true, staged: safe } : { ok: false, error: res.error };
+  const selection = await prepareRepoSelection(root, paths);
+  if (!selection.ok) return selection;
+  const res = await safeGit(selection.root, ['add', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: `${selection.paths.join('\0')}\0` });
+  return res.ok ? { ok: true, staged: selection.paths } : { ok: false, error: res.error };
 }
 
 /**
@@ -437,10 +575,15 @@ async function stage(root, paths) {
  * Returns { ok, unstaged: string[] }
  */
 async function unstage(root, paths) {
-  const safe = sanitisePaths(paths);
-  if (safe.length === 0) return { ok: false, error: 'No paths provided' };
-  const res = await safeGit(root, ['restore', '--staged', '--', ...safe]);
-  return res.ok ? { ok: true, unstaged: safe } : { ok: false, error: res.error };
+  const selection = await prepareRepoSelection(root, paths);
+  if (!selection.ok) return selection;
+  const status = await getStatus(selection.root);
+  if (!status.ok) return status;
+  const originals = status.staged.filter((file) => file.index === 'R' && file.originalPath && selection.paths.includes(file.path)).map((file) => file.originalPath);
+  const expanded = normaliseRepoSelection(selection.root, [...selection.paths, ...originals]);
+  if (!expanded.ok) return expanded;
+  const res = await safeGit(selection.root, ['reset', '-q', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: `${expanded.paths.join('\0')}\0` });
+  return res.ok ? { ok: true, unstaged: expanded.paths } : { ok: false, error: res.error };
 }
 
 /**
@@ -448,10 +591,10 @@ async function unstage(root, paths) {
  * Irreversible — use with caution.  Untracked files are not touched.
  */
 async function discardChanges(root, paths) {
-  const safe = sanitisePaths(paths);
-  if (safe.length === 0) return { ok: false, error: 'No paths provided' };
-  const res = await safeGit(root, ['restore', '--', ...safe]);
-  return res.ok ? { ok: true, discarded: safe } : { ok: false, error: res.error };
+  const selection = await prepareRepoSelection(root, paths);
+  if (!selection.ok) return selection;
+  const res = await safeGit(selection.root, ['restore', '--worktree', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: `${selection.paths.join('\0')}\0` });
+  return res.ok ? { ok: true, discarded: selection.paths } : { ok: false, error: res.error };
 }
 
 /**
@@ -462,7 +605,14 @@ async function commit(root, message) {
   const msg = String(message || '').trim();
   if (!msg) return { ok: false, error: 'Commit message is required' };
   const res = await safeGit(root, ['commit', '-m', msg]);
-  if (!res.ok) return { ok: false, error: res.error };
+  if (!res.ok) {
+    // A fresh repository with no user.name/user.email fails here with a wall of
+    // git advice; say what to do in one line instead.
+    if (/Please tell me who you are|unable to auto-detect email|empty ident name/i.test(res.error || '')) {
+      return { ok: false, error: '本机还没有配置 git 身份，先设置 user.name 与 user.email 再提交', missingIdentity: true };
+    }
+    return { ok: false, error: res.error };
+  }
   // Extract hash from output like "[main a1b2c3d] message"
   const hashMatch = res.stdout.match(/\[.+ ([a-f0-9]+)\]/);
   const shortHash = hashMatch ? hashMatch[1] : '';
@@ -473,11 +623,41 @@ async function commit(root, message) {
  * Push to remote.
  * Returns { ok, output: string }
  */
-async function push(root, remote = 'origin', branch = '', force = false) {
+async function validateSyncBranch(root, name) {
+  if (typeof name !== 'string' || !name || name.startsWith('-') || name === 'HEAD' || name.includes('@{') || name.includes('\0')) return { ok: false, error: '请选择有效的分支名称' };
+  const result = await safeGit(root, ['check-ref-format', '--branch', name]);
+  return result.ok ? { ok: true, name } : { ok: false, error: '分支名称无效，请刷新后重新选择' };
+}
+
+async function validateSyncRemote(root, name) {
+  const result = await safeGit(root, ['remote']);
+  if (!result.ok) return { ok: false, error: result.error };
+  if (typeof name !== 'string' || !name || (name !== '.' && !result.stdout.split('\n').includes(name))) return { ok: false, error: '请选择仓库中已配置的远程名称' };
+  return { ok: true, name };
+}
+
+async function push(root, remote = 'origin', branch = '', force = false, setUpstream = false) {
+  const selectedRemote = await validateSyncRemote(root, remote);
+  if (!selectedRemote.ok) return selectedRemote;
+  if (typeof branch !== 'string') return { ok: false, error: '请选择要推送的分支' };
+  const parts = branch.split(':');
+  if (parts.length > 2 || !parts[0] || (parts.length === 2 && !parts[1].startsWith('refs/heads/'))) return { ok: false, error: '推送目标必须是完整的远程分支，不能删除或匹配多个分支' };
+  const local = parts[0].startsWith('refs/heads/') ? parts[0].slice(11) : parts[0];
+  const target = parts.length === 2 ? parts[1].slice(11) : local;
+  const [localValid, targetValid] = await Promise.all([validateSyncBranch(root, local), validateSyncBranch(root, target)]);
+  if (!localValid.ok || !targetValid.ok) return { ok: false, error: localValid.error || targetValid.error };
+  const current = await safeGit(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  if (!current.ok || current.stdout !== local) return { ok: false, error: '当前分支已变化或 HEAD 已分离，请刷新后确认推送目标' };
+  const exists = await safeGit(root, ['show-ref', '--verify', '--quiet', `refs/heads/${local}`]);
+  if (!exists.ok) return { ok: false, error: '当前分支尚无提交，请先创建首次提交' };
+  if (setUpstream) {
+    const [previousRemote, previousMerge] = await Promise.all([safeGit(root, ['config', '--get', `branch.${local}.remote`]), safeGit(root, ['config', '--get', `branch.${local}.merge`])]);
+    if ((previousRemote.ok || previousMerge.ok) && (previousRemote.stdout !== remote || previousMerge.stdout !== `refs/heads/${target}`)) return { ok: false, error: '分支追踪配置已变化，请刷新后重新确认' };
+  }
   const args = ['push'];
   if (force) args.push('--force-with-lease');
-  args.push(remote);
-  if (branch) args.push(branch);
+  if (setUpstream) args.push('--set-upstream');
+  args.push('--', remote, `refs/heads/${local}:refs/heads/${target}`);
   const res = await safeGit(root, args);
   return res.ok
     ? { ok: true, output: res.stdout || res.stderr }
@@ -488,9 +668,18 @@ async function push(root, remote = 'origin', branch = '', force = false) {
  * Pull from remote.
  * Returns { ok, output: string }
  */
-async function pull(root, remote = 'origin', branch = '') {
-  const args = ['pull', remote];
-  if (branch) args.push(branch);
+async function pull(root, remote = 'origin', branch = '', strategy = 'configured') {
+  if (typeof branch !== 'string') return { ok: false, error: '请选择要拉取的分支' };
+  const selectedRemote = await validateSyncRemote(root, remote);
+  if (!selectedRemote.ok) return selectedRemote;
+  const target = branch.startsWith('refs/heads/') ? branch.slice(11) : branch;
+  const selectedBranch = await validateSyncBranch(root, target);
+  if (!selectedBranch.ok) return selectedBranch;
+  const policies = { configured: [], 'ff-only': ['--ff-only', '--no-rebase'], merge: ['--no-rebase', '--ff'], rebase: ['--rebase', '--ff'] };
+  if (!Object.hasOwn(policies, strategy)) return { ok: false, error: '拉取策略无效，请重新选择' };
+  const current = await safeGit(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  if (!current.ok) return { ok: false, error: '当前 HEAD 已分离，请先切换到本地分支' };
+  const args = ['pull', '--no-edit', ...policies[strategy], '--', remote, `refs/heads/${target}`];
   const res = await safeGit(root, args);
   return res.ok
     ? { ok: true, output: res.stdout || res.stderr }
@@ -539,7 +728,7 @@ function sanitisePaths(paths) {
   if (!Array.isArray(paths)) return [];
   return paths
     .map(String)
-    .filter((p) => p.trim() && !p.startsWith('-') && !p.split(/[\\/]/).includes('..'));
+    .filter((p) => p.trim() && !p.includes('\0') && !p.split(/[\\/]/).includes('..'));
 }
 
 /**
@@ -609,10 +798,13 @@ async function createPr(root, { title, body = '', draft = false, base = '' }) {
  * cares about the file's total delta.
  */
 async function getFileStats(root) {
+  const repository = await safeGit(root, ['rev-parse', '--show-toplevel']);
+  if (!repository.ok) return { ok: false, error: repository.error };
+  const base = repository.stdout;
   const [stagedRes, unstagedRes, untrackedRes] = await Promise.all([
-    safeGit(root, ['diff', '--cached', '--numstat']),
-    safeGit(root, ['diff', '--numstat']),
-    safeGit(root, ['ls-files', '--others', '--exclude-standard']),
+    safeGit(base, ['diff', '--cached', '--numstat', '-z', '-M']),
+    safeGit(base, ['diff', '--numstat', '-z', '-M']),
+    safeGit(base, ['ls-files', '--others', '--exclude-standard', '-z']),
   ]);
   if (!stagedRes.ok) return { ok: false, error: stagedRes.error };
 
@@ -632,45 +824,22 @@ async function getFileStats(root) {
   // numstat: "<added>\t<removed>\t<path>". Binary files report "-", which
   // parses as NaN — count the file but contribute no lines.
   const walkNumstat = (text, status) => {
-    for (const line of text.split('\n')) {
-      if (!line) continue;
-      const tab1 = line.indexOf('\t');
-      if (tab1 < 0) continue;
-      const tab2 = line.indexOf('\t', tab1 + 1);
-      if (tab2 < 0) continue;
-      const rel = line.slice(tab2 + 1);
-      if (!rel) continue;
-      const a = Number(line.slice(0, tab1));
-      const r = Number(line.slice(tab1 + 1, tab2));
-      bump(rel, Number.isFinite(a) ? a : 0, Number.isFinite(r) ? r : 0, status);
+    for (const file of parseNumstatRecords(text)) {
+      bump(file.path, file.added, file.removed, status);
+      if (file.originalPath) files.get(file.path).originalPath = file.originalPath;
     }
   };
   walkNumstat(stagedRes.stdout, 'staged');
   walkNumstat(unstagedRes.stdout, 'unstaged');
 
-  const untrackedFiles = (untrackedRes.ok ? untrackedRes.stdout.split('\n').filter(Boolean) : [])
+  const untrackedFiles = (untrackedRes.ok ? untrackedRes.stdout.split('\0').filter(Boolean) : [])
     .slice(0, UNTRACKED_FILE_CAP);
   let budget = UNTRACKED_LINE_CAP;
   for (const rel of untrackedFiles) {
     if (budget <= 0) break;
-    try {
-      const abs = path.resolve(root, rel);
-      const stat = fs.statSync(abs);
-      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) {
-        bump(rel, 0, 0, 'untracked');
-        continue;
-      }
-      const text = fs.readFileSync(abs, 'utf8');
-      let n = 0;
-      for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
-      if (text.length > 0 && text.charCodeAt(text.length - 1) !== 10) n++;
-      const capped = Math.min(n, budget);
-      budget -= capped;
-      bump(rel, capped, 0, 'untracked');
-    } catch {
-      // Unreadable or vanished between ls-files and stat — still list it.
-      bump(rel, 0, 0, 'untracked');
-    }
+    const counted = countUntrackedLines(base, rel, budget);
+    budget -= counted;
+    bump(rel, counted, 0, 'untracked');
   }
 
   return { ok: true, files: [...files.values()] };
@@ -713,6 +882,7 @@ async function getGraph(root, n = 60) {
 
 module.exports = {
   getStatus,
+  initRepo,
   getBranches,
   getLog,
   getGraph,

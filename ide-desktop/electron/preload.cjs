@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     setRoot: (root) => ipcRenderer.invoke('workspace.setRoot', root),
     restore: () => ipcRenderer.invoke('workspace.restore'),
     getTree: (relativePath) => ipcRenderer.invoke('workspace.getTree', relativePath),
+    reveal: (relativePath) => ipcRenderer.invoke('workspace.reveal', relativePath),
   },
   fs: {
     read: (relativePath) => ipcRenderer.invoke('fs.read', relativePath),
@@ -100,6 +101,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
   memory: {
     listProjects: () => ipcRenderer.invoke('memory.listProjects'),
     read: (workspaceId, fileName) => ipcRenderer.invoke('memory.read', workspaceId, fileName),
+    global: () => ipcRenderer.invoke('memory.global'),
   },
   media: {
     prepare: (relativePath, expectedKind) => ipcRenderer.invoke('media.prepare', relativePath, expectedKind),
@@ -129,6 +131,10 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
       return () => ipcRenderer.removeListener('automation.changed', listener);
     },
   },
+  messageQueue: {
+    load: (root) => ipcRenderer.invoke('messageQueue.load', root),
+    save: (root, state) => ipcRenderer.invoke('messageQueue.save', root, state),
+  },
   agent: {
     // The trailing sessionId on each call targets one conversation's CLI child.
     // Several can be running at once, so an un-addressed call could reach the
@@ -142,6 +148,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     restart: (resumeSessionId) => ipcRenderer.invoke('agent.restart', resumeSessionId),
     stopSession: (sessionId) => ipcRenderer.invoke('agent.stopSession', sessionId),
     approve: (requestId, decision, sessionId) => ipcRenderer.invoke('agent.approve', requestId, decision, sessionId),
+    guardConfirmation: (requestId, selectedLabel, sessionId) => ipcRenderer.invoke('agent.guardConfirmation', requestId, selectedLabel, sessionId),
     undo: (checkpointIds, undoId, sessionId) => ipcRenderer.invoke('agent.undo', checkpointIds, undoId, sessionId),
     onEvent: (handler) => {
       const listener = (_event, payload) => handler(payload);
@@ -192,6 +199,8 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     canNavigate:     ()                                 => ipcRenderer.invoke('preview.canNavigate'),
     openExternal:    (url)                              => ipcRenderer.invoke('preview.openExternal',    url),
     readDocx:        (relativePath, token)              => ipcRenderer.invoke('preview.readDocx',        relativePath, token),
+    readXlsx:        (relativePath, token)              => ipcRenderer.invoke('preview.readXlsx',        relativePath, token),
+    readPptx:        (relativePath, token)              => ipcRenderer.invoke('preview.readPptx',        relativePath, token),
     onState: (handler) => {
       const listener = (_event, payload) => handler(payload);
       ipcRenderer.on('preview.state', listener);
@@ -203,8 +212,24 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
       return () => ipcRenderer.removeListener('preview.log', listener);
     },
   },
+  backgroundApp: {
+    execute: (tool, input) => ipcRenderer.invoke('backgroundApp.execute', tool, input),
+    close: () => ipcRenderer.invoke('backgroundApp.close'),
+  },
+  backgroundBrowser: {
+    execute: (tool, input, sessionId) => ipcRenderer.invoke('backgroundBrowser.execute', tool, input, sessionId),
+    close: (sessionId) => ipcRenderer.invoke('backgroundBrowser.close', sessionId),
+    status: () => ipcRenderer.invoke('backgroundBrowser.status'),
+  },
   computer: {
     detectBrowserExtension: () => ipcRenderer.invoke('computer.detectBrowserExtension'),
+  },
+  // 电脑操控 panel: one computer_* tool per call, run headlessly by the CLI.
+  // Separate from `quality` (read-only analysis) and from `agent` (model turns)
+  // because this drives the user's real windows.
+  guiControl: {
+    status: () => ipcRenderer.invoke('guiControl.status'),
+    invoke: (tool, input) => ipcRenderer.invoke('guiControl.invoke', tool, input),
   },
   quality: {
     invoke: (toolName, input, revision) => ipcRenderer.invoke('quality.invoke', toolName, input, revision),
@@ -295,6 +320,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
   },
   git: {
     status:       ()                           => ipcRenderer.invoke('git.status'),
+    init:         (options)                    => ipcRenderer.invoke('git.init', options),
     branches:     ()                           => ipcRenderer.invoke('git.branches'),
     log:          (n)                          => ipcRenderer.invoke('git.log', n),
     graph:        (n)                          => ipcRenderer.invoke('git.graph', n),
@@ -308,8 +334,8 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     unstage:      (paths)                      => ipcRenderer.invoke('git.unstage', paths),
     discard:      (paths)                      => ipcRenderer.invoke('git.discard', paths),
     commit:       (message)                    => ipcRenderer.invoke('git.commit', message),
-    push:         (remote, branch, force)      => ipcRenderer.invoke('git.push', remote, branch, force),
-    pull:         (remote, branch)             => ipcRenderer.invoke('git.pull', remote, branch),
+    push:         (remote, branch, force, setUpstream) => ipcRenderer.invoke('git.push', remote, branch, force, setUpstream),
+    pull:         (remote, branch, strategy)   => ipcRenderer.invoke('git.pull', remote, branch, strategy),
     checkout:     (branch)                     => ipcRenderer.invoke('git.checkout', branch),
     createBranch: (name)                       => ipcRenderer.invoke('git.createBranch', name),
     deleteBranch: (name, force)                => ipcRenderer.invoke('git.deleteBranch', name, force),

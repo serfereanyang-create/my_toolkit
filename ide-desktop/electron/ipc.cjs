@@ -5,7 +5,12 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { assertInsideRoot, describeFile, inspectProject, resolveWorkspacePath } = require('./preview-policy.cjs');
 const { describePathError } = require('./path-error.cjs');
+const { settingsNeedAgentRestart } = require('./settings-restart.cjs');
+const { readTextFile, validateTextWrite } = require('./editor-policy.cjs');
+const { createFileWatchRegistry } = require('./file-watch-registry.cjs');
+const { createDocumentPreviewService } = require('./document-preview.cjs');
 const { createQualityGateway } = require('./quality-gateway.cjs');
+const { createGuiControlService } = require('./gui-control.cjs');
 const git = require('./git.cjs');
 const { createCheckpointBackend } = require('./checkpoints.cjs');
 const { createFileSearchService } = require('./file-search.cjs');
@@ -18,6 +23,7 @@ const { collectSystemInfo } = require('./system-info.cjs');
 const { analyzeSessionsDir, deleteSessionFiles } = require('./session-cleanup.cjs');
 const { suggestCommitMessage, collectNumstat } = require('./git-suggest.cjs');
 const { listProjectMemories, readProjectMemoryFile } = require('./memory-service.cjs');
+const { readGlobalMemory } = require('./memory-global.cjs');
 const { prepareMediaPreview } = require('./media-preview.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
@@ -32,7 +38,22 @@ function withDeadline(promise, timeoutMs, message) {
   });
 }
 
-function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, automation, agentManager, terminalManager, previewService, previewRuntime, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings, subagentRuns }) {
+function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, messageQueues, automation, agentManager, terminalManager, previewService, previewRuntime, backgroundBrowser, backgroundApp, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings, subagentRuns }) {
+  const queueScopes = new Set();
+  const queueRoot = root => { if (typeof root !== 'string' || !path.isAbsolute(root)) throw new Error('需要绝对工作区路径。'); return path.resolve(root); };
+  ipcMain.handle('messageQueue.load', async (_event, root) => {
+    const requested = queueRoot(root);
+    if (requested !== queueRoot(workspace.getRoot())) throw new Error('消息队列工作区已变化。');
+    const state = await messageQueues.load(requested);
+    queueScopes.add(requested);
+    return state;
+  });
+  ipcMain.handle('messageQueue.save', async (_event, root, state) => {
+    const requested = queueRoot(root);
+    if (!queueScopes.has(requested)) throw new Error('未授权的消息队列工作区。');
+    await messageQueues.save(requested, state);
+    return { ok: true };
+  });
   async function materializePersona(root) {
     try {
       const config = await settings.get();
@@ -45,9 +66,9 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('workspace.open', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
     if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+    await activateWorkspace();
     const root = workspace.setRoot(result.filePaths[0]);
     await settings.addRecentWorkspace(root);
-    await activateWorkspace(root);
     await automation.setWorkspace(root);
     await materializePersona(root);
     return { canceled: false, root };
@@ -71,9 +92,9 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   });
 
   ipcMain.handle('workspace.setRoot', async (_event, root) => {
+    await activateWorkspace();
     const resolved = workspace.setRoot(root);
     await settings.addRecentWorkspace(resolved);
-    await activateWorkspace(resolved);
     await automation.setWorkspace(resolved);
     await materializePersona(resolved);
     return { root: resolved };
@@ -87,22 +108,14 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
    * against the new root. The restart is not awaited: it takes seconds and
    * the renderer picks the fresh bridge_ready/session up asynchronously.
    */
-  async function activateWorkspace(root) {
-    void root;
-    try { await previewRuntime?.stopAll(); } catch { /* keep switching */ }
-    try { previewService?.revokeAllTokens?.(); } catch { /* keep switching */ }
-    try { previewService?.hide(); } catch { /* keep switching */ }
-    try { agentManager.cancel(); } catch { /* no live bridge */ }
-    try { agentManager.sideChatRestart(); } catch { /* no live side bridge */ }
-    void agentManager.start().catch((error) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('agent.event', {
-          type: 'log',
-          level: 'error',
-          text: `工作区切换后 Agent 重启失败: ${error instanceof Error ? error.message : String(error)}`,
-        });
-      }
-    });
+  async function activateWorkspace() {
+    await automation.disposeAll();
+    await agentManager.switchWorkspace();
+    await backgroundBrowser?.disposeAll();
+    await backgroundApp?.disposeAll();
+    await previewRuntime?.stopAll();
+    previewService?.revokeAllTokens?.();
+    previewService?.hide();
   }
 
   ipcMain.handle('dispatch.status', async (_event, sessionId) => {
@@ -132,6 +145,20 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   });
 
   ipcMain.handle('workspace.getTree', async (_event, relativePath) => await workspace.tree(relativePath || '.'));
+  // Reveal one workspace file in the OS file manager. Deliberately not a
+  // general openPath: a downloaded file is untrusted, so it is shown in its
+  // folder rather than handed to whatever handler the OS registered for its
+  // extension. resolveWorkspacePath refuses anything outside the root.
+  ipcMain.handle('workspace.reveal', async (_event, relativePath) => {
+    try {
+      const target = await resolveEditorPath(relativePath);
+      await fs.access(target);
+      shell.showItemInFolder(target);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: describePathError(error) };
+    }
+  });
   ipcMain.handle('sessions.list', async () => await workspace.listSessions());
   ipcMain.handle('sessions.listArchived', async () => await workspace.listArchivedSessions());
   ipcMain.handle('sessions.load', async (_event, id) => await workspace.loadSession(id));
@@ -323,6 +350,9 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     const file = await readProjectMemoryFile({ memoriesRoot, workspaceId, fileName });
     return { ok: true, ...file };
   });
+  // Global memory: one record of every file ever edited, across every project
+  // and every session. Read-only — the CLI writes the ledger.
+  ipcMain.handle('memory.global', async () => await readGlobalMemory());
 
   // Audio/video preview preparation (zcode media-preview). Paths are confined
   // to the workspace like every other fs handler.
@@ -418,7 +448,7 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('editor.readFile', async (_event, relativePath) => {
     try {
       const target = await resolveEditorPath(relativePath);
-      const content = await fs.readFile(target, 'utf-8');
+      const content = await readTextFile(target);
       return { ok: true, content };
     } catch (error) {
       return { ok: false, error: describePathError(error) };
@@ -428,6 +458,7 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     try {
       if (typeof content !== 'string' || content.length > 20 * 1024 * 1024) throw new Error('File content exceeds the allowed size');
       const target = await resolveEditorPath(relativePath, { mustExist: false });
+      await validateTextWrite(target, content);
       // Iteration 7: capture the on-disk bytes *before* overwriting them so
       // the timeline can step back through manual saves. Best-effort: a
       // history failure must never block the save itself.
@@ -444,45 +475,30 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   });
 
   // Watch one file for external modifications (agent writes, git ops).
-  // Polling mtime beats fs.watch here: one watcher per OPEN editor tab only,
-  // no recursive native watcher spam, and it works identically on Windows.
-  const fileWatchers = new Map();
+  //
+  // Polling mtime beats fs.watch here: one watcher per CONSUMER only, no
+  // recursive native watcher spam, and it works identically on Windows. The
+  // registry refcounts by path, because the editor tab and a preview pane may
+  // both want the same file and neither may cancel the other's notifications.
+  const fileWatchers = createFileWatchRegistry({
+    stat: async (absolutePath) => await fs.stat(absolutePath),
+    onChange: (absolutePath) => {
+      const mainWindowRef = mainWindow;
+      if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+        mainWindowRef.webContents.send('editor.fileChanged', { path: absolutePath });
+      }
+    },
+  });
   ipcMain.handle('editor.watchFile', async (_event, relativePath) => {
     let absolutePath;
     try { absolutePath = await resolveEditorPath(relativePath); } catch (error) { return { ok: false, error: describePathError(error) }; }
-    if (fileWatchers.has(absolutePath)) return { ok: true, alreadyWatching: true };
-    let lastMtime = 0;
-    let lastSize = -1;
-    try {
-      const stat = await fs.stat(absolutePath);
-      lastMtime = stat.mtimeMs;
-      lastSize = stat.size;
-    } catch { return { ok: false, error: 'file not found' }; }
-    const timer = setInterval(async () => {
-      try {
-        const stat = await fs.stat(absolutePath);
-        if (stat.mtimeMs !== lastMtime || stat.size !== lastSize) {
-          lastMtime = stat.mtimeMs;
-          lastSize = stat.size;
-          const mainWindowRef = mainWindow;
-          if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-            mainWindowRef.webContents.send('editor.fileChanged', { path: absolutePath });
-          }
-        }
-      } catch {
-        // File deleted — notify once then keep polling in case it returns.
-      }
-    }, 1200);
-    fileWatchers.set(absolutePath, timer);
-    return { ok: true };
+    return await fileWatchers.watch(absolutePath);
   });
 
   ipcMain.handle('editor.unwatchFile', async (_event, relativePath) => {
     let absolutePath;
     try { absolutePath = await resolveEditorPath(relativePath); } catch { return { ok: true }; }
-    const timer = fileWatchers.get(absolutePath);
-    if (timer) { clearInterval(timer); fileWatchers.delete(absolutePath); }
-    return { ok: true };
+    return fileWatchers.unwatch(absolutePath);
   });
 
   // Conflict guard: compare on-disk mtime with what the editor last saw, so a
@@ -508,9 +524,15 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     // re-starts with the new mode (otherwise "变更前确认" silently stays auto).
     // Auto-review travels the same way (--auto-review), so it needs the same
     // treatment or the toggle would silently do nothing until an app restart.
-    if (previous.approval !== merged.approval
-      || previous.preferences?.autoReview !== merged.preferences?.autoReview) {
-      try { agentManager.invalidate(); } catch { /* no live bridge */ }
+    //
+    // The provider is spawn-time too (--provider / --model / --base-url), so a
+    // live child kept answering with the previous model after the user switched
+    // suppliers in settings: the new config was saved, the next prompt still ran
+    // on the old one until the app was restarted.
+    // Provider edits count too: the child is launched with --provider/--model/
+    // --base-url, so saving a supplier change has to reach a fresh process.
+    if (settingsNeedAgentRestart(previous, merged)) {
+      await agentManager.invalidate();
     }
     try {
       await syncPersonaFile(workspace.getRoot(), merged.preferences);
@@ -571,7 +593,35 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   ipcMain.handle('agent.setEffort', async (_event, reasoningEffort, sessionId) => agentManager.setEffort(reasoningEffort, sessionId));
   ipcMain.handle('agent.setToolScope', async (_event, toolScope, sessionId) => agentManager.setToolScope(toolScope, sessionId));
   ipcMain.handle('agent.cancel', async (_event, sessionId) => agentManager.cancel(sessionId));
-  ipcMain.handle('agent.restart', async (_event, resumeSessionId) => await agentManager.restart(resumeSessionId));
+  // Respawn the child so changed spawn-time settings (provider, model,
+  // approval, background-browser flags) actually take effect. Distinct from
+  // `agent.start`, which reuses a live bridge on purpose.
+  ipcMain.handle('agent.restart', async (_event, resumeSessionId) => await agentManager.restartSession(resumeSessionId));
+  ipcMain.handle('agent.guardConfirmation', async (_event, requestId, selectedLabel, sessionId) => {
+    if (typeof requestId !== 'string' || typeof selectedLabel !== 'string' || typeof sessionId !== 'string') throw new Error('Invalid guard response');
+    return agentManager.guardConfirmation(requestId, selectedLabel, sessionId);
+  });
+  ipcMain.handle('backgroundApp.execute', async (_event, tool, input) => {
+    if (!backgroundApp) return { ok: false, output: '后台应用不可用。' };
+    return backgroundApp.execute({ sessionId: 'manual-background-app', workspaceRoot: workspace.getRoot(), tool, input });
+  });
+  ipcMain.handle('backgroundApp.close', async () => {
+    await backgroundApp?.closeSession('manual-background-app');
+    return { ok: true };
+  });
+  ipcMain.handle('backgroundBrowser.execute', async (_event, tool, input, sessionId) => {
+    if (!backgroundBrowser) return { ok: false, output: '后台浏览器不可用。' };
+    const id = typeof sessionId === 'string' && sessionId ? sessionId : 'manual-background';
+    return backgroundBrowser.execute({ sessionId: id, workspaceRoot: workspace.getRoot(), tool, input });
+  });
+  ipcMain.handle('backgroundBrowser.close', async (_event, sessionId) => {
+    // Closes every hidden page this conversation opened. The per-page close is
+    // the `background_browser_close` tool, which the panel sends through
+    // execute() with a browserId.
+    await backgroundBrowser?.closeSession(typeof sessionId === 'string' && sessionId ? sessionId : 'manual-background');
+    return { ok: true };
+  });
+  ipcMain.handle('backgroundBrowser.status', async () => ({ sessions: backgroundBrowser?.status() ?? [] }));
   ipcMain.handle('agent.stopSession', async (_event, sessionId) => await agentManager.stopSession(sessionId));
   ipcMain.handle('agent.approve', async (_event, requestId, decision, sessionId) => agentManager.approve(requestId, decision, sessionId));
   // preload sends: ipcRenderer.invoke('agent.undo', checkpointIds, undoId).
@@ -732,6 +782,16 @@ Edited code:`;
     ok: true,
     records: await qualityGateway.history(toolName, workspace.getRoot(), typeof limit === 'number' ? limit : 20),
   }));
+
+  // ── GUI control (the 电脑操控 sidebar panel) ───────────────────────────────
+  // This is the one place the desktop drives the user's real windows without a
+  // conversation in the middle, so it is reachable ONLY from the panel: the
+  // renderer never sees a generic "run any tool" channel, and the service
+  // allowlists the nine computer_* tools. The CLI path it spawns re-validates
+  // every input through the tool's own validate().
+  const guiControl = createGuiControlService({ cliRoot: path.resolve(__dirname, '..', '..', 'cli') });
+  ipcMain.handle('guiControl.status', async () => guiControl.status());
+  ipcMain.handle('guiControl.invoke', async (_event, tool, input) => guiControl.invoke(tool, input));
 
   // Real packaged version for Help / What's New content selection.
   ipcMain.handle('app.version', () => ({ version: app.getVersion() }));
@@ -958,34 +1018,27 @@ Edited code:`;
     return { ok: true };
   });
 
-  ipcMain.handle('preview.readDocx', async (_event, relativePath, token) => {
-    const root = workspace.getRoot();
-    let abs;
-    try {
-      abs = (await resolveWorkspacePath(relativePath, root)).path;
-    } catch (error) {
-      // A missing file is the ordinary case here — the renderer can hold a stale
-      // path — and describePathError reports it as a plain sentence instead of
-      // leaking the raw ENOENT with an absolute filesystem path.
-      return { ok: false, error: describePathError(error) };
-    }
-    if (!previewService?.validateToken?.(token, {
-      workspaceRoot: root,
-      kind: 'docx',
-      absolutePath: abs,
-    })) return { ok: false, error: 'Invalid preview token' };
-    // Re-use policy validation (token was registered on describe)
-    const { assertInsideRoot } = require('./preview-policy.cjs');
-    const fsSync = require('node:fs');
-    let real;
-    try { real = fsSync.realpathSync(abs); } catch { return { ok: false, error: 'File not found' }; }
-    try { assertInsideRoot(real, workspace.getRoot()); } catch (e) { return { ok: false, error: e.message }; }
-    const stat = fsSync.statSync(real);
-    if (!stat.isFile() || path.extname(real).toLowerCase() !== '.docx') return { ok: false, error: 'Not a DOCX file' };
-    if (stat.size > 20 * 1024 * 1024) return { ok: false, error: 'File too large for inline rendering' };
-    const buf = fsSync.readFileSync(real);
-    return { ok: true, buffer: buf.buffer, byteOffset: buf.byteOffset, byteLength: buf.byteLength };
+  // Office documents (docx/xlsx/pptx) for the preview panes. The token check,
+  // the containment check, the extension check and the size cap all live in
+  // electron/document-preview.cjs, where they are unit tested — the docx handler
+  // that used to sit here had them inline, in a file `node --test` cannot even
+  // require.
+  const documentPreview = createDocumentPreviewService({
+    validateToken: (token, expectation) => previewService?.validateToken?.(token, expectation) === true,
+    workspaceRoot: () => workspace.getRoot(),
+    assertInsideRoot,
+    resolveAbsolutePath: async (relativePath) => {
+      try {
+        return (await resolveWorkspacePath(relativePath, workspace.getRoot())).path;
+      } catch (error) {
+        throw new Error(describePathError(error));
+      }
+    },
   });
+
+  ipcMain.handle('preview.readDocx', async (_event, relativePath, token) => await documentPreview.read('docx', relativePath, token));
+  ipcMain.handle('preview.readXlsx', async (_event, relativePath, token) => await documentPreview.read('xlsx', relativePath, token));
+  ipcMain.handle('preview.readPptx', async (_event, relativePath, token) => await documentPreview.read('pptx', relativePath, token));
 
   // ── Navigation / @-mention search ─────────────────────────────────────────
   ipcMain.handle('nav.symbols', async (_event, pattern) => {
@@ -1175,6 +1228,11 @@ Edited code:`;
   ipcMain.handle('history.restore', async (_event, relativePath, snapshotId) => {
     try {
       const target = await resolveEditorPath(relativePath);
+      // The snapshot is text, but the file on disk may not be any more (the
+      // agent replaced it with a build artifact, say). Restoring would then
+      // overwrite binary bytes with text and destroy the file — the same guard
+      // editor.saveFile applies, for the same reason.
+      await validateTextWrite(target, '');
       const content = await fileHistory.read(target, snapshotId);
       if (content === null) return { ok: false, error: '快照不存在或已清理' };
       // Restoring overwrites current bytes — snapshot them first (the same
@@ -1311,6 +1369,9 @@ Edited code:`;
 
   // ── Git IPC ───────────────────────────────────────────────────────────────
   ipcMain.handle('git.status',        async () => git.getStatus(workspace.getRoot()));
+  // `git init` for a folder that has never been a repository. Never stages or
+  // commits anything — it only creates .git.
+  ipcMain.handle('git.init',          async (_e, options) => git.initRepo(workspace.getRoot(), options || {}));
   ipcMain.handle('git.branches',      async () => git.getBranches(workspace.getRoot()));
   ipcMain.handle('git.log',           async (_e, n) => git.getLog(workspace.getRoot(), n));
   // Commit DAG with parents, for the graph view (git log --graph is ASCII).
@@ -1329,8 +1390,8 @@ Edited code:`;
   ipcMain.handle('git.unstage',       async (_e, paths) => git.unstage(workspace.getRoot(), paths));
   ipcMain.handle('git.discard',       async (_e, paths) => git.discardChanges(workspace.getRoot(), paths));
   ipcMain.handle('git.commit',        async (_e, message) => git.commit(workspace.getRoot(), message));
-  ipcMain.handle('git.push',          async (_e, remote, branch, force) => git.push(workspace.getRoot(), remote, branch, force));
-  ipcMain.handle('git.pull',          async (_e, remote, branch) => git.pull(workspace.getRoot(), remote, branch));
+  ipcMain.handle('git.push',          async (_e, remote, branch, force, setUpstream) => git.push(workspace.getRoot(), remote, branch, force, setUpstream));
+  ipcMain.handle('git.pull',          async (_e, remote, branch, strategy) => git.pull(workspace.getRoot(), remote, branch, strategy));
   ipcMain.handle('git.checkout',      async (_e, branch) => git.checkout(workspace.getRoot(), branch));
   ipcMain.handle('git.createBranch',  async (_e, name) => git.createBranch(workspace.getRoot(), name));
   ipcMain.handle('git.deleteBranch',  async (_e, name, force) => git.deleteBranch(workspace.getRoot(), name, force));

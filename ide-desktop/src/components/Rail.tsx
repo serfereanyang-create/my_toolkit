@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FilePlus, LoaderCircle, MessageSquare, Clock, Files, Settings, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, BarChart3, FileClock } from 'lucide-react';
+import { FilePlus, LoaderCircle, MessageSquare, Clock, Files, Settings, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, BarChart3, FileClock, MoreHorizontal, ChevronDown, GitBranch, Monitor, BrainCircuit } from 'lucide-react';
 import type { AppState, SessionMeta } from '../types';
 import { HelpMenu, type HelpAction } from './HelpMenu';
 import { ConversationContextMenu, type ConvoAction } from './ConversationContextMenu';
@@ -7,7 +7,7 @@ import { TagEditorDialog } from './TagEditorDialog';
 import { formatAgo, recentLabel, type RecentFile } from '../lib/recentFiles';
 import { sessionMatchesTag, tagCloud, tagColorIndex } from '../lib/sessionTags';
 
-type MainView = 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality';
+type MainView = 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality' | 'computer' | 'memory';
 
 // ── Rename dialog ─────────────────────────────────────────────────────────────
 function RenameDialog({ initialTitle, onConfirm, onCancel }: {
@@ -41,6 +41,7 @@ function RenameDialog({ initialTitle, onConfirm, onCancel }: {
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === 'Enter') { e.preventDefault(); handleConfirm(); }
               if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
             }}
@@ -56,7 +57,7 @@ function RenameDialog({ initialTitle, onConfirm, onCancel }: {
   );
 }
 
-function SessionItem({ session, active, tags, running, approvals, onOpen, onContextMenu, onRename }: {
+function SessionItem({ session, active, tags, running, approvals, onOpen, onOpenActions, onRename }: {
   session: SessionMeta;
   active: boolean;
   tags: string[];
@@ -65,28 +66,37 @@ function SessionItem({ session, active, tags, running, approvals, onOpen, onCont
   /** Count of unresolved approvals — host shows a blue attention dot. */
   approvals: number;
   onOpen: () => void;
-  onContextMenu: (e: React.MouseEvent) => void;
+  onOpenActions: (x: number, y: number) => void;
   onRename: (title: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(session.title);
+  // The rename box edits the real title: a clashing row carries a timestamp
+  // suffix for display only, and confirming the box must not bake it in.
+  const editableTitle = session.baseTitle ?? session.title;
+  const [draft, setDraft] = useState(editableTitle);
   const inputRef = useRef<HTMLInputElement>(null);
+  const updatedAt = Date.parse(session.updatedAt);
+  const statusLabel = approvals > 0 ? `待审批 ${approvals}` : running ? '运行中' : '';
+  const showActions = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const anchor = event.currentTarget.getBoundingClientRect();
+    onOpenActions(anchor.right, anchor.bottom + 4);
+  };
 
   useEffect(() => {
     if (editing) {
-      setDraft(session.title);
+      setDraft(editableTitle);
       setTimeout(() => { inputRef.current?.select(); }, 0);
     }
-  }, [editing, session.title]);
+  }, [editing, editableTitle]);
 
   function commit() {
     const trimmed = draft.trim();
-    if (trimmed && trimmed !== session.title) onRename(trimmed);
+    if (trimmed && trimmed !== editableTitle) onRename(trimmed);
     setEditing(false);
   }
 
   function cancel() {
-    setDraft(session.title);
+    setDraft(editableTitle);
     setEditing(false);
   }
 
@@ -100,6 +110,7 @@ function SessionItem({ session, active, tags, running, approvals, onOpen, onCont
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === 'Enter') { e.preventDefault(); commit(); }
             if (e.key === 'Escape') { e.preventDefault(); cancel(); }
           }}
@@ -113,12 +124,16 @@ function SessionItem({ session, active, tags, running, approvals, onOpen, onCont
   }
 
   return (
+    <div className={`rail-session ${active ? 'active' : ''}`} data-session-id={session.id}>
     <button
+      type="button"
       className={`rail-convo ${active ? 'active' : ''}`}
       title={session.title}
+      aria-label={`${session.title}${statusLabel ? `，${statusLabel}` : ''}`}
+      aria-current={active ? 'page' : undefined}
       onClick={onOpen}
       onDoubleClick={() => setEditing(true)}
-      onContextMenu={onContextMenu}
+      onContextMenu={(event) => { event.preventDefault(); onOpenActions(event.clientX, event.clientY); }}
     >
       {/* Status glyph first (host: ✳ for running, blue dot for waiting
           approvals), then pin, then the title. */}
@@ -129,8 +144,8 @@ function SessionItem({ session, active, tags, running, approvals, onOpen, onCont
       ) : session.pinned ? (
         <Pin size={13} />
       ) : null}
-      <span>{session.title}</span>
-      <span className="rail-convo-time">{formatAgo(Date.parse(session.updatedAt))}</span>
+      <span className="rail-session-copy">
+      <span className="rail-convo-title">{session.title}</span>
       {tags.length > 0 && (
         <span className="rail-tags" aria-label={`标签：${tags.join('、')}`}>
           {tags.slice(0, 2).map((tag) => (
@@ -139,7 +154,17 @@ function SessionItem({ session, active, tags, running, approvals, onOpen, onCont
           {tags.length > 2 && <span className="tag-chip tiny">+{tags.length - 2}</span>}
         </span>
       )}
+      </span>
+      {statusLabel ? (
+        <span className={`rail-convo-state ${approvals > 0 ? 'waiting' : 'working'}`}>{statusLabel}</span>
+      ) : Number.isFinite(updatedAt) ? (
+        <time className="rail-convo-time" dateTime={session.updatedAt}>{formatAgo(updatedAt)}</time>
+      ) : null}
     </button>
+    <button type="button" className="rail-convo-more" aria-label={`更多操作：${session.title}`} title="更多操作" onClick={showActions}>
+      <MoreHorizontal size={15} />
+    </button>
+    </div>
   );
 }
 
@@ -170,6 +195,7 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   // Iteration 18: tag editor target + active tag filter for the session list.
   const [tagEdit, setTagEdit] = useState<{ id: string } | null>(null);
+  const [deleting, setDeleting] = useState<{ id: string } | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const workspaceName = state.workspaceRoot ? state.workspaceRoot.split(/[\\/]/).filter(Boolean).pop() : '无项目';
 
@@ -212,10 +238,7 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
       running={runningSet.includes(session.id)}
       approvals={approvalCounts[session.id] ?? 0}
       onOpen={() => onOpenSession(session.id)}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        setCtx({ x: event.clientX, y: event.clientY, session: session.id });
-      }}
+      onOpenActions={(x, y) => setCtx({ x, y, session: session.id })}
       onRename={(title) => onConvoAction('rename' as ConvoAction, session.id + '::' + title)}
     />
   );
@@ -225,18 +248,23 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
       <div className="rail-head">
         <div className="rail-brand">
           {/* ZCode marks the sidebar with a solid brand tile, not just text. */}
-          <span className="rail-logo" aria-hidden="true">Y</span>
+          <span className="rail-logo" aria-hidden="true">
+            <img src="./icon.svg" alt="" />
+          </span>
           <span>YOYcode</span>
         </div>
-        <div className="rail-head-actions">
-          <button className="icon-button" title="搜索（全文检索工作区）" onClick={() => onSelectView('search')}><Search size={17} /></button>
-        </div>
       </div>
+
+      <button type="button" className="rail-workspace" onClick={onOpenWorkspace} title={state.workspaceRoot || '打开文件夹'} aria-label={`切换项目：${workspaceName}`}>
+        <FolderOpen size={16} />
+        <span>{workspaceName}</span>
+        <ChevronDown size={13} />
+      </button>
 
       {/* Host sidebar leads with labeled primary actions before the list;
           kbd hints show the app's REAL resolved bindings. */}
       <div className="rail-primary">
-        <button className="rail-primary-row" onClick={onNewChat}>
+        <button className="rail-primary-row rail-primary-new" onClick={onNewChat}>
           <FilePlus size={16} />
           <span>新对话</span>
           {shortcuts?.newChat && <kbd className="rail-kbd">{shortcuts.newChat}</kbd>}
@@ -255,25 +283,31 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
           className={`rail-view ${mainView === 'chat' ? 'active' : ''}`}
           title="对话"
           aria-label="对话"
+          aria-pressed={mainView === 'chat'}
           onClick={() => onSelectView('chat')}
         >
-          <MessageSquare size={15} />
+          <MessageSquare size={15} /><span>对话</span>
         </button>
         <button
-          className={`rail-view ${mainView === 'files' ? 'active' : ''}`}
+          className={`rail-view ${mainView === 'files' || mainView === 'editor' ? 'active' : ''}`}
           title="文件"
           aria-label="文件"
+          aria-pressed={mainView === 'files' || mainView === 'editor'}
           onClick={() => onSelectView('files')}
         >
-          <Files size={15} />
+          <Files size={15} /><span>文件</span>
+        </button>
+        <button type="button" className={`rail-view ${mainView === 'git' ? 'active' : ''}`} title="源代码管理" aria-label="源代码管理" aria-pressed={mainView === 'git'} onClick={() => onSelectView('git')}>
+          <GitBranch size={15} /><span>更改</span>
         </button>
         <button
           className={`rail-view ${mainView === 'stats' ? 'active' : ''}`}
           title="代码普查"
           aria-label="代码普查"
+          aria-pressed={mainView === 'stats'}
           onClick={() => onSelectView('stats')}
         >
-          <BarChart3 size={15} />
+          <BarChart3 size={15} /><span>统计</span>
         </button>
         {/* 编辑器 / 质量 / 片段库 / 书签 / 保存历史 都不在左栏：编辑器随文件打开，
             其余走命令面板（Ctrl+Shift+P）或输入框的插件菜单。这里曾写着「顶栏
@@ -282,21 +316,22 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
           className={`rail-view ${mainView === 'automation' ? 'active' : ''}`}
           title="自动化"
           aria-label="自动化"
+          aria-pressed={mainView === 'automation'}
           onClick={() => onSelectView('automation')}
         >
-          <CalendarClock size={15} />
+          <CalendarClock size={15} /><span>自动化</span>
         </button>
+        {/* 电脑操控 had no entry anywhere in the window: the computer_* tools
+            were reachable only by asking the agent in a sentence, so "看看我的
+            电脑上有什么" needed the user to know they could ask. */}
         <button
-          className={`rail-view ${mainView === 'settings' ? 'active' : ''}`}
-          title="设置"
-          aria-label="设置"
-          onClick={() => onSelectView('settings')}
+          className={`rail-view ${mainView === 'computer' ? 'active' : ''}`}
+          title="电脑操控"
+          aria-label="电脑操控"
+          aria-pressed={mainView === 'computer'}
+          onClick={() => onSelectView('computer')}
         >
-          <Settings size={15} />
-        </button>
-        <span className="rail-viewbar-gap" />
-        <button className="rail-view rail-view-new" title="开始新对话（新建会话）" aria-label="开始新对话" onClick={onNewChat}>
-          <FilePlus size={15} />
+          <Monitor size={15} /><span>电脑</span>
         </button>
       </nav>
 
@@ -326,16 +361,10 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
           ? <div className="pane-title" style={{ textTransform: 'none', letterSpacing: 0 }}>{sessions.length === 0 ? '暂无会话' : '没有匹配该标签的会话'}</div>
           : groups.map(([label, list]) => (
             <div key={label} className="rail-group">
-              <div className="rail-section">{label}</div>
+              <div className="rail-section"><span>{label}</span><span className="rail-section-count">{list.length}</span></div>
               {list.map(renderSession)}
             </div>
           ))}
-
-        <div className="rail-section">项目</div>
-        <button className="rail-convo" onClick={onOpenWorkspace} title={state.workspaceRoot || '打开文件夹'}>
-          <FolderOpen size={16} />
-          <span>{workspaceName}</span>
-        </button>
 
         {recentFiles.length > 0 && (
           <>
@@ -360,15 +389,24 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
         <ConversationContextMenu
           x={ctx.x}
           y={ctx.y}
-          onClose={() => setCtx(null)}
+          onClose={(restoreFocus) => {
+            setCtx(null);
+            if (restoreFocus) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-session-id="${CSS.escape(ctx.session)}"] .rail-convo-more`)?.focus());
+          }}
           onPick={(action) => {
             const session = ctx.session;
             setCtx(null);
             if (action === 'rename') {
               const meta = sessions.find((s) => s.id === session);
-              setRenaming({ id: session, title: meta?.title ?? '' });
+              setRenaming({ id: session, title: meta?.baseTitle ?? meta?.title ?? '' });
             } else if (action === 'edit-tags') {
               setTagEdit({ id: session });
+            } else if (action === 'remove') {
+              // Deleting a session removes its file from disk; there is no undo
+              // and it is not in the OS recycle bin. The menu entry is one click
+              // away from 归档, which does keep the record, so the destructive
+              // one has to confirm first.
+              setDeleting({ id: session });
             } else {
               onConvoAction(action, session);
             }
@@ -394,7 +432,34 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
         />
       )}
 
+      {deleting && (
+        <div className="rename-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setDeleting(null); }}>
+          <div className="rename-dialog" role="alertdialog" aria-modal="true" aria-label="确认删除会话">
+            <div className="rename-dialog-head">
+              <span>永久删除聊天？</span>
+              <button className="rename-close" onClick={() => setDeleting(null)} aria-label="关闭"><X size={15} /></button>
+            </div>
+            <div className="rename-dialog-body">
+              <p className="rename-dialog-note">
+                「{sessions.find((s) => s.id === deleting.id)?.title || '未命名会话'}」的记录会从磁盘删除，无法恢复，也不会进入回收站。
+                如果只是想让它从列表里消失，请改用<strong>归档聊天</strong>。
+              </p>
+            </div>
+            <div className="rename-dialog-foot">
+              <button className="rename-btn-cancel" onClick={() => setDeleting(null)}>取消</button>
+              <button className="rename-btn-confirm"
+                onClick={() => { onConvoAction('remove', deleting.id); setDeleting(null); }}>
+                永久删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="rail-foot">
+        <button type="button" className={`rail-item rail-settings ${mainView === 'settings' ? 'active' : ''}`} aria-pressed={mainView === 'settings'} onClick={() => onSelectView('settings')}>
+          <Settings size={16} />设置
+        </button>
         <div className="rail-foot-anchor">
           {helpOpen && (
             <HelpMenu

@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { matchAction, resolveBindings, serializeChord } from './lib/keybindings';
 import { applyBackground, normalizeBlur, normalizeDim, normalizeScope, readBackground } from './lib/background';
-import { FolderOpen, MessageSquare, Files as FilesIcon, Settings as SettingsIcon, CalendarClock, GitBranch, FileCode, Gauge, Search, Braces, BookmarkCheck, History, BarChart3 } from 'lucide-react';
+import { FolderOpen, MessageSquare, Files as FilesIcon, Settings as SettingsIcon, CalendarClock, GitBranch, FileCode, Gauge, Search, Braces, BookmarkCheck, History, BarChart3, StickyNote, Monitor, BrainCircuit } from 'lucide-react';
 import { AutomationPanel } from './components/AutomationPanel';
+import { GuiControlPanel } from './components/GuiControlPanel';
+import { MemoryPanel } from './components/MemoryPanel';
 import { CodeReviewPanel } from './components/CodeReviewPanel';
 import { Composer } from './components/Composer';
 import { ConversationStream } from './components/ConversationStream';
@@ -32,27 +34,34 @@ import { SnippetsPanel } from './components/SnippetsPanel';
 import { BookmarksPanel } from './components/BookmarksPanel';
 import { FileHistoryPanel } from './components/FileHistoryPanel';
 import { CodeStatsPanel } from './components/CodeStatsPanel';
-import { SessionNotesDrawer } from './components/SessionNotesDrawer';
+import { SessionNotesDrawer, NOTES_DRAFT_KEY, NOTES_WIDTH } from './components/SessionNotesDrawer';
 import { SettingsView, type SettingsNavId } from './components/Settings/SettingsView';
 import { TaskCard } from './components/TaskCard';
 import { Terminal } from './components/Terminal';
 import { TerminalFloat } from './components/TerminalFloat';
-import { ToastLayer } from './components/ToastLayer';
+import { ToastLayer, appNotice } from './components/ToastLayer';
 import { ApprovalModal } from './components/ApprovalModal';
+import { GuardConfirmationModal } from './components/GuardConfirmationModal';
+import { ConfirmDialog } from './components/ConfirmDialog';
+import { SaveConflictDialog } from './components/SaveConflictDialog';
+import { useEditorSave } from './lib/useEditorSave';
 import { cueForEvent, playCue, soundVolume } from './lib/notifySounds';
 import { Welcome } from './components/Welcome';
 import { desktop } from './lib/ipc';
+import { settingsPatch, type SettingsPatch } from './lib/settingsPatch';
 import { appReducer, initialState, languageForPath, sessionChangeTotals, activeTurnProgress, sessionToChat } from './lib/state';
 import { queueForSession } from './lib/messageQueueSelect';
+import { returnedQueueMessages } from './lib/cancelledQueue';
 import { decideQueuePump, pumpSessionId } from './lib/queuePump';
 import { setLanguageWorkspaceRoot } from './lib/languageProviders';
 import { transcriptFileName, transcriptToMarkdown } from './lib/transcriptExport';
 import { loadRecent, rankRecent, touchRecent, type RecentFile } from './lib/recentFiles';
-import { normalizeChains, toggleChain, toggleSelectedModel } from './lib/dispatchChains';
+import { moveChain, normalizeChains, toggleChain, toggleSelectedModel } from './lib/dispatchChains';
+import type { DispatchChains } from './lib/dispatchChains';
 import type { MentionItem } from './components/MentionPicker';
 import type { ApprovalMode, ChatItem, PreviewFileDescriptor, ProjectDescriptor, ReasoningEffort, SessionMeta, ThemeMode, ToolScope } from './types';
 
-type MainView = 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality';
+type MainView = 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality' | 'computer' | 'memory';
 type QualityOverlay = 'review' | 'coverage' | 'performance' | 'refactor' | null;
 
 function applyTheme(theme: ThemeMode | undefined) {
@@ -104,6 +113,15 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   // Iteration 10: session notes drawer.
   const [notesOpen, setNotesOpen] = useState(false);
+  const [notesDraft, setNotesDraft] = useState(false);
+  const [workspaceConfirm, setWorkspaceConfirm] = useState<'dirty' | 'running' | null>(null);
+  // The drawer only mounts while open, so it cannot report its draft while
+  // closed. Seed the flag from the same localStorage key it writes, and read it
+  // again whenever the drawer closes, so the dot outlives a close/reopen.
+  useEffect(() => {
+    if (notesOpen) return;
+    setNotesDraft(Boolean(localStorage.getItem(NOTES_DRAFT_KEY)?.trim()));
+  }, [notesOpen]);
   // Iteration 13: recently-opened files (per workspace, localStorage-backed).
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
   // Iteration 17: Ctrl+P quick-open file palette.
@@ -159,21 +177,53 @@ export default function App() {
   }, [state.workspaceRoot]);
   // Editor state
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
+  const openFilesRef = useRef(openFiles);
+  openFilesRef.current = openFiles;
   // Last-known on-disk mtime per open file, for external-change conflict checks.
   const diskMtimes = useRef<Map<string, number>>(new Map());
   // Deferred bridge restart: set when the user switches model mid-turn.
-  const pendingRestartRef = useRef(false);
+  const pendingRestartRef = useRef(new Set<string>());
   const switchingSessionRef = useRef(false);
   const switchSequenceRef = useRef(0);
   const approvingRequests = useRef(new Set<string>());
   // Closes the window between writing a prompt to the bridge and the CLI's
   // turn_start arriving. The pump effect re-fires on the queue change the send
   // itself causes, so without this a second message would be pushed immediately.
-  const sendInFlightRef = useRef(false);
+  const sendInFlightRef = useRef(new Set<string>());
+  const pendingSubmissionRef = useRef<{ cancelled: boolean; sequence: number; root: string } | null>(null);
+  const queueLoadedRootRef = useRef('');
   const [activeFile, setActiveFile] = useState<string | null>(null);
 
   const stateRef = useRef(state);
   stateRef.current = state;
+  useEffect(() => {
+    const root = state.workspaceRoot;
+    queueLoadedRootRef.current = '';
+    if (!root || !desktop.messageQueue) return;
+    let stale = false;
+    void desktop.messageQueue.load(root).then(snapshot => {
+      if (stale || root !== stateRef.current.workspaceRoot) return;
+      queueLoadedRootRef.current = root;
+      dispatch({ type: 'queue/hydrate', messages: snapshot.messages, pausedSessions: snapshot.pausedSessions });
+    }).catch(error => { if (!stale) appNotice('读取暂存消息失败，原文件已保留', cleanIpcError(error)); });
+    return () => { stale = true; };
+  }, [state.workspaceRoot]);
+
+  useLayoutEffect(() => {
+    const root = state.workspaceRoot;
+    if (!root || queueLoadedRootRef.current !== root || !desktop.messageQueue) return;
+    void desktop.messageQueue.save(root, { messages: state.messageQueue, pausedSessions: state.queuePausedSessions ?? [] }).catch(error => appNotice('暂存消息保存失败', cleanIpcError(error)));
+  }, [state.workspaceRoot, state.messageQueue, state.queuePausedSessions]);
+  const editorSave = useEditorSave({
+    workspaceRoot: state.workspaceRoot,
+    getFiles: () => openFilesRef.current,
+    setFiles: setOpenFiles,
+    mtimes: diskMtimes.current,
+    editor: desktop.editor,
+    onError: (message) => appNotice('文件操作已中止', cleanIpcError(message)),
+  });
+  const handleSaveFile = editorSave.saveFile;
+  const dispatchDefaultWriteQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     desktop.settings.get().then((settings) => {
@@ -212,6 +262,13 @@ export default function App() {
       setBooting(false);
     });
     return desktop.agent.onEvent(async (event) => {
+      const root = typeof event.workspaceRoot === 'string' ? event.workspaceRoot : null;
+      if (root && root.replace(/\\/g, '/').toLowerCase() !== stateRef.current.workspaceRoot.replace(/\\/g, '/').toLowerCase()) return;
+      if (event.type === 'cancel_ack') {
+        const sessionId = typeof event.sessionId === 'string' ? event.sessionId : stateRef.current.activeSessionId ?? '';
+        pauseQueue(sessionId);
+        dispatch({ type: 'queue/restore', messages: returnedQueueMessages(event, sessionId) });
+      }
       dispatch({ type: 'agent/event', event });
       // System notification cues (WebAudio): confirmation needed / task done
       // / error. Volume 0 (sounds off) short-circuits; auto-decided approvals
@@ -230,12 +287,15 @@ export default function App() {
         // idle effect below only ever serves the conversation on screen.
         void pumpQueue(pumpSessionId(event.sessionId, stateRef.current.activeSessionId), { justFinished: true });
       }
-      if (event.type === 'turn_done' && pendingRestartRef.current && !switchingSessionRef.current) {
-        // Model was switched mid-turn; now that files are no longer being
-        // written, it's safe to swap the bridge to the new provider/model.
-        pendingRestartRef.current = false;
-        dispatch({ type: 'agent/status', status: 'starting' });
-        try { await desktop.agent.restart(); } catch { /* next prompt retries */ }
+      const finishedSession = typeof event.sessionId === 'string' ? event.sessionId : null;
+      if (event.type === 'turn_done' && finishedSession && pendingRestartRef.current.has(finishedSession)) {
+        pendingRestartRef.current.delete(finishedSession);
+        try {
+          const result = await desktop.agent.restart(finishedSession);
+          if (stateRef.current.activeSessionId === finishedSession) dispatch({ type: 'agent/bind', sessionId: result.sessionId });
+        } catch (error) {
+          dispatch({ type: 'agent/event', event: { type: 'error', sessionId: finishedSession, message: `切换模型失败：${cleanIpcError(error)}` } });
+        }
       }
       if (event.type === 'undo_done' && event.ok !== false && stateRef.current.workspaceRoot) {
         // The reducer already flips the requesting turn to `undone`; now refresh
@@ -279,7 +339,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- pumpQueue reads
     // live state through stateRef and is intentionally not a dependency: making
     // it one would re-create it every render and re-fire this effect forever.
-  }, [state.activeSessionId, state.agentStatus, state.runningSessions, state.messageQueue]);
+  }, [state.activeSessionId, state.agentStatus, state.readySessions, state.runningSessions, state.messageQueue, state.queuePausedSessions]);
 
   useEffect(() => {
     refreshSessions();
@@ -306,12 +366,10 @@ export default function App() {
   // Apply persisted font-size preferences as CSS custom properties so the whole
   // UI scales. Falls back to the stylesheet defaults when unset.
   //
-  // --fs-base is the single knob for the whole interface scale: every other
-  // step (--fs-sm/-xs/-md/-lg/-xl) is expressed relative to it in styles.css.
-  // Writing just this one variable is what makes the 界面字号 preference move
-  // the whole UI rather than only the styles that happened to read --fs-base.
-  // It deliberately does NOT touch the root font-size, which would scale icons,
-  // spacing and radii along with it.
+  // --fs-base is the single knob for the whole interface scale: every type step
+  // in styles.css is one of ten `calc(var(--fs-base) ± Npx)` tokens, so writing
+  // this one variable moves the entire interface. It deliberately does NOT touch
+  // the root font-size, which would scale icons and spacing along with the text.
   const uiFontSize = Number(state.settings?.preferences?.uiFontSize) || undefined;
   const codeFontSize = Number(state.settings?.preferences?.codeFontSize) || undefined;
   const chineseFont = String(state.settings?.preferences?.uiChineseFont || 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif');
@@ -322,6 +380,10 @@ export default function App() {
     if (uiFontSize) root.style.setProperty('--fs-base', `${uiFontSize}px`);
     else root.style.removeProperty('--fs-base');
   }, [uiFontSize]);
+  // --fs-code feeds the transcript's code surfaces (fenced blocks, inline code,
+  // diffs, logs) and the Terminal; the Monaco editor takes the number directly.
+  // Its stylesheet default is base-relative, so 界面字号 still moves code until
+  // the user sets a code size of their own — see the token's comment.
   useEffect(() => {
     const root = document.documentElement;
     if (codeFontSize) root.style.setProperty('--fs-code', `${codeFontSize}px`);
@@ -380,13 +442,62 @@ export default function App() {
   }, [backgroundEnabled, backgroundImage, backgroundDim, backgroundBlur, backgroundScope]);
 
   // Global keyboard shortcuts advertised by the launcher and shortcuts page.
-  const workspaceToolsRef = useRef({ open: false, browserOpen: false, sideChatOpen: false });
-  workspaceToolsRef.current = { open: workspaceToolsOpen, browserOpen: state.browserOpen, sideChatOpen: state.sideChatOpen };
+  const workspaceToolsRef = useRef({ open: false, browserOpen: false, sideChatOpen: false, notesOpen: false, inspectorOpen: false });
+  workspaceToolsRef.current = { open: workspaceToolsOpen, browserOpen: state.browserOpen, sideChatOpen: state.sideChatOpen, notesOpen, inspectorOpen };
+
+  // The right column holds one surface at a time. Everything that opens one has
+  // to close the others, or two components land in grid track 3 and the later
+  // one paints over the earlier — which is how the notes drawer came to cover
+  // the browser panel and its close button.
+  const closeOtherPanels = useCallback((keep: 'notes' | 'tools' | 'inspector' | null) => {
+    const snapshot = workspaceToolsRef.current;
+    if (keep !== 'notes' && snapshot.notesOpen) setNotesOpen(false);
+    if (keep !== 'tools' && snapshot.open) setWorkspaceToolsOpen(false);
+    if (keep !== 'inspector' && snapshot.inspectorOpen) setInspectorOpen(false);
+    if (snapshot.browserOpen) dispatch({ type: 'browser/toggle' });
+    if (snapshot.sideChatOpen) dispatch({ type: 'sidechat/toggle' });
+  }, [dispatch]);
+
+  // Settings is an early-return branch of the app (it renders its own tree,
+  // with no side panels and no conversation). A command that opens a panel from
+  // there therefore did nothing visible: the palette closed, the flag flipped,
+  // and the user stayed on the settings page. Commands that put something in
+  // the right column or the conversation now also leave settings.
+  const ensureChatVisible = useCallback(() => {
+    setMainView((current) => (current === 'settings' ? 'chat' : current));
+  }, []);
+
+  // Browser and side chat live in the same track. Both have several entry
+  // points (palette, shortcut, plugin list, panel close), and only some of them
+  // consulted the exclusion rules, so the browser could open on top of the
+  // notes drawer. These two helpers are now the only writers that open them.
+  const toggleBrowserPanel = useCallback(() => {
+    closeOtherPanels(null);
+    dispatch({ type: 'browser/toggle' });
+    ensureChatVisible();
+  }, [closeOtherPanels, dispatch, ensureChatVisible]);
+
+  const toggleSideChatPanel = useCallback(() => {
+    closeOtherPanels(null);
+    dispatch({ type: 'sidechat/toggle' });
+    ensureChatVisible();
+  }, [closeOtherPanels, dispatch, ensureChatVisible]);
+
+  const toggleNotesPanel = useCallback(() => {
+    if (workspaceToolsRef.current.notesOpen) {
+      setNotesOpen(false);
+      return;
+    }
+    closeOtherPanels('notes');
+    setNotesOpen(true);
+    ensureChatVisible();
+  }, [closeOtherPanels, ensureChatVisible]);
   const openWorkspaceTools = useCallback(() => {
     const snapshot = workspaceToolsRef.current;
     if (!snapshot.open) {
       if (snapshot.browserOpen) dispatch({ type: 'browser/toggle' });
       if (snapshot.sideChatOpen) dispatch({ type: 'sidechat/toggle' });
+      setNotesOpen(false);
       setWorkspaceToolsOpen(true);
     }
   }, [dispatch]);
@@ -401,6 +512,7 @@ export default function App() {
     if (snapshot.browserOpen) dispatch({ type: 'browser/toggle' });
     if (snapshot.sideChatOpen) dispatch({ type: 'sidechat/toggle' });
     setWorkspaceToolsOpen(false);
+    setNotesOpen(false);
     setInspectorLevel(level);
     setInspectorNonce((n) => n + 1);
     setInspectorOpen(true);
@@ -450,8 +562,8 @@ export default function App() {
         case 'toggle-terminal': dispatch({ type: 'bottom/toggle' }); return;
         case 'new-chat': dispatch({ type: 'chat/clear' }); setMainView('chat'); return;
         case 'toggle-details': setDetailsExpanded((v) => !v); return;
-        case 'side-chat': setWorkspaceToolsOpen(false); dispatch({ type: 'sidechat/toggle' }); return;
-        case 'browser': setWorkspaceToolsOpen(false); dispatch({ type: 'browser/toggle' }); return;
+        case 'side-chat': toggleSideChatPanel(); return;
+        case 'browser': toggleBrowserPanel(); return;
         case 'workspace-tools': {
           const snapshot = workspaceToolsRef.current;
           if (snapshot.open) setWorkspaceToolsOpen(false);
@@ -462,7 +574,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openWorkspaceTools]);
+  }, [openWorkspaceTools, toggleBrowserPanel, toggleSideChatPanel]);
 
   // Editor tabs belong to a workspace. On any workspace change, drop them all
   // (and their disk watchers) so saves/watch events can't touch the old tree.
@@ -480,62 +592,54 @@ export default function App() {
     // dialog so declining never leaves main/renderer root state inconsistent.
     const dirtyCount = openFilesRef.current.filter((file) => file.dirty).length;
     if (dirtyCount > 0) {
-      const proceed = window.confirm(
-        `${dirtyCount} 个文件有未保存的修改。\n切换工作区将丢弃这些修改，是否继续？`,
-      );
-      if (!proceed) return;
+      setWorkspaceConfirm('dirty');
+      return;
     }
-    // Switching workspaces while the agent is running would leave it writing to
-    // the old project tree. The CLI child must die with the old workspace.
-    if (stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting') {
-      const proceed = window.confirm(
-        '智能体正在当前工作区执行任务。\n\n切换工作区将中断任务，已执行的部分会保留。\n\n是否继续？'
-      );
-      if (!proceed) return;
-      try { await desktop.agent.restart(); } catch { /* already dead */ }
+    if (stateRef.current.runningSessions.length > 0 || stateRef.current.agentStatus === 'starting') {
+      setWorkspaceConfirm('running');
+      return;
     }
-    const result = await desktop.workspace.open();
-    if (!result.canceled && result.root) {
+    await performOpenWorkspace();
+  }
+
+  async function performOpenWorkspace() {
+    const sequence = ++switchSequenceRef.current;
+    switchingSessionRef.current = true;
+    try {
+      const result = await desktop.workspace.open();
+      if (sequence !== switchSequenceRef.current || result.canceled || !result.root) return;
       resetEditorTabs();
+      pendingRestartRef.current.clear();
+      sendInFlightRef.current.clear();
+      setSessions([]);
+      setRunningSubagentCount(0);
       setLanguageWorkspaceRoot(result.root);
       dispatch({ type: 'workspace/opened', root: result.root });
       const tree = await desktop.workspace.getTree('.');
-      dispatch({ type: 'tree/loaded', tree });
+      if (sequence === switchSequenceRef.current) dispatch({ type: 'tree/loaded', tree });
+    } catch (error) {
+      dispatch({ type: 'agent/event', event: { type: 'error', message: `切换工作区失败：${cleanIpcError(error)}` } });
+    } finally {
+      if (sequence === switchSequenceRef.current) switchingSessionRef.current = false;
     }
   }
 
-  async function openFile(path: string) {
-    try {
-      const desc = await desktop.preview.describe(path);
-      // Route binary/preview-able formats to the preview sidebar
-      if (desc.kind !== 'text') {
-        const tabId = `preview-${desc.token}`;
-        dispatch({
-          type: 'preview/open',
-          tab: {
-            id: tabId,
-            title: desc.name,
-            kind: desc.kind,
-            descriptor: desc,
-            status: desc.kind === 'pdf' || desc.kind === 'html' ? 'loading' : 'ready',
-            zoom: 1,
-            fitWidth: true,
-          },
-        });
-        // For PDF: load in native WebContentsView
-        if (desc.kind === 'pdf') {
-          const url = `yoycode-preview://${desc.token}/${encodeURIComponent(desc.relativePath)}`;
-          await desktop.preview.show(url, undefined);
-        }
-        return;
-      }
-    } catch {
-      // Fall through: if describe fails, try as text
-    }
-    // Bug-8 fix: for plain text files there is no editor to display content in,
-    // so reading the file content was pointless and injected a misleading message.
-    // Just select the file in the tree silently (no IPC read, no chat injection).
-    void path; // path is used above by describe(); nothing more to do for text files.
+  async function openPreviewFile(path: string): Promise<boolean> {
+    const desc = await desktop.preview.describe(path);
+    if (desc.kind === 'text') return false;
+    dispatch({
+      type: 'preview/open',
+      tab: {
+        id: `preview-${desc.relativePath}`,
+        title: desc.name,
+        kind: desc.kind,
+        descriptor: desc,
+        status: desc.kind === 'pdf' || desc.kind === 'html' ? 'loading' : 'ready',
+        zoom: 1,
+        fitWidth: true,
+      },
+    });
+    return true;
   }
 
   async function openDirectory(path: string) {
@@ -575,23 +679,33 @@ export default function App() {
     return languageMap[ext || ''] || 'plaintext';
   }
 
-  async function handleOpenFile(path: string) {
+  async function handleOpenFile(path: string, options?: { asText?: boolean }): Promise<boolean> {
+    const root = stateRef.current.workspaceRoot;
+    try {
+      if (!options?.asText && await openPreviewFile(path)) return true;
+    } catch (error) {
+      appNotice('无法打开文件', cleanIpcError(error));
+      return false;
+    }
+    if (stateRef.current.workspaceRoot !== root) return false;
     // Check if already open
     if (openFiles.find(f => f.path === path)) {
       setActiveFile(path);
       setMainView('editor');
-      return;
+      return true;
     }
 
     // Read file content
     const result = await desktop.editor.readFile(path);
     if (!result.ok) {
-      alert(`无法打开文件: ${result.error || '未知错误'}`);
-      return;
+      appNotice('无法打开文件', result.error || '未知错误');
+      return false;
     }
     const fileContent = result.content ?? '';
+    if (stateRef.current.workspaceRoot !== root) return false;
     // Record on-disk mtime and start watching for external (agent) writes.
     const stat = await desktop.editor.stat(path);
+    if (stateRef.current.workspaceRoot !== root) return false;
     if (stat.ok && stat.mtimeMs !== undefined) diskMtimes.current.set(path, stat.mtimeMs);
     void desktop.editor.watchFile(path);
 
@@ -605,16 +719,19 @@ export default function App() {
     // Iteration 13: remember the file per workspace for the rail quick list.
     setRecentFiles(rankRecent(touchRecent(stateRef.current.workspaceRoot, path, fileContent.length)));
 
-    setOpenFiles(prev => [...prev, newFile]);
+    setOpenFiles(prev => prev.some((file) => file.path === path) ? prev : [...prev, newFile]);
     setActiveFile(path);
     setMainView('editor');
+    return true;
   }
 
   /** Open a file from a quality panel and reveal a 1-based line in Monaco. */
   async function handleOpenFileAtLine(path: string, line?: number) {
-    await handleOpenFile(path);
-    if (line && Number.isFinite(line) && line >= 1) {
-      setPendingReveal({ path, line: Math.floor(line) });
+    const root = stateRef.current.workspaceRoot;
+    const revealLine = line !== undefined && Number.isFinite(line) && line >= 1 ? Math.floor(line) : null;
+    const opened = await handleOpenFile(path, { asText: revealLine !== null });
+    if (opened && stateRef.current.workspaceRoot === root && revealLine !== null) {
+      setPendingReveal({ path, line: revealLine });
     }
   }
 
@@ -627,6 +744,17 @@ export default function App() {
    * handling applies for free. The findings come back as a `review_report`
    * event, not as this call's return value.
    */
+  async function ensureSession(): Promise<string> {
+    const root = stateRef.current.workspaceRoot;
+    const sequence = switchSequenceRef.current;
+    const requested = stateRef.current.activeSessionId;
+    const result = await desktop.agent.start(requested ?? undefined);
+    if (sequence !== switchSequenceRef.current || root !== stateRef.current.workspaceRoot) throw new Error('会话或工作区已切换，未发送此消息');
+    dispatch({ type: 'agent/bind', sessionId: result.sessionId });
+    if (result.running) dispatch({ type: 'agent/event', event: { type: 'turn_start', sessionId: result.sessionId } });
+    return result.sessionId;
+  }
+
   async function runReview() {
     if (stateRef.current.agentStatus === 'running') {
       dispatch({ type: 'agent/event', event: { type: 'info', message: '当前回合进行中，请等它结束后再审查。' } });
@@ -634,69 +762,15 @@ export default function App() {
     }
     dispatch({ type: 'chat/user', text: '/review' });
     try {
-      if (stateRef.current.agentStatus === 'offline') {
-        dispatch({ type: 'agent/status', status: 'starting' });
-        await desktop.agent.start(stateRef.current.activeSessionId ?? undefined);
-      }
+      const sessionId = await ensureSession();
       const toolScope = (stateRef.current.settings?.preferences?.toolScope as ToolScope | undefined) ?? 'auto';
-      await desktop.agent.prompt('/review', [], toolScope, stateRef.current.activeSessionId ?? undefined);
+      await desktop.agent.prompt('/review', [], toolScope, sessionId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       dispatch({ type: 'agent/event', event: { type: 'error', message: `无法启动审查：${cleanIpcError(message)}` } });
     }
   }
 
-  async function handleSaveFile(path: string, content: string) {
-    try {
-      // Conflict guard: if the file changed on disk after we opened/last synced
-      // it (e.g. the agent rewrote it), refuse to silently clobber those edits.
-      const file = openFilesRef.current.find((candidate) => candidate.path === path);
-      const disk = await desktop.editor.stat(path);
-      const known = diskMtimes.current.get(path);
-      if (known !== undefined && (!disk.ok || disk.mtimeMs === undefined)) {
-        alert('无法确认文件是否被外部修改，已取消保存以保护你的本地编辑。');
-        return;
-      }
-      const changedOnDisk = disk.ok && known !== undefined && disk.mtimeMs !== known;
-      if (file?.stale || changedOnDisk) {
-        const reload = window.confirm(
-          '文件在你编辑期间被外部修改（可能是 agent 写入）。\n' +
-          '确定 = 覆盖外部修改并保存我的版本\n取消 = 丢弃我的编辑，加载磁盘上的最新内容'
-        );
-        if (!reload) {
-          const fresh = await desktop.editor.readFile(path);
-          if (fresh.ok && fresh.content !== undefined) {
-            const newContent = fresh.content;
-            setOpenFiles(prev => prev.map(f => f.path === path ? {
-              ...f,
-              content: newContent,
-              dirty: false,
-              external: undefined,
-              stale: false,
-            } : f));
-            if (disk.mtimeMs !== undefined) diskMtimes.current.set(path, disk.mtimeMs);
-          }
-          return;
-        }
-      }
-      const result = await desktop.editor.saveFile(path, content);
-      if (!result.ok) {
-        alert(`保存失败: ${result.error || '未知错误'}`);
-        return;
-      }
-      const after = await desktop.editor.stat(path);
-      if (after.ok && after.mtimeMs !== undefined) diskMtimes.current.set(path, after.mtimeMs);
-
-      // Mark as not dirty. Clear any stale snapshot only after the write succeeds.
-      setOpenFiles(prev => prev.map(f =>
-        f.path === path ? { ...f, content, dirty: false, external: undefined, stale: false } : f
-      ));
-    } catch (error) {
-      // Keep the tab dirty when IPC itself fails (rather than treating a
-      // rejected save as if the file had been written).
-      alert(`保存失败: ${cleanIpcError(error)}`);
-    }
-  }
 
   function handleCloseFile(path: string) {
     void desktop.editor.unwatchFile(path);
@@ -716,10 +790,16 @@ export default function App() {
   // External file changes (agent writes, git checkout): reload clean tabs, but
   // preserve dirty local content and keep the latest disk snapshot as stale
   // metadata so a later save can make an explicit overwrite decision.
-  const openFilesRef = useRef(openFiles);
-  openFilesRef.current = openFiles;
+  //
+  // Preview panes are refreshed from the same event. They watch their own files
+  // (see the effect below) and this is what makes an agent's edit to an open
+  // .docx/.xlsx/.pptx actually redraw the pane: the reducer bumps that one tab's
+  // `revision`, the pane is keyed on it, and the component remounts and re-reads.
+  // Without this the pane keeps showing the bytes the agent just replaced.
   useEffect(() => {
     const unsub = desktop.editor.onFileChanged(async ({ path }) => {
+      dispatch({ type: 'preview/changed', absolutePath: path });
+
       const tab = openFilesRef.current.find((f) => f.path === path);
       if (!tab) return;
       const fresh = await desktop.editor.readFile(path);
@@ -750,13 +830,74 @@ export default function App() {
     ));
   }
 
+  // Watch the files the preview panes are showing, so an agent's write to an
+  // open document reaches the pane. Watching is refcounted per path in the main
+  // process, so a file open in both an editor tab and a preview pane keeps
+  // working when either one closes.
+  //
+  // Only DOM-rendered documents are watched. A `web` pane is a running dev
+  // server, which reloads itself, and forcing a re-read on every workspace write
+  // would fight it.
+  const previewWatchRef = useRef(new Set<string>());
+  useEffect(() => {
+    const watched = previewWatchRef.current;
+    const wanted = new Set(
+      state.preview.tabs
+        .filter((tab) => tab.kind === 'docx' || tab.kind === 'xlsx' || tab.kind === 'pptx' || tab.kind === 'pdf' || tab.kind === 'image' || tab.kind === 'html')
+        .map((tab) => (tab.descriptor as { absolutePath?: string }).absolutePath)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0),
+    );
+
+    for (const path of wanted) {
+      if (watched.has(path)) continue;
+      watched.add(path);
+      void desktop.editor.watchFile(path);
+    }
+    for (const path of [...watched]) {
+      if (wanted.has(path)) continue;
+      watched.delete(path);
+      void desktop.editor.unwatchFile(path);
+    }
+  }, [state.preview.tabs]);
+
+  // Stop watching everything when the workspace changes; the paths belong to the
+  // old root and the panes are gone.
+  useEffect(() => {
+    return () => {
+      for (const path of previewWatchRef.current) void desktop.editor.unwatchFile(path);
+      previewWatchRef.current.clear();
+    };
+  }, [state.workspaceRoot]);
+
   function handleSetActiveFile(path: string) {
     setActiveFile(path);
   }
 
-  async function saveSettings(next: NonNullable<typeof state.settings>) {
+  async function saveSettings(next: SettingsPatch) {
     const settings = await desktop.settings.set(next);
-    dispatch({ type: 'settings/loaded', settings });
+    const hints = new Map(stateRef.current.settings?.providers.map((provider) => [provider.id, provider.keyHint]));
+    dispatch({ type: 'settings/loaded', settings: {
+      ...settings,
+      providers: settings.providers.map((provider) => ({ ...provider, keyHint: provider.keyHint ?? hints.get(provider.id) })),
+    } });
+  }
+
+  function saveSettingsSnapshot(next: NonNullable<typeof state.settings>) {
+    const before = state.settings;
+    if (before) return saveSettings(settingsPatch(before, next));
+    return saveSettings(next);
+  }
+
+  function updateDispatchDefault(update: (current: DispatchChains) => DispatchChains): Promise<void> {
+    const queued = dispatchDefaultWriteQueueRef.current.then(async () => {
+      const settings = await desktop.settings.get();
+      const current = normalizeChains(settings.preferences?.dispatchDefault);
+      const next = update(current);
+      if (next === current) return;
+      await saveSettings({ preferences: { dispatchDefault: next } });
+    });
+    dispatchDefaultWriteQueueRef.current = queued.catch(() => undefined);
+    return queued;
   }
 
   async function saveApiKey(providerId: string, apiKey: string) {
@@ -774,7 +915,7 @@ export default function App() {
     if (!state.settings) return;
     const order: ApprovalMode[] = ['ask', 'auto', 'deny'];
     const next = order[(order.indexOf(state.settings.approval) + 1) % order.length];
-    await saveSettings({ ...state.settings, approval: next });
+    await saveSettings({ approval: next });
   }
 
   async function setReasoningEffort(reasoningEffort: ReasoningEffort) {
@@ -782,9 +923,7 @@ export default function App() {
     const provider = state.settings.providers.find((p) => p.id === state.settings?.activeProviderId);
     const modelKey = `${state.settings.activeProviderId}/${provider?.model ?? ''}`;
     const next = {
-      ...state.settings,
       preferences: {
-        ...state.settings.preferences,
         reasoningEffort,
         reasoningEffortByModel: {
           ...state.settings.preferences?.reasoningEffortByModel,
@@ -796,19 +935,15 @@ export default function App() {
     await saveSettings(next);
     // If a bridge is already running, update it live for the very next turn.
     if (stateRef.current.agentStatus !== 'offline') {
-      await desktop.agent.setEffort(reasoningEffort);
+      await desktop.agent.setEffort(reasoningEffort, stateRef.current.activeSessionId ?? undefined);
     }
   }
 
   async function setToolScope(toolScope: ToolScope) {
     if (!state.settings) return;
-    const next = {
-      ...state.settings,
-      preferences: { ...state.settings.preferences, toolScope },
-    };
-    await saveSettings(next);
+    await saveSettings({ preferences: { toolScope } });
     if (stateRef.current.agentStatus !== 'offline') {
-      await desktop.agent.setToolScope(toolScope);
+      await desktop.agent.setToolScope(toolScope, stateRef.current.activeSessionId ?? undefined);
     }
   }
 
@@ -925,7 +1060,9 @@ export default function App() {
     // typed. Queue it instead and send it when the turn ends — submissions then
     // run in the order they were made.
     const sessionId = stateRef.current.activeSessionId;
-    const busy = stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting';
+    if (queueForSession(stateRef.current.messageQueue, sessionId).length === 0 && (stateRef.current.queuePausedSessions ?? []).includes(sessionId ?? '')) resumeQueue(sessionId ?? '');
+    const currentSubmission = pendingSubmissionRef.current;
+    const busy = stateRef.current.agentStatus === 'running' || stateRef.current.agentStatus === 'starting' || Boolean(currentSubmission && currentSubmission.sequence === switchSequenceRef.current && currentSubmission.root === stateRef.current.workspaceRoot);
     if (busy) {
       dispatch({
         type: 'queue/add',
@@ -946,22 +1083,31 @@ export default function App() {
     // Show the user's message immediately so it never silently disappears,
     // even if starting the agent or sending the prompt fails below.
     dispatch({ type: 'chat/user', text: expandedText });
+    const submittedRoot = stateRef.current.workspaceRoot;
+    const submission = { cancelled: false, sequence: switchSequenceRef.current, root: submittedRoot };
+    pendingSubmissionRef.current = submission;
+    let submittedSessionId = sessionId;
     try {
-      if (stateRef.current.agentStatus === 'offline') {
-        dispatch({ type: 'agent/status', status: 'starting' });
-        await desktop.agent.start(stateRef.current.activeSessionId ?? undefined);
-      }
+      dispatch({ type: 'agent/status', status: 'starting' });
+      const sessionId = await ensureSession();
+      submittedSessionId = sessionId;
+      if (submission.cancelled) throw new Error('Agent bridge cancelled before sending');
       const toolScope = (stateRef.current.settings?.preferences?.toolScope as ToolScope | undefined) ?? 'auto';
-      // Target this conversation's CLI child explicitly: other conversations may
-      // be running at the same time.
-      await desktop.agent.prompt(expandedText, files, toolScope, stateRef.current.activeSessionId ?? undefined);
+      await desktop.agent.prompt(expandedText, files, toolScope, sessionId);
     } catch (error) {
+      if (submittedRoot !== stateRef.current.workspaceRoot || submission.sequence !== switchSequenceRef.current) return;
       // Surface the real reason (e.g. "API key is missing") in the conversation
       // instead of failing silently, and reset so the next prompt can retry.
       const message = error instanceof Error ? error.message : String(error);
+      if (submission.cancelled || (/cancelled|canceled|not running/i.test(message) && (stateRef.current.queuePausedSessions ?? []).some(paused => paused === (submittedSessionId ?? '') || paused === ''))) {
+        const owner = submittedSessionId ?? stateRef.current.activeSessionId ?? '';
+        pauseQueue(owner);
+        dispatch({ type: 'queue/restore', messages: [{ id: `cancelled-send-${crypto.randomUUID()}`, sessionId: owner, text: expandedText, files: files?.map(file => ({ path: file.path, name: file.name, size: file.size })), createdAt: Date.now() }] });
+        return;
+      }
       dispatch({ type: 'agent/event', event: { type: 'error', message: `无法启动对话：${cleanIpcError(message)}` } });
       dispatch({ type: 'agent/status', status: 'offline' });
-    }
+    } finally { if (pendingSubmissionRef.current === submission) pendingSubmissionRef.current = null; }
   }
 
   /**
@@ -980,20 +1126,21 @@ export default function App() {
    * immediately, emptying the queue instead of showing what is still waiting.
    */
   async function pumpQueue(sessionId: string | null, options?: { justFinished?: boolean }) {
-    if (!sessionId || sendInFlightRef.current) return;
+    if (!sessionId || sendInFlightRef.current.has(sessionId) || switchingSessionRef.current) return;
     const decision = decideQueuePump({
+      paused: (stateRef.current.queuePausedSessions ?? []).some(paused => paused === sessionId || paused === ''),
       queue: stateRef.current.messageQueue,
       sessionId,
       // Per conversation, not the global status: several can run at once.
       sessionRunning: stateRef.current.runningSessions.includes(sessionId),
-      bridgeReady: stateRef.current.agentStatus === 'ready',
-      sendInFlight: sendInFlightRef.current,
+      bridgeReady: stateRef.current.readySessions.includes(sessionId),
+      sendInFlight: sendInFlightRef.current.has(sessionId),
       ...(options?.justFinished ? { justFinished: true } : {}),
     });
     if (decision.action !== 'send') return;
 
     const next = decision.message;
-    sendInFlightRef.current = true;
+    sendInFlightRef.current.add(sessionId);
     try {
       // Adopt an orphaned entry — queued while the bridge was still starting, so
       // it carries no session id — into the conversation sending it. Until it is
@@ -1001,23 +1148,37 @@ export default function App() {
       if (!next.sessionId) dispatch({ type: 'queue/adopt', id: next.id, sessionId });
       // Drop it before sending: a failure below must not leave it queued forever.
       dispatch({ type: 'queue/remove', id: next.id });
-      dispatch({ type: 'chat/user', text: next.text });
+      dispatch({ type: 'chat/user', text: next.text, sessionId });
       const toolScope = (stateRef.current.settings?.preferences?.toolScope as ToolScope | undefined) ?? 'auto';
       await desktop.agent.prompt(next.text, next.files, toolScope, sessionId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       dispatch({ type: 'agent/event', event: { type: 'error', message: `队列消息发送失败：${cleanIpcError(message)}` } });
     } finally {
-      sendInFlightRef.current = false;
+      sendInFlightRef.current.delete(sessionId);
     }
   }
 
   async function cancelTurn() {
-    await desktop.agent.cancel(stateRef.current.activeSessionId ?? undefined);
-    // agent-bridge.cancel() now emits both turn_done and agent_offline, so the
-    // agent/event listener will set agentStatus → 'offline' automatically.
-    // We do NOT force 'ready' here; that would leave the bridge in a dead state
-    // where prompt() would throw "Agent bridge is not running".
+    const sessionId = stateRef.current.activeSessionId;
+    const submission = pendingSubmissionRef.current;
+    if (submission && submission.sequence === switchSequenceRef.current && submission.root === stateRef.current.workspaceRoot) submission.cancelled = true;
+    pauseQueue(sessionId ?? '');
+    if (!sessionId) { dispatch({ type: 'agent/status', status: 'offline' }); return; }
+    try { await desktop.agent.cancel(sessionId); }
+    catch (error) { appNotice('停止未完成', cleanIpcError(error)); }
+  }
+
+  function pauseQueue(sessionId: string) {
+    sessionId = sessionId || stateRef.current.activeSessionId || '';
+    stateRef.current = { ...stateRef.current, queuePausedSessions: [...new Set([...(stateRef.current.queuePausedSessions ?? []), sessionId])] };
+    dispatch({ type: 'queue/pause', sessionId });
+  }
+
+  function resumeQueue(sessionId: string) {
+    stateRef.current = { ...stateRef.current, queuePausedSessions: (stateRef.current.queuePausedSessions ?? []).filter(paused => paused !== sessionId && !(paused === '' && sessionId === stateRef.current.activeSessionId)) };
+    dispatch({ type: 'queue/resume', sessionId });
+    void pumpQueue(sessionId || stateRef.current.activeSessionId);
   }
 
   // ── Command palette (iteration 2) ────────────────────────────────────────
@@ -1047,8 +1208,7 @@ export default function App() {
   function setThemeMode(mode: 'light' | 'dark' | 'system') {
     const current = stateRef.current.settings;
     if (!current) return;
-    const next = { ...current, preferences: { ...current.preferences, theme: mode } };
-    void saveSettings(next);
+    void saveSettings({ preferences: { theme: mode } });
     applyTheme(mode);
   }
 
@@ -1059,15 +1219,15 @@ export default function App() {
     toggleTerminal: () => dispatch({ type: 'bottom/toggle' }),
     toggleTerminalFloat,
     toggleDetails: () => setDetailsExpanded((v) => !v),
-    toggleSideChat: () => { setWorkspaceToolsOpen(false); dispatch({ type: 'sidechat/toggle' }); },
-    toggleBrowser: () => { setWorkspaceToolsOpen(false); dispatch({ type: 'browser/toggle' }); },
-    toggleWorkDetails: () => dispatch({ type: 'work/toggle' }),
-    togglePreview: () => dispatch({ type: 'preview/toggle' }),
-    toggleNotes: () => { setNotesOpen((v) => !v); setMainView('chat'); },
+    toggleSideChat: toggleSideChatPanel,
+    toggleBrowser: toggleBrowserPanel,
+    toggleWorkDetails: () => { dispatch({ type: 'work/toggle' }); ensureChatVisible(); },
+    togglePreview: () => { dispatch({ type: 'preview/toggle' }); ensureChatVisible(); },
+    toggleNotes: toggleNotesPanel,
     toggleWorkspaceTools: () => {
       // Reuse the helper so the panel exclusion rules stay in one place.
       if (workspaceToolsRef.current.open) setWorkspaceToolsOpen(false);
-      else openWorkspaceTools();
+      else { openWorkspaceTools(); ensureChatVisible(); }
     },
     openSettings: (page) => { setSettingsPage(page as SettingsNavId | undefined); setMainView('settings'); },
     openWorkspace: () => { void openWorkspace(); },
@@ -1139,12 +1299,18 @@ export default function App() {
       // The old confirm existed because `agent.restart` killed the running task.
       const record = await desktop.sessions.load(id);
       if (seq !== switchSequenceRef.current) return;
-      pendingRestartRef.current = false;
+      pendingRestartRef.current.delete(id);
       dispatch({ type: 'chat/load', sessionId: id, chat: sessionToChat(record) });
       setMainView('chat');
       // Ensure a bridge for the target session, but reuse one that is already
       // up — restarting would kill a turn that is still running there.
-      try { await desktop.agent.start(id); } catch (error) {
+      try {
+        const result = await desktop.agent.start(id);
+        if (seq === switchSequenceRef.current) {
+          dispatch({ type: 'agent/bind', sessionId: result.sessionId });
+          if (result.running) dispatch({ type: 'agent/event', event: { type: 'turn_start', sessionId: result.sessionId } });
+        }
+      } catch (error) {
         if (seq === switchSequenceRef.current) {
           dispatch({ type: 'agent/event', event: { type: 'error', message: `会话桥接启动失败：${cleanIpcError(error)}` } });
         }
@@ -1183,7 +1349,9 @@ export default function App() {
         try {
           const record = await desktop.sessions.load(sessionId);
           const markdown = transcriptToMarkdown(sessionToChat(record), {
-            title: meta?.title,
+            // Not the disambiguated label: a timestamp added to tell two
+            // same-named chats apart does not belong in the exported document.
+            title: meta?.baseTitle ?? meta?.title,
             workspaceRoot: stateRef.current.workspaceRoot,
           });
           await desktop.clipboard.write(markdown);
@@ -1262,8 +1430,28 @@ export default function App() {
     [state.chat],
   );
 
+  const confirmationDialogs = <>
+    <ConfirmDialog
+      open={workspaceConfirm !== null}
+      title={workspaceConfirm === 'dirty' ? '切换工作区并丢弃未保存修改？' : '切换工作区并停止运行任务？'}
+      message={workspaceConfirm === 'dirty'
+        ? '当前编辑器有未保存修改，切换后这些修改会被丢弃。'
+        : '当前工作区仍有任务运行，已执行的部分会保留，但所有会话和后台任务会停止。'}
+      confirmLabel="继续切换" danger
+      onConfirm={() => {
+        const kind = workspaceConfirm;
+        setWorkspaceConfirm(null);
+        if (!kind) return;
+        if (kind === 'dirty' && (stateRef.current.runningSessions.length > 0 || stateRef.current.agentStatus === 'starting')) setWorkspaceConfirm('running');
+        else void performOpenWorkspace();
+      }}
+      onCancel={() => setWorkspaceConfirm(null)} />
+    <SaveConflictDialog conflict={editorSave.conflict} busy={editorSave.busy}
+      onKeep={editorSave.cancel} onReload={() => { void editorSave.reload(); }} onOverwrite={() => { void editorSave.overwrite(); }} />
+  </>;
+
   if (booting) return <main className="app-shell" />;
-  if (!state.workspaceRoot) return <main className="app-shell"><Welcome onOpenWorkspace={openWorkspace} /></main>;
+  if (!state.workspaceRoot) return <main className="app-shell"><Welcome onOpenWorkspace={openWorkspace} />{confirmationDialogs}</main>;
 
   if (mainView === 'settings' && state.settings) {
     return (
@@ -1274,11 +1462,13 @@ export default function App() {
         <SettingsView
           settings={state.settings}
           onBack={() => setMainView('chat')}
-          onSave={saveSettings}
+          onSave={saveSettingsSnapshot}
           onSaveKey={saveApiKey}
           initialPage={settingsPage}
           sessionId={state.activeSessionId ?? undefined}
         />
+        {confirmationDialogs}
+        <ToastLayer onFocusChat={() => setMainView('chat')} />
         {paletteOpen && (
           <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
         )}
@@ -1316,22 +1506,36 @@ export default function App() {
     settings: { icon: <SettingsIcon size={16} />, label: '设置' },
     editor: { icon: <FileCode size={16} />, label: '编辑器' },
     quality: { icon: <Gauge size={16} />, label: '质量' },
+    computer: { icon: <Monitor size={16} />, label: '电脑操控' },
+    memory: { icon: <BrainCircuit size={16} />, label: '记忆' },
   };
 
   return (
     <div
       className="chat-shell"
       style={{
-        // Drive the grid's 3rd column width from state so browser/sidechat panels
-        // actually resize when the user drags. The column is `auto` in CSS but
-        // overridden here with the live pixel value.
-        gridTemplateColumns: `280px minmax(0,1fr) ${
+        // Only the third column is dynamic: it carries whichever side panel is
+        // open, and its width is state so that dragging the handle resizes it.
+        // The first column (the rail) is fixed and comes from --rail-w in CSS —
+        // writing the whole grid-template-columns here meant the rail width was
+        // declared in this file as well as twice in the stylesheet.
+        '--panel-w': (
           state.browserOpen ? `${state.browserWidth}px`
           : state.sideChatOpen ? `${state.sideChatWidth}px`
           : workspaceToolsOpen ? `${workspaceToolsWidth}px`
+          : notesOpen ? `${NOTES_WIDTH}px`
           : inspectorOpen ? `${inspectorWidth}px`
-          : 'auto'
-        }`,
+          // A length, not `auto`: the grid caps this value with min()/calc(),
+          // and `auto` is not a valid operand there — it would invalidate the
+          // whole grid-template-columns declaration and drop the shell to its
+          // initial `none`.
+          : '0px'
+        ),
+        // The preview sidebar is the fourth track and can be open beside the
+        // inspector. It carries its own width because the shell caps it
+        // against whatever the panel left over; the component's inline width
+        // alone would let the two tracks together exceed the window.
+        '--preview-w': state.preview.open ? `${state.preview.width}px` : '0px',
       } as React.CSSProperties}
     >
       <Rail
@@ -1361,12 +1565,15 @@ export default function App() {
         onConvoAction={handleConvoAction}
         onOpenSession={openSession}
       />
+      {/* The decorative layer sits on the shell, not inside .main. `.main`
+          declares `container-type: inline-size` for the narrow-composer query,
+          and a size container becomes the containing block for its fixed
+          descendants — so the layer's scale-up (which hides the blur fringe)
+          spilled ~52px left over the rail and washed out 自动化 and the kbd
+          hints. On the shell it spans the window as inset:0 intends. */}
+      {backgroundEnabled && backgroundImage && <div className="app-background" aria-hidden="true" />}
       <div className="main">
-        {/* Decorative background layer, rendered first so every later sibling
-            paints above it. Inert to pointer events. */}
-        {backgroundEnabled && backgroundImage && <div className="app-background" aria-hidden="true" />}
-        <div className="main-topbar">
-          {/* ZCode WorkspaceHeader: the chat header shows the workspace (with
+        <div className="main-topbar">          {/* ZCode WorkspaceHeader: the chat header shows the workspace (with
               a folder glyph), other views keep their own icon + label. */}
           {mainView === 'chat' ? (
             <div className="main-title">
@@ -1377,13 +1584,30 @@ export default function App() {
             <div className="main-title">{titleMap[mainView].icon}<span>{titleMap[mainView].label}</span></div>
           )}
           {mainView === 'chat' && state.taskSummary && (
-            <TaskCard 
+            <TaskCard
               summary={state.taskSummary}
               chat={state.chat}
               onToggle={() => dispatch({ type: 'task/toggle' })}
             />
           )}
           <span className="main-topbar-spacer" />
+          {/* Notes had no entry of its own: the drawer was reachable only from
+              the command palette, so a feature the app advertises in the
+              palette looked missing from the window. The dot reports an
+              unsaved draft, which is otherwise invisible once the drawer is
+              closed. */}
+          {mainView === 'chat' && (
+            <button
+              type="button"
+              className={`main-topbar-notes${notesOpen ? ' active' : ''}`}
+              aria-pressed={notesOpen}
+              title={notesOpen ? '关闭会话笔记' : '会话笔记'}
+              onClick={toggleNotesPanel}
+            >
+              <StickyNote size={15} />
+              {notesDraft && <span className="main-topbar-notes-dot" aria-label="有未保存的笔记草稿" />}
+            </button>
+          )}
           {/* Background conversations are invisible otherwise: with one CLI child
               per session, other conversations keep working while you look at
               this one, and one of them may be blocked on an approval. */}
@@ -1463,11 +1687,26 @@ export default function App() {
 
         {mainView === 'git' && (
           <div className="secondary">
-            <GitPanel state={state} forcePush={Boolean(state.settings?.preferences?.gitForcePush)} branchPrefix={typeof state.settings?.preferences?.gitBranchPrefix === 'string' ? state.settings.preferences.gitBranchPrefix : 'codex/'} />
+            <GitPanel state={state} forcePush={Boolean(state.settings?.preferences?.gitForcePush)} branchPrefix={typeof state.settings?.preferences?.gitBranchPrefix === 'string' ? state.settings.preferences.gitBranchPrefix : 'codex/'} onOpenFile={(path, line) => { void handleOpenFileAtLine(path, line); }} />
+          </div>
+        )}
+
+        {mainView === 'memory' && (
+          <div className="secondary">
+            <MemoryPanel onOpenFile={(p) => { void handleOpenFile(p); }} />
           </div>
         )}
 
         {mainView === 'automation' && <AutomationPanel />}
+
+        {mainView === 'computer' && (
+          <GuiControlPanel
+            // 交给智能体 drops the window description into the composer rather
+            // than sending it: the user still decides what to ask about it.
+            onAskAgent={(text) => { setMainView('chat'); setPrefill({ text, nonce: Date.now() }); }}
+            desktopMode={state.settings?.preferences?.computerExecutionMode === 'desktop'}
+          />
+        )}
 
         {mainView === 'quality' && (
           <div className="quality-view">
@@ -1540,11 +1779,6 @@ export default function App() {
           onPick={(path) => { void handleOpenFileAtLine(path); }}
         />
 
-        {/* Session notes drawer (iteration 10) — chat view only. */}
-        {notesOpen && mainView === 'chat' && (
-          <SessionNotesDrawer sessionId={state.activeSessionId} onClose={() => setNotesOpen(false)} />
-        )}
-
         {mainView === 'editor' && (
           <EditorView
             openFiles={openFiles}
@@ -1558,7 +1792,11 @@ export default function App() {
               fontSize: Number(state.settings?.preferences?.codeFontSize) || 13,
               fontFamily: "'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', 'Noto Sans Mono CJK SC', Consolas, monospace",
               tabSize: Number(state.settings?.preferences?.editorTabSize) || 2,
-              minimap: state.settings?.preferences?.editorMinimap !== false,
+              // Off unless the user asked for it: at this column width the
+              // 74px minimap is unreadable (it renders CJK comments as noise)
+              // and it sits exactly where the eye tracks the end of a line.
+              // 设置 → 外观 still turns it on.
+              minimap: state.settings?.preferences?.editorMinimap === true,
               wordWrap: state.settings?.preferences?.editorWordWrap === true,
             }}
             pendingReveal={pendingReveal}
@@ -1577,6 +1815,8 @@ export default function App() {
             // invisible. Entries queued while the bridge was still starting carry
             // an empty session id and belong to the active conversation.
             queue={queueForSession(state.messageQueue, state.activeSessionId)}
+            queuePaused={(state.queuePausedSessions ?? []).some(sessionId => sessionId === (state.activeSessionId ?? '') || sessionId === '')}
+            onQueueResume={() => resumeQueue(state.activeSessionId ?? '')}
             onQueueSendNow={(id) => {
               // Jump the line: move it to the front of its session's queue. It
               // still waits for the running turn — "立即" means "next", not
@@ -1588,14 +1828,14 @@ export default function App() {
             onQueueRemove={(id) => dispatch({ type: 'queue/remove', id })}
             onPickApproval={async (mode) => {
               if (!state.settings) return;
-              await saveSettings({ ...state.settings, approval: mode });
+              await saveSettings({ approval: mode });
             }}
             terminalOutput={terminalOutput}
             onPickPlugin={(plugin) => {
               // Iteration 20: plugins with a route jump straight to their
               // view; the rest just confirm selection in the transcript.
               switch (plugin.route) {
-                case 'browser': setWorkspaceToolsOpen(false); if (!stateRef.current.browserOpen) dispatch({ type: 'browser/toggle' }); setMainView('chat'); return;
+                case 'browser': if (!stateRef.current.browserOpen) toggleBrowserPanel(); setMainView('chat'); return;
                 case 'snippets': setMainView('snippets'); return;
                 case 'bookmarks': setMainView('bookmarks'); return;
                 case 'history': setMainView('history'); return;
@@ -1604,7 +1844,7 @@ export default function App() {
                 case 'automation': setMainView('automation'); return;
                 case 'git': setMainView('git'); return;
                 case 'quality': setMainView('quality'); return;
-                case 'notes': setNotesOpen(true); setMainView('chat'); return;
+                case 'notes': if (!workspaceToolsRef.current.notesOpen) toggleNotesPanel(); setMainView('chat'); return;
                 case 'terminal': dispatch({ type: 'bottom/toggle' }); return;
                 default:
                   dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: `已选择插件：${plugin.name} — ${plugin.desc}` } });
@@ -1612,21 +1852,24 @@ export default function App() {
             }}
             onPickModel={async (providerId, model) => {
               if (!state.settings) return;
-              const providers = state.settings.providers.map((p) => (p.id === providerId ? { ...p, model } : p));
-              const next = { ...state.settings, activeProviderId: providerId, providers };
-              await saveSettings(next);
+              await saveSettings({ activeProviderId: providerId, providerUpdates: [{ id: providerId, model }] });
               // A running bridge was created with the old provider/model. If a
               // turn is mid-flight, DON'T kill it — a half-written file is worse
               // than a delayed switch. Defer restart until the turn ends.
               if (stateRef.current.agentStatus === 'running') {
-                pendingRestartRef.current = true;
+                const sessionId = stateRef.current.activeSessionId;
+                if (sessionId) pendingRestartRef.current.add(sessionId);
                 dispatch({ type: 'agent/event', event: { type: 'info', message: '当前任务完成后将切换模型。' } });
                 return;
               }
               if (stateRef.current.agentStatus !== 'offline') {
                 dispatch({ type: 'agent/status', status: 'starting' });
                 try {
-                  await desktop.agent.restart();
+                  const sessionId = stateRef.current.activeSessionId;
+                  if (sessionId) {
+                    const result = await desktop.agent.restart(sessionId);
+                    if (stateRef.current.activeSessionId === sessionId) dispatch({ type: 'agent/bind', sessionId: result.sessionId });
+                  }
                 } catch (error) {
                   dispatch({ type: 'agent/event', event: {
                     type: 'error',
@@ -1638,33 +1881,39 @@ export default function App() {
             onPickEffort={(effort) => { void setReasoningEffort(effort); }}
             onPickToolScope={(toolScope) => { void setToolScope(toolScope); }}
             onToggleDispatchTier={async (tier, value) => {
-              if (!state.settings) return;
-              const current = normalizeChains(state.settings.preferences?.dispatchDefault);
-              const nextDefault = toggleChain(current, tier, value);
-              await saveSettings({
-                ...state.settings,
-                preferences: { ...state.settings.preferences, dispatchDefault: nextDefault },
-              });
+              await updateDispatchDefault((current) => toggleChain(current, tier, value));
             }}
             onToggleDispatchPick={async (value) => {
-              if (!state.settings) return;
-              const current = normalizeChains(state.settings.preferences?.dispatchDefault);
-              const nextDefault = toggleSelectedModel(current, value);
-              await saveSettings({
-                ...state.settings,
-                preferences: { ...state.settings.preferences, dispatchDefault: nextDefault },
-              });
+              await updateDispatchDefault((current) => toggleSelectedModel(current, value));
+            }}
+            onMoveDispatchTier={async (tier, value, direction) => {
+              await updateDispatchDefault((current) => moveChain(current, tier, value, direction));
             }}
             onManageModels={() => { setSettingsPage('model'); setMainView('settings'); }}
           />
         )}
       </div>
 
+      {/* Session notes drawer (iteration 10) — chat view only. Mounted on the
+          shell rather than inside .main: .main is a size container, which makes
+          it the containing block for position:fixed children, so the drawer
+          anchored to the conversation column. Opening the browser panel shrank
+          that column and the drawer slid into the middle of the chat instead of
+          sitting against the window edge. */}
+      {notesOpen && mainView === 'chat' && (
+        <SessionNotesDrawer
+          sessionId={state.activeSessionId}
+          onClose={() => setNotesOpen(false)}
+          onDraftChange={setNotesDraft}
+        />
+      )}
+
       <PreviewSidebar
         open={state.preview.open}
         width={state.preview.width}
         tabs={state.preview.tabs}
         activeTabId={state.preview.activeTabId}
+        layout={state.preview.layout}
         dispatch={dispatch}
         workspaceRoot={state.workspaceRoot}
       />
@@ -1713,7 +1962,7 @@ export default function App() {
         initialLevel={inspectorLevel}
         onClose={() => setInspectorOpen(false)}
         onWidthChange={setInspectorWidth}
-        onOpenFile={(path) => { void handleOpenFile(path); }}
+        onOpenFile={(path, line) => { void handleOpenFileAtLine(path, line); }}
       />
 
       <BrowserPanel
@@ -1752,9 +2001,19 @@ export default function App() {
       {/* Key task-state reminders (approval needed / done / error / offline) */}
       <ToastLayer onFocusChat={() => setMainView('chat')} />
 
+      {confirmationDialogs}
+
       {/* Blocking confirmation dialog for the oldest live approval request,
           when enabled (gen.approvalModal). Auto-decided (sandbox) approvals
           never appear here — the reducer marks them decided on arrival. */}
+      <GuardConfirmationModal
+        key={state.guardRequests.find((request) => request.sessionId === state.activeSessionId)?.requestId ?? 'guard-empty'}
+        request={state.guardRequests.find((request) => request.sessionId === state.activeSessionId) ?? null}
+        onChoose={async (request, label) => {
+          await desktop.agent.guardConfirmation(request.requestId, label, request.sessionId);
+          dispatch({ type: 'guard/decided', requestId: request.requestId });
+        }}
+      />
       {(state.settings?.preferences?.['gen.approvalModal'] !== false) && (
         <ApprovalModal item={pendingApproval} onApprove={approve} />
       )}
