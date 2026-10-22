@@ -1,0 +1,243 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import {
+  globalMemoryIndexPath,
+  globalMemoryLedgerPath,
+  isScratchWorkspace,
+  loadGlobalMemorySummary,
+  readGlobalEdits,
+  recordGlobalEdit,
+  renderGlobalMemoryIndex,
+} from '../src/memory/global.js';
+import { runAgentTurn } from '../src/agent/agent.js';
+import type { AppConfig } from '../src/config/types.js';
+import { ProjectMemoryStore } from '../src/memory/store.js';
+import type { Provider, ProviderRequest } from '../src/providers/types.js';
+import { CheckpointStore } from '../src/session/checkpoint.js';
+import { SessionStore } from '../src/session/store.js';
+import { createDefaultToolRegistry } from '../src/tools/index.js';
+import { TerminalUI } from '../src/ui/terminal.js';
+
+async function scratch() {
+  const base = await mkdtemp(join(tmpdir(), 'aicode-global-'));
+  const memory = join(base, 'memory-root');
+  const workspace = join(base, 'work');
+  await mkdir(workspace, { recursive: true });
+  return { base, memory, workspace };
+}
+
+test('an edit lands in the ledger and in MEMORY.md', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    const file = join(workspace, 'src', 'app.ts');
+    await recordGlobalEdit(
+      { workspaceRoot: workspace, action: 'write', path: file, created: true, now: new Date('2026-10-22T10:00:00Z') },
+      { root: memory },
+    );
+
+    const ledger = await readFile(globalMemoryLedgerPath(memory), 'utf8');
+    assert.equal(ledger.trim().split('\n').length, 1);
+    const parsed = JSON.parse(ledger.trim());
+    assert.equal(parsed.action, 'write');
+    assert.equal(parsed.path, 'src/app.ts', 'paths inside the workspace are stored relative');
+    assert.equal(parsed.created, true);
+
+    const index = await readFile(globalMemoryIndexPath(memory), 'utf8');
+    assert.match(index, /^# 全局记忆/);
+    assert.match(index, /## work/);
+    assert.match(index, /- src\/app\.ts/);
+    assert.match(index, /新建/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('MEMORY.md counts repeated edits of one file and orders projects by freshness', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    const other = join(base, 'other');
+    await mkdir(other, { recursive: true });
+    await recordGlobalEdit({ workspaceRoot: workspace, action: 'write', path: join(workspace, 'a.ts'), now: new Date('2026-10-22T09:00:00Z') }, { root: memory });
+    await recordGlobalEdit({ workspaceRoot: workspace, action: 'write', path: join(workspace, 'a.ts'), now: new Date('2026-10-22T09:05:00Z') }, { root: memory });
+    await recordGlobalEdit({ workspaceRoot: other, action: 'write', path: join(other, 'b.ts'), now: new Date('2026-10-22T11:00:00Z') }, { root: memory });
+
+    const index = await readFile(globalMemoryIndexPath(memory), 'utf8');
+    assert.match(index, /- a\.ts　—　[^\n]*2 次/);
+    assert.ok(index.indexOf('## other') < index.indexOf('## work'), 'the freshly edited project comes first');
+    assert.match(index, /共 2 个项目、3 次编辑/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('a corrupt ledger line is skipped instead of failing the read', async () => {
+  const { base, memory } = await scratch();
+  try {
+    await mkdir(memory, { recursive: true });
+    await writeFile(
+      globalMemoryLedgerPath(memory),
+      ['{"at":"2026-10-22T09:00:00Z","project":"work","workspace":"/w","action":"write","path":"a.ts","created":false}', '{"at":"broken"', 'not json at all'].join('\n'),
+      'utf8',
+    );
+    const records = await readGlobalEdits({ root: memory });
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.path, 'a.ts');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('the summary separates this workspace from the rest and stays short', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    const other = join(base, 'elsewhere');
+    await mkdir(other, { recursive: true });
+    for (let i = 0; i < 5; i += 1) {
+      await recordGlobalEdit(
+        { workspaceRoot: workspace, action: 'write', path: join(workspace, `file-${i}.ts`), now: new Date(Date.UTC(2026, 9, 22, 9, i)) },
+        { root: memory },
+      );
+    }
+    await recordGlobalEdit({ workspaceRoot: other, action: 'write', path: join(other, 'remote.ts'), now: new Date('2026-10-22T12:00:00Z') }, { root: memory });
+
+    const summary = await loadGlobalMemorySummary({ workspaceRoot: workspace, root: memory, limit: 3 });
+    assert.ok(summary);
+    const lines = summary.markdown.split('\n');
+    assert.equal(lines[0], 'This workspace, recently edited (earlier sessions included):');
+    assert.equal(lines.filter((line) => line.startsWith('- file-')).length, 3, 'limit caps the workspace file list');
+    assert.match(summary.markdown, /Other projects, most recent edit:/);
+    assert.match(summary.markdown, /elsewhere: remote\.ts/);
+    assert.ok(lines.length < 12, 'the injected block stays small');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('an empty ledger produces no block at all', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    assert.equal(await loadGlobalMemorySummary({ workspaceRoot: workspace, root: memory }), undefined);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('temp workspaces are recognised as scratch, real ones are not', () => {
+  assert.equal(isScratchWorkspace(join(tmpdir(), 'aicode-something')), true);
+  const real = process.platform === 'win32' ? 'C:\\Users\\someone\\project' : '/home/someone/project';
+  assert.equal(isScratchWorkspace(real), false);
+});
+
+test('renderGlobalMemoryIndex is stable without records', () => {
+  const index = renderGlobalMemoryIndex([], '2026-10-22T10:00:00Z');
+  assert.match(index, /# 全局记忆/);
+  assert.match(index, /还没有任何编辑记录/);
+});
+
+test('every checkpointed write reaches the ledger, and a rename records its source', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    const store = new CheckpointStore(workspace, { globalMemoryRoot: memory });
+    const target = join(workspace, 'notes.md');
+    await store.beforeWrite(target);
+    await writeFile(target, 'hello\n');
+    await store.beforeWrite(target);
+    await store.beforeRename(target, join(workspace, 'renamed.md'));
+
+    const records = await readGlobalEdits({ root: memory });
+    assert.equal(records.length, 3);
+    assert.equal(records[0]?.path, 'notes.md');
+    assert.equal(records[0]?.created, true, 'the first write created the file');
+    assert.equal(records[1]?.created, false, 'the second write overwrote it');
+    assert.equal(records[2]?.action, 'rename');
+    assert.equal(records[2]?.path, 'renamed.md');
+    assert.equal(records[2]?.from, 'notes.md');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('a deletion is recorded as a deletion, not as an edit', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    const store = new CheckpointStore(workspace, { globalMemoryRoot: memory });
+    const target = join(workspace, 'gone.md');
+    await store.beforeWrite(target);
+    await writeFile(target, 'bye\n');
+    await store.beforeWrite(target, { action: 'delete' });
+
+    const records = await readGlobalEdits({ root: memory });
+    assert.equal(records.length, 2);
+    assert.equal(records[1]?.action, 'delete');
+    assert.equal(records[1]?.created, false, 'a deletion never counts as creating the file');
+
+    const index = await readFile(globalMemoryIndexPath(memory), 'utf8');
+    assert.match(index, /gone\.md.+已删除/);
+    assert.doesNotMatch(index, /gone\.md.+新建/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('the ledger can be switched off per store', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    const store = new CheckpointStore(workspace, { globalMemoryRoot: memory, recordGlobalMemory: false });
+    await store.beforeWrite(join(workspace, 'quiet.md'));
+    const records = await readGlobalEdits({ root: memory });
+    assert.deepEqual(records, []);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+/*
+ * The block has to actually reach the model. Written after a change that
+ * declared the block, passed every unit test and injected nothing: the wiring
+ * is only real if a turn can be observed carrying it.
+ */
+test('an agent turn carries the global edit record into the model messages', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-agent-global-'));
+  const memoryRoot = join(workspace, 'global-memory');
+  const previous = process.env.AICODE_GLOBAL_MEMORY_ROOT;
+  process.env.AICODE_GLOBAL_MEMORY_ROOT = memoryRoot;
+  try {
+    await recordGlobalEdit(
+      { workspaceRoot: workspace, action: 'write', path: join(workspace, 'src', 'parser.ts'), now: new Date('2026-10-22T09:00:00Z') },
+      { root: memoryRoot },
+    );
+
+    const config: AppConfig = { provider: 'mock', model: 'mock-code-agent-v1', approval: 'auto', workspaceRoot: workspace, sessionDir: join(workspace, 'sessions'), maxSteps: 2, noBanner: true };
+    const sessions = new SessionStore(config.sessionDir);
+    const session = await sessions.create({ provider: 'mock', model: 'mock-code-agent-v1', workspaceRoot: workspace });
+    const memory = new ProjectMemoryStore(workspace);
+
+    let captured: ProviderRequest['messages'] = [];
+    const provider: Provider = {
+      name: 'mock',
+      model: 'mock-code-agent-v1',
+      async complete(request: ProviderRequest) {
+        captured = request.messages;
+        return { actions: [{ type: 'message', content: 'ok' }] };
+      },
+    };
+
+    const result = await runAgentTurn(
+      { config, provider, tools: createDefaultToolRegistry(), sessions, session, memory, ui: new TerminalUI(true) },
+      'continue the parser work',
+    );
+    assert.equal(result.ok, true);
+
+    const block = captured.find((message) => typeof message.content === 'string' && message.content.startsWith('<global-memory>'));
+    assert.ok(block, 'the global memory block should be injected as a message');
+    assert.match(String(block?.content), /src\/parser\.ts/, 'it should name a file this workspace really edited');
+    assert.match(String(block?.content), /<\/global-memory>/);
+  } finally {
+    if (previous === undefined) delete process.env.AICODE_GLOBAL_MEMORY_ROOT;
+    else process.env.AICODE_GLOBAL_MEMORY_ROOT = previous;
+    await rm(workspace, { recursive: true, force: true });
+  }
+});

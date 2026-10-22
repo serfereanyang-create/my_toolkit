@@ -20,6 +20,7 @@ import type { TerminalUI } from '../ui/terminal.js';
 import { executeCommandPlan, extractCommand, formatCommandStrategy, planCommand } from './commandExtract/index.js';
 import { formatProjectContext, readProjectContext } from './context.js';
 import { formatMemories } from '../memory/format.js';
+import { loadGlobalMemorySummary } from '../memory/global.js';
 import { selectRelevantMemories } from '../memory/select.js';
 import { compactMessagesForModel } from './contextBudget.js';
 import { globalToolHealth } from './toolHealth.js';
@@ -520,6 +521,10 @@ async function runAgentTurnCore(
   // not just the task board — benefit from cross-session recall of conventions,
   // decisions, and pitfalls. Failures here must never break a turn.
   const memoryBlock = await loadMemoryBlock(runtime, prompt);
+  // Cross-session, cross-project edit history (global memory). A fresh session
+  // starts knowing which files this workspace has been changing and where the
+  // work stands elsewhere, instead of rediscovering it from the code.
+  const globalMemoryBlock = await loadGlobalMemoryBlock(runtime);
   // Skills layer (.aicode/skills/<name>/SKILL.md): scan + trigger-match against
   // the task prompt; matched instructions are injected alongside memories at
   // step 0. Failures here must never break a turn.
@@ -738,6 +743,13 @@ async function runAgentTurnCore(
       // Re-injecting is free: the blocks are constant for the duration of a
       // turn, so from step 1 onward they are part of the cached prefix rather
       // than new input.
+      if (globalMemoryBlock) {
+        packed.messages.unshift({
+          role: 'user',
+          content: `<global-memory>\n${globalMemoryBlock}\n</global-memory>`,
+          createdAt: new Date().toISOString(),
+        });
+      }
       if (memoryBlock) {
         packed.messages.unshift({
           role: 'user',
@@ -1313,7 +1325,7 @@ function latestUserRequest(runtime: AgentRuntime): string | undefined {
     if (message.role !== 'user') continue;
     // Skip the framework's own injected blocks (memories, skills, planning).
     const content = message.content ?? '';
-    if (content.startsWith('<relevant-project-memories>') || content.startsWith('<planning-turn')) continue;
+    if (content.startsWith('<relevant-project-memories>') || content.startsWith('<global-memory>') || content.startsWith('<planning-turn')) continue;
     return content;
   }
   return undefined;
@@ -1474,6 +1486,17 @@ async function loadMemoryBlock(runtime: AgentRuntime, prompt: string): Promise<s
     const relevant = selectRelevantMemories({ entries, goal: prompt, limit: 5 });
     if (relevant.length === 0) return undefined;
     return formatMemories(relevant);
+  } catch {
+    return undefined;
+  }
+}
+
+// The global edit record, rendered small enough to inject every turn. Failure
+// is swallowed: a memory problem must never break a turn.
+async function loadGlobalMemoryBlock(runtime: AgentRuntime): Promise<string | undefined> {
+  try {
+    const summary = await loadGlobalMemorySummary({ workspaceRoot: runtime.config.workspaceRoot });
+    return summary?.markdown;
   } catch {
     return undefined;
   }

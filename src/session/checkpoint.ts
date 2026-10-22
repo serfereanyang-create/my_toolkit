@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isScratchWorkspace, recordGlobalEdit } from '../memory/global.js';
 
 const CHECKPOINT_ID = /^cp_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -19,13 +20,23 @@ export type CheckpointEntry = {
 export class CheckpointStore {
   private readonly indexPath: string;
   private readonly backupDir: string;
+  private readonly globalMemory: { root?: string; enabled: boolean };
 
-  constructor(private readonly root: string) {
+  constructor(
+    private readonly root: string,
+    options: { globalMemoryRoot?: string; recordGlobalMemory?: boolean } = {},
+  ) {
     this.indexPath = resolve(root, '.aicode', 'checkpoints', 'index.json');
     this.backupDir = resolve(root, '.aicode', 'checkpoints', 'backups');
+    this.globalMemory = { root: options.globalMemoryRoot, enabled: options.recordGlobalMemory !== false };
   }
 
-  async beforeWrite(path: string) {
+  /**
+   * Snapshot a path before it is written. `action` only labels the global
+   * memory record: a deletion is a write of nothing, and the record should say
+   * so instead of claiming the file was edited.
+   */
+  async beforeWrite(path: string, options: { action?: 'write' | 'delete' } = {}) {
     const safePath = this.assertWorkspacePath(path);
     const id = makeId();
     const backupPath = join(this.backupDir, `${id}.bak`);
@@ -47,6 +58,9 @@ export class CheckpointStore {
     }
     const entry: CheckpointEntry = { id, action: 'write', createdAt: new Date().toISOString(), path: safePath, backupPath, existed };
     await this.push(entry);
+    // Every write in the CLI funnels through this method, which makes it the
+    // one honest place to keep the cross-project edit record.
+    await this.rememberGlobalEdit({ workspaceRoot: this.root, action: options.action ?? 'write', path: safePath, created: !existed && options.action !== 'delete' });
     return entry;
   }
 
@@ -55,7 +69,24 @@ export class CheckpointStore {
     const safeTo = this.assertWorkspacePath(to);
     const entry: CheckpointEntry = { id: makeId(), action: 'rename', createdAt: new Date().toISOString(), from: safeFrom, to: safeTo };
     await this.push(entry);
+    await this.rememberGlobalEdit({ workspaceRoot: this.root, action: 'rename', path: safeTo, from: safeFrom });
     return entry;
+  }
+
+  /**
+   * Append to the global memory ledger. Failure is swallowed on purpose: the
+   * file write already succeeded and must not be rolled back by bookkeeping.
+   */
+  private async rememberGlobalEdit(input: { workspaceRoot: string; action: 'write' | 'rename' | 'delete'; path: string; from?: string; created?: boolean }) {
+    if (!this.globalMemory.enabled) return;
+    // Without an explicit root this is the real ledger: keep throwaway
+    // workspaces (test fixtures, scratch dirs) out of it.
+    if (this.globalMemory.root === undefined && isScratchWorkspace(input.workspaceRoot)) return;
+    try {
+      await recordGlobalEdit(input, { root: this.globalMemory.root });
+    } catch {
+      // ignored — see doc comment
+    }
   }
 
   async undoLast() {

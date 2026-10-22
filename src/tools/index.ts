@@ -111,7 +111,7 @@ import { listCountTool, listUniqueTool, listSortTool, listReverseTool, listSlice
 import { readManyFilesTool, globFilesTool, diffFilesTool, editLinesTool, writeJsonTool, formatJsonTool, jsonToCsvTool, csvToJsonTool, listTreeTool } from './datatools2.js';
 import { readLinesTool, appendFileTool, envGetTool, whichCommandTool } from './sysextra.js';
 import {
-  gitAddTool, gitCommitTool, gitBranchTool, gitCheckoutTool, gitStashTool, gitShowTool, gitBlameTool,
+  gitInitTool, gitAddTool, gitCommitTool, gitBranchTool, gitCheckoutTool, gitStashTool, gitShowTool, gitBlameTool,
   gitFetchTool, gitPullTool, gitMergeTool, gitCherryPickTool, gitTagTool,
   gitResetTool, gitRestoreTool,
 } from './git-write.js';
@@ -380,6 +380,7 @@ export function createDefaultToolRegistry(options?: { excelAutomation?: boolean 
   // auto mode can commit like CC. Network (fetch/pull) and history-shaping
   // (merge/cherry-pick/tag) stay behind the normal approval gate. Destructive
   // force-push / reset --hard / clean -f stay out of git-write.ts entirely.
+  registry.register({ ...gitInitTool, autoApprove: true });
   registry.register({ ...gitAddTool, autoApprove: true });
   registry.register({ ...gitCommitTool, autoApprove: true });
   registry.register({ ...gitBranchTool, autoApprove: true });

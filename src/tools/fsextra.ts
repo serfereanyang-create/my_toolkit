@@ -86,7 +86,7 @@ export const deletePathTool: ToolDefinition<{ path: string }> = {
   },
   async execute(input, context) {
     const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
-    const checkpoint = await context.checkpoints?.beforeWrite(target);
+    const checkpoint = await context.checkpoints?.beforeWrite(target, { action: 'delete' });
     await rm(target, { recursive: true, force: true });
     return {
       ok: true,

@@ -30,6 +30,42 @@ function pathList(value: unknown): string[] {
   throw new Error('paths is required (a string or array of paths)');
 }
 
+const BRANCH_NAME = /^[A-Za-z0-9._/-]+$/;
+
+/**
+ * `git init` for a folder that is not a repository yet. Refused when the
+ * workspace already sits inside a repository (a nested repo is never what was
+ * meant), and it never stages, commits or deletes anything.
+ */
+export const gitInitTool: ToolDefinition<{ branch: string }> = {
+  name: 'git_init',
+  description: 'Create a git repository in the workspace (git init) when the folder is not version-controlled yet. Refuses if the folder already belongs to a repository. Only creates .git — nothing is staged or committed.',
+  inputHint: '{ "branch": "main" }',
+  risk: 'write',
+  validate(input) {
+    if (input === undefined || input === null) return { branch: 'main' };
+    const record = asRecord(input);
+    const branch = optionalRef(record.branch) ?? 'main';
+    if (!BRANCH_NAME.test(branch) || branch.startsWith('-') || branch.endsWith('/')) {
+      throw new Error('branch may only contain letters, digits, dot, underscore, dash and slash');
+    }
+    return { branch };
+  },
+  async execute(input, context) {
+    const probe = await runGit(['rev-parse', '--show-toplevel'], context.workspaceRoot, MAX);
+    if (probe.ok) {
+      return { ok: false, output: `Workspace is already inside a git repository (${probe.output}); nothing to initialise.`, data: { alreadyRepo: true } };
+    }
+    const created = await runGit(['init', '-b', input.branch], context.workspaceRoot, MAX);
+    if (created.ok) return created;
+    // git older than 2.28 has no `init -b`: create the repo, then name HEAD.
+    const plain = await runGit(['init'], context.workspaceRoot, MAX);
+    if (!plain.ok) return plain;
+    const named = await runGit(['symbolic-ref', 'HEAD', `refs/heads/${input.branch}`], context.workspaceRoot, MAX);
+    return named.ok ? { ok: true, output: `${plain.output}\nbranch: ${input.branch}`, data: named.data } : named;
+  },
+};
+
 export const gitAddTool: ToolDefinition<{ paths: string[] }> = {
   name: 'git_add',
   description: 'Stage files for commit (git add). Pass a path or list of paths; use ["."] to stage everything.',
