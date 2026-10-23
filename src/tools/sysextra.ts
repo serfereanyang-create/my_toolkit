@@ -76,6 +76,7 @@ export const appendFileTool: ToolDefinition<{ path: string; content: string }> =
     const previous = await readFileOrEmpty(target);
     const next = previous + input.content;
     await writeFile(target, next, 'utf8');
+    await context.checkpoints?.confirm(checkpoint);
     const { added, removed } = lineDiff(previous, next);
     return {
       ok: true,

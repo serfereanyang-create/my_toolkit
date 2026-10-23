@@ -177,6 +177,7 @@ export const createPptxTool: ToolDefinition<{
     });
     
     await writeFile(finalTarget, zipFiles(files));
+    await context.checkpoints?.confirm(checkpoint);
     
     return {
       ok: true,

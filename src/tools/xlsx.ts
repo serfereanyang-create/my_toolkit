@@ -192,6 +192,7 @@ export const createXlsxTool: ToolDefinition<{
     });
     
     await writeFile(finalTarget, zipFiles(files));
+    await context.checkpoints?.confirm(checkpoint);
     
     const totalRows = input.sheets.reduce((sum, s) => sum + s.rows.length, 0);
     return {

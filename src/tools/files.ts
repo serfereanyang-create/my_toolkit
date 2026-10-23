@@ -119,6 +119,7 @@ export const writeFileTool: ToolDefinition<{ path: string; content: string }> = 
     // the genuine added/removed line counts, not an estimate.
     const previous = await readFileOrEmpty(target);
     await writeFile(target, input.content, 'utf8');
+    await context.checkpoints?.confirm(checkpoint);
     const { added, removed } = lineDiff(previous, input.content);
     return {
       ok: true,

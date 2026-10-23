@@ -60,6 +60,7 @@ export const writeCsvTool: ToolDefinition<{ path: string; rows: unknown[] }> = {
     const checkpoint = await context.checkpoints?.beforeWrite(target);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, csv, 'utf8');
+    await context.checkpoints?.confirm(checkpoint);
     return {
       ok: true,
       output: `Wrote ${matrix.length} rows to ${input.path}`,

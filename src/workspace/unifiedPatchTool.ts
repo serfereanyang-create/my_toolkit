@@ -1,4 +1,5 @@
 import type { ToolDefinition } from '../tools/types.js';
+import type { CheckpointEntry } from '../session/checkpoint.js';
 import { applyUnifiedPatch } from './unifiedPatch.js';
 
 export const applyUnifiedDiffTool: ToolDefinition<{
@@ -24,12 +25,10 @@ export const applyUnifiedDiffTool: ToolDefinition<{
 
   async execute(input, context) {
     let checkpointId: string | undefined;
+    let checkpoint: CheckpointEntry | undefined;
     if (input.dryRun !== true) {
-      const store = context.checkpoints;
-      if (store) {
-        const cp = await store.beforeWrite(context.workspaceRoot);
-        checkpointId = cp?.id;
-      }
+      checkpoint = await context.checkpoints?.beforeWrite(context.workspaceRoot);
+      checkpointId = checkpoint?.id;
     }
 
     const result = await applyUnifiedPatch({
@@ -38,6 +37,10 @@ export const applyUnifiedDiffTool: ToolDefinition<{
       dryRun: input.dryRun === true,
       atomic: input.atomic !== false,
     });
+
+    // Only a patch that actually applied counts as having edited anything; a
+    // dry run or a rejected patch must not land in the global edit record.
+    if (result.ok) await context.checkpoints?.confirm(checkpoint);
 
     const headerLines: string[] = [
       input.dryRun === true ? '## Dry run result' : '## Apply result',

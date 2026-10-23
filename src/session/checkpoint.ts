@@ -22,15 +22,27 @@ export type CheckpointEntry = {
 export class CheckpointStore {
   private readonly indexPath: string;
   private readonly backupDir: string;
-  private readonly globalMemory: { root?: string; enabled: boolean };
+  private readonly globalMemory: { root?: string; enabled: boolean; indexThrottleMs?: number };
+  /**
+   * Global-memory records for checkpoints that have not been confirmed yet.
+   * A checkpoint is taken *before* the write, so recording it here would claim
+   * an edit that may still fail (a locked file, a permission error, a tool that
+   * changes its mind). The tool calls confirm() once its write landed; an
+   * unconfirmed entry is simply never remembered.
+   */
+  private readonly pending = new Map<string, { action: 'write' | 'rename' | 'delete'; path: string; from?: string; created?: boolean }>();
 
   constructor(
     private readonly root: string,
-    options: { globalMemoryRoot?: string; recordGlobalMemory?: boolean } = {},
+    options: { globalMemoryRoot?: string; recordGlobalMemory?: boolean; globalMemoryIndexThrottleMs?: number } = {},
   ) {
     this.indexPath = resolve(root, '.aicode', 'checkpoints', 'index.json');
     this.backupDir = resolve(root, '.aicode', 'checkpoints', 'backups');
-    this.globalMemory = { root: options.globalMemoryRoot, enabled: options.recordGlobalMemory !== false };
+    this.globalMemory = {
+      root: options.globalMemoryRoot,
+      enabled: options.recordGlobalMemory !== false,
+      indexThrottleMs: options.globalMemoryIndexThrottleMs,
+    };
   }
 
   /**
@@ -38,10 +50,11 @@ export class CheckpointStore {
    * memory record: a deletion is a write of nothing, and the record should say
    * so instead of claiming the file was edited.
    */
-  async beforeWrite(path: string, options: { action?: 'write' | 'delete' } = {}) {
+  async beforeWrite(path: string, options: { action?: 'write' | 'delete' } = {}): Promise<CheckpointEntry> {
     const safePath = this.assertWorkspacePath(path);
     const id = makeId();
     const backupPath = join(this.backupDir, `${id}.bak`);
+    const action = options.action ?? 'write';
     let existed = false;
     let content: Buffer;
     try {
@@ -51,8 +64,9 @@ export class CheckpointStore {
         // several files at once) has no single file to snapshot, and restoring
         // one would mean deleting the user's directory. Record that it was
         // touched, but never index it as something undo can revert.
-        await this.rememberGlobalEdit({ workspaceRoot: this.root, action: options.action ?? 'write', path: safePath });
-        return { id, action: 'write', createdAt: new Date().toISOString(), path: safePath, existed: true, directory: true };
+        this.pending.set(id, { action, path: safePath });
+        const directoryEntry: CheckpointEntry = { id, action: 'write', createdAt: new Date().toISOString(), path: safePath, existed: true, directory: true };
+        return directoryEntry;
       }
       existed = true;
       content = await readFile(safePath);
@@ -69,9 +83,7 @@ export class CheckpointStore {
     }
     const entry: CheckpointEntry = { id, action: 'write', createdAt: new Date().toISOString(), path: safePath, backupPath, existed };
     await this.push(entry);
-    // Every write in the CLI funnels through this method, which makes it the
-    // one honest place to keep the cross-project edit record.
-    await this.rememberGlobalEdit({ workspaceRoot: this.root, action: options.action ?? 'write', path: safePath, created: !existed && options.action !== 'delete' });
+    this.pending.set(id, { action, path: safePath, created: !existed && action !== 'delete' });
     return entry;
   }
 
@@ -80,8 +92,22 @@ export class CheckpointStore {
     const safeTo = this.assertWorkspacePath(to);
     const entry: CheckpointEntry = { id: makeId(), action: 'rename', createdAt: new Date().toISOString(), from: safeFrom, to: safeTo };
     await this.push(entry);
-    await this.rememberGlobalEdit({ workspaceRoot: this.root, action: 'rename', path: safeTo, from: safeFrom });
+    this.pending.set(entry.id, { action: 'rename', path: safeTo, from: safeFrom });
     return entry;
+  }
+
+  /**
+   * The tool's write landed: remember it in the global edit record. Call this
+   * after the write succeeds — never before, or a failed write would be
+   * remembered as an edit. Confirming twice (or confirming a directory entry)
+   * is safe; ids this store did not hand out are ignored.
+   */
+  async confirm(entry: CheckpointEntry | undefined) {
+    if (!entry) return;
+    const record = this.pending.get(entry.id);
+    if (!record) return;
+    this.pending.delete(entry.id);
+    await this.rememberGlobalEdit({ workspaceRoot: this.root, ...record });
   }
 
   /**
@@ -94,7 +120,7 @@ export class CheckpointStore {
     // workspaces (test fixtures, scratch dirs) out of it.
     if (this.globalMemory.root === undefined && isScratchWorkspace(input.workspaceRoot)) return;
     try {
-      await recordGlobalEdit(input, { root: this.globalMemory.root });
+      await recordGlobalEdit(input, { root: this.globalMemory.root, indexThrottleMs: this.globalMemory.indexThrottleMs });
     } catch {
       // ignored — see doc comment
     }

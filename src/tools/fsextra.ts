@@ -66,6 +66,7 @@ export const copyFileTool: ToolDefinition<{ from: string; to: string }> = {
     await mkdir(dirname(dest), { recursive: true });
     const checkpoint = await context.checkpoints?.beforeWrite(dest);
     await copyFile(source, dest);
+    await context.checkpoints?.confirm(checkpoint);
     return {
       ok: true,
       output: `Copied ${basename(source)} → ${relative(context.workspaceRoot, dest)}`,
@@ -88,6 +89,7 @@ export const deletePathTool: ToolDefinition<{ path: string }> = {
     const target = resolveWorkspacePath(context.workspaceRoot, input.path, pathScopeFor(context.approval));
     const checkpoint = await context.checkpoints?.beforeWrite(target, { action: 'delete' });
     await rm(target, { recursive: true, force: true });
+    await context.checkpoints?.confirm(checkpoint);
     return {
       ok: true,
       output: `Deleted ${relative(context.workspaceRoot, target)}`,

@@ -179,6 +179,7 @@ export const createDocxTool: ToolDefinition<{
     const checkpoint = await context.checkpoints?.beforeWrite(target);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, buildDocx(input.title, input.body, input.format));
+    await context.checkpoints?.confirm(checkpoint);
     const fmt = bodyFormat(input.format);
     const summary = `正文 ${input.format?.font ?? '宋体'} ${input.format?.size ?? '小四'} · ${fmt.lineSpacing}倍行距 · 首行缩进${fmt.firstLineIndentChars}字符`;
     return {

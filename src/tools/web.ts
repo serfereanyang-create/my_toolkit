@@ -258,6 +258,7 @@ export const downloadFileTool: ToolDefinition<{
       const checkpoint = await context.checkpoints?.beforeWrite(targetPath);
       
       await writeFile(targetPath, buffer);
+      await context.checkpoints?.confirm(checkpoint);
 
       return {
         ok: true,

@@ -23,6 +23,7 @@ export const applyPatchTool: ToolDefinition<{ path: string; oldText?: string; ne
     await mkdir(dirname(target), { recursive: true });
     if (input.oldText === undefined) {
       await writeFile(target, input.newText, 'utf8');
+      await context.checkpoints?.confirm(checkpoint);
       const { added, removed } = lineDiff('', input.newText);
       return { ok: true, output: `Created ${input.path} via patch (+${added} -${removed})`, data: { path: input.path, mode: 'create', added, removed, checkpointId: checkpoint?.id } };
     }
@@ -42,6 +43,7 @@ export const applyPatchTool: ToolDefinition<{ path: string; oldText?: string; ne
     }
     const next = current.slice(0, firstIndex) + input.newText + current.slice(firstIndex + input.oldText.length);
     await writeFile(target, next, 'utf8');
+    await context.checkpoints?.confirm(checkpoint);
     const { added, removed } = lineDiff(current, next);
     return { ok: true, output: `Patched ${input.path} (+${added} -${removed})`, data: { path: input.path, mode: 'replace', added, removed, checkpointId: checkpoint?.id } };
   },

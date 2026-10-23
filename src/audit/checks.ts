@@ -248,6 +248,28 @@ function buildChecks(root: string): Check[] {
   checks.push({ name: 'write tools exist', run: () => registry.list().filter((tool) => tool.risk === 'write').length >= 2 });
   checks.push({ name: 'shell tool exists', run: () => registry.list().some((tool) => tool.risk === 'shell') });
 
+  // A checkpoint is taken before the write; the edit only counts once the write
+  // landed (checkpoint.confirm). A tool that checkpoints without confirming
+  // silently disappears from the global edit record, which no unit test would
+  // notice — so the pairing is checked statically here.
+  const checkpointedTools = [
+    'src/tools/csv.ts', 'src/tools/datatools2.ts', 'src/tools/docx-image.ts', 'src/tools/docx-table.ts',
+    'src/tools/docx.ts', 'src/tools/files.ts', 'src/tools/fsextra.ts', 'src/tools/patch.ts',
+    'src/tools/pdf-convert.ts', 'src/tools/pptx.ts', 'src/tools/rename.ts', 'src/tools/sysextra.ts',
+    'src/tools/web.ts', 'src/tools/xlsx.ts', 'src/tools/zip.ts', 'src/workspace/unifiedPatchTool.ts',
+  ];
+  for (const path of checkpointedTools) {
+    checks.push({
+      name: `checkpoint is confirmed after the write: ${path}`,
+      run: async () => {
+        const source = await text(path);
+        const start = source.match(/\.beforeWrite\(|\.beforeRename\(/g)?.length ?? 0;
+        const confirmed = source.match(/\.confirm\(/g)?.length ?? 0;
+        return start > 0 && confirmed >= start;
+      },
+    });
+  }
+
   checks.push({ name: 'tool scope source exists', run: () => exists('src/tools/scope.ts') });
   const toolNeedles: Array<[string, string]> = [
     ['src/tools/activity.ts', 'recentActivityTool'],

@@ -205,6 +205,7 @@ export const editLinesTool: ToolDefinition<{ path: string; start: number; end: n
     const checkpoint = await context.checkpoints?.beforeWrite(target);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, after, 'utf8');
+    await context.checkpoints?.confirm(checkpoint);
     const { added, removed } = lineDiff(before, after);
     return {
       ok: true,
@@ -240,6 +241,7 @@ export const writeJsonTool: ToolDefinition<{ path: string; value: unknown; prett
     const checkpoint = await context.checkpoints?.beforeWrite(target);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, `${serialized}\n`, 'utf8');
+    await context.checkpoints?.confirm(checkpoint);
     const { added, removed } = lineDiff(before, `${serialized}\n`);
     return { ok: true, output: `Wrote JSON ${input.path} (+${added} -${removed})`, data: { path: target, added, removed, checkpointId: checkpoint?.id } };
   },

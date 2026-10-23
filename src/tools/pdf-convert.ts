@@ -129,6 +129,7 @@ export const convertToPdfTool: ToolDefinition<{
       } catch {
         throw new Error(`PDF generation failed. LibreOffice output: ${stderr || stdout}`);
       }
+      await context.checkpoints?.confirm(checkpoint);
       
       return {
         ok: true,

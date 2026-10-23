@@ -23,6 +23,14 @@ const LEDGER_FILE_NAME = 'edits.jsonl';
 /** Rotate once the ledger grows past this; keeps reads cheap forever. */
 const LEDGER_ROTATE_BYTES = 4 * 1024 * 1024;
 const LEDGER_KEEP_LINES = 4000;
+/**
+ * MEMORY.md is rendered from the whole ledger, so rewriting it on every single
+ * edit turns a burst of writes into O(burst × ledger). Appending stays
+ * immediate; the index is rewritten at most this often, with a trailing render
+ * so the last edit of a burst is never lost.
+ */
+export const DEFAULT_INDEX_THROTTLE_MS = 800;
+const indexWrites = new Map<string, { last: number; timer?: NodeJS.Timeout }>();
 const INDEX_PROJECT_LIMIT = 12;
 const INDEX_FILE_LIMIT = 12;
 const SUMMARY_FILE_LIMIT = 8;
@@ -86,7 +94,7 @@ export async function recordGlobalEdit(
     created?: boolean;
     now?: Date;
   },
-  options: { root?: string } = {},
+  options: { root?: string; indexThrottleMs?: number } = {},
 ): Promise<GlobalEditRecord> {
   const root = options.root ?? globalMemoryRoot();
   const at = (input.now ?? new Date()).toISOString();
@@ -102,9 +110,46 @@ export async function recordGlobalEdit(
   await mkdir(root, { recursive: true });
   await appendFile(globalMemoryLedgerPath(root), `${JSON.stringify(record)}\n`, 'utf8');
   await rotateLedger(root);
+  await refreshIndex(root, at, options.indexThrottleMs ?? DEFAULT_INDEX_THROTTLE_MS);
+  return record;
+}
+
+/** Rewrite MEMORY.md from the ledger. Cheap enough to run a few times a second, not per write. */
+async function writeIndex(root: string, at: string, now: number) {
+  const previous = indexWrites.get(root);
+  if (previous?.timer) clearTimeout(previous.timer);
+  indexWrites.set(root, { last: now });
   const records = await readGlobalEdits({ root, limit: LEDGER_KEEP_LINES });
   await writeFile(globalMemoryIndexPath(root), renderGlobalMemoryIndex(records, at), 'utf8');
-  return record;
+}
+
+/**
+ * Rewrite the index now, or schedule a trailing rewrite when a burst is in
+ * progress. `throttleMs <= 0` means "every write rewrites it" (tests, and any
+ * caller that needs the file up to date synchronously).
+ */
+async function refreshIndex(root: string, at: string, throttleMs: number) {
+  const now = Date.now();
+  if (throttleMs <= 0) {
+    await writeIndex(root, at, now);
+    return;
+  }
+  const state = indexWrites.get(root);
+  if (!state || now - state.last >= throttleMs) {
+    await writeIndex(root, at, now);
+    return;
+  }
+  if (state.timer) return;
+  // Trailing render: fire once the window closes so the newest edits land in
+  // MEMORY.md without another write having to arrive first.
+  const timer = setTimeout(() => {
+    const current = indexWrites.get(root);
+    if (current) delete current.timer;
+    const stamp = new Date().toISOString();
+    void writeIndex(root, stamp, Date.now()).catch(() => undefined);
+  }, Math.max(0, throttleMs - (now - state.last)));
+  timer.unref?.();
+  state.timer = timer;
 }
 
 /** The most recent `limit` records, oldest first. Unreadable lines are skipped. */
@@ -167,7 +212,7 @@ export function renderGlobalMemoryIndex(records: GlobalEditRecord[], updatedAt: 
     `共 ${projects.size} 个项目、${records.length} 次编辑${records.length >= LEDGER_KEEP_LINES ? `（只保留最近 ${LEDGER_KEEP_LINES} 次）` : ''}。`,
   ];
   for (const project of ordered.slice(0, INDEX_PROJECT_LIMIT)) {
-    lines.push('', `## ${project.project}`, `工作区：\`${project.workspace}\`　共 ${project.edits} 次编辑、${project.files.size} 个文件`);
+    lines.push('', `## ${project.project}`, `工作区：\`${project.workspace}\`\u3000共 ${project.edits} 次编辑、${project.files.size} 个文件`);
     const files = [...project.files.entries()].sort((a, b) => b[1].at.localeCompare(a[1].at)).slice(0, INDEX_FILE_LIMIT);
     for (const [path, info] of files) {
       const marks = [
@@ -178,7 +223,7 @@ export function renderGlobalMemoryIndex(records: GlobalEditRecord[], updatedAt: 
         info.lastAction === 'delete' ? '已删除' : '',
         info.lastAction === 'rename' ? '改名' : '',
       ].filter(Boolean).join(' ');
-      lines.push(`- ${path}　—　${marks}`);
+      lines.push(`- ${path}\u3000—\u3000${marks}`);
     }
   }
   if (ordered.length > INDEX_PROJECT_LIMIT) lines.push('', `（另有 ${ordered.length - INDEX_PROJECT_LIMIT} 个项目未列出）`);

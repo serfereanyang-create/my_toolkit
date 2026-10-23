@@ -254,6 +254,7 @@ export const createZipTool: ToolDefinition<{
 
     const zipBuffer = zipFiles(fileMap);
     await writeFile(finalTarget, zipBuffer);
+    await context.checkpoints?.confirm(checkpoint);
 
     const totalSize = Array.from(fileMap.values()).reduce((sum, buf) => sum + buf.length, 0);
     const saved = totalSize - zipBuffer.length;
@@ -392,6 +393,7 @@ export const extractZipTool: ToolDefinition<{
       extracted.push(header.name);
     }
 
+    await context.checkpoints?.confirm(checkpoint);
     const summary = `Extracted ${extracted.length} file${extracted.length === 1 ? '' : 's'} from ${input.path}${skipped > 0 ? ` (${skipped} skipped)` : ''}`;
 
     return {

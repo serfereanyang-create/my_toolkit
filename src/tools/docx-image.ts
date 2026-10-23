@@ -183,6 +183,7 @@ export const insertDocxImageTool: ToolDefinition<{
     });
     
     await writeFile(finalTarget, zipMixed(files));
+    await context.checkpoints?.confirm(checkpoint);
     
     return {
       ok: true,

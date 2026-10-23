@@ -107,6 +107,7 @@ test('an operation that lands in a folder is recorded but never reverted', async
     assert.equal(await checkpoints.undoLast(), 'No checkpoint to undo.');
 
     // It still reaches the global memory ledger — the folder really was touched.
+    await checkpoints.confirm(entry);
     const ledger = await readFile(join(memory, 'edits.jsonl'), 'utf8');
     assert.match(ledger, /"action":"write"/);
   } finally {
@@ -138,7 +139,6 @@ test('extract_zip into the workspace root works with checkpoints wired', async (
 test('apply_unified_diff runs at all when checkpoints are wired', async () => {
   const workspace = await mkdtemp(join(tmpdir(), 'aicode-patch-cp-'));
   const checkpoints = new CheckpointStore(workspace);
-  const registry = createDefaultToolRegistry();
   const context = { workspaceRoot: workspace, approval: 'auto' as const, checkpoints };
   try {
     await writeFile(join(workspace, 'a.txt'), 'one\n');

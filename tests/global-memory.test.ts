@@ -60,12 +60,14 @@ test('MEMORY.md counts repeated edits of one file and orders projects by freshne
   try {
     const other = join(base, 'other');
     await mkdir(other, { recursive: true });
-    await recordGlobalEdit({ workspaceRoot: workspace, action: 'write', path: join(workspace, 'a.ts'), now: new Date('2026-10-22T09:00:00Z') }, { root: memory });
-    await recordGlobalEdit({ workspaceRoot: workspace, action: 'write', path: join(workspace, 'a.ts'), now: new Date('2026-10-22T09:05:00Z') }, { root: memory });
-    await recordGlobalEdit({ workspaceRoot: other, action: 'write', path: join(other, 'b.ts'), now: new Date('2026-10-22T11:00:00Z') }, { root: memory });
+    // indexThrottleMs 0: assert the file as it is after every edit, not as the
+    // trailing render leaves it later.
+    await recordGlobalEdit({ workspaceRoot: workspace, action: 'write', path: join(workspace, 'a.ts'), now: new Date('2026-10-22T09:00:00Z') }, { root: memory, indexThrottleMs: 0 });
+    await recordGlobalEdit({ workspaceRoot: workspace, action: 'write', path: join(workspace, 'a.ts'), now: new Date('2026-10-22T09:05:00Z') }, { root: memory, indexThrottleMs: 0 });
+    await recordGlobalEdit({ workspaceRoot: other, action: 'write', path: join(other, 'b.ts'), now: new Date('2026-10-22T11:00:00Z') }, { root: memory, indexThrottleMs: 0 });
 
     const index = await readFile(globalMemoryIndexPath(memory), 'utf8');
-    assert.match(index, /- a\.ts　—　[^\n]*2 次/);
+    assert.match(index, /- a\.ts\u3000—\u3000[^\n]*2 次/);
     assert.ok(index.indexOf('## other') < index.indexOf('## work'), 'the freshly edited project comes first');
     assert.match(index, /共 2 个项目、3 次编辑/);
   } finally {
@@ -153,7 +155,7 @@ test('a busy ledger still shows this workspace its own history', async () => {
 });
 
 test('two spellings of one workspace are one project in MEMORY.md', async () => {
-  const { base, memory, workspace } = await scratch();
+  const { base, workspace } = await scratch();
   try {
     const record = (path: string, at: string) => ({
       at,
@@ -195,15 +197,18 @@ test('renderGlobalMemoryIndex is stable without records', () => {
   assert.match(index, /还没有任何编辑记录/);
 });
 
-test('every checkpointed write reaches the ledger, and a rename records its source', async () => {
+test('a confirmed write reaches the ledger, and a rename records its source', async () => {
   const { base, memory, workspace } = await scratch();
   try {
-    const store = new CheckpointStore(workspace, { globalMemoryRoot: memory });
+    const store = new CheckpointStore(workspace, { globalMemoryRoot: memory, globalMemoryIndexThrottleMs: 0 });
     const target = join(workspace, 'notes.md');
-    await store.beforeWrite(target);
+    const created = await store.beforeWrite(target);
     await writeFile(target, 'hello\n');
-    await store.beforeWrite(target);
-    await store.beforeRename(target, join(workspace, 'renamed.md'));
+    await store.confirm(created);
+    const overwrite = await store.beforeWrite(target);
+    await store.confirm(overwrite);
+    const moved = await store.beforeRename(target, join(workspace, 'renamed.md'));
+    await store.confirm(moved);
 
     const records = await readGlobalEdits({ root: memory });
     assert.equal(records.length, 3);
@@ -218,14 +223,47 @@ test('every checkpointed write reaches the ledger, and a rename records its sour
   }
 });
 
+test('an unconfirmed checkpoint leaves no edit record', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    const store = new CheckpointStore(workspace, { globalMemoryRoot: memory, globalMemoryIndexThrottleMs: 0 });
+    await store.beforeWrite(join(workspace, 'attempt.md'));
+    assert.deepEqual(await readGlobalEdits({ root: memory }), [], 'checkpointing alone is not an edit');
+    assert.equal((await store.list()).length, 1, 'the checkpoint itself is still there for undo');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('a write that fails is not remembered as an edit', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    // `blocker` is a file, so writing below it fails after the checkpoint was taken.
+    await writeFile(join(workspace, 'blocker'), 'not a directory\n');
+    const store = new CheckpointStore(workspace, { globalMemoryRoot: memory, globalMemoryIndexThrottleMs: 0 });
+    const registry = createDefaultToolRegistry();
+    const result = await registry.execute(
+      'write_file',
+      { path: 'blocker/inside.md', content: 'never lands\n' },
+      { workspaceRoot: workspace, approval: 'auto', checkpoints: store },
+    );
+    assert.equal(result.ok, false, 'the write really failed');
+    assert.deepEqual(await readGlobalEdits({ root: memory }), [], 'a failed write must not claim the file was edited');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test('a deletion is recorded as a deletion, not as an edit', async () => {
   const { base, memory, workspace } = await scratch();
   try {
-    const store = new CheckpointStore(workspace, { globalMemoryRoot: memory });
+    const store = new CheckpointStore(workspace, { globalMemoryRoot: memory, globalMemoryIndexThrottleMs: 0 });
     const target = join(workspace, 'gone.md');
-    await store.beforeWrite(target);
+    const created = await store.beforeWrite(target);
     await writeFile(target, 'bye\n');
-    await store.beforeWrite(target, { action: 'delete' });
+    await store.confirm(created);
+    const removed = await store.beforeWrite(target, { action: 'delete' });
+    await store.confirm(removed);
 
     const records = await readGlobalEdits({ root: memory });
     assert.equal(records.length, 2);
@@ -244,7 +282,8 @@ test('the ledger can be switched off per store', async () => {
   const { base, memory, workspace } = await scratch();
   try {
     const store = new CheckpointStore(workspace, { globalMemoryRoot: memory, recordGlobalMemory: false });
-    await store.beforeWrite(join(workspace, 'quiet.md'));
+    const entry = await store.beforeWrite(join(workspace, 'quiet.md'));
+    await store.confirm(entry);
     const records = await readGlobalEdits({ root: memory });
     assert.deepEqual(records, []);
   } finally {
@@ -297,5 +336,30 @@ test('an agent turn carries the global edit record into the model messages', asy
     if (previous === undefined) delete process.env.AICODE_GLOBAL_MEMORY_ROOT;
     else process.env.AICODE_GLOBAL_MEMORY_ROOT = previous;
     await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('a burst of edits renders once, and the trailing render sees the last one', async () => {
+  const { base, memory, workspace } = await scratch();
+  const options = { root: memory, indexThrottleMs: 50 };
+  try {
+    await recordGlobalEdit({ workspaceRoot: workspace, action: 'write', path: join(workspace, 'a.ts') }, options);
+    await recordGlobalEdit({ workspaceRoot: workspace, action: 'write', path: join(workspace, 'b.ts') }, options);
+
+    const during = await readFile(globalMemoryIndexPath(memory), 'utf8');
+    assert.doesNotMatch(during, /b\.ts/, 'the second edit is throttled out of the index for now');
+    assert.equal((await readGlobalEdits({ root: memory })).length, 2, 'but the ledger is already complete');
+
+    // Poll instead of sleeping a fixed time: the trailing render is a timer,
+    // and a loaded machine may deliver it late.
+    let after = '';
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      after = await readFile(globalMemoryIndexPath(memory), 'utf8');
+      if (after.includes('b.ts')) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.match(after, /b\.ts/, 'the trailing render picks the throttled edit up');
+  } finally {
+    await rm(base, { recursive: true, force: true });
   }
 });

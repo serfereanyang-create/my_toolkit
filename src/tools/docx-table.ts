@@ -140,6 +140,7 @@ export const createDocxTableTool: ToolDefinition<{
     ]);
     
     await writeFile(finalTarget, zip(files));
+    await context.checkpoints?.confirm(checkpoint);
     
     return {
       ok: true,
