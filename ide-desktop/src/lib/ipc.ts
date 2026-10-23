@@ -198,6 +198,8 @@ export type GlobalMemoryProject = {
   workspace: string;
   edits: number;
   lastAt: string;
+  /** Every file ever edited in this workspace; `files` is only the newest slice. */
+  fileTotal: number;
   files: GlobalMemoryFile[];
 };
 
@@ -221,6 +223,8 @@ export type GlobalMemorySnapshot = {
   markdown?: string;
   updatedAt?: number;
   totalEdits?: number;
+  /** Distinct files across every project — not the length of the rendered rows. */
+  totalFiles?: number;
   projects?: GlobalMemoryProject[];
   records?: GlobalMemoryEdit[];
   error?: string;

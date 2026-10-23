@@ -22,12 +22,14 @@ const SNAPSHOT = {
   markdown: '# 全局记忆\n\n## zcode\n- ide-desktop/electron/git.cjs\n- cli/src/tools/git-write.ts\n',
   updatedAt: Date.now(),
   totalEdits: 8,
+  totalFiles: 42,
   projects: [
     {
       project: 'zcode',
       workspace: 'C:/work/zcode',
       edits: 6,
       lastAt: '2026-10-22T11:00:00.000Z',
+      fileTotal: 41,
       files: [
         { path: 'ide-desktop/electron/git.cjs', at: '2026-10-22T11:00:00.000Z', count: 3, created: false },
         { path: 'cli/src/tools/git-write.ts', at: '2026-10-22T10:00:00.000Z', count: 1, created: false, renamed: true },
@@ -40,6 +42,7 @@ const SNAPSHOT = {
       workspace: 'C:/work/cidai',
       edits: 2,
       lastAt: '2026-10-21T20:00:00.000Z',
+      fileTotal: 1,
       files: [{ path: 'app/src/main/java/Glass.kt', at: '2026-10-21T20:00:00.000Z', count: 2, created: false }],
     },
   ],

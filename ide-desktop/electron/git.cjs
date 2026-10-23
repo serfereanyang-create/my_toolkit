@@ -70,8 +70,9 @@ async function safeGit(cwd, args, opts = {}) {
   } catch (err) {
     const stderr = err && err.stderr ? String(err.stderr).trimEnd() : '';
     const message = err instanceof Error ? err.message : String(err);
-    const diagnostic = err?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'Git 返回内容超过预览限制，请缩小查看范围' : stderr || message;
-    return { ok: false, stdout: '', stderr, error: diagnostic };
+    const overflow = err?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+    const diagnostic = overflow ? 'Git 返回内容超过预览限制，请缩小查看范围' : stderr || message;
+    return { ok: false, stdout: '', stderr, error: diagnostic, code: err?.code };
   }
 }
 
@@ -105,7 +106,14 @@ async function probeRepository(root) {
  */
 async function getStatus(root) {
   // --porcelain=v1 -b gives us branch info + per-file status in one call
-  const res = await safeGit(root, ['status', '--porcelain=v1', '-b', '-z', '--untracked-files=all'], { preserveWhitespace: true });
+  let res = await safeGit(root, ['status', '--porcelain=v1', '-b', '-z', '--untracked-files=all'], { preserveWhitespace: true });
+  if (!res.ok && res.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+    // A folder with node_modules or a build output tree can list hundreds of
+    // thousands of files — exactly what a freshly initialised repo looks like.
+    // Fall back to collapsing untracked directories (one row per folder), which
+    // is what every other git client shows, instead of failing the whole panel.
+    res = await safeGit(root, ['status', '--porcelain=v1', '-b', '-z', '--untracked-files=normal'], { preserveWhitespace: true, maxBuffer: 8 * 1024 * 1024 });
+  }
   if (!res.ok) {
     // A folder that has never been through `git init` is not a broken repo —
     // the panel offers to create one instead of repeating git's fatal message.

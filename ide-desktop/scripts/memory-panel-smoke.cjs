@@ -78,7 +78,7 @@ app.whenReady().then(async () => {
 
   // 1. The header has to report the real totals, not a guess.
   const subtitle = await evaluate(`document.querySelector('.gtx-page-header p')?.textContent ?? ''`);
-  check('the header counts edits, files and projects', subtitle.includes('8 次编辑') && subtitle.includes('5 个文件') && subtitle.includes('2 个项目'), subtitle);
+  check('the header counts edits, files and projects', subtitle.includes('8 次编辑') && subtitle.includes('42 个文件') && subtitle.includes('2 个项目'), subtitle);
   check('the header points at the memory root', (await evaluate(`document.querySelector('.gtx-page-header p')?.getAttribute('title') ?? ''`)).includes('memories/global'));
 
   // 2. Projects are collapsed by default and ordered by freshness.

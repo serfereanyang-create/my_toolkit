@@ -110,3 +110,35 @@ test('AICODE_GLOBAL_MEMORY_ROOT points the reader at an alternate root', async (
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('the headline counts the whole ledger, not the page the panel renders', async () => {
+  const lines = [];
+  for (let i = 0; i < 2100; i += 1) lines.push(record({ at: `2026-10-22T10:00:00.${String(i).padStart(3, '0')}Z` }));
+  const root = fixture(lines);
+  const snapshot = await readGlobalMemory({ root });
+  assert.equal(snapshot.totalEdits, 2100, 'every edit counts even though only the tail is returned');
+  assert.ok(snapshot.records.length <= 2000);
+});
+
+test('a project reports how many files it really touched, beyond the row cap', async () => {
+  const lines = [];
+  for (let i = 0; i < 45; i += 1) lines.push(record({ path: `src/file-${i}.ts` }));
+  const root = fixture(lines);
+  const snapshot = await readGlobalMemory({ root });
+  const project = snapshot.projects[0];
+  assert.equal(project.files.length, 40, 'the panel only renders a slice');
+  assert.equal(project.fileTotal, 45, 'but the count is the real one');
+  assert.equal(snapshot.totalFiles, 45);
+});
+
+test('two spellings of one workspace are one project', async () => {
+  const root = fixture([
+    record({ workspace: 'C:/work', path: 'a.ts' }),
+    record({ workspace: 'C:/work/', path: 'b.ts' }),
+    record({ workspace: process.platform === 'win32' ? 'c:/WORK' : 'C:/WORK', path: 'c.ts' }),
+  ]);
+  const snapshot = await readGlobalMemory({ root });
+  assert.equal(snapshot.projects.length, 1, 'trailing separator (and drive-letter case on Windows) must not split a project');
+  assert.equal(snapshot.projects[0].edits, 3);
+  assert.equal(snapshot.projects[0].fileTotal, 3);
+});

@@ -16,10 +16,11 @@ import { desktop, type GlobalMemorySnapshot, type ProjectMemorySummary } from '.
  * Nothing here is editable: memory is a record of what happened, not a form.
  */
 
-function formatWhen(iso: string | undefined): string {
-  if (!iso) return '—';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
+/** ISO string or epoch milliseconds; an unusable value renders as a dash, never a crash. */
+function formatWhen(value: string | number | undefined): string {
+  if (value === undefined || value === null || value === '') return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return typeof value === 'string' ? value : '—';
   const now = new Date();
   const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   if (date.toDateString() === now.toDateString()) return `今天 ${time}`;
@@ -90,7 +91,9 @@ export function MemoryPanel({ onOpenFile }: { onOpenFile?: (path: string) => voi
 
   const recent = useMemo(() => (snapshot?.records ?? []).slice(-24).reverse(), [snapshot]);
   const totalEdits = snapshot?.totalEdits ?? 0;
-  const fileCount = (snapshot?.projects ?? []).reduce((sum, project) => sum + project.files.length, 0);
+  // The reader caps the rows it renders per project; the headline must show the
+  // real totals or it silently stops counting after the first 40 files.
+  const fileCount = snapshot?.totalFiles ?? (snapshot?.projects ?? []).reduce((sum, project) => sum + (project.fileTotal ?? project.files.length), 0);
 
   async function openNote(project: ProjectMemorySummary, fileName: string) {
     const result = await desktop.memory.read(project.id, fileName);
@@ -107,7 +110,7 @@ export function MemoryPanel({ onOpenFile }: { onOpenFile?: (path: string) => voi
             {loading && !snapshot ? '正在读取记忆'
               : totalEdits === 0 ? '还没有编辑记录'
               : `${totalEdits} 次编辑 · ${fileCount} 个文件 · ${(snapshot?.projects ?? []).length} 个项目`}
-            <span>·</span>{snapshot?.updatedAt ? `更新于 ${formatWhen(new Date(snapshot.updatedAt).toISOString())}` : '—'}
+            <span>·</span>{snapshot?.updatedAt ? `更新于 ${formatWhen(snapshot.updatedAt)}` : '—'}
           </p>
         </div>
         <button type="button" className="gtx-btn" title="刷新" disabled={loading} onClick={() => void refresh()}>
@@ -162,7 +165,7 @@ export function MemoryPanel({ onOpenFile }: { onOpenFile?: (path: string) => voi
                     <FolderGit2 size={14} />
                     <span className="mem-project-name">{project.project}</span>
                     <span className="mem-project-path" title={project.workspace}>{shortWorkspace(project.workspace)}</span>
-                    <span className="mem-project-meta">{project.edits} 次 · {project.files.length} 个文件 · {formatWhen(project.lastAt)}</span>
+                    <span className="mem-project-meta">{project.edits} 次 · {project.fileTotal ?? project.files.length} 个文件 · {formatWhen(project.lastAt)}</span>
                   </button>
                   {open && (
                     <ul className="mem-files">
@@ -171,9 +174,10 @@ export function MemoryPanel({ onOpenFile }: { onOpenFile?: (path: string) => voi
                           <button
                             type="button"
                             className="mem-file"
-                            title={`${file.path}\n最后编辑 ${formatWhen(file.at)}${file.count > 1 ? `\n共 ${file.count} 次` : ''}`}
+                            title={`${file.path}\n最后编辑 ${formatWhen(file.at)}${file.count > 1 ? `\n共 ${file.count} 次` : ''}${file.deleted ? '\n这个文件已经删除了' : ''}`}
                             onClick={() => onOpenFile?.(absolutePath(project.workspace, file.path))}
-                            disabled={!onOpenFile}
+                            // Nothing to open: the file was deleted after the edit.
+                            disabled={!onOpenFile || Boolean(file.deleted)}
                           >
                             <FileText size={13} />
                             <span className="mem-file-path">{file.path}</span>
@@ -185,6 +189,9 @@ export function MemoryPanel({ onOpenFile }: { onOpenFile?: (path: string) => voi
                           </button>
                         </li>
                       ))}
+                      {project.fileTotal > project.files.length && (
+                        <li><p className="mem-hint">只列出最近 {project.files.length} 个文件，共 {project.fileTotal} 个。</p></li>
+                      )}
                     </ul>
                   )}
                 </div>
@@ -221,7 +228,7 @@ export function MemoryPanel({ onOpenFile }: { onOpenFile?: (path: string) => voi
               <div className="mem-note-group-head">
                 <FolderGit2 size={14} />
                 <span className="mem-note-group-name">{project.label}</span>
-                <span className="mem-note-group-meta">{project.files.length} 个文件 · {formatWhen(new Date(project.updatedAt).toISOString())}</span>
+                <span className="mem-note-group-meta">{project.files.length} 个文件 · {formatWhen(project.updatedAt)}</span>
               </div>
               <ul className="mem-note-files">
                 {project.files.map((file) => (

@@ -30,14 +30,21 @@ function isNotFound(error) {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }
 
+/**
+ * Parse the ledger. `records` is the recent tail the panel renders; `total` is
+ * how many edits the ledger really holds — the header must not shrink to the
+ * page size once a user has more history than one read.
+ */
 function parseLedger(raw) {
   const records = [];
+  let total = 0;
   for (const line of raw.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       const parsed = JSON.parse(trimmed);
       if (typeof parsed?.at === 'string' && typeof parsed?.path === 'string' && typeof parsed?.workspace === 'string') {
+        total += 1;
         records.push({
           at: parsed.at,
           project: typeof parsed.project === 'string' ? parsed.project : path.basename(parsed.workspace),
@@ -52,17 +59,29 @@ function parseLedger(raw) {
       // A half-written line from a killed process: skip, never fail the read.
     }
   }
-  return records.slice(-MAX_LEDGER_RECORDS);
+  return { records: records.slice(-MAX_LEDGER_RECORDS), total };
+}
+
+/**
+ * Two spellings of the same folder (trailing separator, drive-letter case) must
+ * not become two projects: the ledger stores whatever the CLI was given as the
+ * workspace root, so grouping has to compare loosely while still showing — and
+ * opening files from — the spelling that was recorded.
+ */
+function workspaceKey(workspace) {
+  const trimmed = workspace.replace(/[\\/]+$/, '');
+  return process.platform === 'win32' ? trimmed.toLowerCase() : trimmed;
 }
 
 /** Group raw records into one entry per workspace, newest project first. */
 function summariseProjects(records) {
   const projects = new Map();
   for (const record of records) {
-    let entry = projects.get(record.workspace);
+    const key = workspaceKey(record.workspace);
+    let entry = projects.get(key);
     if (!entry) {
-      entry = { project: record.project, workspace: record.workspace, edits: 0, lastAt: record.at, files: new Map() };
-      projects.set(record.workspace, entry);
+      entry = { project: record.project, workspace: record.workspace, edits: 0, lastAt: record.at, files: new Map(), fileTotal: 0 };
+      projects.set(key, entry);
     }
     entry.edits += 1;
     if (record.at > entry.lastAt) entry.lastAt = record.at;
@@ -84,6 +103,7 @@ function summariseProjects(records) {
         renamed: record.action === 'rename',
         deleted: record.action === 'delete',
       });
+      entry.fileTotal += 1;
     }
   }
   return [...projects.values()]
@@ -93,6 +113,8 @@ function summariseProjects(records) {
       workspace: entry.workspace,
       edits: entry.edits,
       lastAt: entry.lastAt,
+      // True number of files touched; `files` is only the newest slice.
+      fileTotal: entry.fileTotal,
       files: [...entry.files.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, MAX_FILES_PER_PROJECT),
     }));
 }
@@ -120,20 +142,25 @@ async function readGlobalMemory(options = {}) {
   }
 
   let records = [];
+  let total = 0;
   try {
-    records = parseLedger(await readFile(ledgerPath, 'utf8'));
+    const parsed = parseLedger(await readFile(ledgerPath, 'utf8'));
+    records = parsed.records;
+    total = parsed.total;
   } catch (error) {
     if (!isNotFound(error)) return { ok: false, error: error instanceof Error ? error.message : String(error), root };
   }
 
+  const projects = summariseProjects(records);
   return {
     ok: true,
     root,
     indexPath,
     markdown,
     updatedAt,
-    totalEdits: records.length,
-    projects: summariseProjects(records),
+    totalEdits: total,
+    totalFiles: projects.reduce((sum, project) => sum + project.fileTotal, 0),
+    projects,
     // Recent activity for the timeline strip; the full ledger stays on disk.
     records: records.slice(-200),
   };

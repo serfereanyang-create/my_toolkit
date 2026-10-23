@@ -108,3 +108,18 @@ test('a commit without a configured identity explains itself', async () => {
     }
   }
 });
+
+test('a freshly initialised folder with a huge untracked tree still lists', async () => {
+  // node_modules / build output after `git init`: git status --untracked-files=all
+  // blows the child-process buffer, and the panel used to just show an error.
+  const folder = tempDir('yoy-flood-');
+  const modules = path.join(folder, 'node_modules');
+  fs.mkdirSync(modules);
+  const long = 'b'.repeat(80);
+  for (let i = 0; i < 6000; i += 1) fs.writeFileSync(path.join(modules, `f${i}-${long}.js`), '');
+  await git.initRepo(folder);
+
+  const status = await git.getStatus(folder);
+  assert.equal(status.ok, true, `status must survive the flood, got: ${status.error || 'ok'}`);
+  assert.deepEqual(status.untracked, ['node_modules/'], 'untracked directories collapse to one row instead of failing');
+});
