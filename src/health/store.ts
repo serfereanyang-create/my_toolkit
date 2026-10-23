@@ -4,8 +4,9 @@
  * 快照存于 <workspace>/.aicode/health/history.json，上限 MAX_SNAPSHOTS。
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { writeFileAtomic } from '../utils/atomic.js';
 import {
   MAX_SNAPSHOTS,
   METRIC_DIRECTION,
@@ -40,14 +41,13 @@ export class HealthStore {
     // 保留最近 MAX_SNAPSHOTS 份
     const trimmed = history.slice(-MAX_SNAPSHOTS);
 
-    await mkdir(dirname(historyPath(workspaceRoot)), { recursive: true });
-    await writeFile(historyPath(workspaceRoot), JSON.stringify({ snapshots: trimmed }, null, 2), 'utf8');
+    await writeFileAtomic(historyPath(workspaceRoot), JSON.stringify({ snapshots: trimmed }, null, 2));
     return trimmed.length;
   }
 
   async clear(workspaceRoot: string): Promise<void> {
     try {
-      await writeFile(historyPath(workspaceRoot), JSON.stringify({ snapshots: [] }), 'utf8');
+      await writeFileAtomic(historyPath(workspaceRoot), JSON.stringify({ snapshots: [] }));
     } catch {
       // Ignore
     }

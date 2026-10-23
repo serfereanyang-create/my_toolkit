@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentRuntime } from '../src/agent/agent.js';
@@ -395,6 +395,57 @@ test('/memory supports add list and forget', async () => {
     const forgotten = await handleSlashCommand({ line: `/memory forget ${id}`, ...base });
     assert.match(forgotten, /Forgot|forgot|deactivated|inactive/i);
     assert.deepEqual(await new ProjectMemoryStore(workspace).list(), []);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('concurrent adds keep every entry', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-memory-race-'));
+  try {
+    // Two sessions in one workspace (and one session's Promise.all batch) each
+    // load, edit and rewrite the whole file. Interleaved, the last write wins
+    // and every earlier entry is gone.
+    const store = new ProjectMemoryStore(workspace);
+    const count = 25;
+    await Promise.all(
+      Array.from({ length: count }, (_, i) =>
+        new ProjectMemoryStore(workspace).add({
+          kind: 'note',
+          summary: `fact number ${i}`,
+          keywords: [`fact${i}`],
+          source: { type: 'system' },
+        }),
+      ),
+    );
+    const listed = await store.list();
+    assert.equal(listed.length, count, 'no add is lost');
+    assert.equal(new Set(listed.map((entry) => entry.summary)).size, count);
+    assert.equal((await readdir(join(workspace, '.aicode', 'memory'))).filter((name) => name.endsWith('.tmp')).length, 0);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('an unreadable entries.json is preserved instead of being overwritten', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-memory-corrupt-'));
+  try {
+    const dir = join(workspace, '.aicode', 'memory');
+    await mkdir(dir, { recursive: true });
+    const file = join(dir, 'entries.json');
+    await writeFile(file, '{"version":1,"entries":[{"id":"mem_1"', 'utf8');
+
+    const store = new ProjectMemoryStore(workspace);
+    assert.deepEqual(await store.load().then((loaded) => loaded.entries), []);
+    assert.equal(await readFile(file, 'utf8').then(() => true).catch(() => false), false, 'the torn file is moved aside');
+
+    const kept = (await readdir(dir)).filter((name) => name.includes('.corrupt-'));
+    assert.equal(kept.length, 1, 'the old contents are still on disk to recover from');
+    assert.match(await readFile(join(dir, kept[0]), 'utf8'), /mem_1/);
+
+    // Memory keeps working from an empty file rather than failing.
+    await store.add({ kind: 'note', summary: 'after the corruption', source: { type: 'user' } });
+    assert.equal((await store.list()).length, 1);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }

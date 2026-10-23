@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -154,6 +154,84 @@ test('apply_unified_diff runs at all when checkpoints are wired', async () => {
     const applied = await applyUnifiedDiffTool.execute({ patch, atomic: true }, context);
     assert.equal(applied.ok, true, String(applied.output));
     assert.equal(await readFile(join(workspace, 'a.txt'), 'utf8'), 'two\n');
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+/** The index cap in src/session/checkpoint.ts. */
+const INDEX_CAP = 400;
+
+test('a batch of concurrent writes keeps every checkpoint and its backup', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-cp-parallel-'));
+  const backups = join(workspace, '.aicode', 'checkpoints', 'backups');
+  try {
+    // agent.ts runs a step's tool calls through Promise.all: they all try to
+    // read-modify-write index.json at once, which used to lose entries and
+    // fail the write outright on Windows.
+    for (let i = 0; i < 20; i += 1) await writeFile(join(workspace, `f${i}.txt`), 'v0');
+    const checkpoints = new CheckpointStore(workspace, { recordGlobalMemory: false });
+    const rounds = 5;
+    let rejected = 0;
+    for (let round = 0; round < rounds; round += 1) {
+      const settled = await Promise.allSettled(
+        Array.from({ length: 20 }, (_, i) => checkpoints.beforeWrite(join(workspace, `f${i}.txt`))),
+      );
+      rejected += settled.filter((outcome) => outcome.status === 'rejected').length;
+    }
+    assert.equal(rejected, 0, 'no write is aborted by a racing index update');
+    const entries = await checkpoints.list();
+    assert.equal(entries.length, rounds * 20);
+    assert.equal(new Set(entries.map((entry) => entry.id)).size, rounds * 20, 'no id is lost or duplicated');
+    assert.equal((await readdir(backups)).length, rounds * 20, 'every entry has the backup undo needs');
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('the undo history is capped and the dropped backups are deleted', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-cp-cap-'));
+  const root = join(workspace, '.aicode', 'checkpoints');
+  try {
+    for (let i = 0; i < 10; i += 1) await writeFile(join(workspace, `f${i}.txt`), 'v0');
+    const checkpoints = new CheckpointStore(workspace, { recordGlobalMemory: false });
+    const rounds = Math.ceil((INDEX_CAP + 10) / 10);
+    for (let round = 0; round < rounds; round += 1) {
+      await Promise.all(
+        Array.from({ length: 10 }, (_, i) => checkpoints.beforeWrite(join(workspace, `f${i}.txt`))),
+      );
+    }
+    const entries = await checkpoints.list();
+    assert.equal(entries.length, INDEX_CAP, 'the index stops growing');
+    assert.equal((await readdir(join(root, 'backups'))).length, INDEX_CAP, 'disk use stops growing with it');
+    // Pruning keeps the newest entries, so undo still works on recent history.
+    assert.match(await checkpoints.undoLast(), /^Undid checkpoint/);
+    assert.equal((await checkpoints.list()).length, INDEX_CAP - 1);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('a stale orphan backup is swept, a backup from a write still in flight is not', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-cp-orphan-'));
+  const backups = join(workspace, '.aicode', 'checkpoints', 'backups');
+  try {
+    await writeFile(join(workspace, 'a.txt'), 'content');
+    const checkpoints = new CheckpointStore(workspace, { recordGlobalMemory: false });
+    await mkdir(backups, { recursive: true });
+    // A backup whose entry never made it into the index.
+    await writeFile(join(backups, 'cp_orphan.bak'), 'gone');
+    const stale = new Date(Date.now() - 60 * 60 * 1000);
+    await utimes(join(backups, 'cp_orphan.bak'), stale, stale);
+    // A sibling write in a batch may have created its backup but not yet
+    // indexed it; sweeping that window would break its undo.
+    await writeFile(join(backups, 'cp_inflight.bak'), 'kept');
+
+    await checkpoints.beforeWrite(join(workspace, 'a.txt'));
+
+    const names = await readdir(backups);
+    assert.equal(names.includes('cp_orphan.bak'), false, 'the orphan is cleaned up');
+    assert.equal(names.includes('cp_inflight.bak'), true, 'a fresh backup is left alone');
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }

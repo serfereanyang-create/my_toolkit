@@ -47,6 +47,26 @@ type PromptCacheBasis = {
   totalChars: number;
 };
 
+/**
+ * Post-turn bookkeeping (the automatic memory entry, the reflexion lesson) is
+ * started but not awaited, so a slow disk never delays the answer. Those writes
+ * still have to finish before the process or a test temp workspace goes away;
+ * close() drains this set.
+ */
+const backgroundWrites = new Set<Promise<unknown>>();
+
+export function trackBackgroundWrite(task: Promise<unknown>) {
+  backgroundWrites.add(task);
+  void task.catch(() => undefined).finally(() => backgroundWrites.delete(task));
+}
+
+/** Wait for every post-turn write started so far. */
+export async function flushBackgroundWrites() {
+  while (backgroundWrites.size > 0) {
+    await Promise.allSettled([...backgroundWrites]);
+  }
+}
+
 export type AgentRuntime = {
   config: AppConfig;
   provider: Provider;
@@ -456,14 +476,14 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
   // Auto-record memory from successful turns. Failures to write are
   // swallowed so a memory problem never breaks turn delivery.
   if (runtime.memory && coreResult.ok && coreResult.finalAnswer) {
-    recordTurnMemory(runtime, coreResult.finalAnswer).catch(() => {});
+    trackBackgroundWrite(recordTurnMemory(runtime, coreResult.finalAnswer));
   }
 
   // Reflexion: terminal failures (exception or max-steps exhaustion) become a
   // structured lesson in .aicode/reflections.json so future similar tasks can
   // avoid repeating the same mistake. User cancels are NOT failures — no lesson.
   if (coreResult.hadTerminalFailure && coreResult.outcome === 'failed') {
-    recordTurnReflection(runtime, prompt, coreResult).catch(() => {});
+    trackBackgroundWrite(recordTurnReflection(runtime, prompt, coreResult));
   }
 
   // Proactive cache self-awareness: after a successful turn, if the local cache
@@ -1529,7 +1549,7 @@ async function loadReflectionBlock(runtime: AgentRuntime, prompt: string): Promi
     if (entries.length === 0) return undefined;
     const relevant = runtime.reflections.selectRelevant(entries, prompt);
     if (relevant.length === 0) return undefined;
-    void runtime.reflections.touchHits(relevant.map((e) => e.id)).catch(() => {});
+    trackBackgroundWrite(runtime.reflections.touchHits(relevant.map((e) => e.id)));
     return runtime.reflections.buildBlock(relevant) || undefined;
   } catch {
     return undefined;

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { runAgentTurn } from '../src/agent/agent.js';
+import { flushBackgroundWrites, runAgentTurn } from '../src/agent/agent.js';
 import type { AppConfig } from '../src/config/types.js';
 import type { Provider, ProviderRequest } from '../src/providers/types.js';
 import { ProjectMemoryStore } from '../src/memory/store.js';
@@ -82,6 +82,37 @@ test('successful agent turn auto-records a useful final answer into memory', asy
 
   assert.ok(entries.length >= 1, 'at least one memory entry should be recorded');
   assert.ok(entries.some((e) => e.summary.includes('parameterized queries')));
+
+  await rm(workspace, { recursive: true, force: true });
+});
+
+test('the post-turn memory write can be drained instead of raced', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-agent-mem-flush-'));
+  const config: AppConfig = { provider: 'mock', model: 'mock-code-agent-v1', approval: 'auto', workspaceRoot: workspace, sessionDir: join(workspace, 'sessions'), maxSteps: 2, noBanner: true };
+  const sessions = new SessionStore(config.sessionDir);
+  const session = await sessions.create({ provider: 'mock', model: 'mock-code-agent-v1', workspaceRoot: workspace });
+  const memory = new ProjectMemoryStore(workspace);
+
+  const provider: Provider = {
+    name: 'mock',
+    model: 'mock-code-agent-v1',
+    async complete() {
+      return { actions: [{ type: 'message', content: 'You must always use parameterized queries for database access.' }] };
+    },
+  };
+
+  const result = await runAgentTurn(
+    { config, provider, tools: createDefaultToolRegistry(), sessions, session, memory, ui: new TerminalUI(true) },
+    'database query best practice',
+  );
+  assert.equal(result.ok, true);
+
+  // No polling: draining the tracked writes is what close() does, so the entry
+  // must be readable the moment it returns — otherwise exiting right after a
+  // turn silently loses the memory.
+  await flushBackgroundWrites();
+  const entries = await memory.list();
+  assert.ok(entries.some((entry) => entry.summary.includes('parameterized queries')));
 
   await rm(workspace, { recursive: true, force: true });
 });

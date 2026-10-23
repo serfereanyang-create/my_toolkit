@@ -21,6 +21,7 @@ import { createDefaultToolRegistry } from '../tools/index.js';
 import { type ToolScope } from '../tools/scope.js';
 import { TerminalUI } from '../ui/terminal.js';
 import { CommandJobManager } from '../safety/commandJobs.js';
+import { flushBackgroundWrites } from '../agent/agent.js';
 import type { AgentRuntime } from '../agent/agent.js';
 
 export async function createAgentRuntime(config: AppConfig) {
@@ -130,6 +131,12 @@ export async function createAgentRuntime(config: AppConfig) {
       }
       try { await commandJobs.close(); } catch (error) {
         closeErrors.push(`commandJobs: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      // The last turn's memory entry and reflexion lesson are written after the
+      // answer is delivered. Let them land before the process (or the caller's
+      // temp workspace) goes away, instead of racing the exit.
+      try { await flushBackgroundWrites(); } catch (error) {
+        closeErrors.push(`background writes: ${error instanceof Error ? error.message : String(error)}`);
       }
       try { await mcp.close(); } catch (error) {
         closeErrors.push(`mcp: ${error instanceof Error ? error.message : String(error)}`);

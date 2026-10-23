@@ -1,32 +1,60 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { renameWithRetry, serializeWrites as serialize, writeFileAtomic } from '../utils/atomic.js';
 import type { NewMemoryInput, ProjectMemoryEntry, ProjectMemoryFile } from './types.js';
 
 const MAX_SUMMARY = 240;
 
 export class ProjectMemoryStore {
   private readonly filePath: string;
+  /** The unreadable file is moved aside at most once per store. */
+  private quarantined = false;
 
   constructor(workspaceRoot: string) {
     this.filePath = resolve(workspaceRoot, '.aicode', 'memory', 'entries.json');
   }
 
   async load(): Promise<ProjectMemoryFile> {
+    let raw: string;
     try {
-      const parsed = JSON.parse(await readFile(this.filePath, 'utf8')) as ProjectMemoryFile;
-      if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.entries)) {
-        return emptyFile(new Date().toISOString());
-      }
-      return parsed;
+      raw = await readFile(this.filePath, 'utf8');
     } catch {
       return emptyFile(new Date().toISOString());
+    }
+    try {
+      const parsed = JSON.parse(raw) as ProjectMemoryFile;
+      if (parsed && parsed.version === 1 && Array.isArray(parsed.entries)) return parsed;
+    } catch {
+      // fall through: the file is corrupt
+    }
+    // Returning an empty store is the right answer for a read, but the next
+    // write would then replace the file and take the history with it. Move the
+    // unreadable copy aside first so it can still be recovered by hand.
+    await this.quarantine();
+    return emptyFile(new Date().toISOString());
+  }
+
+  private async quarantine() {
+    if (this.quarantined) return;
+    this.quarantined = true;
+    try {
+      if ((await stat(this.filePath)).size === 0) return;
+    } catch {
+      return;
+    }
+    const target = `${this.filePath}.corrupt-${new Date().toISOString().replace(/[-:.TZ]/g, '')}.json`;
+    try {
+      await renameWithRetry(this.filePath, target);
+    } catch {
+      // best effort: never fail a memory operation over the backup copy
     }
   }
 
   async save(file: ProjectMemoryFile) {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
+    await serialize(this.filePath, async () => {
+      await this.write(file);
+    });
   }
 
   async list(options?: { includeInactive?: boolean }) {
@@ -49,27 +77,47 @@ export class ProjectMemoryStore {
       updatedAt: nowIso,
       active: true,
     };
-    const file = await this.load();
-    file.entries = [entry, ...file.entries];
-    file.updatedAt = nowIso;
-    await this.save(file);
+    await this.mutate((current) => {
+      current.entries = [entry, ...current.entries];
+      return true;
+    }, nowIso);
     return entry;
   }
 
   async forget(idOrQuery: string): Promise<ProjectMemoryEntry | undefined> {
-    const file = await this.load();
     const needle = idOrQuery.trim().toLowerCase();
-    const index = file.entries.findIndex((entry) => {
-      if (!entry.active) return false;
-      if (entry.id === idOrQuery) return true;
-      return entry.summary.toLowerCase().includes(needle) || entry.keywords.some((keyword) => keyword.includes(needle));
-    });
-    if (index < 0) return undefined;
     const nowIso = new Date().toISOString();
-    file.entries[index] = { ...file.entries[index], active: false, updatedAt: nowIso };
-    file.updatedAt = nowIso;
-    await this.save(file);
-    return file.entries[index];
+    let forgotten: ProjectMemoryEntry | undefined;
+    await this.mutate((file) => {
+      const index = file.entries.findIndex((entry) => {
+        if (!entry.active) return false;
+        if (entry.id === idOrQuery) return true;
+        return entry.summary.toLowerCase().includes(needle) || entry.keywords.some((keyword) => keyword.includes(needle));
+      });
+      if (index < 0) return false;
+      forgotten = file.entries[index] = { ...file.entries[index], active: false, updatedAt: nowIso };
+      return true;
+    }, nowIso);
+    return forgotten;
+  }
+
+  /**
+   * Read, edit and rewrite the file as one queued step. Editing a copy read
+   * outside the queue would drop an entry a concurrent session added in
+   * between. The edit reports whether it changed anything; an unchanged file is
+   * not rewritten.
+   */
+  private async mutate(edit: (file: ProjectMemoryFile) => boolean, nowIso = new Date().toISOString()) {
+    await serialize(this.filePath, async () => {
+      const file = await this.load();
+      if (!edit(file)) return;
+      file.updatedAt = nowIso;
+      await this.write(file);
+    });
+  }
+
+  private async write(file: ProjectMemoryFile) {
+    await writeFileAtomic(this.filePath, `${JSON.stringify(file, null, 2)}\n`);
   }
 }
 

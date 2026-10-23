@@ -1,5 +1,6 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { writeFileAtomic } from '../utils/atomic.js';
 import type { AutomationTask, ExecutionHistory, ExecutionResult } from './types.js';
 
 /**
@@ -52,8 +53,7 @@ export class AutomationStore {
       let history = await this.readHistory(historyFile, taskId);
       history.results.push(result);
       if (history.results.length > 100) history.results = history.results.slice(-100);
-      await mkdir(this.historyDir, { recursive: true });
-      await writeFile(historyFile, JSON.stringify(history, null, 2), 'utf8');
+      await writeFileAtomic(historyFile, JSON.stringify(history, null, 2));
     });
   }
 
@@ -91,8 +91,9 @@ export class AutomationStore {
   }
 
   private async writeTasks(tasks: AutomationTask[]): Promise<void> {
-    await mkdir(dirname(this.tasksFilePath), { recursive: true });
-    await writeFile(this.tasksFilePath, JSON.stringify(tasks, null, 2), 'utf8');
+    // Replaced whole: an in-place rewrite leaves a torn file if the process
+    // dies mid-write, and readTasks() then refuses to read the store at all.
+    await writeFileAtomic(this.tasksFilePath, JSON.stringify(tasks, null, 2));
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {

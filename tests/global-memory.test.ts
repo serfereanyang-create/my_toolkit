@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -341,7 +341,10 @@ test('an agent turn carries the global edit record into the model messages', asy
 
 test('a burst of edits renders once, and the trailing render sees the last one', async () => {
   const { base, memory, workspace } = await scratch();
-  const options = { root: memory, indexThrottleMs: 50 };
+  // Leave enough room for the first atomic index write itself; the assertion
+  // is about the trailing-render contract, not a race against filesystem
+  // latency on a loaded Windows runner.
+  const options = { root: memory, indexThrottleMs: 5_000 };
   try {
     await recordGlobalEdit({ workspaceRoot: workspace, action: 'write', path: join(workspace, 'a.ts') }, options);
     await recordGlobalEdit({ workspaceRoot: workspace, action: 'write', path: join(workspace, 'b.ts') }, options);
@@ -353,12 +356,43 @@ test('a burst of edits renders once, and the trailing render sees the last one',
     // Poll instead of sleeping a fixed time: the trailing render is a timer,
     // and a loaded machine may deliver it late.
     let after = '';
-    for (let attempt = 0; attempt < 40; attempt += 1) {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
       after = await readFile(globalMemoryIndexPath(memory), 'utf8');
       if (after.includes('b.ts')) break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.match(after, /b\.ts/, 'the trailing render picks the throttled edit up');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('concurrent edits leave one whole ledger line each and a readable MEMORY.md', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    // A tool batch confirms its checkpoints through Promise.all, so these land
+    // at once. Rendering immediately makes the index writes collide too.
+    const count = 40;
+    await Promise.all(
+      Array.from({ length: count }, (_, i) =>
+        recordGlobalEdit(
+          { workspaceRoot: workspace, action: 'write', path: join(workspace, `f${i}.ts`) },
+          { root: memory, indexThrottleMs: 0 },
+        ),
+      ),
+    );
+
+    const ledger = await readFile(globalMemoryLedgerPath(memory), 'utf8');
+    const lines = ledger.split('\n').filter((line) => line.trim());
+    assert.equal(lines.length, count, 'no append is lost or torn');
+    for (const line of lines) JSON.parse(line);
+
+    const index = await readFile(globalMemoryIndexPath(memory), 'utf8');
+    assert.match(index, /^# /, 'the index is a whole document, not two interleaved ones');
+    assert.match(index, /f\d+\.ts/, 'the newest edit is in it');
+
+    const names = await readdir(memory);
+    assert.equal(names.filter((name) => name.endsWith('.tmp')).length, 0, 'no temp file is left behind');
   } finally {
     await rm(base, { recursive: true, force: true });
   }

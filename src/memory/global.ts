@@ -1,6 +1,7 @@
-import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
+import { serializeWrites, writeFileAtomic } from '../utils/atomic.js';
 
 /*
  * Global memory: one ledger of every file ZCode has ever edited, across every
@@ -108,8 +109,10 @@ export async function recordGlobalEdit(
     created: input.created === true,
   };
   await mkdir(root, { recursive: true });
-  await appendFile(globalMemoryLedgerPath(root), `${JSON.stringify(record)}\n`, 'utf8');
-  await rotateLedger(root);
+  await serializeWrites(`ledger:${root}`, async () => {
+    await appendFile(globalMemoryLedgerPath(root), `${JSON.stringify(record)}\n`, 'utf8');
+    await rotateLedger(root);
+  });
   await refreshIndex(root, at, options.indexThrottleMs ?? DEFAULT_INDEX_THROTTLE_MS);
   return record;
 }
@@ -119,8 +122,12 @@ async function writeIndex(root: string, at: string, now: number) {
   const previous = indexWrites.get(root);
   if (previous?.timer) clearTimeout(previous.timer);
   indexWrites.set(root, { last: now });
-  const records = await readGlobalEdits({ root, limit: LEDGER_KEEP_LINES });
-  await writeFile(globalMemoryIndexPath(root), renderGlobalMemoryIndex(records, at), 'utf8');
+  await serializeWrites(`index:${root}`, async () => {
+    // Read inside the queue, so the last render to run always reflects the
+    // newest ledger rather than overwriting it with an older snapshot.
+    const records = await readGlobalEdits({ root, limit: LEDGER_KEEP_LINES });
+    await writeFileAtomic(globalMemoryIndexPath(root), renderGlobalMemoryIndex(records, at));
+  });
 }
 
 /**
@@ -303,7 +310,7 @@ async function rotateLedger(root: string) {
     const info = await stat(path);
     if (info.size <= LEDGER_ROTATE_BYTES) return;
     const lines = (await readFile(path, 'utf8')).split('\n').filter((line) => line.trim());
-    await writeFile(path, `${lines.slice(-LEDGER_KEEP_LINES).join('\n')}\n`, 'utf8');
+    await writeFileAtomic(path, `${lines.slice(-LEDGER_KEEP_LINES).join('\n')}\n`);
   } catch {
     // Rotation is an optimisation; a failure here never breaks the edit.
   }

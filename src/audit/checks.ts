@@ -270,6 +270,30 @@ function buildChecks(root: string): Check[] {
     });
   }
 
+  // Every store that rewrites a whole file has to replace it atomically, and
+  // the ones that edit it read-modify-write have to serialise that too: an
+  // in-place rewrite loses the file on a crash, and a batch of parallel tool
+  // calls loses every edit but the last.
+  const wholeFileStores: Array<[string, boolean]> = [
+    ['src/session/checkpoint.ts', true],
+    ['src/memory/global.ts', true],
+    ['src/memory/store.ts', true],
+    ['src/automation/store.ts', true],
+    ['src/health/store.ts', false],
+  ];
+  for (const [path, needsSerialising] of wholeFileStores) {
+    checks.push({
+      name: `whole-file state writes are atomic: ${path}`,
+      run: async () => {
+        const source = await text(path);
+        const atomic = /utils\/atomic\.js/.test(source) || /function (replaceFile|writeAtomic|writeFileAtomic)/.test(source);
+        const serialised = !needsSerialising || /serializeWrites|private async lock|private async withLock/.test(source);
+        return atomic && serialised;
+      },
+    });
+  }
+  checks.push({ name: 'the checkpoint history is capped', run: async () => /MAX_CHECKPOINT_ENTRIES\s*=\s*\d+/.test(await text('src/session/checkpoint.ts')) });
+
   checks.push({ name: 'tool scope source exists', run: () => exists('src/tools/scope.ts') });
   const toolNeedles: Array<[string, string]> = [
     ['src/tools/activity.ts', 'recentActivityTool'],
