@@ -140,7 +140,7 @@ export function renderGlobalMemoryIndex(records: GlobalEditRecord[], updatedAt: 
     files: Map<string, { at: string; count: number; created: boolean; lastAction: GlobalEditAction }>;
   }>();
   for (const record of records) {
-    const key = record.workspace;
+    const key = workspaceKey(record.workspace);
     let entry = projects.get(key);
     if (!entry) {
       entry = { project: record.project, workspace: record.workspace, edits: 0, files: new Map() };
@@ -195,11 +195,15 @@ export async function loadGlobalMemorySummary(options: {
   root?: string;
   limit?: number;
 }): Promise<{ markdown: string; records: GlobalEditRecord[] } | undefined> {
-  const records = await readGlobalEdits({ root: options.root, limit: 400 });
+  // The whole tail, not a small slice: an active machine edits other projects
+  // too, and a fixed window would silently drop this workspace's history —
+  // exactly the case where the block is most useful.
+  const records = await readGlobalEdits({ root: options.root, limit: LEDGER_KEEP_LINES });
   if (records.length === 0) return undefined;
   const limit = options.limit ?? SUMMARY_FILE_LIMIT;
-  const sameProject = records.filter((record) => record.workspace === options.workspaceRoot);
-  const elsewhere = records.filter((record) => record.workspace !== options.workspaceRoot);
+  const currentKey = workspaceKey(options.workspaceRoot);
+  const sameProject = records.filter((record) => workspaceKey(record.workspace) === currentKey);
+  const elsewhere = records.filter((record) => workspaceKey(record.workspace) !== currentKey);
 
   const lines: string[] = [];
   const current = topFiles(sameProject, limit);
@@ -235,8 +239,9 @@ function topFiles(records: GlobalEditRecord[], limit: number) {
 function latestPerProject(records: GlobalEditRecord[]) {
   const byProject = new Map<string, GlobalEditRecord>();
   for (const record of records) {
-    const current = byProject.get(record.workspace);
-    if (!current || record.at > current.at) byProject.set(record.workspace, record);
+    const key = workspaceKey(record.workspace);
+    const current = byProject.get(key);
+    if (!current || record.at > current.at) byProject.set(key, record);
   }
   return [...byProject.values()].sort((a, b) => b.at.localeCompare(a.at));
 }
@@ -261,6 +266,16 @@ async function rotateLedger(root: string) {
 
 function projectName(workspaceRoot: string) {
   return basename(workspaceRoot.replace(/[\\/]+$/, '')) || workspaceRoot;
+}
+
+/**
+ * Identity of a workspace for grouping. The ledger stores the path verbatim as
+ * the CLI was given it, so `D:\proj` and `d:/proj/` are one project; showing
+ * two of them would split the history the record exists to keep together.
+ */
+function workspaceKey(workspaceRoot: string) {
+  const trimmed = workspaceRoot.replace(/[\\/]+$/, '');
+  return process.platform === 'win32' ? trimmed.toLowerCase() : trimmed;
 }
 
 /** Workspace-relative (forward slashes) when the file is inside the workspace. */

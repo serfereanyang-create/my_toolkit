@@ -116,6 +116,64 @@ test('the summary separates this workspace from the rest and stays short', async
   }
 });
 
+test('a busy ledger still shows this workspace its own history', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    // 600 edits elsewhere, this workspace's only edit is the oldest one. A
+    // fixed read window would drop it and tell a new session nothing.
+    const lines: string[] = [];
+    lines.push(JSON.stringify({
+      at: '2026-10-22T08:00:00.000Z',
+      project: 'work',
+      workspace,
+      action: 'write',
+      path: 'mine.ts',
+      created: false,
+    }));
+    for (let i = 0; i < 600; i += 1) {
+      lines.push(JSON.stringify({
+        at: new Date(Date.UTC(2026, 9, 22, 9, i % 60, i % 60)).toISOString(),
+        project: 'other',
+        workspace: join(base, 'other'),
+        action: 'write',
+        path: `other-${i}.ts`,
+        created: false,
+      }));
+    }
+    await mkdir(memory, { recursive: true });
+    await writeFile(globalMemoryLedgerPath(memory), `${lines.join('\n')}\n`, 'utf8');
+
+    const summary = await loadGlobalMemorySummary({ workspaceRoot: workspace, root: memory });
+    assert.ok(summary);
+    assert.match(summary.markdown, /^This workspace, recently edited/);
+    assert.match(summary.markdown, /- mine\.ts/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('two spellings of one workspace are one project in MEMORY.md', async () => {
+  const { base, memory, workspace } = await scratch();
+  try {
+    const record = (path: string, at: string) => ({
+      at,
+      project: 'work',
+      workspace,
+      action: 'write' as const,
+      path,
+      created: false,
+    });
+    const index = renderGlobalMemoryIndex(
+      [record('a.ts', '2026-10-22T09:00:00.000Z'), { ...record('b.ts', '2026-10-22T10:00:00.000Z'), workspace: `${workspace}/` }],
+      '2026-10-22T10:00:00.000Z',
+    );
+    assert.equal(index.match(/^## /gm)?.length, 1, 'one heading, not one per spelling');
+    assert.match(index, /共 2 次编辑、2 个文件/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test('an empty ledger produces no block at all', async () => {
   const { base, memory, workspace } = await scratch();
   try {

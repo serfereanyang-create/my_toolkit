@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -15,6 +15,8 @@ export type CheckpointEntry = {
   existed?: boolean;
   from?: string;
   to?: string;
+  /** The target was a directory: recorded, never backed up or reverted. */
+  directory?: boolean;
 };
 
 export class CheckpointStore {
@@ -40,13 +42,22 @@ export class CheckpointStore {
     const safePath = this.assertWorkspacePath(path);
     const id = makeId();
     const backupPath = join(this.backupDir, `${id}.bak`);
-    let existed = true;
+    let existed = false;
     let content: Buffer;
     try {
+      const info = await stat(safePath);
+      if (info.isDirectory()) {
+        // An operation that lands in a folder (extracting an archive, patching
+        // several files at once) has no single file to snapshot, and restoring
+        // one would mean deleting the user's directory. Record that it was
+        // touched, but never index it as something undo can revert.
+        await this.rememberGlobalEdit({ workspaceRoot: this.root, action: options.action ?? 'write', path: safePath });
+        return { id, action: 'write', createdAt: new Date().toISOString(), path: safePath, existed: true, directory: true };
+      }
+      existed = true;
       content = await readFile(safePath);
     } catch (error) {
       if (isMissing(error)) {
-        existed = false;
         content = Buffer.alloc(0);
       } else {
         throw error;
@@ -132,6 +143,8 @@ export class CheckpointStore {
   /** Restore a single checkpoint entry's file to its pre-write/rename state. */
   private async revert(entry: CheckpointEntry) {
     assertCheckpointId(entry.id);
+    // Directory entries are informational: this store cannot restore a tree.
+    if (entry.directory) return;
     if (entry.action === 'write' && entry.path) {
       const safePath = this.assertWorkspacePath(entry.path);
       if (entry.existed && entry.backupPath) {
