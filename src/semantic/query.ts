@@ -22,14 +22,53 @@ export class SemanticQueryEngine {
     this.workspaceRoot = workspaceRoot;
     this.store = new SemanticStore(workspaceRoot);
     this.embedder = embedder || createDefaultEmbedder();
-    const metadata = this.embedder.getMetadata();
-    this.store.setMetadata({
-      provider: metadata.name,
-      model: metadata.model,
-      dimensions: metadata.dimensions,
-      fallback: metadata.fallback || 'none',
-      lastUpdated: Date.now(),
-    });
+    // 这里**不能**回写元数据。索引的 provider/model/维度是「建库那一刻」的事实，
+    // 查询方一写就把别人的事实改成了自己的，之后所有不一致都查不出来——守卫
+    // 比的是自己刚写进去的数字，等于永远通过。读到的才算证据。
+  }
+
+  /**
+   * 索引与当前 embedder 必须是同一个向量空间，否则相似度是没有意义的数。
+   *
+   * 两种不一致都要响亮地失败：维度不同（local 768 vs openai 1536）会直接算错，
+   * 维度相同但模型不同（text-embedding-3-small vs 3-large）会静默给出看似合理的
+   * 乱七八糟排名——后者比前者更危险。
+   *
+   * 先按声明比对再发请求：一次 embedding 调用是要花钱的，发现空间不对就该在
+   * 花钱之前失败。拿到向量之后再按实际长度复核一遍，防的是 provider 谎报维度。
+   */
+  private assertEmbedderMatchesIndex(): void {
+    const stats = this.store.getStats();
+    if (stats.embeddingCount === 0) return;
+    const meta = this.embedder.getMetadata();
+    if (stats.dimensions > 0 && meta.dimensions !== stats.dimensions) {
+      throw new Error(
+        `Embedding dimension mismatch: the index holds ${stats.dimensions} dims ` +
+        `(built with ${stats.provider}/${stats.model}) but the current embedder is ` +
+        `${meta.name}/${meta.model} at ${meta.dimensions} dims. Rebuild the index with ` +
+        'build_semantic_index (force: true).',
+      );
+    }
+    if (stats.provider !== 'unknown' && (stats.provider !== meta.name || stats.model !== meta.model)) {
+      throw new Error(
+        `Embedding model mismatch: the index was built with ${stats.provider}/${stats.model} but the ` +
+        `current embedder is ${meta.name}/${meta.model}. Same-dimension vectors from different models ` +
+        'are not comparable, so results would be nonsense. Rebuild with build_semantic_index (force: true).',
+      );
+    }
+  }
+
+  /** 向量到手后的复核：provider 可能声明 1536 维却返回别的长度。 */
+  private assertVectorFitsIndex(queryVector: Float32Array): void {
+    const stats = this.store.getStats();
+    if (stats.embeddingCount === 0 || stats.dimensions === 0) return;
+    if (queryVector.length !== stats.dimensions) {
+      throw new Error(
+        `Embedding dimension mismatch: the index holds ${stats.dimensions} dims ` +
+        `(built with ${stats.provider}/${stats.model}) but the current embedder produced ` +
+        `${queryVector.length} dims. Rebuild the index with build_semantic_index (force: true).`,
+      );
+    }
   }
 
   /**
@@ -44,7 +83,10 @@ export class SemanticQueryEngine {
       pathPrefix?: string;
     } = {},
   ): Promise<SemanticSearchResult> {
-    // 1. 将查询文本转换为向量
+    // 1. 先确认索引和当前 embedder 是同一个空间：不对就别花这次 embedding 的钱
+    this.assertEmbedderMatchesIndex();
+
+    // 2. 将查询文本转换为向量
     const embedResponse = await this.embedder.embed({
       texts: [query],
     });
@@ -59,18 +101,10 @@ export class SemanticQueryEngine {
 
     const queryVector = embedResponse.vectors[0]!;
 
-    // 2. 维度一致性守卫：索引用不同 provider/model 构建时，静默返回空结果
-    //    会误导调用方，必须明确要求重建。
-    const stats = this.store.getStats();
-    if (stats.dimensions > 0 && queryVector.length !== stats.dimensions) {
-      throw new Error(
-        `Embedding dimension mismatch: the index was built with ${stats.dimensions} dims ` +
-        `(provider ${stats.provider}) but the current embedder produced ${queryVector.length} dims. ` +
-        'Rebuild the index with build_semantic_index.',
-      );
-    }
+    // 3. 拿到向量后按实际长度复核
+    this.assertVectorFitsIndex(queryVector);
 
-    // 3. 向量搜索
+    // 4. 向量搜索
     const matches = this.store.search(queryVector, options);
 
     return {

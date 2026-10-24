@@ -118,6 +118,8 @@ export interface SemanticIndexStats {
   lastUpdated: number;
   /** Embedding 提供商 */
   provider: string;
+  /** Embedding 模型：换模型等于换向量空间，查询时要跟它对齐 */
+  model: string;
   /** 向量维度 */
   dimensions: number;
 }

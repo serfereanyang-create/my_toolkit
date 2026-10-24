@@ -6,6 +6,7 @@ import { isSandboxScrubEnabled } from '../safety/sandbox.js';
 import type { Provider } from '../providers/types.js';
 import type { ToolRegistry } from '../tools/index.js';
 import { collectCacheProbe } from '../probe/cacheProbe.js';
+import { createDefaultEmbedder } from '../semantic/embedder.js';
 
 export type DoctorCheck = {
   name: string;
@@ -28,6 +29,7 @@ export async function runDoctor(
     providerCheck(provider),
     mcpCheck(mcp),
     sandboxCheck(),
+    embedderCheck(),
     cacheProbeCheck(),
   ];
 }
@@ -98,6 +100,36 @@ function sandboxCheck(): DoctorCheck {
       ? 'process sandbox active (secret env scrub on; timeout tree-kill)'
       : 'process sandbox active (secret env scrub OFF via AICODE_SANDBOX; timeout tree-kill still on)',
   };
+}
+
+/**
+ * 语义检索用的 embedder。
+ *
+ * 这一项存在的理由：默认 embedder 会按环境自动选（有 key 就走真实 embedding），
+ * 用户不该靠猜——`semantic_search` 给出高相似度时，得知道那是神经向量还是词法
+ * 近似。显式配错了（比如 AICODE_EMBED_PROVIDER=openai 却没有 key）在这里就是
+ * fail，而不是等到建索引时才炸。
+ */
+function embedderCheck(): DoctorCheck {
+  try {
+    const meta = createDefaultEmbedder().getMetadata();
+    const lexical = meta.name === 'local' || meta.fallback === 'local';
+    return {
+      name: 'embedder',
+      ok: true,
+      detail: lexical
+        ? `${meta.name}/${meta.model} (${meta.dimensions}d) — lexical approximation, not neural; ` +
+          'set OPENAI_API_KEY (plus AICODE_EMBED_BASE_URL for a relay) for real embeddings, ' +
+          'AICODE_EMBED_PROVIDER=local to force this mode'
+        : `${meta.name}/${meta.model} (${meta.dimensions}d)`,
+    };
+  } catch (error) {
+    return {
+      name: 'embedder',
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function cacheProbeCheck(): DoctorCheck {

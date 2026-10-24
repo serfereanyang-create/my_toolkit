@@ -155,3 +155,46 @@ test('createDefaultEmbedder honors AICODE_EMBED_* overrides', () => {
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousKey;
   }
 });
+
+/** 在指定环境变量下取默认 embedder 的元数据，结束后一律还原环境。 */
+function metadataWith(env: Record<string, string | undefined>) {
+  const keys = ['AICODE_EMBED_PROVIDER', 'AICODE_EMBED_MODEL', 'OPENAI_API_KEY', 'AICODE_EMBED_BASE_URL'];
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined) process.env[key] = value;
+  }
+  try {
+    return createDefaultEmbedder().getMetadata();
+  } finally {
+    for (const key of keys) {
+      const value = previous[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+test('the default embedder is neural whenever a key is available — no silent lexical fallback', () => {
+  // 有 key 就该用真向量：语义检索的价值全在向量质量上，默认拿哈希凑等于白挂这个能力。
+  const neural = metadataWith({ OPENAI_API_KEY: 'sk-test' });
+  assert.equal(neural.name, 'openai');
+  assert.equal(neural.model, 'text-embedding-3-small');
+  assert.equal(neural.dimensions, 1536);
+});
+
+test('an explicit provider still wins over key detection, so offline stays possible', () => {
+  const forcedLocal = metadataWith({ OPENAI_API_KEY: 'sk-test', AICODE_EMBED_PROVIDER: 'local' });
+  assert.equal(forcedLocal.name, 'local');
+  assert.equal(forcedLocal.model, 'local-hash-v1');
+
+  const forcedModel = metadataWith({ OPENAI_API_KEY: 'sk-test', AICODE_EMBED_MODEL: 'bge-m3' });
+  assert.equal(forcedModel.name, 'openai');
+  assert.equal(forcedModel.model, 'bge-m3');
+});
+
+test('with neither a key nor a provider the default is the labelled local hash', () => {
+  const local = metadataWith({});
+  assert.equal(local.name, 'local');
+  assert.equal(local.dimensions, 768);
+});

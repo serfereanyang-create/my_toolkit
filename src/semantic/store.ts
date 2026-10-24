@@ -4,6 +4,11 @@
  * 使用纯 JavaScript 实现向量搜索，避免 native 模块依赖
  */
 
+// better-sqlite3 必须是 13.x 及以上：11.x 的预编译二进制在 Node 24 上，只要
+// 「写库 + 同进程再做一批 AST 分配」就会在 GC 阶段原生崩溃（断言
+// node::RemoveEnvironmentCleanupHook env != nullptr，进程直接死，不是异常）。
+// `tests/semantic-space.test.ts` 里「同一进程连续建两次索引」那条用例就是它的
+// 回归哨兵——升级前它是必崩的。
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { existsSync } from 'node:fs';
@@ -281,6 +286,7 @@ export class SemanticStore {
       sizeInMB: Math.round((sizeInBytes / 1024 / 1024) * 100) / 100,
       lastUpdated: Number(this.getMetadata('lastUpdated') || 0) || 0,
       provider: String(this.getMetadata('provider') || 'unknown'),
+      model: String(this.getMetadata('model') || 'unknown'),
       dimensions: Number(this.getMetadata('dimensions') || this.getAll()[0]?.vector.length || 0),
     };
   }

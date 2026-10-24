@@ -166,6 +166,28 @@ export const buildSemanticIndexTool: ToolDefinition<{
       const embedder = createDefaultEmbedder();
       const metadata = embedder.getMetadata();
       store = new SemanticStore(workspaceRoot);
+
+      // 换 embedder 必须整库重建。指纹只认源码、不认向量空间，增量更新会把两套
+      // 空间的向量混进同一张表 —— 之后每次相似度都是噪声，而且看不出原因。
+      const before = store.getStats();
+      const switchingModel = before.embeddingCount > 0
+        && (before.provider !== metadata.name || before.model !== metadata.model);
+      if (switchingModel && !input.force) {
+        return {
+          ok: false,
+          output:
+            `Semantic index was built with ${before.provider}/${before.model} (${before.dimensions}d) ` +
+            `but the current embedder is ${metadata.name}/${metadata.model} (${metadata.dimensions}d). ` +
+            'Re-run with force: true to rebuild every symbol in the new vector space — an incremental ' +
+            'update would leave two incompatible spaces in one table.',
+          data: {
+            error: 'embedder_changed',
+            previous: { provider: before.provider, model: before.model, dimensions: before.dimensions },
+            current: { provider: metadata.name, model: metadata.model, dimensions: metadata.dimensions },
+          },
+        };
+      }
+      if (switchingModel) store.clear();
       store.setMetadata({
         provider: metadata.name,
         model: metadata.model,
@@ -218,15 +240,19 @@ export const buildSemanticIndexTool: ToolDefinition<{
         tokenCount += response.tokenCount;
       }
 
+      const lexical = metadata.name === 'local' || metadata.fallback === 'local';
       const lines = [
-        `Semantic index build complete (${metadata.name}/${metadata.model}).`,
+        `Semantic index build complete — embedder ${metadata.name}/${metadata.model} (${metadata.dimensions}d, ` +
+        `${lexical ? 'lexical approximation' : 'neural embeddings'}).`,
         `Files scanned: ${files.length}; embeddable symbols: ${candidates.length} (indexed up to ${selected.length}).`,
         `Embedded now: ${embedded}; unchanged (skipped): ${unchanged}; tokens: ${tokenCount}.`,
       ];
-      if (metadata.name === 'local' || metadata.fallback === 'local') {
+      if (lexical) {
         lines.push(
           'Note: local hash embeddings are approximate lexical features, not a neural embedding model. ' +
-          'Configure AICODE_EMBED_PROVIDER=openai (with OPENAI_API_KEY) for true semantic search.',
+          'OpenAI-compatible embeddings are used automatically when OPENAI_API_KEY is set ' +
+          '(AICODE_EMBED_BASE_URL points at a relay, AICODE_EMBED_MODEL overrides the model); ' +
+          'set AICODE_EMBED_PROVIDER=local to force this offline mode.',
         );
       }
       return {
@@ -240,6 +266,8 @@ export const buildSemanticIndexTool: ToolDefinition<{
           tokenCount,
           provider: metadata.name,
           model: metadata.model,
+          dimensions: metadata.dimensions,
+          lexical,
         },
       };
     } catch (error) {
@@ -298,7 +326,16 @@ export const semanticSearchTool: ToolDefinition<{
   async execute(input, context) {
     try {
       const embedder = createDefaultEmbedder();
+      const metadata = embedder.getMetadata();
       const engine = new SemanticQueryEngine(context.workspaceRoot, embedder);
+      // 索引是哪个 embedder 建的、多少维，必须跟着结果一起报：用户看到相似度
+      // 之前就该知道这是神经向量还是词法近似。
+      const lexical = metadata.name === 'local' || metadata.fallback === 'local';
+      const profile = () => {
+        const stats = engine.getStats();
+        return `index ${stats.provider}/${stats.model} ${stats.dimensions}d` +
+          `${lexical ? ' (lexical approximation)' : ''}`;
+      };
 
       const result = await engine.search(input.query, {
         maxResults: input.maxResults,
@@ -309,6 +346,7 @@ export const semanticSearchTool: ToolDefinition<{
 
       if (result.matches.length === 0) {
         const stats = engine.getStats();
+        const badge = profile();
         engine.close();
 
         if (stats.embeddingCount === 0) {
@@ -321,7 +359,7 @@ export const semanticSearchTool: ToolDefinition<{
 
         return {
           ok: true,
-          output: `No matches found for query: "${input.query}"`,
+          output: `No matches found for query: "${input.query}" (${badge})`,
           data: { result },
         };
       }
@@ -335,11 +373,12 @@ export const semanticSearchTool: ToolDefinition<{
    Summary: ${embedding.summary}`;
       }).join('\n\n');
 
+      const badge = profile();
       engine.close();
 
       return {
         ok: true,
-        output: `Found ${result.totalCount} semantic matches for "${input.query}":\n\n${output}`,
+        output: `Found ${result.totalCount} semantic matches for "${input.query}" (${badge}):\n\n${output}`,
         data: { result },
       };
     } catch (error: any) {

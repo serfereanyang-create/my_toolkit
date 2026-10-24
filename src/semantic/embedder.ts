@@ -246,10 +246,19 @@ ${truncatedBody}`;
 /**
  * 创建默认的 embedder
  */
+/**
+ * 按环境挑选默认 embedder。
+ *
+ * 顺序是「显式 > 有能力 > 离线」：`AICODE_EMBED_PROVIDER` 说了算；没说但配了
+ * `OPENAI_API_KEY` 就走真实 embedding —— 语义检索的价值全在向量质量上，明明有
+ * key 却默认拿特征哈希凑，等于把能力挂在那儿不用；两者都没有才退回 local，
+ * 且 build 的输出会写明这是词法近似。想强制离线检索就显式
+ * `AICODE_EMBED_PROVIDER=local`。
+ */
 export function createDefaultEmbedder(): CodeEmbedder {
   const providerName = process.env.AICODE_EMBED_PROVIDER as EmbeddingProvider['name'] | undefined;
   const fallback = process.env.AICODE_EMBED_FALLBACK === 'local' ? 'local' : 'none';
-  const name = providerName || 'local';
+  const name = providerName || (process.env.OPENAI_API_KEY ? 'openai' : 'local');
   const apiKey = name === 'openai' ? process.env.OPENAI_API_KEY : name === 'anthropic' ? process.env.ANTHROPIC_API_KEY : undefined;
   const model = process.env.AICODE_EMBED_MODEL;
   const baseUrl = process.env.AICODE_EMBED_BASE_URL;
