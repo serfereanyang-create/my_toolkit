@@ -4,6 +4,9 @@
   "description": "A local Claude-Code-like CLI coding agent MVP.",
   "type": "module",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "aicode": "dist/src/index.js"
   },
