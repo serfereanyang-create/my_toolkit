@@ -8,8 +8,9 @@
  *   response: { id, insert?, error?, latencyMs, truncated }
  */
 import { createInterface } from 'node:readline';
-import type { FimRequest, FimOptions } from '../providers/fim.js';
+import type { FimOptions } from '../providers/fim.js';
 import { completeFIM } from '../providers/fim.js';
+import { parseFimRequest } from './fimProtocol.js';
 
 const opts: FimOptions = {
   provider:    (process.env.FIM_PROVIDER as FimOptions['provider']) ?? 'openai',
@@ -28,13 +29,10 @@ rl.on('line', async (line) => {
 
   let id = 'unknown';
   try {
-    const msg = JSON.parse(trimmed) as { id: string } & FimRequest;
-    id = msg.id;
+    const parsed = parseFimRequest(trimmed);
+    id = parsed.id;
 
-    const result = await completeFIM(
-      { prefix: msg.prefix, suffix: msg.suffix, language: msg.language, filepath: msg.filepath, maxTokens: msg.maxTokens },
-      opts,
-    );
+    const result = await completeFIM(parsed.request, opts);
 
     process.stdout.write(JSON.stringify({ id, insert: result.insert, latencyMs: result.latencyMs, truncated: result.truncated }) + '\n');
   } catch (err) {

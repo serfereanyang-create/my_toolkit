@@ -10,10 +10,19 @@ import { dirname } from 'node:path';
  *     between leaves a half-written one — and every store here treats an
  *     unreadable file as empty, so the next save would erase the rest;
  *   - a store that reads, edits and rewrites the whole file loses whatever a
- *     concurrent writer added between its read and its write. Tool batches and
- *     several desktop sessions do write concurrently.
+ *     concurrent writer added between its read and its write — within ONE
+ *     process, tool batches do write concurrently and the queue below covers
+ *     that.
  *
  * Both are silent: nothing throws, the entries simply stop existing.
+ *
+ * NOT covered: two OS processes (one desktop session each spawns its own CLI,
+ * and scheduled automation runs spawn more) writing the same file. `queues` is
+ * an in-process Map, so it cannot see the other process; `writeFileAtomic`
+ * prevents a torn file, not a lost update. Real protection needs an OS-level
+ * lock (`proper-lockfile`, or an `open(…, 'wx')` spin lock), which is its own
+ * piece of work — until then, treat concurrent multi-process writes to the same
+ * store as unsynchronised.
  */
 
 /** One queue per file, so read-modify-write cycles on it never interleave. */

@@ -36,7 +36,6 @@ export const projectIndexTool: ToolDefinition<{ path: string; maxFiles: number }
     
     // Add warning if hit the limit
     if (files.length >= requestedMax) {
-      const coverage = (files.length / (files.length * 1.2) * 100).toFixed(0); // Estimate 20% more exist
       output += `\n\n⚠️  Reached index limit (${files.length}/${requestedMax}). Results may be incomplete. Consider using find_symbol or search_text for targeted queries.`;
     }
     

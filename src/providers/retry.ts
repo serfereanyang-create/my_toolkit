@@ -1,7 +1,9 @@
 /**
  * Model request retry, ported from openai/codex (codex-rs/codex-client/src/retry.rs
  * + model-provider-info defaults, Apache-2.0):
- * - default 4 attempts, 200ms base delay, exponential backoff with ±10% jitter
+ * - default 4 **retries** (5 calls: the first attempt plus 4), 200ms base
+ *   delay, exponential backoff with ±10% jitter. The count matches upstream
+ *   `request_max_retries`, which also counts retries, not attempts.
  * - retry only transport-class failures: HTTP 5xx, network errors, timeouts
  * - 429 and other 4xx are NOT retried at the transport layer (upstream
  *   `retry_429 = false`; rate limits surface to the turn instead)
@@ -50,7 +52,8 @@ const NETWORK_PATTERNS = [
   'fetch failed',
   'network',
   'premature close',
-  'aborted', // undici timeout wraps as AbortError with this message — still a transport fault
+  // 不要把 'aborted' 当触发词：AbortError 在此之前的 name 守卫里就被判死了，写在这里假装「超时也会重试」是骗人。
+  // undici 的超时本来就带 'fetch failed' 消息，走上面那条就够了。
 ];
 
 /**
