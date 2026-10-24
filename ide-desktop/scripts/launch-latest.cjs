@@ -21,6 +21,7 @@ const desktopOutputs = [
   path.join(desktopRoot, 'dist', 'icon-16.png'),
   path.join(desktopRoot, 'dist', 'icon-32.png'),
   path.join(desktopRoot, 'resources', 'icon.ico'),
+  path.join(desktopRoot, 'resources', 'yoycode-app.ico'),
 ];
 const desktopSources = [
   path.join(desktopRoot, 'src'),

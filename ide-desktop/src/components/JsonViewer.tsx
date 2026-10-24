@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Copy } from 'lucide-react';
 import { buildJsonTree, filterJsonTree, flattenJsonTree, tryParseJson, allContainerPaths } from '../lib/jsonTree';
+import { copyText } from '../lib/clipboard';
 
 /**
  * Iteration 11 — collapsible JSON tree viewer.
@@ -74,7 +75,7 @@ export function JsonViewer({ text, height = 'auto' }: {
           title="复制格式化 JSON"
           onClick={() => {
             const pretty = parsed.ok ? JSON.stringify(parsed.value, null, 2) : text;
-            void navigator.clipboard.writeText(pretty).catch(() => { /* clipboard blocked */ });
+            void copyText(pretty);
           }}
         ><Copy size={12} /></button>
       </div>

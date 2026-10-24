@@ -14,13 +14,13 @@ test('a missing file becomes a plain sentence, not a raw ENOENT', () => {
     "ENOENT: no such file or directory, realpath 'C:\\Users\\someone\\proj\\nope.docx'",
   );
   err.code = 'ENOENT';
-  assert.equal(describePathError(err), 'File not found');
+  assert.equal(describePathError(err), '文件不存在，可能已被移动或删除');
 });
 
 test('an ENOENT from any syscall is still a missing file', () => {
   const err = new Error("ENOENT: no such file or directory, open 'C:\\x\\y.txt'");
   err.code = 'ENOENT';
-  assert.equal(describePathError(err), 'File not found');
+  assert.equal(describePathError(err), '文件不存在，可能已被移动或删除');
 });
 
 test('other errors keep their wording but lose the absolute path', () => {

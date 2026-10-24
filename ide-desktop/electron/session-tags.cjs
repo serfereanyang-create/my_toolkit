@@ -4,9 +4,14 @@
  * The session JSON itself is CLI-owned, so tags live in a workspace sidecar
  * (.aicode/desktop/session-tags.json) keyed by session id — same pattern as
  * the bookmark store. Losing the sidecar only loses tags, never transcripts.
+ *
+ * Durable plumbing (atomic replace, rename retry, corrupt-file quarantine,
+ * serialized mutations) is json-store.cjs. There is no in-memory cache on
+ * purpose: it used to be loaded once per workspace root and written back whole,
+ * so a second window (or a hand-edit) silently lost whatever it did not know.
  */
-const fs = require('node:fs/promises');
 const path = require('node:path');
+const { createJsonStore } = require('./json-store.cjs');
 
 const MAX_TAGS = 24;      // distinct tags across the workspace
 const MAX_PER_SESSION = 6;
@@ -26,71 +31,48 @@ function sanitizeSessionId(raw) {
   return id;
 }
 
+/** Keep only well-formed { sessionId: tags[] } pairs, de-duplicated and capped. */
+function sanitizeMap(parsed) {
+  const out = {};
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return out;
+  for (const [key, value] of Object.entries(parsed)) {
+    const sid = sanitizeSessionId(key);
+    if (!sid || !Array.isArray(value)) continue;
+    const tags = [];
+    for (const t of value) {
+      const tag = sanitizeTag(t);
+      if (tag && !tags.includes(tag) && tags.length < MAX_PER_SESSION) tags.push(tag);
+    }
+    if (tags.length) out[sid] = tags;
+  }
+  return out;
+}
+
+function distinctTags(map) {
+  const all = new Set();
+  for (const tags of Object.values(map)) for (const tag of tags) all.add(tag);
+  return all;
+}
+
 /**
  * @param {() => string|null} getRoot current workspace root (null when none)
  */
 function createSessionTagsStore(getRoot) {
-  let chain = Promise.resolve();
-  let loadedFor = null; // root the in-memory map was loaded from
-  /** @type {Map<string, string[]>} sessionId -> tags */
-  let map = new Map();
-
-  function tagsFile(root) {
+  function tagsFile() {
+    const root = getRoot();
+    if (!root) throw new Error('没有打开工作区');
     return path.join(root, '.aicode', 'desktop', 'session-tags.json');
   }
 
-  async function loadLocked(root) {
-    if (loadedFor === root) return;
-    loadedFor = root;
-    map = new Map();
-    try {
-      const raw = await fs.readFile(tagsFile(root), 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        for (const [key, value] of Object.entries(parsed)) {
-          const sid = sanitizeSessionId(key);
-          if (!sid || !Array.isArray(value)) continue;
-          const tags = [];
-          for (const t of value) {
-            const tag = sanitizeTag(t);
-            if (tag && !tags.includes(tag) && tags.length < MAX_PER_SESSION) tags.push(tag);
-          }
-          if (tags.length) map.set(sid, tags);
-        }
-      }
-    } catch { /* missing or corrupt file heals to empty */ }
-  }
-
-  async function saveLocked(root) {
-    const file = tagsFile(root);
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    const obj = {};
-    for (const [sid, tags] of map) obj[sid] = tags;
-    const tmp = file + '.tmp';
-    await fs.writeFile(tmp, JSON.stringify(obj, null, 2), 'utf8');
-    await fs.rename(tmp, file);
-  }
-
-  function mutate(fn) {
-    const run = chain.then(async () => {
-      const root = getRoot();
-      if (!root) return { error: '没有打开工作区', value: null };
-      await loadLocked(root);
-      const out = await fn(root);
-      return { error: null, value: out };
-    });
-    chain = run.then(() => undefined, () => undefined);
-    return run;
-  }
+  const store = createJsonStore({ file: tagsFile, normalize: sanitizeMap });
 
   /** All tags as { sessionId -> tags[] }. */
   async function listAll() {
-    const r = await mutate(async () => {
-      const out = {};
-      for (const [sid, tags] of map) out[sid] = [...tags];
-      return out;
-    });
-    return r.value ?? {};
+    try {
+      return await store.read();
+    } catch {
+      return {};
+    }
   }
 
   /** Replace the tag set of one session (empty list removes it). */
@@ -103,51 +85,65 @@ function createSessionTagsStore(getRoot) {
       if (tag && !cleaned.includes(tag)) cleaned.push(tag);
       if (cleaned.length >= MAX_PER_SESSION) break;
     }
-    const r = await mutate(async (root) => {
-      if (cleaned.length === 0) map.delete(sid);
-      else map.set(sid, cleaned);
-      await saveLocked(root);
-      return { sessionId: sid, tags: cleaned };
-    });
-    if (r.error) return { ok: false, error: r.error };
-    return { ok: true, ...r.value };
+    try {
+      return await store.mutate((data) => {
+        if (cleaned.length === 0) delete data[sid];
+        else data[sid] = cleaned;
+        return { ok: true, sessionId: sid, tags: cleaned };
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
-  /** Toggle one tag on a session; returns the resulting tag list. */
+  /**
+   * Toggle one tag on a session; returns the resulting tag list.
+   *
+   * The read and the write happen inside one queued mutation: checking the cap
+   * against a snapshot taken before the queue (the old shape) let two toggles
+   * in the same tick each pass the check and exceed it together.
+   */
   async function toggleTag(sessionId, rawTag) {
+    const sid = sanitizeSessionId(sessionId);
+    if (!sid) return { ok: false, error: '非法会话 ID' };
     const tag = sanitizeTag(rawTag);
     if (!tag) return { ok: false, error: '标签不能为空' };
-    const current = await listAll();
-    const tags = current[sessionId] ? [...current[sessionId]] : [];
-    const at = tags.indexOf(tag);
-    if (at >= 0) tags.splice(at, 1);
-    else {
-      const distinct = new Set();
-      for (const sid of Object.keys(current)) for (const t of current[sid]) distinct.add(t);
-      if (!distinct.has(tag) && distinct.size >= MAX_TAGS) {
-        return { ok: false, error: `标签数量已达上限（${MAX_TAGS}）` };
-      }
-      if (tags.length >= MAX_PER_SESSION) {
-        return { ok: false, error: `单个会话最多 ${MAX_PER_SESSION} 个标签` };
-      }
-      tags.push(tag);
+    try {
+      return await store.mutate((data) => {
+        const tags = Array.isArray(data[sid]) ? [...data[sid]] : [];
+        const at = tags.indexOf(tag);
+        if (at >= 0) {
+          tags.splice(at, 1);
+        } else {
+          if (!distinctTags(data).has(tag) && distinctTags(data).size >= MAX_TAGS) {
+            return { ok: false, error: `标签数量已达上限（${MAX_TAGS}）` };
+          }
+          if (tags.length >= MAX_PER_SESSION) {
+            return { ok: false, error: `单个会话最多 ${MAX_PER_SESSION} 个标签` };
+          }
+          tags.push(tag);
+        }
+        if (tags.length === 0) delete data[sid];
+        else data[sid] = tags;
+        return { ok: true, sessionId: sid, tags };
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
-    const out = await setTags(sessionId, tags);
-    if (!out.ok) return out;
-    return { ok: true, sessionId, tags: out.tags };
   }
 
   /** Drop tags for a removed/archived session. */
   async function remove(sessionId) {
     const sid = sanitizeSessionId(sessionId);
     if (!sid) return { ok: false, error: '非法会话 ID' };
-    const r = await mutate(async (root) => {
-      map.delete(sid);
-      await saveLocked(root);
-      return { removed: sid };
-    });
-    if (r.error) return { ok: false, error: r.error };
-    return { ok: true, ...r.value };
+    try {
+      return await store.mutate((data) => {
+        delete data[sid];
+        return { ok: true, removed: sid };
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   return { listAll, setTags, toggleTag, remove };

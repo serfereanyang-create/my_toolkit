@@ -184,12 +184,12 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
       <SettingsCard heading="背景">
         <SettingRow
           title="使用背景图片"
-          description="在界面背后显示一张自定义图片，所有控件仍保持可读"
+          description="在界面背景显示自定义图片"
           control={<Toggle checked={backgroundEnabled} onChange={setBackgroundEnabled} label="使用背景图片" />}
         />
         <SettingRow
           title="背景图片"
-          description="支持 PNG / JPG / WebP / GIF / BMP / AVIF，最大 16 MB；图片会复制到应用数据目录"
+          description="PNG / JPG / WebP，最大 16 MB"
           control={
             <div className="background-picker">
               <button type="button" className="settings-button" onClick={() => void chooseBackground()} disabled={backgroundBusy}>
@@ -209,7 +209,7 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
         )}
         <SettingRow
           title="显示范围"
-          description="「整个界面」连左侧栏一起铺满；「仅对话区」让侧栏保持纯色"
+          description="背景显示的范围"
           control={<Segmented value={backgroundScope} onChange={setBackgroundScope} options={[
             { value: 'chat', label: '仅对话区' },
             { value: 'app', label: '整个界面' },
@@ -217,12 +217,12 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
         />
         <SettingRow
           title="压暗"
-          description="提高数值可压暗图片，让文字在花哨的背景上依然清晰"
+          description="压暗图片，保证文字可读"
           control={<Slider value={Math.round(backgroundDim * 100)} min={0} max={90} onChange={(next) => setBackgroundDim(next / 100)} />}
         />
         <SettingRow
           title="模糊"
-          description="柔化背景细节，减少与代码文本的视觉竞争"
+          description="柔化背景细节"
           control={<Slider value={backgroundBlur} min={0} max={40} onChange={setBackgroundBlur} />}
         />
       </SettingsCard>
@@ -249,32 +249,32 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
         />
         <SettingRow
           title="中文字体"
-          description="简体中文界面优先使用的字体，系统未安装时自动回退"
+          description="中文界面使用的字体"
           control={<SelectPill value={chineseFont} onChange={(next) => onFontChange({ uiChineseFont: next })} options={CHINESE_FONT_OPTIONS} />}
         />
         <SettingRow
           title="English font"
-          description="Font stack used when the interface language is English"
+          description="Font used for the English interface"
           control={<SelectPill value={englishFont} onChange={(next) => onFontChange({ uiEnglishFont: next })} options={ENGLISH_FONT_OPTIONS} />}
         />
         <SettingRow
           title="代码字体大小"
-          description="调整编辑器、聊天和差异视图中代码使用的基础字号"
+          description="代码的基础字号"
           control={<NumberField value={codeFontSize} onChange={(next) => onFontSizeChange({ codeFontSize: next })} suffix="px" min={8} max={24} />}
         />
         <SettingRow
           title="缩进宽度"
-          description="编辑器中 Tab 缩进使用的空格数（立即生效）"
+          description="Tab 缩进的空格数"
           control={<NumberField value={editorTabSize} onChange={(next) => onEditorPrefChange({ editorTabSize: next })} suffix="格" min={2} max={8} />}
         />
         <SettingRow
           title="显示小地图"
-          description="在编辑器右侧显示代码缩略导航图"
+          description="在编辑器右侧显示缩略图"
           control={<Toggle checked={editorMinimap} onChange={(next) => onEditorPrefChange({ editorMinimap: next })} label="显示小地图" />}
         />
         <SettingRow
           title="自动换行"
-          description="长行在编辑器宽度处折行，而不是横向滚动"
+          description="长行在编辑器宽度处折行"
           control={<Toggle checked={editorWordWrap} onChange={(next) => onEditorPrefChange({ editorWordWrap: next })} label="自动换行" />}
         />
       </SettingsCard>

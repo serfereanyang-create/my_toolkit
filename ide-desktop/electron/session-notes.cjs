@@ -6,9 +6,9 @@
 // run") with pinning so a takeaway can float to the top. Same serialized
 // write chain discipline as the snippets store.
 
-const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { createJsonStore } = require('./json-store.cjs');
 
 const MAX_NOTES_PER_SESSION = 100;
 const MAX_NOTE_CHARS = 4000;
@@ -38,37 +38,37 @@ function sanitizeNote(input, now) {
 
 function createSessionNotesStore(userDataDir) {
   const storePath = path.join(userDataDir, 'session-notes.json');
-  let chain = Promise.resolve();
+  // Durable plumbing lives in json-store.cjs: atomic replace, rename retry,
+  // corrupt-file quarantine, serialized mutations.
+  const store = createJsonStore({ file: () => storePath, normalize: shapeAll });
 
-  async function readRaw() {
-    try {
-      const parsed = JSON.parse(await fs.readFile(storePath, 'utf8'));
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-      return parsed;
-    } catch (error) {
-      if (error && error.code === 'ENOENT') return {};
-      return {}; // corrupt: treat as empty; next write heals
+  /** Keep only well-formed [note] buckets; anything else is dropped on read. */
+  function shapeAll(parsed) {
+    const out = {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return out;
+    for (const [id, bucket] of Object.entries(parsed)) {
+      if (!Array.isArray(bucket)) continue;
+      const notes = [];
+      for (const note of bucket) {
+        if (!note || typeof note !== 'object') continue;
+        if (typeof note.id !== 'string' || !note.id) continue;
+        if (typeof note.text !== 'string' || !note.text.trim()) continue;
+        notes.push({
+          id: note.id,
+          text: note.text.slice(0, MAX_NOTE_CHARS),
+          pinned: Boolean(note.pinned),
+          createdAt: String(note.createdAt ?? ''),
+          updatedAt: String(note.updatedAt ?? ''),
+        });
+        if (notes.length >= MAX_NOTES_PER_SESSION) break;
+      }
+      if (notes.length) out[id] = notes;
     }
+    return out;
   }
 
-  async function writeRaw(data) {
-    const tmp = `${storePath}.${process.pid}.tmp`;
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
-    await fs.rename(tmp, storePath);
-  }
-
-  function mutate(fn) {
-    const task = chain.then(async () => {
-      const data = await readRaw();
-      const result = await fn(data);
-      await writeRaw(data);
-      return result;
-    });
-    chain = task.catch(() => undefined);
-    return task;
-  }
-
+  const readRaw = () => store.read();
+  const mutate = (fn) => store.mutate(fn);
   function sessionNotes(data, sessionId) {
     const id = sanitizeSessionId(sessionId);
     if (!Array.isArray(data[id])) data[id] = [];

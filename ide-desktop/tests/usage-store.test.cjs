@@ -135,5 +135,21 @@ test('predictCacheHitRate falls back to provider-reported cache when local estim
   const result = predictCacheHitRate(entries, 'gpt-5.5');
   assert.equal(result.source, 'provider-reported');
   assert.ok(result.predicted !== null);
-  assert.equal(Number(result.predicted.toFixed(3)), 0.5);
+  // `inputTokens` is stored net of the cached part, so the denominator is
+  // input + cacheRead: 100 / (200 + 100). Dividing by input alone gave 50%,
+  // which is the hit rate of a shape that never occurs.
+  assert.equal(Number(result.predicted.toFixed(3)), 0.333);
+});
+
+test('predictCacheHitRate weights a turn by the whole prompt it read', () => {
+  const entries = parseEntries([
+    // A cached megaturn and a tiny uncached one. Weighting by net input would
+    // let the 10-token turn pull the prediction.
+    JSON.stringify({ ts: iso(0), model: 'm', provider: 'p', inputTokens: 20000, outputTokens: 10, cacheReadTokens: 980000, localCachePredictedRate: 0.98 }),
+    JSON.stringify({ ts: iso(1), model: 'm', provider: 'p', inputTokens: 10, outputTokens: 10, localCachePredictedRate: 0.0 }),
+    JSON.stringify({ ts: iso(2), model: 'm', provider: 'p', inputTokens: 10, outputTokens: 10, localCachePredictedRate: 0.0 }),
+  ].join('\n'));
+  const result = predictCacheHitRate(entries, 'm');
+  assert.equal(result.samples, 3);
+  assert.ok(result.predicted > 0.9, `expected the megaturn to dominate, got ${result.predicted}`);
 });

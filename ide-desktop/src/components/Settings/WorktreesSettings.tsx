@@ -20,12 +20,12 @@ export function WorktreesSettings({ prefs, savePref }: { prefs: Prefs; savePref:
       <SettingsCard>
         <SettingRow
           title="工作树根目录"
-          description="YOYcode 创建托管工作树的目录；留空则使用默认位置"
+          description="工作树的存放目录，留空使用默认位置"
           control={<TextField value={root} onChange={setRoot} placeholder="默认" />}
         />
         <SettingRow
           title="自动删除旧工作树"
-          description="推荐大多数用户启用。仅当你需要手动管理旧工作树和磁盘使用空间时，再关闭此功能。"
+          description="自动清理不在使用中的旧工作树"
           control={<Toggle checked={autoDelete} onChange={setAutoDelete} label="自动删除旧工作树" />}
         />
         <SettingRow

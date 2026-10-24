@@ -16,8 +16,8 @@
  * parent session id, so losing it loses only the directory listing, never a
  * transcript or a subagent's own session.
  */
-const fs = require('node:fs/promises');
 const path = require('node:path');
+const { createJsonStore } = require('./json-store.cjs');
 
 /** Keep the directory bounded — this is a recent-activity view, not an archive. */
 const MAX_RUNS = 200;
@@ -31,48 +31,37 @@ function cleanText(raw, max) {
 }
 
 function createSubagentRunStore(getRoot) {
-  let chain = Promise.resolve();
-  let loadedFor = null;
-  /** @type {Map<string, object[]>} parentSessionId -> runs (newest first) */
-  let map = new Map();
-
-  async function loadLocked(root) {
-    if (loadedFor === root) return;
-    loadedFor = root;
-    map = new Map();
-    try {
-      const parsed = JSON.parse(await fs.readFile(runsFile(root), 'utf8'));
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        for (const [sessionId, runs] of Object.entries(parsed)) {
-          if (!sessionId || !Array.isArray(runs)) continue;
-          map.set(sessionId, runs.filter((r) => r && typeof r === 'object').slice(0, MAX_RUNS));
-        }
-      }
-    } catch { /* missing or corrupt sidecar heals to empty */ }
-  }
-
-  async function saveLocked(root) {
-    const file = runsFile(root);
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    const obj = {};
-    for (const [sessionId, runs] of map) obj[sessionId] = runs;
-    const tmp = `${file}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(obj, null, 2), 'utf8');
-    await fs.rename(tmp, file);
-  }
-
-  function mutate(fn) {
-    const run = chain.then(async () => {
+  // Durable plumbing comes from json-store.cjs. The runs are re-read on every
+  // mutation instead of being cached per root: a cache loaded once meant a
+  // second window wrote back a stale list, dropping runs it never saw.
+  const store = createJsonStore({
+    file: () => {
       const root = getRoot();
-      if (!root) return { error: '没有打开工作区', value: null };
-      await loadLocked(root);
-      const out = await fn(root);
-      return { error: null, value: out };
-    });
-    chain = run.then(() => undefined, () => undefined);
-    return run;
+      if (!root) throw new Error('没有打开工作区');
+      return runsFile(root);
+    },
+    normalize: shapeAll,
+  });
+
+  /** Keep only well-formed run arrays, newest first, capped per session. */
+  function shapeAll(parsed) {
+    const out = {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return out;
+    for (const [sessionId, runs] of Object.entries(parsed)) {
+      if (!sessionId || !Array.isArray(runs)) continue;
+      const kept = runs.filter((run) => run && typeof run === 'object' && typeof run.id === 'string').slice(0, MAX_RUNS);
+      if (kept.length) out[sessionId] = kept;
+    }
+    return out;
   }
 
+  async function readAll() {
+    try {
+      return await store.read();
+    } catch {
+      return {};
+    }
+  }
   /**
    * Fold one CLI subagent event into the store.
    *
@@ -86,35 +75,36 @@ function createSubagentRunStore(getRoot) {
     if (!sessionId || !id) return { ok: false, error: '缺少 sessionId 或 id' };
     const phase = event?.phase === 'done' ? 'done' : 'started';
 
-    const r = await mutate(async (root) => {
-      const runs = map.get(sessionId) ?? [];
-      const at = runs.findIndex((run) => run.id === id);
-      const base = at >= 0 ? runs[at] : null;
+    let outcome;
+    try {
+      outcome = await store.mutate((data) => {
+        const runs = Array.isArray(data[sessionId]) ? [...data[sessionId]] : [];
+        const at = runs.findIndex((run) => run.id === id);
+        const base = at >= 0 ? runs[at] : null;
 
-      const next = {
-        id,
-        goal: cleanText(event?.goal, 400),
-        expert: cleanText(event?.expert, 40) || 'general',
-        status: phase === 'done' ? (event?.ok === false ? 'failed' : 'done') : 'running',
-        startedAt: base?.startedAt ?? new Date().toISOString(),
-        finishedAt: phase === 'done' ? new Date().toISOString() : base?.finishedAt,
-        // A finished row keeps the answer; a running row has none yet.
-        answer: phase === 'done' ? cleanText(event?.answer, 400) : base?.answer ?? '',
-        subSessionId: cleanText(event?.subSessionId, 80) || base?.subSessionId || '',
-        durationMs: phase === 'done' ? Number(event?.durationMs) || 0 : base?.durationMs,
-        steps: phase === 'done' ? Number(event?.steps) || 0 : base?.steps,
-      };
+        const next = {
+          id,
+          goal: cleanText(event?.goal, 400),
+          expert: cleanText(event?.expert, 40) || 'general',
+          status: phase === 'done' ? (event?.ok === false ? 'failed' : 'done') : 'running',
+          startedAt: base?.startedAt ?? new Date().toISOString(),
+          finishedAt: phase === 'done' ? new Date().toISOString() : base?.finishedAt,
+          // A finished row keeps the answer; a running row has none yet.
+          answer: phase === 'done' ? cleanText(event?.answer, 400) : base?.answer ?? '',
+          subSessionId: cleanText(event?.subSessionId, 80) || base?.subSessionId || '',
+          durationMs: phase === 'done' ? Number(event?.durationMs) || 0 : base?.durationMs,
+          steps: phase === 'done' ? Number(event?.steps) || 0 : base?.steps,
+        };
 
-      if (at >= 0) runs[at] = next;
-      else runs.unshift(next);
-      map.set(sessionId, runs.slice(0, MAX_RUNS));
-
-      await saveLocked(root);
-      return { run: next };
-    });
-
-    if (r.error) return { ok: false, error: r.error };
-    return { ok: true, ...r.value };
+        if (at >= 0) runs[at] = next;
+        else runs.unshift(next);
+        data[sessionId] = runs.slice(0, MAX_RUNS);
+        return { run: next };
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    return { ok: true, ...outcome };
   }
 
   /**
@@ -126,21 +116,19 @@ function createSubagentRunStore(getRoot) {
    * currently up.
    */
   async function list(sessionId, live) {
-    const r = await mutate(async () => {
-      const liveSet = live instanceof Set ? live : new Set(Array.isArray(live) ? live : []);
-      const collect = (runs, ownerId) =>
-        runs.map((run) => (
-          run.status === 'running' && !liveSet.has(ownerId)
-            ? { ...run, status: 'interrupted' }
-            : run
-        ));
-      if (sessionId) return collect(map.get(String(sessionId)) ?? [], String(sessionId));
-      const all = [];
-      for (const [ownerId, runs] of map) all.push(...collect(runs, ownerId));
-      all.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
-      return all.slice(0, MAX_RUNS);
-    });
-    return r.value ?? [];
+    const data = await readAll();
+    const liveSet = live instanceof Set ? live : new Set(Array.isArray(live) ? live : []);
+    const collect = (runs, ownerId) =>
+      runs.map((run) => (
+        run.status === 'running' && !liveSet.has(ownerId)
+          ? { ...run, status: 'interrupted' }
+          : run
+      ));
+    if (sessionId) return collect(data[String(sessionId)] ?? [], String(sessionId));
+    const all = [];
+    for (const [ownerId, runs] of Object.entries(data)) all.push(...collect(runs, ownerId));
+    all.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
+    return all.slice(0, MAX_RUNS);
   }
 
   /**
@@ -162,13 +150,15 @@ function createSubagentRunStore(getRoot) {
   async function remove(sessionId) {
     const sid = String(sessionId ?? '').trim();
     if (!sid) return { ok: false, error: '缺少 sessionId' };
-    const r = await mutate(async (root) => {
-      map.delete(sid);
-      await saveLocked(root);
-      return { removed: sid };
-    });
-    if (r.error) return { ok: false, error: r.error };
-    return { ok: true, ...r.value };
+    try {
+      const outcome = await store.mutate((data) => {
+        delete data[sid];
+        return { removed: sid };
+      });
+      return { ok: true, ...outcome };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   return { record, list, listGrouped, remove };

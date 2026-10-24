@@ -119,11 +119,11 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
   
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case 'critical': return '#CC0000';
-      case 'major': return '#FF6B00';
-      case 'minor': return '#FF9800';
-      case 'info': return '#2196F3';
-      default: return '#5C635D';
+      case 'critical': return 'var(--danger)';
+      case 'major': return 'var(--danger)';
+      case 'minor': return 'var(--warn)';
+      case 'info': return 'var(--blue)';
+      default: return 'var(--fg-muted)';
     }
   };
   
@@ -140,9 +140,9 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
   };
   
   const getScoreColor = (score: number) => {
-    if (score >= 80) return '#2E7D32';
-    if (score >= 60) return '#FF9800';
-    return '#CC0000';
+    if (score >= 80) return 'var(--ok)';
+    if (score >= 60) return 'var(--warn)';
+    return 'var(--danger)';
   };
   
   if (!visible) return null;
@@ -208,7 +208,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
                     <path
                       d="M 10 70 A 70 70 0 0 1 150 70"
                       fill="none"
-                      stroke="#E7E1D7"
+                      stroke="var(--border)"
                       strokeWidth="12"
                     />
                     <path
@@ -369,7 +369,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         }
         
         .performance-panel {
-          background: #FBF9F5;
+          background: var(--bg-app);
           border-radius: 8px;
           width: 90%;
           max-width: 1000px;
@@ -385,21 +385,21 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           justify-content: space-between;
           align-items: center;
           padding: 20px 24px;
-          border-bottom: 1px solid #E7E1D7;
+          border-bottom: 1px solid var(--border);
         }
         
         .performance-panel-header h2 {
           margin: 0;
-          font-family: 'DM Serif Display', serif;
+          font-family: var(--font-ui);
           font-size: 24px;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .close-btn {
           background: none;
           border: none;
           font-size: 32px;
-          color: #5C635D;
+          color: var(--fg-muted);
           cursor: pointer;
           padding: 0;
           width: 32px;
@@ -410,7 +410,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         }
         
         .close-btn:hover {
-          color: #C4612F;
+          color: var(--blue);
         }
         
         .performance-panel-content {
@@ -420,10 +420,10 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         }
         
         .analyze-options {
-          background: white;
+          background: var(--bg-elevated);
           padding: 20px;
           border-radius: 8px;
-          border: 1px solid #E7E1D7;
+          border: 1px solid var(--border);
           margin-bottom: 24px;
         }
         
@@ -440,14 +440,14 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           margin-bottom: 8px;
           font-size: 14px;
           font-weight: 500;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .option-group input,
         .option-group select {
           width: 100%;
           padding: 10px 12px;
-          border: 1px solid #E7E1D7;
+          border: 1px solid var(--border);
           border-radius: 6px;
           font-size: 14px;
         }
@@ -457,8 +457,8 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           padding: 12px 24px;
           border: none;
           border-radius: 999px;
-          background: #C4612F;
-          color: white;
+          background: var(--blue);
+          color: var(--accent-fg);
           font-size: 14px;
           font-weight: 500;
           cursor: pointer;
@@ -467,7 +467,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         }
         
         .analyze-btn:hover:not(:disabled) {
-          background: #A94E22;
+          background: var(--blue);
           transform: translateY(-1px);
         }
         
@@ -477,18 +477,18 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         }
         
         .error-message {
-          background: #FFE5E5;
-          border: 1px solid #FF4444;
+          background: var(--danger-soft);
+          border: 1px solid var(--danger);
           border-radius: 6px;
           padding: 12px;
           margin-bottom: 16px;
-          color: #CC0000;
+          color: var(--danger);
           font-size: 14px;
         }
         
         .performance-result {
-          background: white;
-          border: 1px solid #E7E1D7;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
           border-radius: 8px;
           padding: 24px;
         }
@@ -498,7 +498,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           align-items: center;
           gap: 24px;
           padding-bottom: 24px;
-          border-bottom: 1px solid #E7E1D7;
+          border-bottom: 1px solid var(--border);
           margin-bottom: 24px;
         }
         
@@ -514,7 +514,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           transform: translateX(-50%);
           font-size: 36px;
           font-weight: bold;
-          font-family: 'DM Serif Display', serif;
+          font-family: var(--font-ui);
         }
         
         .score-info {
@@ -523,13 +523,13 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         
         .score-info h3 {
           margin: 0 0 8px 0;
-          font-family: 'DM Serif Display', serif;
-          color: #1F2421;
+          font-family: var(--font-ui);
+          color: var(--fg);
         }
         
         .score-info p {
           margin: 0;
-          color: #5C635D;
+          color: var(--fg-muted);
         }
         
         .complexity-section,
@@ -544,12 +544,12 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         .memory-risks-section h3,
         .suggestions-section h3 {
           margin: 0 0 16px 0;
-          font-family: 'DM Serif Display', serif;
-          color: #1F2421;
+          font-family: var(--font-ui);
+          color: var(--fg);
         }
         
         .complexity-item {
-          background: #F7F4EF;
+          background: var(--bg-hover);
           padding: 16px;
           border-radius: 6px;
           margin-bottom: 12px;
@@ -558,7 +558,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         .complexity-header {
           margin-bottom: 8px;
           font-weight: 600;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .complexity-row {
@@ -569,21 +569,21 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         }
         
         .complexity-row .label {
-          color: #5C635D;
+          color: var(--fg-muted);
         }
         
         .complexity-row .value {
-          font-family: 'Monaco', 'Courier New', monospace;
-          color: #C4612F;
+          font-family: var(--font-mono);
+          color: var(--blue);
           font-weight: 500;
         }
         
         .complexity-reason {
           margin-top: 8px;
           padding-top: 8px;
-          border-top: 1px solid #E7E1D7;
+          border-top: 1px solid var(--border);
           font-size: 13px;
-          color: #5C635D;
+          color: var(--fg-muted);
           font-style: italic;
         }
         
@@ -594,13 +594,13 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         .category-group h4 {
           margin: 0 0 12px 0;
           font-size: 16px;
-          color: #C4612F;
+          color: var(--blue);
           font-weight: 600;
         }
         
         .issue-item,
         .risk-item {
-          background: #F7F4EF;
+          background: var(--bg-hover);
           padding: 16px;
           border-radius: 6px;
           margin-bottom: 12px;
@@ -620,7 +620,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           gap: 4px;
           padding: 4px 12px;
           border-radius: 999px;
-          color: white;
+          color: var(--accent-fg);
           font-size: 12px;
           font-weight: 500;
           text-transform: uppercase;
@@ -629,16 +629,16 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         .issue-location,
         .risk-location {
           font-size: 12px;
-          color: #5C635D;
-          font-family: 'Monaco', 'Courier New', monospace;
+          color: var(--fg-muted);
+          font-family: var(--font-mono);
         }
         
         .risk-type {
           display: inline-block;
           padding: 4px 12px;
           border-radius: 999px;
-          background: #FFE5E5;
-          color: #CC0000;
+          background: var(--danger-soft);
+          color: var(--danger);
           font-size: 12px;
           font-weight: 500;
         }
@@ -646,7 +646,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         .issue-message {
           font-weight: 600;
           margin-bottom: 8px;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .issue-explanation,
@@ -656,7 +656,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           margin-bottom: 8px;
           font-size: 14px;
           line-height: 1.6;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .issue-example {
@@ -664,8 +664,8 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         }
         
         .issue-example pre {
-          background: #1F2421;
-          color: #F7F4EF;
+          background: var(--fg);
+          color: var(--bg-hover);
           padding: 12px;
           border-radius: 4px;
           overflow-x: auto;
@@ -680,7 +680,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         
         .suggestions-section li {
           margin-bottom: 8px;
-          color: #1F2421;
+          color: var(--fg);
           line-height: 1.6;
         }
       `}</style>

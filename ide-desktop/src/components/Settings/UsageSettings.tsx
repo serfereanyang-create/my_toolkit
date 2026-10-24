@@ -4,6 +4,7 @@ import { desktop } from '../../lib/ipc';
 import type { UsageSummary, UsageHourlySummary, UsageModelStats, UsageRecordsResult, UsageRecord } from '../../lib/ipc';
 import type { CustomModel, DesktopSettings } from '../../types';
 import { Segmented, EmptyState } from './controls';
+import { appNotice } from '../ToastLayer';
 
 /*
  * 用量统计 — real token usage, aggregated from the CLI's usage ledger
@@ -127,20 +128,20 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
     try {
       const { csv, count } = await desktop.usage.exportCsv(hoursWindow);
       if (count === 0) {
-        window.alert('时间窗口内没有可导出的记录。');
+        appNotice('没有可导出的记录', '当前时间窗口内没有用量记录。', 'info');
         return;
       }
       const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
       try {
         await desktop.fs.write(`.aicode/exports/usage-${hoursWindow}h-${stamp}.csv`, csv);
-        window.alert(`已导出 ${count} 条记录到 .aicode/exports/usage-${hoursWindow}h-${stamp}.csv`);
+        appNotice('用量已导出', `${count} 条记录已保存到 .aicode/exports/usage-${hoursWindow}h-${stamp}.csv。`, 'success');
       } catch {
         // No workspace (fs.write rejects): fall back to the clipboard.
         await desktop.clipboard.write(csv);
-        window.alert(`已复制 ${count} 条记录的 CSV 到剪贴板（未打开工作区，无法写入文件）。`);
+        appNotice('用量已复制', `${count} 条记录的 CSV 已复制到剪贴板。`, 'success');
       }
     } catch {
-      window.alert('导出失败。');
+      appNotice('导出失败', '无法写入文件或复制到剪贴板。', 'error');
     } finally {
       setExporting(false);
     }
@@ -245,13 +246,12 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
         <EmptyState
           icon={<BarChart3 size={22} />}
           title="暂无真实用量数据"
-          description="发起真实对话后，各模型的每日 token 用量会在这里逐日累积。"
+          description="发起对话后在这里查看每日用量"
         />
       ) : (
         <>
           <UsageTotals summary={summary!} />
           <ModelDonut summary={summary!} colorByModel={colorByModel} />
-          <SessionBreakdown summary={summary!} />
           <Heatmap summary={summary!} />
           <TrendChart summary={summary!} />
           <Legend summary={summary!} colorByModel={colorByModel} />
@@ -263,7 +263,7 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
         <>
           <div className="usage-header" style={{ marginTop: 16 }}>
             <div>
-              <h1 className="settings-page-title" style={{ fontSize: 16 }}>Token 使用趋势</h1>
+              <h1 className="settings-page-title" style={{ fontSize: 'var(--fs-7)' }}>Token 使用趋势</h1>
               <p className="settings-page-subtitle">按小时粒度，展示输入/输出和缓存命中情况。每 60 秒自动刷新。</p>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -331,7 +331,7 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
             <EmptyState
               icon={<BarChart3 size={22} />}
               title="暂无小时粒度用量"
-              description="发起对话后，按小时的 token 用量趋势会在这里实时更新。"
+              description="发起对话后在这里查看每小时用量"
             />
           )}
         </>
@@ -457,45 +457,6 @@ function ModelDonut({ summary, colorByModel }: { summary: UsageSummary; colorByM
 function dayOfWeek(date: string): number {
   const [y, m, d] = date.split('-').map(Number);
   return new Date(y, m - 1, d).getDay();
-}
-
-/**
- * 会话下钻：按会话聚合的 token/轮次/工具调用（仅新版 ledger 行携带
- * sessionId；旧数据没有该维度时整个区块隐藏）。
- */
-function SessionBreakdown({ summary }: { summary: UsageSummary }) {
-  const sessions = summary.sessions ?? [];
-  if (sessions.length === 0) return null;
-
-  return (
-    <div className="usage-block">
-      <div className="usage-block-head">
-        <span className="usage-block-title">会话下钻</span>
-        <span className="usage-heatmap-readout">按 token 排序</span>
-      </div>
-      <div className="usage-sessions">
-        {sessions.map((session) => (
-          <div key={session.sessionId} className="usage-session-row">
-            <div className="usage-session-head">
-              <span className="usage-session-id" title={session.sessionId}>
-                {session.sessionId.slice(0, 12)}…
-              </span>
-              {session.boardId && (
-                <span className="usage-session-board" title={`任务板 ${session.boardId}`}>任务板</span>
-              )}
-              <span className="usage-session-tokens">{formatTokensCN(session.tokens)} tokens</span>
-            </div>
-            <div className="usage-session-meta">
-              {session.rounds} 轮 · 工具调用 {session.toolCalls} 次
-              {session.toolsUsed.length > 0 && ` · ${session.toolsUsed.slice(0, 4).join(', ')}${session.toolsUsed.length > 4 ? ' 等' : ''}`}
-              {' · '}
-              {new Date(session.firstTs).toLocaleString()} – {new Date(session.lastTs).toLocaleTimeString()}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function Heatmap({ summary }: { summary: UsageSummary }) {
@@ -1100,15 +1061,6 @@ function CostTable({ summary, settings, colorByModel, activeProviderId }: {
                 cost += (m.output / 1_000_000) * (pricing.outputPricePerM ?? 0);
                 cost += (m.cacheRead / 1_000_000) * (pricing.cacheReadPricePerM ?? 0);
                 cost += (m.cacheCreation / 1_000_000) * (pricing.cacheWritePricePerM ?? 0);
-                console.log('[UsageSettings] Cost calculation:', {
-                  input: m.input, output: m.output, 
-                  cacheRead: m.cacheRead, cacheCreation: m.cacheCreation,
-                  inputCost: (m.input / 1_000_000) * (pricing.inputPricePerM ?? 0),
-                  outputCost: (m.output / 1_000_000) * (pricing.outputPricePerM ?? 0),
-                  cacheReadCost: (m.cacheRead / 1_000_000) * (pricing.cacheReadPricePerM ?? 0),
-                  cacheCreationCost: (m.cacheCreation / 1_000_000) * (pricing.cacheWritePricePerM ?? 0),
-                  totalCost: cost
-                });
               }
               const callMode = inferCallMode(m.model);
               const lastUsedTime = m.lastUsed ? formatLastUsed(m.lastUsed) : '—';

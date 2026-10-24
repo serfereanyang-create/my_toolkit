@@ -26,6 +26,10 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
   const language = prefStr(prefs, 'gen.language', 'auto');
   const bottomPanel = prefBool(prefs, 'gen.bottomPanel', true);
   const plugins = prefBool(prefs, 'gen.plugins', true);
+  const storedTimeout = prefNum(prefs, 'requestTimeoutMs', 300_000);
+  const requestTimeoutMs = Number.isSafeInteger(storedTimeout) && storedTimeout > 0 && storedTimeout <= 2_147_483_647 ? storedTimeout : 300_000;
+  const timeoutOptions = [5, 15, 30, 60].map(minutes => ({ value: String(minutes * 60_000), label: `${minutes} 分钟` }));
+  if (!timeoutOptions.some(option => Number(option.value) === requestTimeoutMs)) timeoutOptions.push({ value: String(requestTimeoutMs), label: `${Math.round(requestTimeoutMs / 1000)} 秒（自定义）` });
   const setLanguage = (v: string) => savePref({ 'gen.language': v });
   const setBottomPanel = (v: boolean) => savePref({ 'gen.bottomPanel': v });
   const setPlugins = (v: boolean) => savePref({ 'gen.plugins': v });
@@ -71,7 +75,7 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
       <SettingsCard heading="权限">
         <SettingRow
           title="审批模式"
-          description="同时决定确认频率和可读写的文件范围：只读/仅计划/每次询问只能访问工作区（外加桌面、文档、下载）；自动批准（完全访问）可读写本机任意文件。修改立即生效，聊天输入框旁的审批菜单与此同步。"
+          description="控制操作是否需要确认，以及可读写的范围。"
           control={<Segmented value={approval} onChange={(next) => onApprovalChange(next)} options={[
             { value: 'ask', label: '每次询问' },
             { value: 'auto', label: '自动批准' },
@@ -81,12 +85,12 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
         />
         <SettingRow
           title="自动审核"
-          description="本该问你的高风险动作先交给模型审一遍：判定为低风险就自动放行，判定为高风险就拒绝，审不出结论才来问你。审核用同一个模型、不带任何工具，且只作用于「本来会问你」的动作——黑名单命令、越权网络、只读模式这些硬拒绝它碰不到。每次审核结果都会记在对话里。"
+          description="高风险操作先由模型审核，低风险自动放行。"
           control={<Toggle checked={autoReview} onChange={setAutoReview} />}
         />
         <SettingRow
           title="子智能体委派"
-          description="主智能体把工作交给子智能体的积极程度。积极（默认）：几乎每个任务都先派子智能体，只读的调研、搜索、分析交给它们并行做，你负责整合结果。均衡：只有多步骤任务才派。关闭：全部自己做。注意：子智能体没有向你请求确认的通道，所以积极档下改文件、提交、推送这些操作仍由主智能体执行，以便你能在确认框里看到——被派出去的只有调研。每次委派都会多花一次独立会话的开销（子智能体要重建提示词，且首次请求无法命中缓存）。"
+          description="控制主智能体把任务交给子智能体的频率。"
           control={<Segmented value={delegation} onChange={setDelegation} options={[
             { value: 'eager', label: '积极' },
             { value: 'balanced', label: '均衡' },
@@ -96,6 +100,11 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
       </SettingsCard>
 
       <SettingsCard heading="常规">
+        <SettingRow
+          title="模型请求时限"
+          description="限制单次请求的总等待时间，包含流式读取与重试；完成当前任务后应用。"
+          control={<SelectPill value={String(requestTimeoutMs)} onChange={value => savePref({ requestTimeoutMs: Number(value) })} options={timeoutOptions} />}
+        />
         <SettingRow
           title="语言"
           description="应用 UI 语言（影响界面字体与语言标记）"
@@ -136,7 +145,7 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
       <SettingsCard heading="确认弹窗">
         <SettingRow
           title="审批弹窗"
-          description="需要确认执行时，在界面中央弹出置顶确认框（含快捷键 y/a/n）。关闭后仅在消息流的审批卡片中处理。"
+          description="确认操作时在窗口中央弹出提示框"
           control={<Toggle checked={approvalModal} onChange={setApprovalModal} label="审批弹窗" />}
         />
       </SettingsCard>
@@ -144,7 +153,7 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
       <SettingsCard heading="提示音">
         <SettingRow
           title="系统提示音"
-          description="需要确认、任务完成、执行出错时播放短促提示音（本机合成，无需网络）。"
+          description="需要确认、任务完成或出错时播放提示音"
           control={<Toggle checked={sounds} onChange={setSounds} label="系统提示音" />}
         />
         <SettingRow

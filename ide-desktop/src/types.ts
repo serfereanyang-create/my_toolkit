@@ -83,19 +83,6 @@ export type DesktopPreferences = {
   reasoningEffort?: ReasoningEffort;
   reasoningEffortByModel?: Record<string, ReasoningEffort>;
   toolScope?: ToolScope;
-  /**
-   * Global default for tiered dispatch (省钱分级): one model chain per tier.
-   *
-   * Each tier holds an ORDERED list — the first entry is the primary, the rest
-   * are fallbacks used when it fails (rate limit, quota, auth). A single
-   * string is still accepted for older records. A session can override the
-   * whole thing via /省钱分级; this is what new sessions start from.
-   */
-  dispatchDefault?: {
-    expensive?: string | string[];
-    standard?: string | string[];
-    cheap?: string | string[];
-  };
   taskExecutionMode?: 'auto' | 'plan';
   /**
    * Auto-review risky actions with a second model call instead of prompting the
@@ -118,6 +105,7 @@ export type DesktopPreferences = {
   gitPrGuide?: string;
   // Computer control prefs (ComputerSettings).
   computerAnyApp?: boolean;
+  computerExecutionMode?: 'background' | 'desktop';
   computerExcel?: boolean;
   computerAllowedApps?: string[];   // list of exe/app names allowed without ask
   // Editor prefs (AppearanceSettings → Monaco). All have real consumers.
@@ -150,7 +138,10 @@ export type DesktopSettings = {
 
 export type SessionMeta = {
   id: string;
+  /** Display title; clashes carry a timestamp suffix so rows stay pickable. */
   title: string;
+  /** The title without the disambiguation suffix, for the rename box. */
+  baseTitle?: string;
   pinned: boolean;
   archived?: boolean;
   updatedAt: string;
@@ -158,6 +149,8 @@ export type SessionMeta = {
 };
 
 export type SessionMessage = {
+  displayText?: string;
+  interrupted?: boolean;
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   name?: string;
@@ -226,6 +219,7 @@ export type AgentEvent = {
 };
 
 export type ToolChatItem = {
+  cancelled?: boolean;
   id: string;
   kind: 'tool';
   status: 'running' | 'done' | 'failed';
@@ -266,6 +260,11 @@ export type ChatItem =
       kind: 'turn';
       startedAt: number;
       endedAt?: number;
+      cancelled?: boolean;
+      /** A turn rebuilt from a saved session. Its step timestamps are only the
+       *  moments messages were written, so the real working duration is gone;
+       *  claiming a number (usually "0 秒") is worse than showing none. */
+      elapsedUnknown?: boolean;
       steps: ToolChatItem[];
       files: TurnFileChange[];
       added: number;
@@ -317,7 +316,26 @@ export type ContextCompactionState = {
 
 export type TaskBoardStatus = 'draft' | 'active' | 'completed' | 'blocked' | 'cancelled';
 export type TaskItemStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled' | 'skipped';
+export type TaskVerificationAttempt = {
+  id: string;
+  phase: 'initial' | 'repair';
+  status: 'running' | 'passed' | 'failed' | 'skipped' | 'cancelled' | 'incomplete';
+  startedAt: string;
+  finishedAt?: string;
+  summary: string;
+  results: Array<{
+    name: 'typecheck' | 'test' | 'build' | 'configuration';
+    command: string;
+    status: 'running' | 'passed' | 'failed' | 'skipped' | 'cancelled';
+    exitCode?: number | null;
+    durationMs: number;
+    output: string;
+    reason?: string;
+  }>;
+};
+
 export type TaskBoard = {
+  error?: string;
   id: string;
   title: string;
   goal: string;
@@ -347,6 +365,7 @@ export type TaskBoard = {
     detail?: string;
     /** How the CLI names a finished task's summary. */
     resultSummary?: string;
+    verification?: TaskVerificationAttempt[];
     error?: string;
     startedAt?: string;
     finishedAt?: string;
@@ -468,6 +487,17 @@ export type AppState = {
    * names the session it belongs to, so a queue survives switching conversations.
    */
   messageQueue: QueuedMessage[];
+  queuePausedSessions?: string[];
+  readySessions: string[];
+  guardRequests: GuardConfirmation[];
+};
+
+export type GuardConfirmation = {
+  requestId: string;
+  sessionId: string;
+  title: string;
+  question: string;
+  options: Array<{ label: string; description?: string }>;
 };
 
 // ─── Pending diff types ───────────────────────────────────────────────────────
@@ -482,7 +512,7 @@ export type PendingDiff = {
 
 // ─── Preview sidebar types ────────────────────────────────────────────────────
 
-export type PreviewKind = 'image' | 'pdf' | 'docx' | 'doc_unsupported' | 'html' | 'text' | 'web';
+export type PreviewKind = 'image' | 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'doc_unsupported' | 'html' | 'text' | 'web';
 
 export type PreviewFileDescriptor = {
   absolutePath: string;
@@ -526,12 +556,31 @@ export type PreviewTab = {
   canGoForward?: boolean;
   /** Fit-to-width mode for docx/pdf */
   fitWidth: boolean;
+  /**
+   * Bumped whenever the file changed on disk and the pane should re-render.
+   *
+   * The panes are plain React components, so a re-render needs a reason. Keying
+   * the pane on this (rather than on `descriptor.relativePath`) is what makes an
+   * agent's edit to 报表.xlsx actually redraw the open pane — without it the
+   * component's effect deps never change and the old bytes stay on screen.
+   */
+  revision?: number;
 };
+
+/**
+ * How the panes are laid out inside the sidebar.
+ *
+ * Only affects the panes that render in the DOM (docx, image, xlsx, pptx).
+ * PDF and web panes are native `WebContentsView`s, and only one of those can be
+ * shown at a time — see PreviewSidebar for what happens when a grid contains one.
+ */
+export type PreviewLayout = 'single' | 'grid';
 
 export type PreviewState = {
   open: boolean;
   width: number;
   tabs: PreviewTab[];
   activeTabId: string | null;
+  layout: PreviewLayout;
 };
 

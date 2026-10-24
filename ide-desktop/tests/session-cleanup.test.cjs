@@ -90,3 +90,77 @@ test('a session that gained content between analysis and deletion is skipped', a
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+// The desktop keeps its pins in the sidecar overlay (.desktop-meta.json), not in
+// the session record — only the CLI's own `pin` command writes that field. So
+// "pinned sessions are always kept" was checking a field that the sidebar never
+// sets: an empty chat the user had pinned to keep was offered as a cleanup
+// candidate and deleted, taking its custom title with it.
+test('a chat pinned in the sidebar overlay is never a cleanup candidate', async () => {
+  const dir = await makeSessionsDir({
+    'sess_a.json': emptySession,
+    'sess_pinned.json': { id: 'sess_pinned', messages: [] },
+    '.desktop-meta.json': { sess_pinned: { pinned: true, title: '别删我' } },
+  });
+  try {
+    const analysis = await analyzeSessionsDir(dir);
+    assert.equal(analysis.pinnedEmpty, 1, 'the overlay pin counts as pinned');
+    assert.deepEqual(analysis.candidates.map((c) => c.id), ['sess_a']);
+
+    const result = await deleteSessionFiles(dir, ['sess_a', 'sess_pinned']);
+    assert.deepEqual(result.deleted, ['sess_a']);
+    assert.equal(result.skipped.find((s) => s.id === 'sess_pinned').reason, 'pinned');
+    assert.ok(await fs.stat(path.join(dir, 'sess_pinned.json')), 'the pinned chat survives');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('cleanup previews the sidebar title, not just a title inside the record', async () => {
+  const dir = await makeSessionsDir({
+    'sess_renamed.json': { id: 'sess_renamed', messages: [] },
+    '.desktop-meta.json': { sess_renamed: { title: '重命名过的空会话' } },
+  });
+  try {
+    const analysis = await analyzeSessionsDir(dir);
+    assert.equal(analysis.candidates[0].title, '重命名过的空会话');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a damaged sidecar makes pin state unknown, so nothing is deleted', async () => {
+  const dir = await makeSessionsDir({
+    'sess_a.json': emptySession,
+    '.desktop-meta.json': '{"sess_a": {"pinned": tr',
+  });
+  try {
+    const analysis = await analyzeSessionsDir(dir);
+    assert.equal(analysis.overlayUnreadable, true);
+    assert.deepEqual(analysis.candidates, [], 'unknown pin state offers no candidates');
+
+    const result = await deleteSessionFiles(dir, ['sess_a']);
+    assert.deepEqual(result.deleted, []);
+    assert.equal(result.skipped[0].reason, 'pin-state-unknown');
+    assert.ok(await fs.stat(path.join(dir, 'sess_a.json')), 'the session survives');
+    // Analysis is read-only: it must not repair or rewrite the sidecar.
+    const overlay = await fs.readFile(path.join(dir, '.desktop-meta.json'), 'utf-8');
+    assert.equal(overlay, '{"sess_a": {"pinned": tr');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a pin the CLI wrote on the record also protects an empty session', async () => {
+  const dir = await makeSessionsDir({
+    'sess_cli_pin.json': { id: 'sess_cli_pin', messages: [], pinned: true },
+    'sess_legacy_pin.json': { id: 'sess_legacy_pin', messages: [], guard: { pinned: true } },
+  });
+  try {
+    const analysis = await analyzeSessionsDir(dir);
+    assert.equal(analysis.pinnedEmpty, 2);
+    assert.deepEqual(analysis.candidates, []);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

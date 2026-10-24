@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { appReducer, initialState, sessionChangeTotals, activeTurnProgress } from './state';
+import { appReducer, initialState, sessionChangeTotals, sessionChangedFiles, activeTurnProgress, sessionToChat } from './state';
+import type { PreviewTab } from '../types';
 
 describe('appReducer', () => {
   it('opens a workspace', () => {
@@ -236,8 +237,10 @@ describe('appReducer', () => {
     s = emit(s, statsEvent(14200, 13206));
     const turn = s.chat.find((item) => item.kind === 'turn');
     if (!turn || turn.kind !== 'turn') throw new Error('expected a turn');
-    expect(turn.ctxTokens).toBe(14200);
-    expect(turn.cacheRate).toBe(93);
+    // `inputTokens` is net of the cached part, so the prompt the model read is
+    // the sum. 13206 / 27406 ≈ 48%, not 13206 / 14200 = 93%.
+    expect(turn.ctxTokens).toBe(27406);
+    expect(turn.cacheRate).toBe(48);
     expect(s.contextStats?.inputTokens).toBe(14200);
   });
 
@@ -258,7 +261,7 @@ describe('appReducer', () => {
     s = emit(s, statsEvent(9999, 0));
     const turn = s.chat.find((item) => item.kind === 'turn');
     if (!turn || turn.kind !== 'turn') throw new Error('expected a turn');
-    expect(turn.ctxTokens).toBe(1000);
+    expect(turn.ctxTokens).toBe(1900);
     expect(s.contextStats?.inputTokens).toBe(9999);
   });
 
@@ -281,6 +284,33 @@ describe('appReducer', () => {
     expect(sessionChangeTotals(s.chat)).toBeNull();
   });
 
+  it('groups this conversation\'s changes per file', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'tool_start', tool: 'write_file', input: { path: 'a.ts' } });
+    s = emit(s, { type: 'tool_result', tool: 'write_file', ok: true, output: 'ok', data: { path: 'a.ts', added: 10, removed: 2 } });
+    s = emit(s, { type: 'turn_done' });
+    // Same file touched again in a later turn: one row, summed.
+    s = emit(s, { type: 'turn_start' });
+    s = emit(s, { type: 'tool_start', tool: 'apply_patch', input: { path: 'a.ts' } });
+    s = emit(s, { type: 'tool_result', tool: 'apply_patch', ok: true, output: 'ok', data: { path: 'a.ts', added: 3, removed: 1 } });
+    s = emit(s, { type: 'tool_start', tool: 'write_file', input: { path: 'b.ts' } });
+    s = emit(s, { type: 'tool_result', tool: 'write_file', ok: true, output: 'ok', data: { path: 'b.ts', added: 20, removed: 0 } });
+    s = emit(s, { type: 'turn_done' });
+    const files = sessionChangedFiles(s.chat);
+    // Largest change first, and one row per path.
+    expect(files).toEqual([
+      { path: 'b.ts', added: 20, removed: 0 },
+      { path: 'a.ts', added: 13, removed: 3 },
+    ]);
+  });
+
+  it('reports no changed files for a conversation that only talked', () => {
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'assistant_message', text: 'hi' });
+    s = emit(s, { type: 'turn_done' });
+    expect(sessionChangedFiles(s.chat)).toEqual([]);
+  });
+
   it('matches a tool_result to its running step without diff data', () => {
     let s = emit(initialState, { type: 'turn_start' });
     s = emit(s, { type: 'tool_start', tool: 'shell', input: { command: 'ls' } });
@@ -291,6 +321,19 @@ describe('appReducer', () => {
     expect(turn.added).toBe(0);
     expect(turn.removed).toBe(0);
     expect(turn.steps[0]).toMatchObject({ tool: 'shell', status: 'done', output: 'files' });
+  });
+
+  it('does not report a read-only tool as a changed file', () => {
+    // read_file returns data.path but never touches the file. Treating that as
+    // a change made a pure read turn claim "1 个文件已更改".
+    let s = emit(initialState, { type: 'turn_start' });
+    s = emit(s, { type: 'tool_start', tool: 'read_file', input: { path: 'package.json' } });
+    s = emit(s, { type: 'tool_result', tool: 'read_file', ok: true, output: '{}', data: { path: 'package.json', bytesRead: 120 } });
+    s = emit(s, { type: 'turn_done' });
+    const turn = s.chat.find((item) => item.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.files).toEqual([]);
+    expect(turn.steps[0]).toMatchObject({ tool: 'read_file', status: 'done' });
   });
 
   it('collects distinct changed files with checkpoint ids, merging repeat writes', () => {
@@ -442,6 +485,46 @@ describe('agent event lifecycle (P0)', () => {
     expect(s.activeSessionId).toBe('sess-1');
   });
 
+  describe('background conversation attribution', () => {
+    it('does not fold a session that is running elsewhere into the visible chat', () => {
+      // The chat is on sess-1; sess-2 is still working from a conversation the
+      // user switched away from. Its output must not land in this transcript.
+      let s = appReducer(initialState, { type: 'agent/event', event: { type: 'bridge_ready', sessionId: 'sess-1' } });
+      s = appReducer(s, { type: 'agent/event', event: { type: 'turn_start', sessionId: 'sess-2' } });
+      expect(s.runningSessions).toContain('sess-2');
+
+      s = appReducer(s, { type: 'agent/event', event: { type: 'assistant_delta', sessionId: 'sess-2', text: '后台会话的输出' } });
+      expect(s.chat.some((item) => item.kind === 'assistant' && item.text.includes('后台会话的输出'))).toBe(false);
+    });
+
+    it('does not adopt an idle background session into an empty chat', () => {
+      // No session on screen and sess-2 is not mid-turn, so it is not "ours" by
+      // virtue of being the only id in flight — a new chat must stay empty.
+      let s = appReducer(initialState, { type: 'agent/event', event: { type: 'bridge_ready', sessionId: 'sess-1' } });
+      s = appReducer(s, { type: 'agent/event', event: { type: 'turn_start', sessionId: 'sess-2' } });
+      s = appReducer(s, { type: 'chat/clear' });
+      expect(s.activeSessionId).toBeNull();
+
+      s = appReducer(s, { type: 'agent/event', event: { type: 'assistant_delta', sessionId: 'sess-2', text: '不该出现' } });
+      expect(s.chat.some((item) => item.kind === 'assistant')).toBe(false);
+      expect(s.activeSessionId).toBeNull();
+    });
+
+    it('adopts the starting bridge into a fresh chat', () => {
+      // The converse: nothing on screen and nothing else running, so the
+      // bridge_ready the user just triggered belongs here.
+      const s = appReducer(initialState, { type: 'agent/event', event: { type: 'bridge_ready', sessionId: 'sess-new' } });
+      expect(s.activeSessionId).toBe('sess-new');
+      expect(s.agentStatus).toBe('ready');
+    });
+
+    it('never adopts an event explicitly marked background', () => {
+      let s = appReducer(initialState, { type: 'agent/event', event: { type: 'bridge_ready', sessionId: 'sess-1' } });
+      s = appReducer(s, { type: 'agent/event', event: { type: 'assistant_delta', sessionId: 'sess-1', text: '不该出现', background: true } });
+      expect(s.chat.some((item) => item.kind === 'assistant')).toBe(false);
+    });
+  });
+
   it('error events do not force agentStatus back to ready', () => {
     let s = appReducer(initialState, { type: 'agent/status', status: 'running' });
     s = appReducer(s, { type: 'agent/event', event: { type: 'error', message: 'provider exploded' } });
@@ -587,5 +670,179 @@ describe('agent event lifecycle (P0)', () => {
       const errors = errorEvent('   ').chat.filter((item) => item.kind === 'error');
       expect(String((errors[0] as { text?: string }).text)).toContain('没有提供原因');
     });
+  });
+
+  describe('preview panes', () => {
+    const tab = (over: Partial<PreviewTab> & { id: string }) => ({
+      title: over.id,
+      kind: 'docx' as const,
+      descriptor: { absolutePath: 'C:/w/a.docx', relativePath: 'a.docx', name: 'a.docx', ext: '.docx', kind: 'docx' as const, size: 1, token: 't' },
+      status: 'ready' as const,
+      zoom: 1,
+      fitWidth: true,
+      ...over,
+    });
+
+    it('starts in single layout and switches to grid', () => {
+      expect(initialState.preview.layout).toBe('single');
+      const s = appReducer(initialState, { type: 'preview/setLayout', layout: 'grid' });
+      expect(s.preview.layout).toBe('grid');
+    });
+
+    it('bumps only the revision of the tab showing the changed file', () => {
+      // This is what makes an agent's write to an open document redraw its
+      // pane. Only the matching tab may change, or one file's edit would blank
+      // every other pane.
+      let s = appReducer(initialState, { type: 'preview/open', tab: tab({ id: 'a' }) });
+      s = appReducer(s, { type: 'preview/open', tab: tab({
+        id: 'b',
+        descriptor: { absolutePath: 'C:/w/b.xlsx', relativePath: 'b.xlsx', name: 'b.xlsx', ext: '.xlsx', kind: 'xlsx', size: 1, token: 't2' },
+      }) });
+
+      const before = s.preview.tabs.map((t) => t.revision ?? 0);
+      s = appReducer(s, { type: 'preview/changed', absolutePath: 'C:/w/a.docx' });
+
+      const byId = Object.fromEntries(s.preview.tabs.map((t) => [t.id, t.revision ?? 0]));
+      expect(byId.a).toBe(before[0] + 1);
+      expect(byId.b).toBe(before[1]);
+    });
+
+    it('matches the path regardless of separators and case', () => {
+      // The watcher reports a Windows path; the descriptor may carry either
+      // form. A missed match means the pane silently never refreshes.
+      let s = appReducer(initialState, { type: 'preview/open', tab: tab({ id: 'a' }) });
+      s = appReducer(s, { type: 'preview/changed', absolutePath: 'c:\\W\\A.DOCX' });
+      expect(s.preview.tabs[0].revision).toBe(1);
+    });
+
+    it('returns the same state object when nothing matches', () => {
+      // Identity matters: a new object re-renders every pane on every unrelated
+      // file write in the workspace.
+      let s = appReducer(initialState, { type: 'preview/open', tab: tab({ id: 'a' }) });
+      const after = appReducer(s, { type: 'preview/changed', absolutePath: 'C:/w/other.ts' });
+      expect(after).toBe(s);
+    });
+
+    it('does not force a reload on a web pane', () => {
+      // A dev server owns its own reload; re-reading on every workspace write
+      // would fight it.
+      let s = appReducer(initialState, { type: 'preview/open', tab: {
+        ...tab({ id: 'web' }),
+        kind: 'web',
+        descriptor: { absolutePath: 'C:/w/app', relativePath: 'app', name: 'app', framework: 'vite', pkgManager: 'npm', lockfile: null, hasNodeModules: true, scripts: {}, recommendedScript: 'dev', staticEntry: null, needsInstall: false, token: 't3' },
+      } });
+      const after = appReducer(s, { type: 'preview/changed', absolutePath: 'C:/w/app' });
+      expect(after).toBe(s);
+    });
+  });
+});
+
+describe('sessionToChat', () => {
+  const toolMessage = (name: string, content: string, createdAt = '2026-10-17T16:56:35.000Z') =>
+    ({ role: 'tool', name, content, createdAt });
+
+  it('restores the tool input from toolCalls so the step summary survives a reload', () => {
+    // messages[] persist the tool name and output only. The live row showed
+    // the path; without the input a restored row degraded to the raw tool id.
+    const chat = sessionToChat({
+      messages: [toolMessage('read_file', 'ok')],
+      toolCalls: [{ tool: 'read_file', input: { path: 'src/agent/agent.ts' }, ok: true, output: 'ok' }],
+    });
+    const turn = chat.find((item) => item.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.steps[0]).toMatchObject({ tool: 'read_file', input: { path: 'src/agent/agent.ts' } });
+  });
+
+  it('pairs each tool message with its own call, not the previous one', () => {
+    const chat = sessionToChat({
+      messages: [toolMessage('list_files', 'a'), toolMessage('read_file', 'b')],
+      toolCalls: [
+        { tool: 'list_files', input: { path: '.' }, ok: true, output: 'a' },
+        { tool: 'read_file', input: { path: 'README.md' }, ok: true, output: 'b' },
+      ],
+    });
+    const turn = chat.find((item) => item.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.steps.map((step) => step.input)).toEqual([{ path: '.' }, { path: 'README.md' }]);
+  });
+
+  it('leaves input undefined when the record has no matching call', () => {
+    // Older records (and forked ones) may lack toolCalls entirely; the row then
+    // falls back to the tool name exactly as before.
+    const chat = sessionToChat({ messages: [toolMessage('read_file', 'ok')] });
+    const turn = chat.find((item) => item.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.steps[0].input).toBeUndefined();
+    expect(turn.steps[0].tool).toBe('read_file');
+  });
+
+  it('does not reuse a call for a tool name that does not match', () => {
+    const chat = sessionToChat({
+      messages: [toolMessage('list_files', 'a')],
+      toolCalls: [{ tool: 'read_file', input: { path: 'x.ts' }, ok: true, output: 'a' }],
+    });
+    const turn = chat.find((item) => item.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.steps[0].input).toBeUndefined();
+  });
+});
+
+describe('sessionToChat: changed files', () => {
+  it('restores the changed-file bar and checkpoint ids from toolCalls[].data', () => {
+    // The live turn shows "1 个文件已更改" with an Undo button; the data to
+    // rebuild both is in the persisted call record, not in messages[].
+    const chat = sessionToChat({
+      messages: [
+        { role: 'user', content: '写文件', createdAt: '2026-10-17T16:56:35.000Z' },
+        { role: 'tool', name: 'write_file', content: 'wrote', createdAt: '2026-10-17T16:56:35.100Z' },
+      ],
+      toolCalls: [{
+        tool: 'write_file',
+        input: { path: '.smoke/a.txt', content: 'hello' },
+        ok: true,
+        output: 'wrote',
+        data: { path: '.smoke/a.txt', added: 5, removed: 0, checkpointId: 'cp_1' },
+      }],
+    });
+    const turn = chat.find((item) => item.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.files).toEqual([{ path: '.smoke/a.txt', added: 5, removed: 0, checkpointIds: ['cp_1'] }]);
+    expect(turn.added).toBe(5);
+    expect(turn.removed).toBe(0);
+  });
+
+  it('does not count a read-only call that merely reports a path', () => {
+    const chat = sessionToChat({
+      messages: [{ role: 'tool', name: 'read_file', content: 'ok', createdAt: '2026-10-17T16:56:35.000Z' }],
+      toolCalls: [{ tool: 'read_file', input: { path: 'a.ts' }, ok: true, output: 'ok', data: { path: 'a.ts', bytesRead: 120 } }],
+    });
+    const turn = chat.find((item) => item.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.files).toEqual([]);
+  });
+
+  it('merges a file written twice in one round', () => {
+    const chat = sessionToChat({
+      messages: [
+        { role: 'tool', name: 'write_file', content: 'a', createdAt: '2026-10-17T16:56:35.000Z' },
+        { role: 'tool', name: 'write_file', content: 'b', createdAt: '2026-10-17T16:56:36.000Z' },
+      ],
+      toolCalls: [
+        { tool: 'write_file', input: { path: 'a.txt' }, ok: true, output: 'a', data: { path: 'a.txt', added: 2, removed: 0, checkpointId: 'cp_1' } },
+        { tool: 'write_file', input: { path: 'a.txt' }, ok: true, output: 'b', data: { path: 'a.txt', added: 3, removed: 1, checkpointId: 'cp_2' } },
+      ],
+    });
+    const turn = chat.find((item) => item.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.files).toEqual([{ path: 'a.txt', added: 5, removed: 1, checkpointIds: ['cp_1', 'cp_2'] }]);
+  });
+
+  it('marks restored turns as having no recorded duration', () => {
+    const chat = sessionToChat({
+      messages: [{ role: 'tool', name: 'list_files', content: '.', createdAt: '2026-10-17T16:56:35.000Z' }],
+    });
+    const turn = chat.find((item) => item.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected a turn');
+    expect(turn.elapsedUnknown).toBe(true);
   });
 });

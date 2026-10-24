@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
+const { createJsonStore } = require('./json-store.cjs');
 
 function createWorkspaceService() {
   let root = '';
@@ -74,18 +75,42 @@ function createWorkspaceService() {
 
   // Desktop-only metadata (title / pinned) kept in a sidecar so the CLI's
   // session JSON files are never mutated by the desktop.
+  //
+  // The sidecar holds EVERY session's title, pin and archive flag, so it is the
+  // one file in the workspace whose loss is silent and total: renaming one chat
+  // after a crashed write used to replace the whole map with a single entry and
+  // take the other chats' names with it. It goes through the shared JSON store
+  // for all three reasons that store exists — atomic replace, quarantining an
+  // unreadable copy instead of overwriting it, and serialising the
+  // read-modify-write pairs that pin/rename/archive all perform.
+  const overlayStore = createJsonStore({
+    file: overlayFile,
+    empty: () => ({}),
+    normalize: (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {}),
+  });
+
   async function readOverlay() {
-    try {
-      return JSON.parse(await fs.readFile(overlayFile(), 'utf8'));
-    } catch (error) {
-      if (error && error.code === 'ENOENT') return {};
-      return {};
-    }
+    return await overlayStore.read();
   }
 
-  async function writeOverlay(overlay) {
-    await fs.mkdir(sessionRootDir(), { recursive: true });
-    await fs.writeFile(overlayFile(), JSON.stringify(overlay, null, 2), 'utf8');
+  /**
+   * The title a session carries in its own record (`/rename` in the CLI writes
+   * it there; the desktop writes its own to the sidecar overlay).
+   */
+  function recordTitle(record) {
+    const title = record?.title;
+    return typeof title === 'string' && title.trim() ? title.trim() : '';
+  }
+
+  /**
+   * Pinned in the sidecar overlay (this app) or on the record (`/pin` in the
+   * CLI — including the `guard.pinned` field older CLI builds wrote). The
+   * overlay wins when it has an opinion, so unpinning here sticks.
+   */
+  function recordPinned(overlay, record) {
+    if (overlay && typeof overlay.pinned === 'boolean') return overlay.pinned;
+    if (record?.pinned === true) return true;
+    return record?.guard?.pinned === true;
   }
 
   function firstUserText(record) {
@@ -133,8 +158,8 @@ function createWorkspaceService() {
         const ov = overlay[id] || {};
         metas.push({
           id,
-          title: ov.title || firstUserText(record) || fallbackTitle(id, record),
-          pinned: Boolean(ov.pinned),
+          title: ov.title || recordTitle(record) || firstUserText(record) || fallbackTitle(id, record),
+          pinned: recordPinned(ov, record),
           archived: Boolean(ov.archived),
           updatedAt: record.updatedAt || record.createdAt || '',
           messageCount: Array.isArray(record.messages) ? record.messages.length : 0,
@@ -144,9 +169,42 @@ function createWorkspaceService() {
       }
     }
     metas.sort((a, b) => Number(b.pinned) - Number(a.pinned) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
-    // Active list excludes archived sessions; the archived page reads them via
-    // listArchivedSessions below.
-    return metas.filter((m) => !m.archived).slice(0, 50);
+    // A record with no message at all is a process that started and stopped —
+    // a spawned CLI child that created its session file before the user typed
+    // anything. Listing them filled the sidebar with same-titled 未命名会话 rows
+    // and, because the cap is applied after sorting, pushed real conversations
+    // out of the 50 shown. Pinned is kept: an explicit pin is the user's call.
+    const real = metas.filter((m) => !m.archived && (m.messageCount > 0 || m.pinned)).slice(0, 50);
+    return disambiguateTitles(real);
+  }
+
+  /**
+   * Make same-titled conversations tell themselves apart.
+   *
+   * The title is the first user prompt, so "你好" typed eighteen times produced
+   * eighteen identical rows — picking the right one was guesswork. Only the
+   * clashing rows get a timestamp appended: a unique title is left exactly as
+   * it was, so the list stays quiet until there is something to disambiguate.
+   */
+  function disambiguateTitles(metas) {
+    const counts = new Map();
+    for (const meta of metas) counts.set(meta.title, (counts.get(meta.title) || 0) + 1);
+    return metas.map((meta) => {
+      if ((counts.get(meta.title) || 0) < 2) return meta;
+      const at = meta.updatedAt || meta.createdAt || '';
+      // `2026-10-17T15:28:50.881Z` → `10-17 15:28`, the same stamp the
+      // untitled fallback uses.
+      const stamp = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(at);
+      if (!stamp) return meta;
+      const [, , month, day, hour, minute] = stamp;
+      return {
+        ...meta,
+        // The rename box must show the real title, not the disambiguated one —
+        // otherwise confirming a rename would write the timestamp into it.
+        baseTitle: meta.title,
+        title: `${meta.title} · ${month}-${day} ${hour}:${minute}`,
+      };
+    });
   }
 
   async function listArchivedSessions() {
@@ -169,8 +227,8 @@ function createWorkspaceService() {
         const record = JSON.parse(await fs.readFile(path.join(dir, name), 'utf8'));
         metas.push({
           id,
-          title: ov.title || firstUserText(record) || fallbackTitle(id, record),
-          pinned: Boolean(ov.pinned),
+          title: ov.title || recordTitle(record) || firstUserText(record) || fallbackTitle(id, record),
+          pinned: recordPinned(ov, record),
           archived: true,
           updatedAt: record.updatedAt || record.createdAt || '',
           messageCount: Array.isArray(record.messages) ? record.messages.length : 0,
@@ -183,43 +241,66 @@ function createWorkspaceService() {
     return metas.slice(0, 100);
   }
 
+  /**
+   * Where sub-agent sessions live, beside the user's conversations.
+   *
+   * A sub-agent writes one record per segment. Those used to land in the main
+   * directory, so the sidebar listed them as chats — a batch of untitled
+   * shells and `## 主任务背景` internal runs pushed the real conversations past
+   * the 50-row cap. The 子智能体目录 still shows the id, so this directory has
+   * to stay loadable.
+   */
+  function subagentSessionDir() {
+    return resolveInside('.aicode/sessions-subagents');
+  }
+
   async function loadSession(id) {
-    return JSON.parse(await fs.readFile(sessionFile(id), 'utf8'));
+    try {
+      return JSON.parse(await fs.readFile(sessionFile(id), 'utf8'));
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT') throw error;
+      // Not a conversation: fall back to the sub-agent store. Reading is all a
+      // caller can do with it anyway — it is not in the session list.
+      const safe = String(id).replace(/[^A-Za-z0-9_.-]/g, '');
+      if (!safe || safe !== String(id)) throw error;
+      return JSON.parse(await fs.readFile(path.join(subagentSessionDir(), `${safe}.json`), 'utf8'));
+    }
   }
 
   async function deleteSession(id) {
     await fs.rm(sessionFile(id), { force: true });
-    const overlay = await readOverlay();
-    if (overlay[id]) {
+    await overlayStore.mutate((overlay) => {
       delete overlay[id];
-      await writeOverlay(overlay);
-    }
+    });
     return { ok: true, id };
   }
 
   async function renameSession(id, title) {
     // Verify the session exists before recording a title for it.
     await fs.access(sessionFile(id));
-    const overlay = await readOverlay();
-    overlay[id] = { ...(overlay[id] || {}), title: String(title || '').slice(0, 120) };
-    await writeOverlay(overlay);
-    return { ok: true, id, title: overlay[id].title };
+    const nextTitle = String(title || '').slice(0, 120);
+    await overlayStore.mutate((overlay) => {
+      overlay[id] = { ...(overlay[id] || {}), title: nextTitle };
+    });
+    return { ok: true, id, title: nextTitle };
   }
 
   async function pinSession(id, pinned) {
     await fs.access(sessionFile(id));
-    const overlay = await readOverlay();
-    overlay[id] = { ...(overlay[id] || {}), pinned: Boolean(pinned) };
-    await writeOverlay(overlay);
-    return { ok: true, id, pinned: overlay[id].pinned };
+    const nextPinned = Boolean(pinned);
+    await overlayStore.mutate((overlay) => {
+      overlay[id] = { ...(overlay[id] || {}), pinned: nextPinned };
+    });
+    return { ok: true, id, pinned: nextPinned };
   }
 
   async function archiveSession(id, archived) {
     await fs.access(sessionFile(id));
-    const overlay = await readOverlay();
-    overlay[id] = { ...(overlay[id] || {}), archived: Boolean(archived) };
-    await writeOverlay(overlay);
-    return { ok: true, id, archived: overlay[id].archived };
+    const nextArchived = Boolean(archived);
+    await overlayStore.mutate((overlay) => {
+      overlay[id] = { ...(overlay[id] || {}), archived: nextArchived };
+    });
+    return { ok: true, id, archived: nextArchived };
   }
 
   function sessionAbsolutePath(id) {
@@ -273,8 +354,10 @@ function createWorkspaceService() {
     // so it never falls back to "未命名会话".
     const overlay = await readOverlay();
     const sourceTitle = overlay[id]?.title || firstUserText(source) || fallbackTitle(id, source);
-    overlay[forkedId] = { ...(overlay[forkedId] || {}), title: `${sourceTitle}（副本）`.slice(0, 120) };
-    await writeOverlay(overlay);
+    const forkedTitle = `${sourceTitle}（副本）`.slice(0, 120);
+    await overlayStore.mutate((current) => {
+      current[forkedId] = { ...(current[forkedId] || {}), title: forkedTitle };
+    });
 
     return { ok: true, id: forkedId, sourceId: id, messageCount: forked.messages.length };
   }

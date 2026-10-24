@@ -1,10 +1,10 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { mkdtemp, readFile, rm } = require('node:fs/promises');
+const { mkdtemp, readFile, rm, writeFile } = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
-const { classifyGitEvent, createAutomationService, normalizeTrigger, automationBus } = require('../electron/automation.cjs');
+const { classifyGitEvent, createAutomationService, normalizeTrigger, automationBus, automationSessionDir, unattendedApprovalDecision } = require('../electron/automation.cjs');
 
 function createFixture(root) {
   const mainWindow = new EventEmitter();
@@ -191,4 +191,169 @@ test('workspace changes resolve pending automation runs instead of leaving IPC b
     await rm(firstRoot, { recursive: true, force: true });
     await rm(secondRoot, { recursive: true, force: true });
   }
+});
+
+/*
+ * An automation run is unattended and long-lived, so it must not share the
+ * user's conversation: the two decisions below are what keep it out. Both are
+ * pinned here because main.cjs cannot be loaded without Electron, so nothing
+ * else in the suite would catch a regression in them.
+ */
+
+test('a run whose agent child dies is failed, not left running for an hour', async () => {
+  /*
+   * The only thing that used to resolve a run was the child's own
+   * `automation_done`. A child that died mid-run never sent one, so the task
+   * stayed in `running` — answering every later trigger with `busy` — until the
+   * one-hour watchdog fired. The user saw a task that was permanently "running"
+   * and could not be re-run, for a run that had in fact died in seconds.
+   *
+   * The desktop now reports the dead child on the same bus the completion uses.
+   */
+  const root = await mkdtemp(path.join(os.tmpdir(), 'yoy-automation-died-'));
+  const fixture = createFixture(root);
+  try {
+    await fixture.service.setWorkspace(root);
+    const task = await fixture.service.create({
+      name: 'Dies mid-run',
+      trigger: { type: 'manual' },
+      action: { type: 'task_board', goal: 'Start something long', confirmPlan: true },
+    });
+
+    const pending = fixture.service.run(task.id);
+    const deadline = Date.now() + 1000;
+    while (fixture.calls.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(fixture.calls.length, 1, 'the run must have been dispatched');
+
+    // What main.cjs emits when the automation child exits without finishing.
+    automationBus.emit('automation.bridge_gone', { reason: '自动化子进程已退出（code 1）' });
+    const result = await pending;
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'failed');
+    assert.match(result.reason, /退出/);
+    const stored = await fixture.service.get(task.id);
+    assert.equal(stored.lastRunStatus, 'failed', 'the task must not still read as running');
+    assert.equal(stored.consecutiveFailures, 1);
+
+    // And the task must be runnable again immediately, not stuck behind `busy`.
+    const second = fixture.service.run(task.id);
+    const deadline2 = Date.now() + 1000;
+    while (fixture.calls.length < 2 && Date.now() < deadline2) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(fixture.calls.length, 2, 'a dead run must not hold the task busy');
+    automationBus.emit('automation.done', { taskId: task.id, status: 'ok' });
+    await second;
+  } finally {
+    await fixture.service.disposeAll();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a run that cannot be recorded still answers its caller', async () => {
+  /*
+   * `finishRun` reads and writes the task and history files, so it can fail on
+   * its own — a corrupt tasks.json is the easy way in. The completion listener
+   * used to resolve only on success (`finishRun(...).then(resolve)`, with no
+   * rejection handler), which left the awaiting IPC call pending forever: the
+   * run was over, but the caller never heard so. The run must always settle.
+   */
+  const root = await mkdtemp(path.join(os.tmpdir(), 'yoy-automation-unwritable-'));
+  const fixture = createFixture(root);
+  try {
+    await fixture.service.setWorkspace(root);
+    const task = await fixture.service.create({
+      name: 'Unrecordable',
+      trigger: { type: 'manual' },
+      action: { type: 'task_board', goal: 'Do the work', confirmPlan: true },
+    });
+
+    const pending = fixture.service.run(task.id);
+    const deadline = Date.now() + 1000;
+    while (fixture.calls.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    // Corrupt the store the way a partial write or an external edit would, so
+    // recording the outcome throws a parse error rather than ENOENT.
+    await writeFile(path.join(root, '.aicode', 'automation', 'tasks.json'), '{ not json', 'utf8');
+    automationBus.emit('automation.done', { taskId: task.id, status: 'ok' });
+
+    const result = await pending;
+    assert.equal(result.status, 'success', 'the run still reports what happened');
+    assert.match(result.reason, /未能写入历史/, 'and says the record could not be written');
+  } finally {
+    await fixture.service.disposeAll();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a run stopped by a workspace change is not counted as a failure', async () => {
+  /*
+   * A user switching workspace is not the task failing, so the run resolves as
+   * `blocked` and records nothing. Counting it would push a task toward the
+   * three-strike auto-disable for the user's own window switch. Pinned because
+   * the resolution now goes through `disposeAll` rather than `finishRun`.
+   *
+   * The death notification that follows teardown must also find nothing to
+   * settle — `pendingRuns` is cleared first, so it cannot record the same run a
+   * second time.
+   */
+  const root = await mkdtemp(path.join(os.tmpdir(), 'yoy-automation-race-'));
+  const fixture = createFixture(root);
+  try {
+    await fixture.service.setWorkspace(root);
+    const task = await fixture.service.create({
+      name: 'Racy run',
+      trigger: { type: 'manual' },
+      action: { type: 'task_board', goal: 'Work', confirmPlan: true },
+    });
+
+    const pending = fixture.service.run(task.id);
+    while (fixture.calls.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+
+    await fixture.service.disposeAll();
+    // The queued death notification lands after teardown has already resolved it.
+    automationBus.emit('automation.bridge_gone', { reason: '自动化子进程已退出（code 1）' });
+    const result = await pending;
+
+    assert.equal(result.status, 'blocked', 'teardown wins; the run reports why it stopped');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const history = await fixture.service.history(task.id);
+    assert.equal(history.length, 0, `a stopped run must not be recorded, saw ${history.length}`);
+    const stored = await fixture.service.get(task.id);
+    assert.equal(stored.consecutiveFailures, 0, 'a window switch must not count as a failure');
+  } finally {
+    await fixture.service.disposeAll();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a run gets its own session scope, never the conversation one', () => {
+  const dir = automationSessionDir('C:\\ws');
+  assert.match(dir.replace(/\\/g, '/'), /\.aicode\/sessions-automation$/);
+  // Distinct from the conversation scope is the whole point: sharing it would
+  // append an unattended run to whatever chat the user is reading.
+  assert.notEqual(dir, path.join('C:\\ws', '.aicode', 'sessions'));
+});
+
+test('an unattended run never waits for a human, and never escalates on its own', () => {
+  // `ask` and `plan` both mean "block until someone answers". A scheduled run
+  // has nobody to answer and nothing in the UI can reach it, so it is refused
+  // with a reason the user can act on rather than left to fail on a timeout.
+  for (const mode of ['ask', 'plan']) {
+    const decision = unattendedApprovalDecision(mode);
+    assert.equal(decision.ok, false, `${mode} must not run unattended`);
+    assert.match(decision.reason, /无人值守|批准模式/);
+  }
+  // `auto` is NOT the fallback for `ask`: it widens the writable scope to the
+  // whole machine (cli/src/safety/policy.ts pathScopeFor). Promoting to it would
+  // hand a scheduled task more reach than the user granted its conversations.
+  assert.equal(unattendedApprovalDecision('ask').approval, undefined);
+  // The two modes that genuinely need no person pass through unchanged.
+  assert.deepEqual(unattendedApprovalDecision('auto'), { ok: true, approval: 'auto' });
+  assert.deepEqual(unattendedApprovalDecision('deny'), { ok: true, approval: 'deny' });
 });

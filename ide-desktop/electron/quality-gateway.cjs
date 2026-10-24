@@ -9,6 +9,9 @@
 'use strict';
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const { atomicWriteText } = require('./atomic-file.cjs');
+const { serialize } = require('./json-store.cjs');
+
 
 // Read-only analysis tools the quality panels may call. The CLI enforces the
 // same read-only boundary independently, so this list is convenience, not the
@@ -63,16 +66,22 @@ async function persistQualityRecord(fsPromises, pathModule, workspaceRoot, toolN
   };
   const dir = pathModule.join(workspaceRoot, '.aicode', 'quality', toolName);
   await fsPromises.mkdir(dir, { recursive: true });
-  await fsPromises.writeFile(pathModule.join(dir, 'latest.json'), JSON.stringify(record, null, 2), 'utf8');
+  // Both files are replaced atomically: a torn history line is skipped by
+  // readers and a torn latest.json is exactly what the panel tries to open.
+  await atomicWriteText(pathModule.join(dir, 'latest.json'), JSON.stringify(record, null, 2));
   const historyPath = pathModule.join(dir, 'history.jsonl');
-  let lines = [];
-  try {
-    const raw = await fsPromises.readFile(historyPath, 'utf8');
-    lines = raw.split('\n').filter((line) => line.trim());
-  } catch { /* first record */ }
-  lines.push(JSON.stringify(record));
-  if (lines.length > HISTORY_LIMIT) lines = lines.slice(-HISTORY_LIMIT);
-  await fsPromises.writeFile(historyPath, lines.join('\n') + '\n', 'utf8');
+  // Read-modify-write, serialised per file: two gates finishing in the same
+  // tick both read the old history and the later write drops the earlier one.
+  await serialize(historyPath, async () => {
+    let lines = [];
+    try {
+      const raw = await fsPromises.readFile(historyPath, 'utf8');
+      lines = raw.split('\n').filter((line) => line.trim());
+    } catch { /* first record */ }
+    lines.push(JSON.stringify(record));
+    if (lines.length > HISTORY_LIMIT) lines = lines.slice(-HISTORY_LIMIT);
+    await atomicWriteText(historyPath, lines.join('\n') + '\n');
+  });
 }
 
 function createQualityGateway({ cliRoot }) {
@@ -188,4 +197,4 @@ function createQualityGateway({ cliRoot }) {
   };
 }
 
-module.exports = { createQualityGateway, ALLOWED_TOOLS };
+module.exports = { createQualityGateway, ALLOWED_TOOLS, persistQualityRecord };

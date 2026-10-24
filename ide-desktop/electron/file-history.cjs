@@ -15,6 +15,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { renameWithRetry } = require('./atomic-file.cjs');
 
 const MAX_SNAPSHOTS_PER_FILE = 24;
 const MAX_SNAPSHOT_BYTES = 1024 * 1024; // skip history for >1 MiB saves
@@ -24,25 +25,55 @@ function keyFor(absolutePath) {
   return crypto.createHash('sha1').update(String(absolutePath).replace(/\\/g, '/').toLowerCase()).digest('hex').slice(0, 24);
 }
 
+/** Snapshot content lands atomically: temp in the same directory, then renamed into place. */
+async function writeSnapshot(snapshotPath, content) {
+  const tmp = `${snapshotPath}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  await fs.writeFile(tmp, content, 'utf8');
+  try {
+    await renameWithRetry(tmp, snapshotPath);
+  } catch (error) {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 function createFileHistoryStore(userDataDir) {
   const baseDir = path.join(userDataDir, 'file-history');
   let chain = Promise.resolve();
 
   async function readIndex() {
+    const indexPath = path.join(baseDir, INDEX_FILE);
+    let raw;
     try {
-      const parsed = JSON.parse(await fs.readFile(path.join(baseDir, INDEX_FILE), 'utf8'));
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-      return parsed;
+      raw = await fs.readFile(indexPath, 'utf8');
     } catch {
-      return {}; // missing or corrupt: start clean; next write heals
+      return {}; // missing: first run, nothing to preserve
     }
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // fall through: the file is unreadable
+    }
+    // Returning {} is right for a read, but every mutation writes the index
+    // back — which would drop the whole timeline, leaving its snapshots on disk
+    // with nothing pointing at them. Keep a copy we can recover from.
+    try {
+      await renameWithRetry(indexPath, `${indexPath}.corrupt-${Date.now()}.json`);
+    } catch { /* best effort: never fail a save over the backup copy */ }
+    return {};
   }
 
   async function writeIndex(index) {
     await fs.mkdir(baseDir, { recursive: true });
-    const tmp = path.join(baseDir, `index.${process.pid}.tmp`);
+    const tmp = path.join(baseDir, `index.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
     await fs.writeFile(tmp, JSON.stringify(index, null, 2), 'utf8');
-    await fs.rename(tmp, path.join(baseDir, INDEX_FILE));
+    try {
+      await renameWithRetry(tmp, path.join(baseDir, INDEX_FILE));
+    } catch (error) {
+      await fs.rm(tmp, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   function mutate(fn) {
@@ -79,8 +110,11 @@ function createFileHistoryStore(userDataDir) {
       }
       const ts = Date.now();
       const fileName = `${ts}-${crypto.randomBytes(2).toString('hex')}.txt`;
+      const snapshotPath = path.join(baseDir, key, fileName);
       await fs.mkdir(path.join(baseDir, key), { recursive: true });
-      await fs.writeFile(path.join(baseDir, key, fileName), previousContent, 'utf8');
+      // Written through a temp file: a snapshot torn by a crash would otherwise
+      // be offered as a version to restore — straight over the user's file.
+      await writeSnapshot(snapshotPath, previousContent);
       entry.entries.unshift({ ts, file: fileName, size: Buffer.byteLength(previousContent, 'utf8') });
       // Prune overflow snapshots (oldest tail).
       while (entry.entries.length > MAX_SNAPSHOT_PER_FILE()) {
@@ -112,7 +146,12 @@ function createFileHistoryStore(userDataDir) {
     const found = entry?.entries?.find((e) => e.file === snapshotId);
     if (!found) return null;
     try {
-      return await fs.readFile(path.join(baseDir, key, found.file), 'utf8');
+      const content = await fs.readFile(path.join(baseDir, key, found.file), 'utf8');
+      // The index already knows how big the snapshot was. A mismatch means the
+      // file on disk is not the one that was recorded, and returning it would
+      // hand the editor a truncated version to restore.
+      if (typeof found.size === 'number' && Buffer.byteLength(content, 'utf8') !== found.size) return null;
+      return content;
     } catch {
       return null;
     }

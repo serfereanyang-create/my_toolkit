@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Copy, RefreshCw } from 'lucide-react';
 
 type Props = { children: ReactNode };
 type State = { error: Error | null };
@@ -19,6 +20,13 @@ export class ErrorBoundary extends Component<Props, State> {
     this.setState({ error: null });
   };
 
+  private reload = () => window.location.reload();
+
+  private copyError = () => {
+    const message = this.state.error?.stack || this.state.error?.message || '未知界面错误';
+    void navigator.clipboard?.writeText(message);
+  };
+
   render() {
     if (!this.state.error) return this.props.children;
     return (
@@ -26,7 +34,11 @@ export class ErrorBoundary extends Component<Props, State> {
         <section className="error-boundary-card" role="alert">
           <h1>界面遇到问题</h1>
           <p>{this.state.error.message || '发生了未知错误。'}</p>
-          <button type="button" onClick={this.recover}>重试</button>
+          <div className="error-boundary-actions">
+            <button type="button" onClick={this.recover}><RefreshCw size={14} />重试界面</button>
+            <button type="button" onClick={this.reload}><RefreshCw size={14} />重新载入</button>
+            <button type="button" onClick={this.copyError}><Copy size={14} />复制错误</button>
+          </div>
         </section>
       </main>
     );

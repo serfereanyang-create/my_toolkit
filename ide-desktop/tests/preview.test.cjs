@@ -89,6 +89,19 @@ describe('preview-policy: kindForPath', () => {
     ['file.htm',  'html'],
     ['file.ts',   'text'],
     ['file',      'text'],
+    // The OOXML formats the panes can parse.
+    ['file.xlsx', 'xlsx'],
+    ['file.XLSX', 'xlsx'],
+    ['file.pptx', 'pptx'],
+    // Their pre-OOXML and OpenDocument counterparts. These are binary, so
+    // leaving them to fall through to `text` would hand the code editor a file
+    // it refuses to open — with no explanation of what went wrong.
+    ['file.xls',  'doc_unsupported'],
+    ['file.ods',  'doc_unsupported'],
+    ['file.ppt',  'doc_unsupported'],
+    ['file.odp',  'doc_unsupported'],
+    ['file.rtf',  'doc_unsupported'],
+    ['file.odt',  'doc_unsupported'],
   ];
   for (const [name, expected] of cases) {
     it(`${name} → ${expected}`, () => assert.equal(kindForPath(name), expected));
@@ -113,18 +126,19 @@ describe('preview-policy: describeFile', () => {
   });
 
   it('rejects a path outside the workspace (non-existent file)', async () => {
-    // The file does not exist so realpath throws "Cannot resolve" — which is
-    // the expected security outcome (unreachable path ≡ access denied).
+    // The file does not exist so realpath throws — which is the expected
+    // security outcome (unreachable path ≡ access denied). The message names
+    // the outcome in the UI's language rather than echoing an absolute path.
     await assert.rejects(
       () => describeFile(os.tmpdir() + '/outside.png', root),
-      (err) => /Cannot resolve|outside workspace/i.test(err.message),
+      (err) => /无法在工作区内定位|outside workspace/i.test(err.message),
     );
   });
 
   it('rejects a directory', async () => {
     const subdir = path.join(root, 'subdir');
     await fs.mkdir(subdir);
-    await assert.rejects(() => describeFile(subdir, root), /Not a file/);
+    await assert.rejects(() => describeFile(subdir, root), /该路径不是文件/);
   });
 });
 

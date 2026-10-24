@@ -10,16 +10,18 @@ export function TaskCard({
   chat: ChatItem[];
   onToggle: () => void;
 }) {
-  // Find the currently running turn and extract its steps
+  // Prefer the running turn; fall back to the newest turn once it finished.
+  // Looking only for an unfinished turn emptied the card the moment a task
+  // completed: the title stayed in the top bar and (0/x) with it, so clicking
+  // it opened nothing.
   let currentTurn: ChatItem | undefined;
   for (let i = chat.length - 1; i >= 0; i--) {
     const item = chat[i];
-    if (item.kind === 'turn' && item.endedAt === undefined) {
-      currentTurn = item;
-      break;
-    }
+    if (item.kind !== 'turn') continue;
+    if (item.endedAt === undefined) { currentTurn = item; break; }
+    if (!currentTurn) currentTurn = item;
   }
-  
+
   const steps: ToolChatItem[] = currentTurn?.kind === 'turn' ? currentTurn.steps : [];
   const completedSteps = steps.filter((s) => s.status === 'done' && s.ok).length;
   

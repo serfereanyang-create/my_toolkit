@@ -1,0 +1,404 @@
+/*
+ * 电脑操控 — the desktop/window map.
+ *
+ * Two columns: the window list (what is running) and the selected window's
+ * controls (what it exposes). Both are scrolled independently, so a calculator
+ * with 49 controls never pushes the window list off screen, and a long window
+ * list never buries the control you are trying to press.
+ *
+ * Only existing tokens are used — this is one more view of the same app, not a
+ * place to introduce a second palette.
+ */
+.gui-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  /* A definite height, not just min-height: without it the grid below sizes to
+     content, so the screenshot block stretches the whole view and pushes the
+     two panes up. The view is a bounded region of the window and must scroll
+     inside itself. */
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-app);
+  color: var(--fg);
+  position: relative;
+  overflow: hidden;
+}
+
+.gui-panel-empty {
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px 24px;
+  color: var(--fg-muted);
+  font-size: var(--fs-base);
+  text-align: center;
+}
+.gui-panel-empty p { margin: 0; max-width: 46ch; line-height: 1.6; }
+
+/* ── header ────────────────────────────────────────────────────────────── */
+.gui-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.gui-head-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.gui-head-title h1 { margin: 0; font-size: var(--fs-6, 15px); font-weight: 600; letter-spacing: -0.01em; }
+.gui-head-title p { margin: 1px 0 0; color: var(--fg-dim); font-size: var(--fs-3); }
+.gui-head-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.gui-btn {
+  display: inline-flex;
+  align-items: center;
+  /* Buttons say one word, never wrap it to two lines ("输/入"). */
+  white-space: nowrap;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-3);
+  cursor: pointer;
+}
+.gui-btn:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border); }
+.gui-btn:disabled { opacity: .45; cursor: default; }
+.gui-btn-accent { border-color: var(--accent); color: var(--accent); }
+.gui-btn-accent:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* ── desktop-mode banner ───────────────────────────────────────────────── */
+.gui-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--warn, #b7791f) 10%, transparent);
+  color: var(--fg-muted);
+  font-size: var(--fs-3);
+  line-height: 1.5;
+}
+.gui-banner svg { flex: 0 0 auto; margin-top: 1px; }
+
+/* ── two columns ───────────────────────────────────────────────────────── */
+.gui-body {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  /* The scrolling region of the view. `auto` here (not 1fr) keeps a short
+     window list from being stretched to the full height. */
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.gui-windows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  border-right: 1px solid var(--border-subtle);
+}
+.gui-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 12px 16px 16px;
+}
+
+.gui-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px;
+  color: var(--fg-dim);
+  font-size: var(--fs-3);
+  font-weight: 600;
+}
+
+/* A window row: monogram, title, class/size. The monogram is what makes the
+   list scannable — several apps share a generic "AppWindow" icon. */
+.gui-window {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.gui-window:hover { background: var(--bg-hover); }
+.gui-window.active { background: var(--bg-selected, var(--bg-hover)); }
+.gui-window.cloaked { opacity: .6; }
+.gui-monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  font-size: var(--fs-2, 10px);
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.gui-window-copy { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.gui-window-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-3); }
+.gui-window-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); font-size: var(--fs-2, 11px); }
+
+/* ── selected window ───────────────────────────────────────────────────── */
+.gui-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.gui-detail-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.gui-detail-title > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-5, 14px); font-weight: 600; }
+.gui-detail-meta { flex: 0 0 auto; color: var(--fg-dim); font-size: var(--fs-3); }
+.gui-detail-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* Two different axes, so two different flex rules. `.gui-filter` sits in the
+   vertical detail column: `1 1 auto` would grow it down the page and squeeze
+   the control list into a strip, so it keeps its own height. The type field is
+   in a row and grows sideways, which is what "1 1 auto" should mean there. */
+.gui-filter, .gui-type-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-app);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-3);
+}
+.gui-filter { flex: 0 0 auto; }
+.gui-type-input { flex: 1 1 auto; min-width: 0; }
+.gui-filter:focus, .gui-type-input:focus { outline: none; border-color: var(--accent); }
+
+/* The control list is the one thing that can be arbitrarily long, so it is the
+   part that scrolls. Everything around it (header, filter, input row, keys)
+   keeps a fixed height, which is what stops a 200-control Notepad tree from
+   pushing the type field off the bottom of the view. */
+.gui-elements {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.gui-element {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-3);
+  text-align: left;
+  cursor: pointer;
+}
+.gui-element:hover:not(:disabled) { background: var(--bg-hover); }
+.gui-element:disabled { opacity: .5; cursor: default; }
+.gui-element-index {
+  flex: 0 0 auto;
+  min-width: 26px;
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2, 11px);
+  text-align: right;
+}
+.gui-element-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gui-element-name em { color: var(--fg-dim); font-style: normal; }
+/* The verb is the action, not decoration: 点击 / 切换 / 展开 / 文本. */
+.gui-element-action {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  font-size: var(--fs-2, 11px);
+}
+.gui-element-action.text { opacity: .55; }
+.gui-element:hover:not(:disabled) .gui-element-action { color: var(--fg); border-color: var(--border); }
+
+.gui-type-row, .gui-key-row {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--fg-dim);
+}
+.gui-key-row { flex-wrap: wrap; padding-top: 0; border-top: 0; }
+.gui-key {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: var(--fs-2, 11px);
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.gui-key:hover:not(:disabled) { color: var(--fg); border-color: var(--border); background: var(--bg-hover); }
+.gui-key:disabled { opacity: .45; cursor: default; }
+
+.gui-hint { margin: 0; padding: 6px 4px; color: var(--fg-dim); font-size: var(--fs-3); line-height: 1.6; }
+
+/* ── result bar + screenshot ───────────────────────────────────────────── */
+.gui-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--fg-muted);
+  font-size: var(--fs-3);
+  line-height: 1.5;
+}
+.gui-status svg { flex: 0 0 auto; margin-top: 2px; }
+.gui-status span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.gui-status.error { color: var(--danger); }
+
+/* Focus confirmation. Sits above the status line and reads as a question, not
+   a toast: the action has NOT happened yet. */
+.gui-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--fg);
+  font-size: var(--fs-3);
+}
+.gui-confirm svg { flex: 0 0 auto; color: var(--accent); }
+.gui-confirm span { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.gui-status-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: .7;
+}
+.gui-status-close:hover { opacity: 1; background: var(--bg-hover); }
+
+.gui-shot {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 16px 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+.gui-shot-image {
+  display: block;
+  max-width: 100%;
+  max-height: 46vh;
+  object-fit: contain;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  background: #fff;
+}
+/* The image is the control, not a picture of one: clicking a point here runs
+   computer_click against the capture id, so it has to look clickable. */
+.gui-shot-image.clickable { cursor: crosshair; }
+.gui-shot-image.clickable:hover { border-color: var(--accent); }
+/* The window changed after the capture, so the pixels no longer show what is
+   there. Dimmed, not hidden — the shape is still useful for orientation. */
+.gui-shot-image.stale { opacity: .55; }
+.gui-shot-image.stale:hover { border-color: var(--border-subtle); }
+/* A minimized window's capture: real pixels, but no place on screen to click.
+   It is not a control, so it keeps the image's own size instead of stretching
+   to the panel — a small window should look small. */
+.gui-shot-image.readonly { cursor: default; align-self: flex-start; }
+.gui-shot-meta {
+  margin-left: auto;
+  margin-right: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The image plus the drag band drawn over it. `inline-block` so the frame is
+   exactly the picture's box — a full-width div would stretch the band's
+   percentage origin past the image. */
+.gui-shot-frame { position: relative; display: inline-block; align-self: flex-start; max-width: 100%; }
+.gui-shot-frame .gui-shot-image { max-width: 100%; }
+
+/* Live feedback for a Shift-drag: where it started and where it will end. */
+.gui-shot-band {
+  position: absolute;
+  border: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* A thin progress line while an action runs — the panel is busy driving real
+   windows, and a disabled button alone does not say "working". */
+.gui-busy {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: gui-busy-slide 1.1s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes gui-busy-slide {
+  from { background-position: -40% 0; }
+  to { background-position: 140% 0; }
+}
+.gui-spin { animation: gui-spin 900ms linear infinite; }
+@keyframes gui-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .gui-busy, .gui-spin { animation: none; }
+}
+
+@media (max-width: 720px) {
+  .gui-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 32%) minmax(0, 1fr); }
+  .gui-windows { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
+}

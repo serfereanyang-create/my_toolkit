@@ -18,7 +18,9 @@ class BridgeRegistry {
 
   /** A bridge that has not announced its session id yet. */
   addPending(bridge) {
-    this.pending.add(bridge);
+    // An already adopted bridge must not also remain pending: bulk shutdown
+    // would otherwise dispose it twice and a second ready could rebind it.
+    if (this.sessionOf(bridge) === undefined) this.pending.add(bridge);
     return bridge;
   }
 
@@ -30,9 +32,14 @@ class BridgeRegistry {
    * replace a live one.
    */
   adopt(bridge, sessionId) {
+    if (sessionId === undefined || sessionId === null || String(sessionId).trim() === '') return false;
     if (!this.pending.has(bridge)) return false;
+    const id = String(sessionId);
+    const existing = this.byId.get(id);
+    // Never let a pending/late child silently evict a live owner of this id.
+    if (existing && existing !== bridge) return false;
     this.pending.delete(bridge);
-    this.byId.set(String(sessionId), bridge);
+    this.byId.set(id, bridge);
     return true;
   }
 
@@ -73,18 +80,15 @@ class BridgeRegistry {
 
   /** Forget a bridge because it went offline. Does not dispose it. */
   removeBridge(bridge) {
-    const id = this.sessionOf(bridge);
-    if (id !== undefined) {
-      this.byId.delete(id);
-      return id;
-    }
     this.pending.delete(bridge);
-    return undefined;
+    const id = this.sessionOf(bridge);
+    if (id !== undefined) this.byId.delete(id);
+    return id;
   }
 
   /** Every live bridge, for a bulk dispose. */
   all() {
-    return [...this.byId.values(), ...this.pending];
+    return [...new Set([...this.byId.values(), ...this.pending])];
   }
 
   clear() {

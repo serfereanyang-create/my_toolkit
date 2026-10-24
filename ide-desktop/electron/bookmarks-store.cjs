@@ -9,8 +9,8 @@
 // Concurrency: all mutations go through a serialized promise chain, so two
 // rapid toggles can't interleave read-modify-write and lose one.
 
-const fs = require('node:fs/promises');
 const path = require('node:path');
+const { createJsonStore } = require('./json-store.cjs');
 
 const MAX_BOOKMARKS_PER_FILE = 200;
 const MAX_FILES = 500;
@@ -31,72 +31,45 @@ function sanitizeRelPath(relPath) {
 }
 
 function createBookmarkStore(workspaceProvider) {
-  let chain = Promise.resolve();
-
   function storeFile() {
     const root = workspaceProvider();
     if (!root) throw new Error('No workspace open');
-    return { root, file: path.join(root, '.aicode', 'desktop', 'bookmarks.json') };
+    return path.join(root, '.aicode', 'desktop', 'bookmarks.json');
   }
 
-  async function readAll() {
-    let root;
-    let file;
-    try {
-      ({ root, file } = storeFile());
-    } catch {
-      return {};
-    }
-    try {
-      const parsed = JSON.parse(await fs.readFile(file, 'utf8'));
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-      // Defensively re-shape every entry: unknown files or malformed records
-      // are dropped rather than propagated to the renderer.
-      const out = {};
-      for (const [key, value] of Object.entries(parsed)) {
-        const rel = sanitizeRelPath(key);
-        if (!rel || !Array.isArray(value)) continue;
-        const items = [];
-        for (const entry of value) {
-          const line = normalizeLine(entry?.line);
-          if (line === null) continue;
-          items.push({
-            line,
-            anchor: String(entry?.anchor ?? '').slice(0, 240),
-            note: String(entry?.note ?? '').slice(0, 500),
-            createdAt: String(entry?.createdAt ?? ''),
-          });
-          if (items.length >= MAX_BOOKMARKS_PER_FILE) break;
-        }
-        if (items.length) out[rel] = items;
-        if (Object.keys(out).length >= MAX_FILES) break;
+  // Durable plumbing (atomic replace, rename retry, corrupt-file quarantine,
+  // serialized mutations) lives in json-store.cjs; this file only decides what
+  // a bookmark record looks like.
+  const store = createJsonStore({ file: storeFile, normalize: shapeAll });
+
+  function shapeAll(parsed) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    // Defensively re-shape every entry: unknown files or malformed records
+    // are dropped rather than propagated to the renderer.
+    const out = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const rel = sanitizeRelPath(key);
+      if (!rel || !Array.isArray(value)) continue;
+      const items = [];
+      for (const entry of value) {
+        const line = normalizeLine(entry?.line);
+        if (line === null) continue;
+        items.push({
+          line,
+          anchor: String(entry?.anchor ?? '').slice(0, 240),
+          note: String(entry?.note ?? '').slice(0, 500),
+          createdAt: String(entry?.createdAt ?? ''),
+        });
+        if (items.length >= MAX_BOOKMARKS_PER_FILE) break;
       }
-      return out;
-    } catch (error) {
-      if (error && error.code === 'ENOENT') return {};
-      return {}; // corrupt file: treat as empty; next write heals it
+      if (items.length) out[rel] = items;
+      if (Object.keys(out).length >= MAX_FILES) break;
     }
+    return out;
   }
 
-  async function writeAll(data) {
-    const { root, file } = storeFile();
-    const tmp = `${file}.${process.pid}.tmp`;
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
-    await fs.rename(tmp, file);
-    void root;
-  }
-
-  function mutate(fn) {
-    const task = chain.then(async () => {
-      const data = await readAll();
-      const result = await fn(data);
-      await writeAll(data);
-      return result;
-    });
-    chain = task.catch(() => undefined);
-    return task;
-  }
+  const readAll = () => store.read();
+  const mutate = (fn) => store.mutate(fn);
 
   /** Snapshot for a single file, sorted by line. */
   async function listFor(relPath) {

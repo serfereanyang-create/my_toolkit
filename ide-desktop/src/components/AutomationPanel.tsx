@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import type { AutomationRun, AutomationTask, AutomationTrigger } from '../types';
+import { ConfirmDialog } from './ConfirmDialog';
 
 type Draft = {
   id?: string;
@@ -63,6 +64,11 @@ export function AutomationPanel() {
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string>();
   const [error, setError] = useState('');
+  // Which required fields the last save attempt found empty. Cleared by a
+  // successful save or by leaving the form, so an old attempt never keeps a
+  // field marked after the user fixed it.
+  const [invalidFields, setInvalidFields] = useState({ name: false, goal: false });
+  const [deleteTask, setDeleteTask] = useState<AutomationTask | null>(null);
 
   const selected = useMemo(() => tasks.find((task) => task.id === selectedId), [tasks, selectedId]);
 
@@ -109,9 +115,21 @@ export function AutomationPanel() {
 
   async function saveDraft() {
     if (!draft.name.trim() || !draft.goal.trim()) {
+      const missing = { name: !draft.name.trim(), goal: !draft.goal.trim() };
       setError('名称和任务目标不能为空。');
+      setInvalidFields(missing);
+      // Focus the first offending field: the banner is above the task list,
+      // far from the form, so without this the user has to hunt for what
+      // failed.
+      const selector = missing.name ? '.automation-form input[aria-invalid="true"]'
+        : '.automation-form textarea[aria-invalid="true"]';
+      window.setTimeout(() => {
+        const field = document.querySelector<HTMLElement>(selector);
+        field?.focus();
+      }, 0);
       return;
     }
+    setInvalidFields({ name: false, goal: false });
     setBusyAction('save');
     try {
       const input = {
@@ -134,15 +152,30 @@ export function AutomationPanel() {
   }
 
   async function runAction(action: 'start' | 'stop' | 'run' | 'delete', task: AutomationTask) {
-    if (action === 'delete' && !window.confirm(`删除自动化“${task.name}”？`)) return;
+    if (action === 'delete') { setDeleteTask(task); return; }
     setBusyAction(`${action}:${task.id}`);
     setError('');
     try {
       if (action === 'start') await desktop.automation.start(task.id);
       else if (action === 'stop') await desktop.automation.stop(task.id);
       else if (action === 'run') await desktop.automation.run(task.id);
-      else await desktop.automation.delete(task.id);
-      if (action === 'delete') setSelectedId(undefined);
+      await refresh();
+    } catch (caught) {
+      setError(errorText(caught));
+    } finally {
+      setBusyAction(undefined);
+    }
+  }
+
+  async function confirmDelete() {
+    const task = deleteTask;
+    setDeleteTask(null);
+    if (!task) return;
+    setBusyAction(`delete:${task.id}`);
+    setError('');
+    try {
+      await desktop.automation.delete(task.id);
+      setSelectedId(undefined);
       await refresh();
     } catch (caught) {
       setError(errorText(caught));
@@ -155,7 +188,8 @@ export function AutomationPanel() {
     <section className="automation-view">
       <header className="automation-header">
         <div>
-          <div className="automation-eyebrow"><Workflow size={15} /> 自动化</div>
+          {/* No eyebrow: the topbar already names the view 自动化, and an
+              eyebrow restating it one line above 任务调度 is pure repetition. */}
           <h1>任务调度</h1>
           <p>按时间、文件变化或 Git 事件自动执行多专家任务板。</p>
         </div>
@@ -200,7 +234,11 @@ export function AutomationPanel() {
 
         <main className="automation-detail-pane">
           {editing ? (
-            <AutomationForm draft={draft} setDraft={setDraft} saving={busyAction === 'save'} onCancel={() => setEditing(false)} onSave={() => void saveDraft()} />
+            <AutomationForm draft={draft} setDraft={setDraft} saving={busyAction === 'save'}
+              invalid={invalidFields}
+              onFix={(field) => setInvalidFields((current) => ({ ...current, [field]: false }))}
+              onCancel={() => { setEditing(false); setInvalidFields({ name: false, goal: false }); }}
+              onSave={() => void saveDraft()} />
           ) : selected ? (
             <AutomationDetail
               task={selected}
@@ -219,16 +257,31 @@ export function AutomationPanel() {
           )}
         </main>
       </div>
+      <ConfirmDialog
+        open={deleteTask !== null}
+        title="删除自动化任务？"
+        message={`“${deleteTask?.name ?? ''}”将从任务列表中删除，已有运行记录会保留。`}
+        confirmLabel="删除任务"
+        danger
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteTask(null)}
+      />
     </section>
   );
 }
 
-function AutomationForm({ draft, setDraft, saving, onCancel, onSave }: {
+function AutomationForm({ draft, setDraft, saving, onCancel, onSave, invalid, onFix }: {
   draft: Draft;
   setDraft: (next: Draft) => void;
   saving: boolean;
   onCancel: () => void;
   onSave: () => void;
+  /** Fields the last save attempt found empty. Both are required, and the
+   *  form has no per-field messages — marking the input puts the failure
+   *  where the fix goes instead of only in the banner above the list. */
+  invalid: { name: boolean; goal: boolean };
+  /** Clear one field's mark once it holds a value. */
+  onFix: (field: 'name' | 'goal') => void;
 }) {
   const triggerTypes = Object.entries(TRIGGER_META) as Array<[AutomationTrigger['type'], (typeof TRIGGER_META)[AutomationTrigger['type']]]>;
   return (
@@ -237,7 +290,13 @@ function AutomationForm({ draft, setDraft, saving, onCancel, onSave }: {
         <div><span>{draft.id ? '编辑任务' : '新建任务'}</span><h2>{draft.id ? draft.name : '配置自动化'}</h2></div>
       </div>
 
-      <label>名称<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：工作日测试" /></label>
+      <label>名称<input className={invalid.name ? 'invalid' : undefined} aria-invalid={invalid.name || undefined}
+        aria-required="true" value={draft.name} onChange={(event) => {
+          setDraft({ ...draft, name: event.target.value });
+          // Typing is the fix, so stop calling the field invalid immediately
+          // rather than waiting for the next save attempt to re-judge it.
+          if (invalid.name && event.target.value.trim()) onFix('name');
+        }} placeholder="例如：工作日测试" /></label>
       <label>说明<input value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} placeholder="可选" /></label>
 
       <fieldset>
@@ -268,7 +327,12 @@ function AutomationForm({ draft, setDraft, saving, onCancel, onSave }: {
         </>
       )}
 
-      <label>任务板目标<textarea className="automation-goal-input" value={draft.goal} onChange={(event) => setDraft({ ...draft, goal: event.target.value })} placeholder="描述触发后需要自主完成的目标" /></label>
+      <label>任务板目标<textarea className={`automation-goal-input${invalid.goal ? ' invalid' : ''}`}
+        aria-invalid={invalid.goal || undefined} aria-required="true"
+        value={draft.goal} onChange={(event) => {
+          setDraft({ ...draft, goal: event.target.value });
+          if (invalid.goal && event.target.value.trim()) onFix('goal');
+        }} placeholder="描述触发后需要自主完成的目标" /></label>
       <div className="automation-form-actions">
         <button className="automation-secondary" onClick={onCancel}>取消</button>
         <button className="automation-primary" disabled={saving} onClick={onSave}><Save size={16} /> {saving ? '保存中…' : '保存'}</button>
@@ -310,7 +374,10 @@ function AutomationDetail({ task, active, history, busyAction, onEdit, onAction 
       <dl className="automation-properties">
         <div><dt>触发条件</dt><dd>{triggerSummary(task.trigger)}</dd></div>
         <div><dt>任务目标</dt><dd>{task.action.goal}</dd></div>
-        <div><dt>最近运行</dt><dd>{task.lastRunAt ? formatDate(task.lastRunAt) : '尚未运行'}</dd></div>
+        {/* "上次运行" is the timestamp of one run; the section below is the run
+            history. Both used to read 最近运行, so the summary row looked like a
+            header for a list that was already printed under it. */}
+        <div><dt>上次运行</dt><dd>{task.lastRunAt ? formatDate(task.lastRunAt) : '尚未运行'}</dd></div>
         <div><dt>执行状态</dt><dd>{statusLabel(task.lastRunStatus)}{task.lastRunError ? ` · ${task.lastRunError}` : ''}</dd></div>
         <div><dt>连续失败</dt><dd>{task.consecutiveFailures || 0} / 3</dd></div>
       </dl>

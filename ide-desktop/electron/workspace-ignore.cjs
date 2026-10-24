@@ -15,6 +15,22 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const ignoreFactory = require('ignore');
+const { renameWithRetry } = require('./atomic-file.cjs');
+/**
+ * Publish the ignore file whole. Writing it in place truncates first: a crash
+ * leaves a half-written .zcodeignore, which the next run then reads as the
+ * user's own rules — the search silently stops honouring most of them.
+ */
+async function writeIgnoreFile(target, content) {
+  const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  await fs.writeFile(tmp, content, 'utf-8');
+  try {
+    await renameWithRetry(tmp, target);
+  } catch (error) {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
 
 const IGNORE_FILE_NAME = '.zcodeignore';
 const GITIGNORE_FILE_NAME = '.gitignore';
@@ -70,7 +86,7 @@ async function ensureIgnoreRules(rootPath) {
   if (await pathExists(gitignorePath)) {
     try {
       const content = await fs.readFile(gitignorePath, 'utf-8');
-      await fs.writeFile(ignorePath, content, 'utf-8');
+      await writeIgnoreFile(ignorePath, content);
       return { matcher: ignoreFactory().add(content), source: 'created-from-gitignore' };
     } catch {
       // fall through to builtin
@@ -79,7 +95,7 @@ async function ensureIgnoreRules(rootPath) {
 
   const content = builtinTemplateContent();
   try {
-    await fs.writeFile(ignorePath, content, 'utf-8');
+    await writeIgnoreFile(ignorePath, content);
     return { matcher: ignoreFactory().add(content), source: 'created-from-template' };
   } catch {
     return { matcher: ignoreFactory().add(BUILTIN_IGNORE_LINES.join('\n')), source: 'fallback-builtin' };

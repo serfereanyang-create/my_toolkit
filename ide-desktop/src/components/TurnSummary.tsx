@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
   Brain, ChevronRight, Clock, FileEdit, FileText, FolderTree, ListTree,
-  Search, Settings2, SquareTerminal, Undo2, Wrench, Check,
+  Search, Settings2, Square, SquareTerminal, Undo2, Wrench, Check, LoaderCircle, CircleAlert,
 } from 'lucide-react';
 import type { ChatItem, ToolChatItem } from '../types';
 import { ToolCard } from './ToolCard';
+import { formatWorkDuration, turnStatusLabel } from '../lib/workProgress';
+import { baseName, summarizePath } from '../lib/paths';
 
 // ZCode renders one quiet outline icon per tool lane (terminal / read /
 // think ...). Map our tool ids onto the same vocabulary; unknown tools get a
@@ -22,38 +24,10 @@ function toolLane(tool: string): { icon: typeof SquareTerminal; label: string } 
   return { icon: Wrench, label: '工具' };
 }
 
-/** status_indicator_widget.rs fmt_elapsed_compact: 42s / 3m 05s / 1h 02m 03s. */
-function fmtElapsedCompact(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
-  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
-  return `${seconds}s`;
-}
-
-/** separators.rs "done %-I:%M %p". */
-function formatDoneClock(ts: number): string {
-  const date = new Date(ts);
-  let hours = date.getHours();
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const suffix = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  if (hours === 0) hours = 12;
-  return `${hours}:${minutes} ${suffix}`;
-}
-
 function formatDuration(ms?: number): string {
   if (!ms) return '';
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function baseName(path: string): string {
-  const normalized = path.replace(/\\/g, '/').replace(/\/$/, '');
-  const idx = normalized.lastIndexOf('/');
-  return idx >= 0 ? normalized.slice(idx + 1) : normalized;
 }
 
 function dirName(path: string): string {
@@ -95,7 +69,7 @@ function stepSummary(step: ToolChatItem): string {
   }
   if (cat === 'read') {
     const path = input.path ?? input.directory ?? input.relativePath ?? '';
-    if (path) return baseName(String(path));
+    if (path) return summarizePath(String(path));
     return step.tool;
   }
   if (cat === 'write') {
@@ -140,6 +114,11 @@ function formatTokensCompact(tokens: number): string {
   return String(tokens);
 }
 
+// How much of the live reasoning to keep on screen. A tail — not the whole
+// trace — so a long chain-of-thought cannot push the answer off screen while
+// it is still being written.
+const THINK_PREVIEW_CHARS = 320;
+
 // Single collapsible step row — codex exec_cell/render.rs language:
 // `[•] Running|Ran <title>` with a blinking bullet while active, green/red
 // bullets on completion, dim summary, no per-category icons.
@@ -156,22 +135,37 @@ function StepRow({ step, onApprove, expandAll }: {
   }, [expandAll]);
   const summary = stepSummary(step);
   const dur = formatDuration(step.durationMs);
-  const hasDetail = step.input !== undefined || step.output;
+  const hasDetail = step.input !== undefined || Boolean(step.output);
   const lane = toolLane(step.tool ?? '');
+  // Thinking is the one step whose value IS its text: collapsing it to a
+  // fixed 「思考中…」 hid the reasoning while the model produced it, so the
+  // whole turn looked like a frozen row followed by a finished answer. Show
+  // the live tail (it grows with every delta) and let the caret pulse at the
+  // end so the stream is visibly alive.
+  const liveThinking = step.tool === 'think' && step.status === 'running' ? (step.output ?? '') : '';
+  const thinkingTail = liveThinking.length > THINK_PREVIEW_CHARS
+    ? `…${liveThinking.slice(-THINK_PREVIEW_CHARS)}`
+    : liveThinking;
 
   return (
-    <div className={`step-row ${step.status}`}>
+    <div className={`step-row ${step.cancelled ? 'cancelled' : step.status} ${liveThinking ? 'streaming' : ''}`}>
       <button
+        type="button"
         className="step-row-head"
         onClick={() => hasDetail && setExpanded((v) => !v)}
         style={{ cursor: hasDetail ? 'pointer' : 'default' }}
         aria-expanded={expanded}
+        aria-label={`${lane.label}：${summary}`}
+        disabled={!hasDetail}
       >
         {/* ZCode lane row: icon + Chinese lane label + muted detail. */}
         <lane.icon size={14} className={`step-icon ${step.status === 'running' ? 'blink' : step.status === 'failed' ? 'failed' : 'ok'}`} />
         <span className="step-label">{lane.label}</span>
         {summary && <span className="step-summary">{summary}</span>}
-        {dur && step.status !== 'running' && <span className="step-dur">· {dur}</span>}
+        <span className={`step-state ${step.cancelled ? 'cancelled' : step.status}`} aria-label={step.cancelled ? '已停止' : step.status === 'running' ? '运行中' : step.status === 'failed' ? '失败' : '已完成'}>
+          {step.cancelled ? <Square size={12} /> : step.status === 'running' ? <LoaderCircle size={12} className="turn-spin" /> : step.status === 'failed' ? <CircleAlert size={12} /> : <Check size={12} />}
+        </span>
+        {dur && step.status !== 'running' && <span className="step-dur">{dur}</span>}
         {(step.added || step.removed) && step.status !== 'running' && (
           <span className="step-changes">
             {step.added ? <span className="turn-add">+{step.added}</span> : null}
@@ -182,6 +176,14 @@ function StepRow({ step, onApprove, expandAll }: {
           <ChevronRight size={12} className={`step-caret ${expanded ? 'open' : ''}`} />
         )}
       </button>
+      {liveThinking && (
+        <div className="think-live" aria-live="polite">
+          <span className="think-live-body">
+            <span className="think-live-text">{thinkingTail}</span>
+            <span className="think-live-caret" aria-hidden="true" />
+          </span>
+        </div>
+      )}
       {expanded && (
         <div className="step-detail">
           <ToolCard item={step} onApprove={onApprove} />
@@ -202,7 +204,9 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile, expandAl
   const running = item.endedAt === undefined;
   const [collapsed, setCollapsed] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
-  const elapsed = fmtElapsedCompact((item.endedAt ?? now) - item.startedAt);
+  const elapsed = formatWorkDuration((item.endedAt ?? now) - item.startedAt);
+  const statusLabel = turnStatusLabel(item.steps, running, item.cancelled);
+  const failed = !running && !item.cancelled && item.steps.some((step) => step.status === 'failed');
   const files = item.files ?? [];
   const hasFiles = files.length > 0;
   const hasSteps = item.steps.length > 0;
@@ -210,7 +214,21 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile, expandAl
   const undoState = item.undo ?? 'idle';
 
   return (
-    <section className={`turn-summary ${running ? 'running' : 'done'}`}>
+    <section className={`turn-summary ${item.cancelled ? 'cancelled' : running ? 'running' : failed ? 'failed' : 'done'}`} aria-label="执行记录">
+      <button type="button" className="turn-head" onClick={() => setCollapsed((value) => !value)} disabled={!hasSteps}
+        aria-expanded={hasSteps ? !collapsed : undefined} aria-label={hasSteps ? (collapsed ? '展开步骤' : '折叠步骤') : statusLabel}>
+        {item.cancelled ? <Square size={14} /> : running ? <LoaderCircle size={14} className="turn-spin" /> : failed ? <CircleAlert size={14} /> : <Check size={14} />}
+        <span className="turn-state-label">{statusLabel}</span>
+        {/* A restored turn has no recorded duration — its timestamps are only
+            when messages were written, which rounds to "0 秒". Showing nothing
+            is honest; the step list still says what ran. */}
+        {!(item.elapsedUnknown && !running) && (
+          <span className="turn-elapsed" title={item.endedAt ? `结束时间 ${new Date(item.endedAt).toLocaleTimeString('zh-CN')}` : undefined}>
+            <Clock size={12} />{elapsed}
+          </span>
+        )}
+        {hasSteps && <ChevronRight className={`turn-caret ${!collapsed ? 'open' : ''}`} size={14} />}
+      </button>
       {/* Step list — default expanded, collapsible. A running turn with no
           steps yet still shows a "thinking" placeholder so the row is never
           an empty dead zone; a finished zero-step turn (transient, endTurn
@@ -231,38 +249,12 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile, expandAl
         </div>
       )}
 
-      {/* Footer bar: elapsed · steps · changes · collapse toggle */}
-      <button
-        className="turn-head"
-        onClick={() => hasSteps && setCollapsed((v) => !v)}
-        aria-expanded={hasSteps ? !collapsed : undefined}
-        aria-label={hasSteps ? (collapsed ? '展开步骤' : '折叠步骤') : undefined}
-        style={hasSteps ? undefined : { cursor: 'default' }}
-      >
-        {hasSteps && <ChevronRight className={`turn-caret ${!collapsed ? 'open' : ''}`} size={15} />}
-        {/* separators.rs turn-end row: `Worked for 1m 30s · done 10:45 PM` */}
-        <span className="turn-elapsed">
-          {running
-            ? <span className="codex-bullet blink">•</span>
-            : <Clock size={14} />}
-          {running ? `Working for ${elapsed}` : `Worked for ${elapsed}`}
-          {!running && item.endedAt ? ` · done ${formatDoneClock(item.endedAt)}` : ''}
-        </span>
-        {hasSteps && <span className="turn-count">{item.steps.length} 步</span>}
-        {(item.added > 0 || item.removed > 0) && (
-          <>
-            <span className="turn-count">·</span>
-            <span className="turn-add">+{item.added}</span>
-            <span className="turn-del">-{item.removed}</span>
-          </>
-        )}
         {item.ctxTokens ? (
           <span className="turn-ctx" title="本轮真实上下文占用（来自 CLI context_stats 事件）">
-            · {formatTokensCompact(item.ctxTokens)} used
-            {item.cacheRate !== null && item.cacheRate !== undefined ? ` · cache ${item.cacheRate}%` : ''}
+            上下文 {formatTokensCompact(item.ctxTokens)} tokens
+            {item.cacheRate !== null && item.cacheRate !== undefined ? ` · 缓存 ${item.cacheRate}%` : ''}
           </span>
         ) : null}
-      </button>
 
       {/* Changed-files bar */}
       {hasFiles && !running && (
@@ -271,6 +263,10 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile, expandAl
             <ChevronRight className={`turn-caret ${filesOpen ? 'open' : ''}`} size={14} />
             <FileEdit size={14} />
             <span className="turn-changes-label">{files.length} 个文件已更改</span>
+            <span className="turn-changes-totals">
+              {item.added > 0 && <span className="turn-add">+{item.added}</span>}
+              {item.removed > 0 && <span className="turn-del">−{item.removed}</span>}
+            </span>
           </button>
           {undoState === 'undone' ? (
             <span className="turn-undo-done"><Check size={13} /> 已撤销</span>
@@ -282,18 +278,21 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile, expandAl
           {filesOpen && (
             <ul className="turn-file-list">
               {files.map((file) => (
-                <li
-                  key={file.path}
+                <li key={file.path}>
+                <button type="button" disabled={!onOpenFile}
                   className={`turn-file-row ${onOpenFile ? 'clickable' : ''}`}
                   title={onOpenFile ? `在编辑器中打开 ${file.path}` : file.path}
                   onClick={() => onOpenFile?.(file.path)}
                 >
-                  <span className="turn-file-name">{baseName(file.path)}</span>
-                  <span className="turn-file-path">{file.path}</span>
+                  <span className="turn-file-copy">
+                    <span className="turn-file-name">{baseName(file.path)}</span>
+                    <span className="turn-file-path">{dirName(file.path)}</span>
+                  </span>
                   <span className="turn-file-stat">
                     {file.added > 0 && <span className="turn-add">+{file.added}</span>}
                     {file.removed > 0 && <span className="turn-del">-{file.removed}</span>}
                   </span>
+                </button>
                 </li>
               ))}
             </ul>

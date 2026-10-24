@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Code2, Copy, Pencil, Plus, Search, Trash2, Upload, Download, X, Check } from 'lucide-react';
 import { desktop, type Snippet, type SnippetInput } from '../lib/ipc';
 import { expandTemplate, parseTemplate, type TemplateVariable } from '../lib/templateVars';
+import { appNotice } from './ToastLayer';
+import { ConfirmDialog } from './ConfirmDialog';
 
 /**
  * Iteration 4 — snippets library panel.
@@ -97,6 +99,7 @@ export function SnippetsPanel({ onInsert }: { onInsert: (text: string) => void }
   // Iteration 5: when a snippet body carries {{variables}}, intercept insert/
   // copy with a fill-in dialog instead of dumping raw placeholders on the user.
   const [tplSnippet, setTplSnippet] = useState<Snippet | null>(null);
+  const [deleteSnippet, setDeleteSnippet] = useState<Snippet | null>(null);
 
   const refresh = useCallback(async (query: string) => {
     try {
@@ -137,7 +140,13 @@ export function SnippetsPanel({ onInsert }: { onInsert: (text: string) => void }
   }
 
   async function remove(snippet: Snippet) {
-    if (!window.confirm(`删除片段「${snippet.title}」？此操作不可撤销。`)) return;
+    setDeleteSnippet(snippet);
+  }
+
+  async function confirmRemove() {
+    const snippet = deleteSnippet;
+    setDeleteSnippet(null);
+    if (!snippet) return;
     try {
       await desktop.snippets.remove(snippet.id);
       if (selectedId === snippet.id) setSelectedId(null);
@@ -181,7 +190,7 @@ export function SnippetsPanel({ onInsert }: { onInsert: (text: string) => void }
       const json = await desktop.snippets.export();
       await desktop.clipboard.write(json);
       setError(null);
-      window.alert('全部片段已复制到剪贴板（JSON）。');
+      appNotice('片段已复制', '全部片段已复制到剪贴板（JSON）。', 'success');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -319,6 +328,15 @@ export function SnippetsPanel({ onInsert }: { onInsert: (text: string) => void }
           onCancel={() => setTplSnippet(null)}
         />
       )}
+      <ConfirmDialog
+        open={deleteSnippet !== null}
+        title="删除片段？"
+        message={`“${deleteSnippet?.title ?? ''}”将被永久删除，此操作不可撤销。`}
+        confirmLabel="删除片段"
+        danger
+        onConfirm={() => void confirmRemove()}
+        onCancel={() => setDeleteSnippet(null)}
+      />
     </div>
   );
 }

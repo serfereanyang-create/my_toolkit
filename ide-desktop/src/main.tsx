@@ -5,6 +5,11 @@ import * as monaco from 'monaco-editor';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles.css';
+import './conversation-shell.css';
+import './settings-shell.css';
+import './workspace-shell.css';
+import './background-browser.css';
+import './gui-control.css';
 
 /*
  * Monaco must be served from the bundled package, not the default CDN.
@@ -12,10 +17,6 @@ import './styles.css';
  * to jsdelivr; when that host is unreachable the editor sits on "Loading…"
  * forever with no error. Wiring the loader to the local ESM build keeps the
  * editor working fully offline, which is the normal case for this desktop app.
- *
- * Workers are created from same-origin blob URLs rather than `?worker` imports:
- * monaco-editor's package `exports` map rewrites every `./*` subpath to
- * `esm/vs/*.js`, so the deep `?worker` specifiers cannot be resolved by Rollup.
  */
 declare global {
   interface Window {
@@ -25,25 +26,32 @@ declare global {
   }
 }
 
-const workerUrls = import.meta.glob('/node_modules/monaco-editor/esm/vs/**/*.worker.js', {
-  query: '?url',
+type MonacoWorkerFactory = new (options?: WorkerOptions) => Worker;
+const workerFactories = import.meta.glob([
+  '/node_modules/monaco-editor/esm/vs/editor/editor.worker.js',
+  '/node_modules/monaco-editor/esm/vs/language/json/json.worker.js',
+  '/node_modules/monaco-editor/esm/vs/language/css/css.worker.js',
+  '/node_modules/monaco-editor/esm/vs/language/html/html.worker.js',
+  '/node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js',
+], {
+  query: '?worker',
   import: 'default',
   eager: true,
-}) as Record<string, string>;
+}) as Record<string, MonacoWorkerFactory>;
 
-function workerUrlFor(label: string): string | undefined {
-  if (label === 'json') return workerUrls['/node_modules/monaco-editor/esm/vs/language/json/json.worker.js'];
-  if (label === 'css' || label === 'scss' || label === 'less') return workerUrls['/node_modules/monaco-editor/esm/vs/language/css/css.worker.js'];
-  if (label === 'html' || label === 'handlebars' || label === 'razor') return workerUrls['/node_modules/monaco-editor/esm/vs/language/html/html.worker.js'];
-  if (label === 'typescript' || label === 'javascript') return workerUrls['/node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js'];
-  return workerUrls['/node_modules/monaco-editor/esm/vs/editor/editor.worker.js'];
+function workerFactoryFor(label: string): MonacoWorkerFactory | undefined {
+  if (label === 'json') return workerFactories['/node_modules/monaco-editor/esm/vs/language/json/json.worker.js'];
+  if (label === 'css' || label === 'scss' || label === 'less') return workerFactories['/node_modules/monaco-editor/esm/vs/language/css/css.worker.js'];
+  if (label === 'html' || label === 'handlebars' || label === 'razor') return workerFactories['/node_modules/monaco-editor/esm/vs/language/html/html.worker.js'];
+  if (label === 'typescript' || label === 'javascript') return workerFactories['/node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js'];
+  return workerFactories['/node_modules/monaco-editor/esm/vs/editor/editor.worker.js'];
 }
 
 window.MonacoEnvironment = {
   getWorker(_workerId: string, label: string) {
-    const url = workerUrlFor(label);
-    if (!url) return new Worker('');
-    return new Worker(url, { type: 'module' });
+    const WorkerFactory = workerFactoryFor(label);
+    if (!WorkerFactory) throw new Error(`没有找到 ${label} 的编辑器 worker`);
+    return new WorkerFactory({ name: label });
   },
 };
 

@@ -1,0 +1,135 @@
+/*
+ * Background web workbench (settings → 电脑操控).
+ *
+ * One definition per selector: this file used to overlap a near-identical
+ * block in workspace-shell.css, and which rule won depended on import order.
+ * The layout here is the one the panel is built for — a stacked card, because
+ * the address field, the download field and the DOM fields do different jobs
+ * and do not belong in one grid row.
+ */
+.background-browser-panel { min-width: 0; }
+.background-app-preview { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.background-app-preview-button { display: block; width: 100%; padding: 0; border: 0; border-radius: var(--r-lg); background: transparent; cursor: crosshair; }
+.background-app-preview-button:disabled { cursor: default; }
+.background-app-preview figcaption { color: var(--fg-muted); font-size: var(--fs-2); line-height: 1.6; }
+.background-browser-note {
+  max-width: 72ch;
+  margin: 0 0 12px;
+  color: var(--fg-muted);
+  font-size: var(--fs-3);
+  line-height: 1.65;
+}
+.background-browser-panel .settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.background-browser-input-row {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.background-browser-input-row label {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 240px;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--fg-muted);
+  font-size: var(--fs-3);
+}
+.background-browser-input-row .settings-text-field { width: 100%; box-sizing: border-box; }
+
+/* The saved file is the outcome of the whole panel, so it gets its own row
+   rather than being buried in the log below. */
+.background-browser-saved {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  background: var(--bg-app);
+}
+.background-browser-saved code {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-3);
+}
+.background-browser-reveal-error { flex-basis: 100%; color: var(--danger); font-size: var(--fs-3); }
+
+.background-browser-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+.background-browser-actions button:disabled { opacity: .5; cursor: default; }
+.background-browser-output {
+  max-height: 200px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  background: var(--bg-app);
+  color: var(--fg-muted);
+  font: var(--fs-3)/1.55 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.background-browser-shot {
+  display: block;
+  width: 100%;
+  max-height: 480px;
+  object-fit: contain;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  background: white;
+}
+.background-browser-panel :focus-visible, .guard-options :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* Links the inspected page offers. Reading a page and then having to retype a
+   URL is the step this removes. */
+.background-browser-links { display: flex; flex-direction: column; gap: 6px; }
+.background-browser-links-label { color: var(--fg-dim); font-size: var(--fs-3); }
+.background-browser-links ul { display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 0; list-style: none; max-height: 220px; overflow: auto; }
+.background-browser-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-3);
+  text-align: left;
+  cursor: pointer;
+}
+.background-browser-link:hover:not(:disabled) { background: var(--bg-hover); }
+.background-browser-link:disabled { opacity: .5; cursor: default; }
+.background-browser-link-icon { display: inline-flex; flex: 0 0 auto; color: var(--fg-dim); }
+.background-browser-link-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The verb says what the click does, which is the whole point of the row. */
+.background-browser-link-action {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  font-size: var(--fs-2, 11px);
+}
+.background-browser-link:hover:not(:disabled) .background-browser-link-action { color: var(--fg); border-color: var(--border); }
+
+@media (max-width: 760px) {
+  .background-browser-input-row label { flex-basis: 100%; }
+}

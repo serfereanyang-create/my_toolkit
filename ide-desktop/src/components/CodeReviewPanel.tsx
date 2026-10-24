@@ -109,11 +109,11 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
   
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case 'critical': return '#CC0000';
-      case 'error': return '#FF6B00';
-      case 'warning': return '#FF9800';
-      case 'info': return '#2196F3';
-      default: return '#5C635D';
+      case 'critical': return 'var(--danger)';
+      case 'error': return 'var(--danger)';
+      case 'warning': return 'var(--warn)';
+      case 'info': return 'var(--blue)';
+      default: return 'var(--fg-muted)';
     }
   };
   
@@ -193,7 +193,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
               {/* 评分 */}
               <div className="score-section">
                 <div className="score-circle" style={{
-                  background: `conic-gradient(#C4612F ${result.score * 3.6}deg, #E7E1D7 0deg)`
+                  background: `conic-gradient(var(--blue) ${result.score * 3.6}deg, var(--border) 0deg)`
                 }}>
                   <div className="score-inner">
                     <span className="score-value">{result.score}</span>
@@ -340,7 +340,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         }
         
         .code-review-panel {
-          background: #FBF9F5;
+          background: var(--bg-app);
           border-radius: 8px;
           width: 90%;
           max-width: 1000px;
@@ -356,14 +356,14 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           justify-content: space-between;
           align-items: center;
           padding: 20px 24px;
-          border-bottom: 1px solid #E7E1D7;
+          border-bottom: 1px solid var(--border);
         }
         
         .code-review-panel-header h2 {
           margin: 0;
-          font-family: 'DM Serif Display', serif;
+          font-family: var(--font-ui);
           font-size: 24px;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .code-review-panel-content {
@@ -373,10 +373,10 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         }
         
         .review-options {
-          background: white;
+          background: var(--bg-elevated);
           padding: 20px;
           border-radius: 8px;
-          border: 1px solid #E7E1D7;
+          border: 1px solid var(--border);
           margin-bottom: 24px;
         }
         
@@ -393,7 +393,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           margin-bottom: 8px;
           font-size: 14px;
           font-weight: 500;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .category-checkboxes {
@@ -406,7 +406,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           display: flex;
           align-items: center;
           font-size: 14px;
-          color: #1F2421;
+          color: var(--fg);
           cursor: pointer;
         }
         
@@ -419,8 +419,8 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           padding: 12px 24px;
           border: none;
           border-radius: 999px;
-          background: #C4612F;
-          color: white;
+          background: var(--blue);
+          color: var(--accent-fg);
           font-size: 14px;
           font-weight: 500;
           cursor: pointer;
@@ -429,7 +429,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         }
         
         .review-btn:hover:not(:disabled) {
-          background: #A94E22;
+          background: var(--blue);
           transform: translateY(-1px);
         }
         
@@ -439,18 +439,18 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         }
         
         .error-message {
-          background: #FFE5E5;
-          border: 1px solid #FF4444;
+          background: var(--danger-soft);
+          border: 1px solid var(--danger);
           border-radius: 6px;
           padding: 12px;
           margin-bottom: 16px;
-          color: #CC0000;
+          color: var(--danger);
           font-size: 14px;
         }
         
         .review-result {
-          background: white;
-          border: 1px solid #E7E1D7;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
           border-radius: 8px;
           padding: 24px;
         }
@@ -460,7 +460,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           align-items: center;
           gap: 24px;
           padding-bottom: 24px;
-          border-bottom: 1px solid #E7E1D7;
+          border-bottom: 1px solid var(--border);
           margin-bottom: 24px;
         }
         
@@ -478,7 +478,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           width: 100px;
           height: 100px;
           border-radius: 50%;
-          background: white;
+          background: var(--bg-elevated);
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -488,13 +488,13 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         .score-value {
           font-size: 36px;
           font-weight: bold;
-          color: #C4612F;
-          font-family: 'DM Serif Display', serif;
+          color: var(--blue);
+          font-family: var(--font-ui);
         }
         
         .score-label {
           font-size: 14px;
-          color: #5C635D;
+          color: var(--fg-muted);
         }
         
         .score-summary {
@@ -503,13 +503,13 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         
         .score-summary h3 {
           margin: 0 0 8px 0;
-          font-family: 'DM Serif Display', serif;
-          color: #1F2421;
+          font-family: var(--font-ui);
+          color: var(--fg);
         }
         
         .score-summary p {
           margin: 0;
-          color: #5C635D;
+          color: var(--fg-muted);
           line-height: 1.6;
         }
         
@@ -525,8 +525,8 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         .comments-section h3,
         .static-analysis-section h3 {
           margin: 0 0 12px 0;
-          font-family: 'DM Serif Display', serif;
-          color: #1F2421;
+          font-family: var(--font-ui);
+          color: var(--fg);
         }
         
         .strengths-section ul,
@@ -538,7 +538,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         .strengths-section li,
         .improvements-section li {
           margin-bottom: 8px;
-          color: #1F2421;
+          color: var(--fg);
           line-height: 1.6;
         }
         
@@ -549,12 +549,12 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         .category-group h4 {
           margin: 0 0 12px 0;
           font-size: 16px;
-          color: #C4612F;
+          color: var(--blue);
           font-weight: 600;
         }
         
         .comment-item {
-          background: #F7F4EF;
+          background: var(--bg-hover);
           padding: 16px;
           border-radius: 6px;
           margin-bottom: 12px;
@@ -573,7 +573,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           gap: 4px;
           padding: 4px 12px;
           border-radius: 999px;
-          color: white;
+          color: var(--accent-fg);
           font-size: 12px;
           font-weight: 500;
           text-transform: uppercase;
@@ -581,21 +581,21 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         
         .comment-line {
           font-size: 12px;
-          color: #5C635D;
-          font-family: 'Monaco', 'Courier New', monospace;
+          color: var(--fg-muted);
+          font-family: var(--font-mono);
         }
         
         .comment-message {
-          color: #1F2421;
+          color: var(--fg);
           line-height: 1.6;
           margin-bottom: 8px;
         }
         
         .comment-suggestion {
-          background: white;
+          background: var(--bg-elevated);
           padding: 12px;
           border-radius: 4px;
-          border-left: 3px solid #C4612F;
+          border-left: 3px solid var(--blue);
           margin-bottom: 8px;
           font-size: 14px;
         }
@@ -605,8 +605,8 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         }
         
         .comment-example pre {
-          background: #1F2421;
-          color: #F7F4EF;
+          background: var(--fg);
+          color: var(--bg-hover);
           padding: 12px;
           border-radius: 4px;
           overflow-x: auto;
@@ -615,7 +615,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         }
         
         .analysis-group {
-          background: #F7F4EF;
+          background: var(--bg-hover);
           padding: 16px;
           border-radius: 6px;
           margin-bottom: 16px;
@@ -625,7 +625,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           margin: 0 0 12px 0;
           font-size: 14px;
           font-weight: 600;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .stat-row {
@@ -640,13 +640,13 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         }
         
         .stat-row span:first-child {
-          color: #5C635D;
+          color: var(--fg-muted);
         }
         
         .stat-row span:last-child {
-          color: #1F2421;
+          color: var(--fg);
           font-weight: 500;
-          font-family: 'Monaco', 'Courier New', monospace;
+          font-family: var(--font-mono);
         }
       `}</style>
     </div>

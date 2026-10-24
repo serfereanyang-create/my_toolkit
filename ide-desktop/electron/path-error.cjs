@@ -19,7 +19,9 @@
  * written for the user and pass through unchanged.
  */
 function describePathError(error) {
-  if (error?.code === 'ENOENT') return 'File not found';
+  // The UI is Chinese; "File not found" was the one English sentence that
+  // reached the user, usually as the whole body of a failed file open.
+  if (error?.code === 'ENOENT') return '文件不存在，可能已被移动或删除';
   const message = typeof error?.message === 'string' ? error.message : String(error);
   // Redact only ABSOLUTE paths. A relative path is the user's own input and is
   // what makes a rejection actionable — assertInsideRoot says "Path escapes

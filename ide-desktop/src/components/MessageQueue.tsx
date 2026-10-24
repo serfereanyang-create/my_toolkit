@@ -20,8 +20,10 @@ import { canPromote } from '../lib/messageQueueSelect';
  * a broken one — which is how this was reported. A disabled control with a
  * reason is honest; an enabled one that never responds is not.
  */
-export function MessageQueue({ items, onSendNow, onEdit, onRemove }: {
+export function MessageQueue({ items, paused, onResume, onSendNow, onEdit, onRemove }: {
   items: QueuedMessage[];
+  paused?: boolean;
+  onResume?: () => void;
   onSendNow: (id: string) => void;
   onEdit: (id: string, text: string) => void;
   onRemove: (id: string) => void;
@@ -32,6 +34,8 @@ export function MessageQueue({ items, onSendNow, onEdit, onRemove }: {
   if (items.length === 0) return null;
 
   return (
+    <div className="msg-queue-wrap">
+      {paused && <div className="msg-queue-paused" role="status"><span>队列已暂停，消息和附件仍保留。</span><button type="button" className="msg-queue-btn msg-queue-now" onClick={onResume}>继续队列</button></div>}
     <div className="msg-queue" role="list" aria-label="排队中的消息">
       {items.map((item, index) => {
         const isEditing = editing === item.id;
@@ -96,6 +100,7 @@ export function MessageQueue({ items, onSendNow, onEdit, onRemove }: {
           </div>
         );
       })}
+    </div>
     </div>
   );
 }

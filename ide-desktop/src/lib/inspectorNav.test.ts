@@ -12,6 +12,19 @@ import {
 } from './inspectorNav';
 
 describe('inspectorNav stack', () => {
+  it('opens a requested changes entry with a usable overview breadcrumb', () => {
+    const stack = initialStack({ kind: 'changes' });
+    expect(currentEntry(stack).level).toEqual({ kind: 'changes' });
+    expect(canGoBack(stack)).toBe(true);
+    expect(currentEntry(popLevel(stack)).level).toEqual({ kind: 'overview' });
+  });
+  it('keeps the commit and index side when initially opening a file', () => {
+    const level = { kind: 'file' as const, path: 'src/session.ts', staged: true, ref: 'abc1234' };
+    expect(currentEntry(initialStack(level)).level).toEqual(level);
+  });
+  it('never duplicates the overview when it is explicitly requested', () => {
+    expect(initialStack({ kind: 'overview' }).entries).toHaveLength(1);
+  });
   it('starts on the overview with nothing to go back to', () => {
     const stack = initialStack();
     expect(currentEntry(stack).level.kind).toBe('overview');

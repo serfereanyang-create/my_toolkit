@@ -4,6 +4,16 @@
  * without rendering React.
  */
 
+import type { GitStatus } from './ipc';
+
+export function gitChangedFileCount(status: GitStatus | null): number {
+  return new Set([
+    ...(status?.staged ?? []).map((file) => file.path),
+    ...(status?.unstaged ?? []).map((file) => file.path),
+    ...(status?.untracked ?? []),
+  ]).size;
+}
+
 /** Format ms as the Codex goal timer: "6小时 38分 50秒" / "38分 50秒" / "50秒". */
 export function formatGoalElapsed(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) ms = 0;

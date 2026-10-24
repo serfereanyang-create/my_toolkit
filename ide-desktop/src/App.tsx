@@ -56,8 +56,6 @@ import { decideQueuePump, pumpSessionId } from './lib/queuePump';
 import { setLanguageWorkspaceRoot } from './lib/languageProviders';
 import { transcriptFileName, transcriptToMarkdown } from './lib/transcriptExport';
 import { loadRecent, rankRecent, touchRecent, type RecentFile } from './lib/recentFiles';
-import { moveChain, normalizeChains, toggleChain, toggleSelectedModel } from './lib/dispatchChains';
-import type { DispatchChains } from './lib/dispatchChains';
 import type { MentionItem } from './components/MentionPicker';
 import type { ApprovalMode, ChatItem, PreviewFileDescriptor, ProjectDescriptor, ReasoningEffort, SessionMeta, ThemeMode, ToolScope } from './types';
 
@@ -223,7 +221,6 @@ export default function App() {
     onError: (message) => appNotice('文件操作已中止', cleanIpcError(message)),
   });
   const handleSaveFile = editorSave.saveFile;
-  const dispatchDefaultWriteQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     desktop.settings.get().then((settings) => {
@@ -752,6 +749,7 @@ export default function App() {
     if (sequence !== switchSequenceRef.current || root !== stateRef.current.workspaceRoot) throw new Error('会话或工作区已切换，未发送此消息');
     dispatch({ type: 'agent/bind', sessionId: result.sessionId });
     if (result.running) dispatch({ type: 'agent/event', event: { type: 'turn_start', sessionId: result.sessionId } });
+    if (result.taskBoard) dispatch({ type: 'agent/event', event: { ...result.taskBoard, type: 'task_board_updated', sessionId: result.sessionId } });
     return result.sessionId;
   }
 
@@ -886,18 +884,6 @@ export default function App() {
     const before = state.settings;
     if (before) return saveSettings(settingsPatch(before, next));
     return saveSettings(next);
-  }
-
-  function updateDispatchDefault(update: (current: DispatchChains) => DispatchChains): Promise<void> {
-    const queued = dispatchDefaultWriteQueueRef.current.then(async () => {
-      const settings = await desktop.settings.get();
-      const current = normalizeChains(settings.preferences?.dispatchDefault);
-      const next = update(current);
-      if (next === current) return;
-      await saveSettings({ preferences: { dispatchDefault: next } });
-    });
-    dispatchDefaultWriteQueueRef.current = queued.catch(() => undefined);
-    return queued;
   }
 
   async function saveApiKey(providerId: string, apiKey: string) {
@@ -1309,6 +1295,7 @@ export default function App() {
         if (seq === switchSequenceRef.current) {
           dispatch({ type: 'agent/bind', sessionId: result.sessionId });
           if (result.running) dispatch({ type: 'agent/event', event: { type: 'turn_start', sessionId: result.sessionId } });
+          if (result.taskBoard) dispatch({ type: 'agent/event', event: { ...result.taskBoard, type: 'task_board_updated', sessionId: result.sessionId } });
         }
       } catch (error) {
         if (seq === switchSequenceRef.current) {
@@ -1880,15 +1867,6 @@ export default function App() {
             }}
             onPickEffort={(effort) => { void setReasoningEffort(effort); }}
             onPickToolScope={(toolScope) => { void setToolScope(toolScope); }}
-            onToggleDispatchTier={async (tier, value) => {
-              await updateDispatchDefault((current) => toggleChain(current, tier, value));
-            }}
-            onToggleDispatchPick={async (value) => {
-              await updateDispatchDefault((current) => toggleSelectedModel(current, value));
-            }}
-            onMoveDispatchTier={async (tier, value, direction) => {
-              await updateDispatchDefault((current) => moveChain(current, tier, value, direction));
-            }}
             onManageModels={() => { setSettingsPage('model'); setMainView('settings'); }}
           />
         )}

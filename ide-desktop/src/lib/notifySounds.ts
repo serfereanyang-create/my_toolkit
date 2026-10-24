@@ -123,6 +123,7 @@ export function cueForEvent(event: { type?: unknown; autoDecision?: unknown; sta
     case 'approval_needed':
       return event.autoDecision === 'allow_once' || event.autoDecision === 'deny' ? null : 'approval';
     case 'turn_done':
+      if (event.status === 'cancelled') return null;
       if (event.status === 'error') return 'error';
       // No chime for a turn that ran no tools: the success cue would announce
       // work that did not happen.

@@ -8,6 +8,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { renameWithRetry } = require('./atomic-file.cjs');
 
 const STORE_VERSION = 1;
 
@@ -60,7 +61,8 @@ function createSnippetsStore(userDataDir) {
     const tmp = `${storePath}.${process.pid}.tmp`;
     await fs.mkdir(path.dirname(storePath), { recursive: true });
     await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
-    await fs.rename(tmp, storePath);
+    // Retried: antivirus/indexers hold the target open for a moment on Windows.
+    await renameWithRetry(tmp, storePath);
   }
 
   /** Run `fn` against the current store, atomically persisting the result. */

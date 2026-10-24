@@ -6,6 +6,7 @@
  */
 
 const { readFile, stat } = require('node:fs/promises');
+const { pathToFileURL } = require('node:url');
 
 const DEFAULT_INLINE_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -50,7 +51,10 @@ async function prepareMediaPreview({ filePath, expectedKind, supportsLocalUrl = 
       mediaType: format.mediaType,
       path: filePath,
       size: info.size,
-      url: `file:///${String(filePath).replace(/\\/g, '/')}`,
+      // pathToFileURL percent-encodes what a hand-built `file:///C:/...` left raw:
+      // a clip named `demo #1.mp4` was truncated at the `#`, and a `?` turned the
+      // rest of the name into a query string, so the pane showed nothing.
+      url: pathToFileURL(filePath).href,
     };
   }
   if (info.size > inlineMaxBytes) {

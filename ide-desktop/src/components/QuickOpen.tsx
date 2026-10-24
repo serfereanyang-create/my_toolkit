@@ -74,6 +74,7 @@ export function QuickOpen({ open, onClose, onPick, workspaceRoot }: {
           <input
             ref={inputRef}
             className="qopen-input"
+            aria-label="按文件名查找文件"
             placeholder="按文件名查找文件…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -86,7 +87,7 @@ export function QuickOpen({ open, onClose, onPick, workspaceRoot }: {
           />
           <button type="button" className="qopen-close" onClick={onClose} title="关闭 (Esc)"><X size={13} /></button>
         </div>
-        <div className="qopen-list" ref={listRef}>
+        <div className="qopen-list" ref={listRef} role="listbox" aria-label="文件结果">
           {busy && <div className="qopen-status"><Loader2 size={12} className="spin" /> 建立索引中…</div>}
           {!busy && error && <div className="qopen-status qopen-error">{error}</div>}
           {!busy && !error && ranked.length === 0 && <div className="qopen-status">没有匹配的文件</div>}
@@ -98,6 +99,8 @@ export function QuickOpen({ open, onClose, onPick, workspaceRoot }: {
                 key={row.file.path}
                 type="button"
                 className={`qopen-row${i === active ? ' active' : ''}`}
+                role="option"
+                aria-selected={i === active}
                 onMouseEnter={() => setActive(i)}
                 onClick={() => commit(row.file.path)}
               >

@@ -140,37 +140,6 @@ export type TrajectoryRecord = {
   usage?: { inputTokens?: number; outputTokens?: number };
 };
 
-/** One pickable provider/model pair for the 省钱分级 dropdowns. */
-export type DispatchOption = {
-  /** `providerId/model` — the unambiguous value stored in settings. */
-  value: string;
-  /** `providerName · model` — what the user reads. */
-  label: string;
-  providerId: string;
-  providerName: string;
-  providerBaseUrl?: string;
-  model: string;
-  contextWindow?: number;
-  hasKey: boolean;
-};
-
-/** One model in a tier's resolved chain, primary first. */
-export type DispatchChainEntry = {
-  provider: string;
-  model: string;
-  hasKey: boolean;
-};
-
-/** One resolved dispatch tier, as shown in the settings panel. */
-export type DispatchTierInfo = {
-  provider: string;
-  model: string;
-  contextWindow: number | null;
-  hasKey: boolean;
-  /** Every model the tier will try, primary first (see the fallback chain). */
-  chain?: DispatchChainEntry[];
-};
-
 /** A project-memory entry from the CLI's shared memory store (read-only). */
 export type ProjectMemorySummary = {
   id: string;
@@ -244,6 +213,8 @@ export type SessionCleanupAnalysis = {
   withContent: number;
   parseFailed: number;
   pinnedEmpty: number;
+  /** The pin sidecar exists but could not be read: pin state is unknown, so nothing is deletable. */
+  overlayUnreadable: boolean;
   candidateBytes: number;
   candidates: Array<{ id: string; file: string; title: string | null; createdAt: number | null; bytes: number; messageCount: number }>;
 };
@@ -394,24 +365,6 @@ type ZCodeDesktopApi = {
   gitSuggest: {
     suggestCommitMessage(sessionId?: string): Promise<{ ok: boolean; message: { subject: string; body: string; full: string; type: string; scope: string | null; changedFileCount: number; scopedFileCount: number; sessionFileCount: number } }>;
   };
-  dispatch: {
-    /** Resolve the session's configured tiers to real providers for the UI. */
-    status(sessionId?: string): Promise<{
-      ok: boolean;
-      configured: boolean;
-      /** Every configured tier, keyed by id; unconfigured tiers are absent. */
-      tiers?: Partial<Record<'expensive' | 'standard' | 'cheap', DispatchTierInfo>>;
-      /** The first configured tier, for a one-line headline. */
-      primary?: 'expensive' | 'standard' | 'cheap' | null;
-      error?: string;
-    }>;
-    /**
-     * Every dispatchable provider/model pair, from the CLI's own resolver.
-     * The desktop's provider list uses different labels, so the pickers must
-     * offer these instead.
-     */
-    options(): Promise<{ ok: boolean; options: DispatchOption[]; error?: string }>;
-  };
   memory: {
     listProjects(): Promise<{ ok: boolean; projects: ProjectMemorySummary[] }>;
     read(workspaceId: string, fileName: string): Promise<{ ok: boolean; content: string; updatedAt: number }>;
@@ -439,7 +392,7 @@ type ZCodeDesktopApi = {
     save(root: string, state: { messages: import('../types').QueuedMessage[]; pausedSessions: string[] }): Promise<{ ok: boolean }>;
   };
   agent: {
-    start(resumeSessionId?: string): Promise<{ ok: boolean; sessionId: string; reused?: boolean; running?: boolean }>;
+    start(resumeSessionId?: string): Promise<{ ok: boolean; sessionId: string; reused?: boolean; running?: boolean; taskBoard?: import('../types').TaskBoard | null }>;
     /**
      * The trailing sessionId addresses one conversation's CLI child. Several can
      * be running at once, so omitting it may reach the wrong one.

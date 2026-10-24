@@ -8,11 +8,20 @@ const fs = require('node:fs/promises');
 const crypto = require('node:crypto');
 
 // Mapping from preview kind → file extensions (lowercase, no leading dot)
+//
+// `xlsx` and `pptx` are the OOXML formats the panes can parse. Their pre-OOXML
+// counterparts (.xls/.ppt) and the OpenDocument ones are listed as unsupported
+// rather than left to fall through to `text`: they are binary, so the fallback
+// would hand the code editor a file it refuses to open, and the user would get
+// no explanation at all. `doc_unsupported` is the shared "binary office file we
+// cannot render, offer the system application" kind.
 const KIND_MAP = {
   image: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'svg'],
   pdf:   ['pdf'],
   docx:  ['docx'],
-  doc_unsupported: ['doc', 'odt', 'rtf'],
+  xlsx:  ['xlsx'],
+  pptx:  ['pptx'],
+  doc_unsupported: ['doc', 'odt', 'rtf', 'xls', 'ods', 'ppt', 'odp'],
   html:  ['html', 'htm'],
 };
 // Reverse map: ext → kind
@@ -68,6 +77,15 @@ async function resolveWorkspacePath(candidate, workspaceRoot, options = {}) {
   if (!rootStat.isDirectory()) throw new Error('Workspace root is not a directory');
 
   const lexicalTarget = path.resolve(realRoot, candidate);
+  // Reject a lexically escaping path BEFORE touching the filesystem. Otherwise a
+  // candidate like `../../other/file` is only rejected after realpath fails, so
+  // the caller learns ENOENT (the file does not exist) instead of "outside the
+  // workspace" (it is not yours to ask about) — an existence oracle for every
+  // path on the machine, plus a raw absolute path in the error.
+  assertInsideRoot(lexicalTarget, realRoot, {
+    allowRoot: options.allowRoot === true,
+    rejectBlocked: options.rejectBlocked !== false,
+  });
   let realTarget;
   try {
     realTarget = await fs.realpath(lexicalTarget);
@@ -107,10 +125,13 @@ async function resolveWorkspacePath(candidate, workspaceRoot, options = {}) {
 async function describeFile(absolutePath, workspaceRoot) {
   let resolved;
   try { resolved = await resolveWorkspacePath(absolutePath, workspaceRoot); }
-  catch { throw new Error(`Cannot resolve: ${absolutePath}`); }
+  // This string reaches the renderer as the body of a failed open, next to
+  // Chinese UI text, and used to spell out an absolute path the user never
+  // typed. Name the input instead.
+  catch { throw new Error('无法在工作区内定位这个文件，它可能已被移动或删除'); }
 
   const stat = await fs.stat(resolved.path);
-  if (!stat.isFile()) throw new Error('Not a file');
+  if (!stat.isFile()) throw new Error('该路径不是文件');
 
   const kind  = kindForPath(resolved.path);
   const token = crypto.randomBytes(20).toString('hex');

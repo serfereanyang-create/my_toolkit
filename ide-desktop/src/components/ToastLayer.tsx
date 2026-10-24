@@ -34,9 +34,65 @@ const KIND_VIEW: Record<ToastKind, { icon: React.ElementType; label: string }> =
   info: { icon: Info, label: '本轮已回复' },
 };
 
+const KINDS: ReadonlySet<string> = new Set(['approval', 'success', 'error', 'offline', 'info']);
+function isToastKind(value: string): value is ToastKind {
+  return KINDS.has(value);
+}
+
+/** Event name for renderer-local notices (see appNotice). */
+export const NOTICE_EVENT = 'zcode:notice';
+
+/**
+ * Show an in-app notice instead of window.alert().
+ *
+ * `alert()` blocks the entire renderer process — the transcript stops
+ * streaming, animations freeze, and the modal is a native dialog that does not
+ * match the app. Anything the user can read and act on belongs in a toast.
+ */
+export function appNotice(title: string, body?: string, kind: ToastKind = 'error') {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(NOTICE_EVENT, { detail: { kind, title, body } }));
+}
+
 export function ToastLayer({ onFocusChat }: { onFocusChat: () => void }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const seqRef = useRef(0);
+  const timersRef = useRef<Map<number, number>>(new Map());
+
+  useEffect(() => () => {
+    for (const timer of timersRef.current.values()) window.clearTimeout(timer);
+    timersRef.current.clear();
+  }, []);
+
+  const scheduleDismiss = (id: number, kind: ToastKind) => {
+    const previous = timersRef.current.get(id);
+    if (previous) window.clearTimeout(previous);
+    const timer = window.setTimeout(() => {
+      timersRef.current.delete(id);
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    }, TOAST_MS[kind]) as unknown as number;
+    timersRef.current.set(id, timer);
+  };
+
+  const show = (toast: Omit<ToastItem, 'id'>) => {
+    const id = ++seqRef.current;
+    setToasts((prev) => [...prev.slice(-4), { ...toast, id }]);
+    scheduleDismiss(id, toast.kind);
+  };
+
+  // Renderer-owned notices (a failed file open, a refused save) arrive here.
+  // They used to call window.alert(), which blocks the whole renderer process
+  // until dismissed — during a streaming turn that freezes the transcript too,
+  // and the platform dialog looks nothing like the rest of the app.
+  useEffect(() => {
+    const onNotice = (event: Event) => {
+      const detail = (event as CustomEvent<{ kind?: ToastKind; title?: string; body?: string }>).detail;
+      if (!detail?.title) return;
+      show({ kind: detail.kind && isToastKind(detail.kind) ? detail.kind : 'info', title: detail.title, body: detail.body });
+    };
+    window.addEventListener(NOTICE_EVENT, onNotice);
+    return () => window.removeEventListener(NOTICE_EVENT, onNotice);
+  }, []);
 
   useEffect(() => {
     const off = desktop.agent.onEvent((event) => {
@@ -68,26 +124,27 @@ export function ToastLayer({ onFocusChat }: { onFocusChat: () => void }) {
         toast = { kind: 'offline', title: '连接断开', body: '智能体已离线' };
       }
       if (!toast) return;
-      const id = ++seqRef.current;
-      setToasts((prev) => [...prev.slice(-4), { ...toast, id }]);
-      window.setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== id));
-      }, TOAST_MS[toast.kind]);
+      show(toast);
     });
     return off;
   }, []);
 
-  const dismiss = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id));
+  const dismiss = (id: number) => {
+    const timer = timersRef.current.get(id);
+    if (timer) window.clearTimeout(timer);
+    timersRef.current.delete(id);
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  };
 
   if (toasts.length === 0) return null;
 
   return (
-    <div className="toast-layer" role="status" aria-live="polite">
+    <div className="toast-layer" role="status" aria-live={toasts.some((toast) => toast.kind === 'error' || toast.kind === 'approval') ? 'assertive' : 'polite'} aria-atomic="false">
       {toasts.map((toast) => {
         const view = KIND_VIEW[toast.kind];
         const Icon = view.icon;
         return (
-          <div key={toast.id} className={`toast toast-${toast.kind}`}>
+          <div key={toast.id} className={`toast toast-${toast.kind}`} onMouseEnter={() => { const timer = timersRef.current.get(toast.id); if (timer) window.clearTimeout(timer); }} onMouseLeave={() => scheduleDismiss(toast.id, toast.kind)}>
             <button
               type="button"
               className="toast-main"

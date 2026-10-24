@@ -3,7 +3,7 @@ import { GitBranch, GitCommitHorizontal, ListTodo } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import type { GitStatus } from '../lib/ipc';
 import type { AppState } from '../types';
-import { formatGoalElapsed, taskProgress } from '../lib/gitPanelFormat';
+import { formatGoalElapsed, taskProgress, gitChangedFileCount } from '../lib/gitPanelFormat';
 import { sessionChangeTotals } from '../lib/state';
 import type { InspectorLevel } from '../lib/inspectorNav';
 
@@ -31,13 +31,14 @@ export function GitCapsule({
   onOpen: (level: InspectorLevel) => void;
 }) {
   const [status, setStatus] = useState<GitStatus | null>(null);
-  const [stats, setStats] = useState<{ added: number; removed: number } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [s, d] = await Promise.all([desktop.git.status(), desktop.git.diffStats()]);
+      // Only the tree's status is needed here; the diff totals belonged to the
+      // chip before it became per-conversation, and polling them every 6s for
+      // numbers nobody renders was pure waste.
+      const s = await desktop.git.status();
       setStatus(s.ok ? s : null);
-      if (d.ok) setStats({ added: d.added ?? 0, removed: d.removed ?? 0 });
     } catch { /* the capsule just shows less */ }
   }, []);
 
@@ -49,9 +50,7 @@ export function GitCapsule({
   }, [refresh]);
 
   const board = state.taskBoard;
-  const changedFiles = status
-    ? (status.staged?.length ?? 0) + (status.unstaged?.length ?? 0) + (status.untracked?.length ?? 0)
-    : 0;
+  const changedFiles = gitChangedFileCount(status);
   const sessionTotals = sessionChangeTotals(state.chat);
   const progress = board ? taskProgress(board.tasks).label : null;
   const elapsed = board?.startedAt ? formatGoalElapsed(Date.now() - board.startedAt) : null;
@@ -62,20 +61,26 @@ export function GitCapsule({
         type="button"
         className="git-capsule-seg"
         onClick={() => onOpen({ kind: 'changes' })}
-        title={changedFiles > 0 ? `${changedFiles} 个文件已更改` : '查看文件变更'}
+        title={sessionTotals
+          ? `本会话改动：+${sessionTotals.added} −${sessionTotals.removed}${changedFiles > 0 ? `；工作区另有 ${changedFiles} 个未提交文件` : ''}`
+          : changedFiles > 0 ? `${changedFiles} 个未提交文件（本会话未改动）` : '查看文件变更'}
       >
         <GitCommitHorizontal size={13} />
         <span className="git-capsule-label">更改</span>
-        {changedFiles > 0 ? (
-          <span className="git-capsule-nums">
-            <span className="insp-add">+{stats?.added ?? changedFiles}</span>
-            <span className="insp-del">−{stats?.removed ?? 0}</span>
-          </span>
-        ) : sessionTotals ? (
-          // Tree is clean: show what THIS conversation changed instead.
+        {/* The chip is per-conversation, so it shows only this conversation's
+            numbers — never the repository's. A fresh chat used to inherit the
+            working tree's totals and therefore showed the same +2945 −212 in
+            every new conversation, which read as if that chat had done the
+            work. Uncommitted work from outside this chat is still discoverable:
+            it is named in the tooltip and listed in the 更改 inspector. */}
+        {sessionTotals ? (
           <span className="git-capsule-nums" title="本次会话累计改动">
             <span className="insp-add">+{sessionTotals.added}</span>
             <span className="insp-del">−{sessionTotals.removed}</span>
+          </span>
+        ) : changedFiles > 0 ? (
+          <span className="git-capsule-muted" title={`工作区有 ${changedFiles} 个未提交文件，不属于本会话`}>
+            工作区 {changedFiles}
           </span>
         ) : (
           <span className="git-capsule-muted">干净</span>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BookmarkCheck, Trash2, X } from 'lucide-react';
 import { desktop, type BookmarkGroup } from '../lib/ipc';
+import { ConfirmDialog } from './ConfirmDialog';
 
 /**
  * Iteration 6 — workspace-wide bookmark jump list.
@@ -14,6 +15,7 @@ export function BookmarksPanel({ onJump }: { onJump: (path: string, line: number
   const [groups, setGroups] = useState<BookmarkGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [clearTarget, setClearTarget] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -29,7 +31,13 @@ export function BookmarksPanel({ onJump }: { onJump: (path: string, line: number
   useEffect(() => { void refresh(); }, [refresh]);
 
   async function clearFile(path: string) {
-    if (!window.confirm(`清除「${path}」的全部书签？`)) return;
+    setClearTarget(path);
+  }
+
+  async function confirmClearFile() {
+    const path = clearTarget;
+    setClearTarget(null);
+    if (!path) return;
     try {
       await desktop.bookmarks.clearFile(path);
       await refresh();
@@ -87,6 +95,15 @@ export function BookmarksPanel({ onJump }: { onJump: (path: string, line: number
           </div>
         ))}
       </div>
+      <ConfirmDialog
+        open={clearTarget !== null}
+        title="清除文件书签？"
+        message={`“${clearTarget ?? ''}”中的全部书签都会被清除。`}
+        confirmLabel="清除书签"
+        danger
+        onConfirm={() => void confirmClearFile()}
+        onCancel={() => setClearTarget(null)}
+      />
     </div>
   );
 }

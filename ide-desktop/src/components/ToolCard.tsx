@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react';
-import { Wrench, ShieldAlert, CheckCircle2, XCircle, Loader, FileEdit, Terminal, Globe, Lock } from 'lucide-react';
+import { Wrench, ShieldAlert, CheckCircle2, XCircle, Loader, FileEdit, Terminal, Globe, Lock, Check, Copy, Square } from 'lucide-react';
 import type { ChatItem, PendingDiff } from '../types';
 import { JsonViewer } from './JsonViewer';
 import { tryParseJson } from '../lib/jsonTree';
+import { displayPath } from '../lib/paths';
+import { copyText } from '../lib/clipboard';
 
 // Risk level → color + icon + label
 const RISK_META: Record<string, { color: string; Icon: React.ElementType; label: string }> = {
-  write:   { color: '#f59e0b', Icon: FileEdit,  label: '写文件' },
-  shell:   { color: '#ef4444', Icon: Terminal,  label: '命令执行' },
-  network: { color: '#3b82f6', Icon: Globe,     label: '网络请求' },
-  read:    { color: '#6b7280', Icon: Wrench,    label: '读取' },
+  write:   { color: 'var(--warn)', Icon: FileEdit,  label: '写文件' },
+  shell:   { color: 'var(--danger)', Icon: Terminal,  label: '命令执行' },
+  network: { color: 'var(--blue)', Icon: Globe,     label: '网络请求' },
+  read:    { color: 'var(--fg-muted)', Icon: Wrench,    label: '读取' },
 };
 
+/** "." is the workspace root. Rendered after the 路径 label it reads as a
+ *  punctuation glitch rather than a location, so name it. */
 // Format tool input for display — show the most relevant field(s)
 function formatInput(tool: string, input: unknown): string | null {
   if (!input || typeof input !== 'object') return null;
@@ -19,7 +23,7 @@ function formatInput(tool: string, input: unknown): string | null {
 
   // write_file / create_file
   if (typeof obj.content === 'string') {
-    const path = typeof obj.path === 'string' ? obj.path : '';
+    const path = typeof obj.path === 'string' ? displayPath(obj.path) : '';
     const preview = obj.content.slice(0, 400) + (obj.content.length > 400 ? '\n…（已截断）' : '');
     return path ? `文件路径: ${path}\n\n${preview}` : preview;
   }
@@ -34,7 +38,7 @@ function formatInput(tool: string, input: unknown): string | null {
   if (typeof obj.url === 'string') return `URL: ${obj.url}`;
   if (typeof obj.query === 'string') return `搜索: ${obj.query}`;
   // path-based tools
-  if (typeof obj.path === 'string') return `路径: ${obj.path}`;
+  if (typeof obj.path === 'string') return `路径: ${displayPath(obj.path)}`;
   // fallback: compact JSON, max 200 chars
   const json = JSON.stringify(obj, null, 2);
   return json.length > 200 ? json.slice(0, 200) + '\n…' : json;
@@ -81,12 +85,14 @@ export function ToolCard({ item, onApprove }: {
   // Iteration 11: structured-vs-raw toggle state for tool output. Declared
   // before any conditional return so hook order stays stable across renders.
   const [rawMode, setRawMode] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // approval_overlay.rs single-key shortcuts: y = approve, a = allow session,
   // n/esc = deny. Only while this card is the live pending approval.
   useEffect(() => {
     if (!isPendingApproval) return;
     function onKey(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing || event.repeat || event.ctrlKey || event.metaKey || event.altKey || document.querySelector('[aria-modal="true"]')) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
       const key = event.key.toLowerCase();
@@ -168,7 +174,7 @@ export function ToolCard({ item, onApprove }: {
     );
   }
 
-  const icon = item.status === 'running'
+  const icon = item.cancelled ? <Square size={15} /> : item.status === 'running'
     ? <Loader size={15} className="tool-spin" />
     : item.status === 'failed'
       ? <XCircle size={15} />
@@ -186,7 +192,7 @@ export function ToolCard({ item, onApprove }: {
   const showRaw = rawMode || !outputIsJson;
 
   return (
-    <section className={`tool-card tool-detail ${item.status}`}>
+    <section className={`tool-card tool-detail ${item.cancelled ? 'cancelled' : item.status}`}>
       <div className="tool-title">
         {icon} {item.tool}
         {outputIsJson && (
@@ -196,6 +202,24 @@ export function ToolCard({ item, onApprove }: {
             title={rawMode ? '切换为结构化视图' : '切换为原始文本'}
             onClick={() => setRawMode((v) => !v)}
           >{rawMode ? '树视图' : '原文'}</button>
+        )}
+        {outputText && (
+          // The tree view has its own copy button; a plain-text result had
+          // none, so copying a command's output meant selecting inside a
+          // scrolling <pre>. Copy the full output, not the truncated preview.
+          <button
+            type="button"
+            className="tool-copy"
+            title={copied ? '已复制' : '复制输出'}
+            aria-label={copied ? '已复制' : '复制输出'}
+            onClick={() => {
+              void copyText(item.output ?? '').then((ok) => {
+                if (!ok) return;
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1400);
+              });
+            }}
+          >{copied ? <Check size={12} /> : <Copy size={12} />}</button>
         )}
       </div>
       {inputText && <pre>{inputText}</pre>}

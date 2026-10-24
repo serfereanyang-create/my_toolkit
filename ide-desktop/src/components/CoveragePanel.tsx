@@ -106,9 +106,9 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
   }, [visible]);
   
   const getCoverageColor = (percent: number) => {
-    if (percent >= 80) return '#2E7D32';
-    if (percent >= 60) return '#FF9800';
-    return '#CC0000';
+    if (percent >= 80) return 'var(--ok)';
+    if (percent >= 60) return 'var(--warn)';
+    return 'var(--danger)';
   };
   
   const getCoverageIcon = (percent: number) => {
@@ -355,7 +355,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         }
         
         .coverage-panel {
-          background: #FBF9F5;
+          background: var(--bg-app);
           border-radius: 8px;
           width: 90%;
           max-width: 1000px;
@@ -371,26 +371,26 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
           justify-content: space-between;
           align-items: center;
           padding: 20px 24px;
-          border-bottom: 1px solid #E7E1D7;
+          border-bottom: 1px solid var(--border);
         }
         
         .coverage-panel-header h2 {
           margin: 0;
-          font-family: 'DM Serif Display', serif;
+          font-family: var(--font-ui);
           font-size: 24px;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .close-btn {
           background: none;
           border: none;
           font-size: 32px;
-          color: #5C635D;
+          color: var(--fg-muted);
           cursor: pointer;
         }
         
         .close-btn:hover {
-          color: #C4612F;
+          color: var(--blue);
         }
         
         .coverage-panel-content {
@@ -400,10 +400,10 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         }
         
         .coverage-options {
-          background: white;
+          background: var(--bg-elevated);
           padding: 20px;
           border-radius: 8px;
-          border: 1px solid #E7E1D7;
+          border: 1px solid var(--border);
           margin-bottom: 24px;
         }
         
@@ -416,16 +416,16 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
           margin-bottom: 8px;
           font-size: 14px;
           font-weight: 500;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .option-group input {
           width: 100%;
           padding: 10px 12px;
-          border: 1px solid #E7E1D7;
+          border: 1px solid var(--border);
           border-radius: 6px;
           font-size: 14px;
-          font-family: 'Monaco', 'Courier New', monospace;
+          font-family: var(--font-mono);
         }
         
         .analyze-btn {
@@ -433,15 +433,15 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
           padding: 12px 24px;
           border: none;
           border-radius: 999px;
-          background: #C4612F;
-          color: white;
+          background: var(--blue);
+          color: var(--accent-fg);
           font-size: 14px;
           font-weight: 500;
           cursor: pointer;
         }
         
         .analyze-btn:hover:not(:disabled) {
-          background: #A94E22;
+          background: var(--blue);
         }
         
         .analyze-btn:disabled {
@@ -450,12 +450,12 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         }
         
         .error-message {
-          background: #FFE5E5;
-          border: 1px solid #FF4444;
+          background: var(--danger-soft);
+          border: 1px solid var(--danger);
           border-radius: 6px;
           padding: 12px;
           margin-bottom: 16px;
-          color: #CC0000;
+          color: var(--danger);
         }
         
         .gate-banner {
@@ -468,13 +468,13 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         }
         
         .gate-banner.pass {
-          background: #E8F5E9;
-          color: #2E7D32;
+          background: color-mix(in srgb, var(--ok) 12%, transparent);
+          color: var(--ok);
         }
         
         .gate-banner.fail {
-          background: #FFE5E5;
-          color: #CC0000;
+          background: var(--danger-soft);
+          color: var(--danger);
         }
         
         .summary-grid {
@@ -485,8 +485,8 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         }
         
         .summary-card {
-          background: white;
-          border: 1px solid #E7E1D7;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
           border-radius: 8px;
           padding: 20px;
           text-align: center;
@@ -494,26 +494,26 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         
         .summary-title {
           font-size: 14px;
-          color: #5C635D;
+          color: var(--fg-muted);
           margin-bottom: 8px;
         }
         
         .summary-value {
           font-size: 32px;
           font-weight: bold;
-          font-family: 'DM Serif Display', serif;
+          font-family: var(--font-ui);
           margin-bottom: 4px;
         }
         
         .summary-detail {
           font-size: 12px;
-          color: #5C635D;
+          color: var(--fg-muted);
           margin-bottom: 12px;
         }
         
         .progress-bar {
           height: 8px;
-          background: #E7E1D7;
+          background: var(--border);
           border-radius: 999px;
           overflow: hidden;
           margin-bottom: 8px;
@@ -527,12 +527,12 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         
         .gate-indicator {
           font-size: 12px;
-          color: #5C635D;
+          color: var(--fg-muted);
         }
         
         .uncovered-warning {
-          background: #FFF3E0;
-          border-left: 3px solid #FF9800;
+          background: color-mix(in srgb, var(--warn) 12%, transparent);
+          border-left: 3px solid var(--warn);
           padding: 12px 16px;
           margin-bottom: 24px;
           border-radius: 4px;
@@ -541,13 +541,13 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         
         .worst-files-section h3 {
           margin: 0 0 16px 0;
-          font-family: 'DM Serif Display', serif;
-          color: #1F2421;
+          font-family: var(--font-ui);
+          color: var(--fg);
         }
         
         .file-coverage-item {
-          background: white;
-          border: 1px solid #E7E1D7;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
           border-radius: 8px;
           margin-bottom: 8px;
           overflow: hidden;
@@ -563,14 +563,14 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         }
         
         .file-coverage-header:hover {
-          background: #F7F4EF;
+          background: var(--bg-hover);
         }
         
         .file-path {
           flex: 1;
-          font-family: 'Monaco', 'Courier New', monospace;
+          font-family: var(--font-mono);
           font-size: 13px;
-          color: #1F2421;
+          color: var(--fg);
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -582,21 +582,21 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         }
         
         .expand-icon {
-          color: #5C635D;
+          color: var(--fg-muted);
           font-size: 12px;
         }
         
         .file-coverage-detail {
           padding: 16px;
-          border-top: 1px solid #E7E1D7;
-          background: #F7F4EF;
+          border-top: 1px solid var(--border);
+          background: var(--bg-hover);
         }
         
         .detail-stats {
           display: flex;
           gap: 24px;
           font-size: 13px;
-          color: #5C635D;
+          color: var(--fg-muted);
           margin-bottom: 12px;
         }
         
@@ -617,41 +617,41 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         .function-chip,
         .line-chip {
           padding: 4px 10px;
-          border: 1px solid #E7E1D7;
+          border: 1px solid var(--border);
           border-radius: 999px;
-          background: white;
+          background: var(--bg-elevated);
           font-size: 12px;
-          font-family: 'Monaco', 'Courier New', monospace;
+          font-family: var(--font-mono);
           cursor: pointer;
-          color: #C4612F;
+          color: var(--blue);
         }
         
         .function-chip:hover,
         .line-chip:hover {
-          border-color: #C4612F;
-          background: #FFF7F2;
+          border-color: var(--blue);
+          background: color-mix(in srgb, var(--warn) 8%, var(--bg-elevated));
         }
         
         .more-lines {
           font-size: 12px;
-          color: #5C635D;
+          color: var(--fg-muted);
           align-self: center;
         }
         
         .generate-tests-btn {
           padding: 8px 16px;
-          border: 1px solid #C4612F;
+          border: 1px solid var(--blue);
           border-radius: 999px;
-          background: white;
-          color: #C4612F;
+          background: var(--bg-elevated);
+          color: var(--blue);
           font-size: 13px;
           cursor: pointer;
           transition: all 0.2s;
         }
         
         .generate-tests-btn:hover {
-          background: #C4612F;
-          color: white;
+          background: var(--blue);
+          color: var(--accent-fg);
         }
       `}</style>
     </div>

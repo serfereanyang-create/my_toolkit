@@ -1,8 +1,11 @@
-import { MousePointer2, Chrome, AppWindow, Sheet, Plus, Trash2, CheckCircle2 } from 'lucide-react';
+import { MousePointer2, Chrome, AppWindow, Sheet, Plus, Trash2, CheckCircle2, Globe } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Toggle } from './controls';
 import { prefBool, prefStrArray, type Prefs, type SavePref } from './prefs';
 import { desktop } from '../../lib/ipc';
+import { BackgroundBrowserPanel } from '../BackgroundBrowserPanel';
+import { BackgroundAppPanel } from '../BackgroundAppPanel';
+import { ConfirmDialog } from '../ConfirmDialog';
 
 /*
  * 电脑操控 — Computer control settings.
@@ -43,6 +46,8 @@ const CHROME_EXT_URL = 'https://chromewebstore.google.com/search/yoycode';
 const EDGE_EXT_URL   = 'https://microsoftedge.microsoft.com/addons/search/yoycode';
 
 export function ComputerSettings({ prefs, savePref }: { prefs: Prefs; savePref: SavePref }) {
+  const backgroundOnly = prefs.computerExecutionMode !== 'desktop';
+  const [desktopConfirmOpen, setDesktopConfirmOpen] = useState(false);
   const anyApp  = prefBool(prefs, 'computerAnyApp', true);
   const excel   = prefBool(prefs, 'computerExcel', false);
   const allowed = prefStrArray(prefs, 'computerAllowedApps', []);
@@ -90,7 +95,24 @@ export function ComputerSettings({ prefs, savePref }: { prefs: Prefs; savePref: 
   return (
     <div className="settings-page">
       <h1 className="settings-page-title">电脑操控</h1>
-      <p className="settings-page-subtitle">管理 YOYcode 如何使用你电脑上的其他应用程序</p>
+      <p className="settings-page-subtitle">在独立后台环境检查网页和支持的应用，不占用你的鼠标、键盘或前台窗口。</p>
+
+      <section className="settings-group">
+        <h3 className="settings-group-heading">执行方式</h3>
+        <div className="settings-card">
+          <AppRow
+            icon={<Globe size={20} />}
+            name="仅后台执行（推荐）"
+            status={backgroundOnly ? '网页、HTML 与支持的 Electron 应用使用隐藏窗口渲染和截图。' : '已允许桌面操控。图形操作可能抢焦点和移动鼠标；定时任务仍仅后台执行。'}
+            control={<Toggle checked={backgroundOnly} label="仅后台执行" onChange={(next) => {
+              if (!next) { setDesktopConfirmOpen(true); return; }
+              savePref({ computerExecutionMode: 'background' });
+            }} />}
+          />
+        </div>
+      </section>
+      <BackgroundAppPanel />
+      <BackgroundBrowserPanel />
 
       <section className="settings-group">
         <h3 className="settings-group-heading">控制</h3>
@@ -99,7 +121,7 @@ export function ComputerSettings({ prefs, savePref }: { prefs: Prefs; savePref: 
             icon={<span className="app-icon app-icon-any"><MousePointer2 size={18} /></span>}
             name="任意应用"
             status={
-              anyApp
+              backgroundOnly ? '仅后台模式下不会启用原生桌面操控。' : anyApp
                 ? <><CheckCircle2 size={12} style={{ color: 'var(--ok)', verticalAlign: 'middle' }} /> auto 模式下放行所有非破坏性命令</>
                 : '已限制 — 仅白名单内命令自动执行，其余按审批模式处理'
             }
@@ -148,7 +170,7 @@ export function ComputerSettings({ prefs, savePref }: { prefs: Prefs; savePref: 
 
       <section className="settings-group">
         <h3 className="settings-group-heading">始终允许的应用</h3>
-        <p style={{ fontSize: 12, color: 'var(--fg-dim)', marginBottom: 8 }}>
+        <p style={{ fontSize: 'var(--fs-3)', color: 'var(--fg-dim)', marginBottom: 8 }}>
           即使「任意应用」关闭，这些应用名称或路径也无需用户确认（如 <code>node</code>、<code>python</code>）。
         </p>
         <div className="settings-card">
@@ -159,7 +181,7 @@ export function ComputerSettings({ prefs, savePref }: { prefs: Prefs; savePref: 
           ) : (
             allowed.map((app) => (
               <div key={app} className="setting-row" style={{ gap: 8 }}>
-                <code style={{ flex: 1, fontSize: 12 }}>{app}</code>
+                <code style={{ flex: 1, fontSize: 'var(--fs-code)' }}>{app}</code>
                 <button
                   className="icon-button"
                   title="移除"
@@ -191,6 +213,14 @@ export function ComputerSettings({ prefs, savePref }: { prefs: Prefs; savePref: 
           </div>
         </div>
       </section>
+      <ConfirmDialog
+        open={desktopConfirmOpen}
+        title="允许桌面操控？"
+        message="任务可能切换窗口并使用你的鼠标和键盘，前台操作会影响当前工作。确认后可在此处再次切回后台模式。"
+        confirmLabel="允许桌面操控"
+        onConfirm={() => { setDesktopConfirmOpen(false); savePref({ computerExecutionMode: 'desktop' }); }}
+        onCancel={() => setDesktopConfirmOpen(false)}
+      />
     </div>
   );
 }

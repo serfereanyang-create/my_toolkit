@@ -77,13 +77,16 @@ export function ContextStatsMenu({ stats, provider, onClose }: {
   }
 
   const total = stats.inputTokens;
+  // Context capacity is the whole prompt the model read: net input plus the
+  // cache-served part. Using the net number alone understated the bar by the
+  // cache-hit share.
+  const totalWithCache = total + stats.cacheReadTokens;
   const contextWindow = contextWindowFor(provider, stats.model);
-  const contextRate = contextWindow ? Math.min(100, (total / contextWindow) * 100) : null;
+  const contextRate = contextWindow ? Math.min(100, (totalWithCache / contextWindow) * 100) : null;
   const predictedRate = stats.predictedPromptCacheRate === null ? null : stats.predictedPromptCacheRate * 100;
   const historicalRate = prediction?.predicted === null || prediction?.predicted === undefined ? null : prediction.predicted * 100;
   // 供应商实报命中率：cacheRead / (input + cacheRead) 是正确分母
   // total（stats.inputTokens）是净输入，不含缓存，分母要加上缓存部分
-  const totalWithCache = total + stats.cacheReadTokens;
   const providerCacheRate = stats.providerCacheReported && totalWithCache > 0
     ? Math.min(100, (stats.cacheReadTokens / totalWithCache) * 100)
     : null;
@@ -95,7 +98,7 @@ export function ContextStatsMenu({ stats, provider, onClose }: {
         <div className="context-title-row">
           <span className="context-title">上下文容量</span>
           <span className="context-value">
-            {formatTokens(total)} / {contextWindow ? formatTokens(contextWindow) : '未配置'}
+            {formatTokens(totalWithCache)} / {contextWindow ? formatTokens(contextWindow) : '未配置'}
             {contextRate !== null ? ` (${contextRate.toFixed(1)}%)` : ''}
           </span>
         </div>
@@ -107,7 +110,7 @@ export function ContextStatsMenu({ stats, provider, onClose }: {
             <div className="context-row" key={row.key}>
               <span className="context-dot" style={{ background: row.color }} />
               <span className="context-row-label">{row.label}</span>
-              <span className="context-row-value">{percent(stats.categories[row.key], total)}</span>
+              <span className="context-row-value">{percent(stats.categories[row.key], totalWithCache)}</span>
             </div>
           ))}
         </div>

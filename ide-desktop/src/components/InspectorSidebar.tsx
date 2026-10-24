@@ -4,13 +4,13 @@ import {
   GitCommitHorizontal, ListTodo, Loader2, PanelRightClose, RefreshCw, X,
 } from 'lucide-react';
 import { desktop } from '../lib/ipc';
-import type { GitCommitDetail, GitFileDiffResult, GitFileStat, GitGraphCommit, GitStatus } from '../lib/ipc';
+import type { GitCommitDetail, GitFileStat, GitGraphCommit, GitStatus } from '../lib/ipc';
 import type { AppState } from '../types';
-import { countDiffRows, parseUnifiedDiff } from '../lib/gitDiffParse';
+import { GitFileDiffView } from './GitFileDiffView';
 import { layoutGraph, laneColorIndex } from '../lib/gitGraph';
 import { ModelTrajectoryPanel } from './ModelTrajectoryPanel';
-import { formatGoalElapsed, taskProgress } from '../lib/gitPanelFormat';
-import { sessionChangeTotals } from '../lib/state';
+import { formatGoalElapsed, taskProgress, gitChangedFileCount } from '../lib/gitPanelFormat';
+import { sessionChangeTotals, sessionChangedFiles } from '../lib/state';
 import {
   canGoBack, currentEntry, goToIndex, initialStack, popLevel, pushLevel,
   type InspectorLevel, type InspectorStack,
@@ -93,16 +93,17 @@ function DrillRow({
 
 // ── Level: overview ──────────────────────────────────────────────────────────
 
-function OverviewLevel({ state, push, gitStatus, totals }: {
+function OverviewLevel({ state, push, gitStatus }: {
   state: AppState;
   push: (level: InspectorLevel) => void;
   gitStatus: GitStatus | null;
-  totals: { added: number; removed: number };
 }) {
   const board = state.taskBoard;
-  const changed = gitStatus
-    ? (gitStatus.staged?.length ?? 0) + (gitStatus.unstaged?.length ?? 0) + (gitStatus.untracked?.length ?? 0)
-    : 0;
+  // The conversation's own edits, not the repository's uncommitted state. The
+  // working tree is shared by every chat (and by work done outside the app),
+  // so showing its totals here made every conversation report the same
+  // +2945 −212 regardless of what it actually touched.
+  const sessionTotals = sessionChangeTotals(state.chat);
   const done = board ? board.tasks.filter((t) => t.status === 'done' || t.status === 'skipped').length : 0;
   const goalElapsed = board?.startedAt ? formatGoalElapsed(Date.now() - board.startedAt) : null;
 
@@ -111,11 +112,11 @@ function OverviewLevel({ state, push, gitStatus, totals }: {
       <DrillRow
         icon={<FileDiff size={14} />}
         name="更改"
-        detail={changed > 0
-          ? <><span className="insp-add">+{totals.added}</span><span className="insp-del">−{totals.removed}</span></>
-          : <span className="insp-muted">干净</span>}
+        detail={sessionTotals
+          ? <><span className="insp-add">+{sessionTotals.added}</span><span className="insp-del">−{sessionTotals.removed}</span></>
+          : <span className="insp-muted">本会话无改动</span>}
         onClick={() => push({ kind: 'changes' })}
-        title="查看逐文件变更"
+        title="查看本会话逐文件变更"
       />
       <DrillRow
         icon={<GitBranch size={14} />}
@@ -159,7 +160,12 @@ function OverviewLevel({ state, push, gitStatus, totals }: {
 
 // ── Level: changes (per-file list) ───────────────────────────────────────────
 
-function ChangesLevel({ push }: { push: (level: InspectorLevel) => void }) {
+function ChangesLevel({ state, push }: { state: AppState; push: (level: InspectorLevel) => void }) {
+  // Two real sources, deliberately separated: what THIS conversation changed
+  // (its own ledger, always accurate for the chat) and what the shared working
+  // tree still holds uncommitted. The conversation's files come first because
+  // that is the question a per-session panel is asked.
+  const sessionFiles = sessionChangedFiles(state.chat);
   const [files, setFiles] = useState<GitFileStat[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -180,37 +186,62 @@ function ChangesLevel({ push }: { push: (level: InspectorLevel) => void }) {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  if (error) return <ErrorNote message={error} />;
-  if (loading && files.length === 0) {
+  if (error && sessionFiles.length === 0) return <ErrorNote message={error} />;
+  if (loading && files.length === 0 && sessionFiles.length === 0) {
     return <div className="insp-loading"><Loader2 size={14} className="insp-spin" />读取变更…</div>;
   }
-  if (files.length === 0) {
-    return <Empty icon={<FileDiff size={20} />} title="工作区是干净的" hint="没有未提交的文件变更。" />;
+  if (files.length === 0 && sessionFiles.length === 0) {
+    return <Empty icon={<FileDiff size={20} />} title="本会话没有改动" hint="工作区也没有未提交的文件变更。" />;
   }
 
   return (
     <div className="insp-stack">
-      {files.map((file) => {
-        const { dir, name } = shortPath(file.path);
-        return (
-          <DrillRow
-            key={file.path}
-            icon={<FileCode2 size={13} />}
-            name={name}
-            dir={dir}
-            detail={<><span className="insp-add">+{file.added}</span><span className="insp-del">−{file.removed}</span></>}
-            onClick={() => push({ kind: 'file', path: file.path, staged: file.status === 'staged' })}
-            title={file.path}
-          />
-        );
-      })}
+      {sessionFiles.length > 0 && (
+        <>
+          <div className="insp-group-label">本会话</div>
+          {sessionFiles.map((file) => {
+            const { dir, name } = shortPath(file.path);
+            return (
+              <DrillRow
+                key={`session:${file.path}`}
+                icon={<FileCode2 size={13} />}
+                name={name}
+                dir={dir}
+                detail={<><span className="insp-add">+{file.added}</span><span className="insp-del">−{file.removed}</span></>}
+                onClick={() => push({ kind: 'file', path: file.path })}
+                title={file.path}
+              />
+            );
+          })}
+        </>
+      )}
+      {files.length > 0 && (
+        <>
+          <div className="insp-group-label">工作区未提交</div>
+          {files.map((file) => {
+            const { dir, name } = shortPath(file.path);
+            return (
+              <DrillRow
+                key={file.path}
+                icon={<FileCode2 size={13} />}
+                name={name}
+                dir={dir}
+                detail={<><span className="insp-add">+{file.added}</span><span className="insp-del">−{file.removed}</span></>}
+                onClick={() => push({ kind: 'file', path: file.path, staged: file.status === 'staged' })}
+                title={file.path}
+              />
+            );
+          })}
+        </>
+      )}
     </div>
   );
 }
 
 // ── Level: one file's diff ───────────────────────────────────────────────────
 
-function FileLevel({ path, staged, commitRef, onOpenFile }: {
+function FileLevel({ workspaceRoot, path, staged, commitRef, onOpenFile }: {
+  workspaceRoot: string;
   path: string;
   staged?: boolean;
   /**
@@ -219,65 +250,11 @@ function FileLevel({ path, staged, commitRef, onOpenFile }: {
    * string ref, which throws (React error #290).
    */
   commitRef?: string;
-  onOpenFile?: (path: string) => void;
+  onOpenFile?: (path: string, line?: number) => void;
 }) {
-  const [data, setData] = useState<GitFileDiffResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    desktop.git.fileDiff(path, staged, commitRef)
-      .then((res) => { if (!cancelled) { if (res.ok === false) setError(res.error ?? '无法读取差异'); else setData(res); } })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [path, staged, commitRef]);
-
-  const hunks = parseUnifiedDiff(data?.diff ?? '');
-  const totals = countDiffRows(hunks);
-
-  return (
-    <div className="insp-diff">
-      <div className="insp-diff-meta">
-        <code title={path}>{path}</code>
-        {commitRef && <span className="insp-tag" title={commitRef}>提交 {commitRef.slice(0, 7)}</span>}
-        {data?.untracked && <span className="insp-tag">未跟踪</span>}
-        {staged && <span className="insp-tag">已暂存</span>}
-        <span className="insp-diff-totals">
-          <span className="insp-add">+{totals.added}</span>
-          <span className="insp-del">−{totals.removed}</span>
-        </span>
-      </div>
-
-      {error && <ErrorNote message={error} />}
-      {loading && !data && <div className="insp-loading"><Loader2 size={14} className="insp-spin" />读取差异…</div>}
-      {!loading && !error && hunks.length === 0 && (
-        <Empty icon={<FileDiff size={20} />} title="没有可显示的差异" hint="该文件与 HEAD 一致，或差异为空。" />
-      )}
-
-      {hunks.map((hunk, hunkIndex) => (
-        <div key={hunkIndex} className="insp-hunk">
-          <div className="insp-hunk-head">{hunk.header}</div>
-          {hunk.rows.map((row, rowIndex) => (
-            <div key={rowIndex} className={`insp-diff-row diff-${row.kind}`}>
-              <span className="insp-diff-ln">{row.oldLine ?? ''}</span>
-              <span className="insp-diff-ln">{row.newLine ?? ''}</span>
-              <span className="insp-diff-text">{row.text || ' '}</span>
-            </div>
-          ))}
-        </div>
-      ))}
-
-      {onOpenFile && (
-        <button type="button" className="insp-open-file" onClick={() => onOpenFile(path)}>
-          在编辑器中打开
-        </button>
-      )}
-    </div>
-  );
+  const modeKey = JSON.stringify([workspaceRoot, path, staged, commitRef]);
+  const [mode, setMode] = useState({ key: '', staged: false });
+  return <GitFileDiffView workspaceRoot={workspaceRoot} path={path} staged={mode.key === modeKey ? mode.staged : Boolean(staged)} commitRef={commitRef} compact onOpenFile={onOpenFile} onStageChange={commitRef ? undefined : (value) => setMode({ key: modeKey, staged: value })} />;
 }
 
 // ── Level: branches ──────────────────────────────────────────────────────────
@@ -576,11 +553,11 @@ export function InspectorSidebar({
   initialLevel?: InspectorLevel;
   onClose: () => void;
   onWidthChange: (width: number) => void;
-  onOpenFile?: (path: string) => void;
+  onOpenFile?: (path: string, line?: number) => void;
 }) {
-  const [stack, setStack] = useState<InspectorStack>(() => initialStack());
+  const [stack, setStack] = useState<InspectorStack>(() => initialStack(initialLevel));
+  const inspectedContext = useRef({ workspaceRoot: state.workspaceRoot, sessionId: state.activeSessionId });
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
-  const [totals, setTotals] = useState({ added: 0, removed: 0 });
   // Drag state lives in a ref, not useState: the move handler must call the
   // parent's onWidthChange directly. Calling a parent setState from inside a
   // state updater is the "update scheduled from inside an update function"
@@ -592,21 +569,26 @@ export function InspectorSidebar({
   // Opening the inspector on a requested level restarts the stack there, so a
   // capsule click lands on that view rather than on whatever was left open.
   useEffect(() => {
-    if (open && initialLevel) setStack(initialStack());
+    if (open && initialLevel) setStack(initialStack(initialLevel));
   }, [open, initialLevel]);
 
   // Reset when the conversation changes: a stack pointing at a file from the
   // previous session would show a path that is no longer meaningful.
   useEffect(() => {
-    setStack(initialStack());
-  }, [state.activeSessionId]);
+    const previous = inspectedContext.current;
+    if (previous.workspaceRoot !== state.workspaceRoot || previous.sessionId !== state.activeSessionId) {
+      inspectedContext.current = { workspaceRoot: state.workspaceRoot, sessionId: state.activeSessionId };
+      setStack(initialStack());
+    }
+  }, [state.activeSessionId, state.workspaceRoot]);
 
-  // Live git summary for the overview level.
+  // Live git summary for the overview level. Only the status is polled now:
+  // the tree's diff totals were never shown per-conversation, and running a
+  // full diff every 8s for numbers the strip no longer renders was wasted work.
   const refreshStatus = useCallback(async () => {
     try {
-      const [s, d] = await Promise.all([desktop.git.status(), desktop.git.diffStats()]);
+      const s = await desktop.git.status();
       setGitStatus(s.ok ? s : null);
-      if (d.ok) setTotals({ added: d.added ?? 0, removed: d.removed ?? 0 });
     } catch { /* the overview just shows less */ }
   }, []);
 
@@ -653,9 +635,7 @@ export function InspectorSidebar({
 
   const current = currentEntry(stack);
   const sessionTotals = sessionChangeTotals(state.chat);
-  const changedFiles = gitStatus
-    ? (gitStatus.staged?.length ?? 0) + (gitStatus.unstaged?.length ?? 0) + (gitStatus.untracked?.length ?? 0)
-    : 0;
+  const changedFiles = gitChangedFileCount(gitStatus);
 
   return (
     <aside className="inspector" style={{ width }} role="dialog" aria-label="检查器">
@@ -705,16 +685,17 @@ export function InspectorSidebar({
           <GitBranch size={12} /> {gitStatus?.branch ?? '—'}
         </span>
         <span className="insp-row-spacer" />
-        {changedFiles > 0 ? (
-          <>
-            <span className="insp-add">+{totals.added}</span>
-            <span className="insp-del">−{totals.removed}</span>
-          </>
-        ) : sessionTotals ? (
+        {/* Session first, working tree second — same rule as the capsule: a
+            conversation's totals are its own. The repository's uncommitted
+            numbers are shown only as a file count, never as this chat's
+            +/−, because every new conversation inherited them otherwise. */}
+        {sessionTotals ? (
           <>
             <span className="insp-add">+{sessionTotals.added}</span>
             <span className="insp-del">−{sessionTotals.removed}</span>
           </>
+        ) : changedFiles > 0 ? (
+          <span className="insp-muted" title="工作区未提交文件不属于本会话">工作区 {changedFiles}</span>
         ) : (
           <span className="insp-muted">干净</span>
         )}
@@ -722,11 +703,12 @@ export function InspectorSidebar({
 
       <div className="inspector-body">
         {current.level.kind === 'overview' && (
-          <OverviewLevel state={state} push={push} gitStatus={gitStatus} totals={totals} />
+          <OverviewLevel state={state} push={push} gitStatus={gitStatus} />
         )}
-        {current.level.kind === 'changes' && <ChangesLevel push={push} />}
+        {current.level.kind === 'changes' && <ChangesLevel state={state} push={push} />}
         {current.level.kind === 'file' && (
           <FileLevel
+            workspaceRoot={state.workspaceRoot}
             path={current.level.path}
             staged={current.level.staged}
             commitRef={current.level.ref}

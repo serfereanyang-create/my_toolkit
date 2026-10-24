@@ -59,7 +59,7 @@ export function GitSettings({ prefs, savePref }: { prefs: Prefs; savePref: SaveP
         />
         <SettingRow
           title="代码审查发送方式"
-          description="尽可能在当前聊天中启动 /review，或启动单独的审查聊天"
+          description="在当前聊天或独立聊天中进行审查"
           control={<Segmented
             value={reviewMode}
             onChange={setReviewMode}

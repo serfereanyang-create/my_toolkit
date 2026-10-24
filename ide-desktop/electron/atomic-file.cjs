@@ -25,10 +25,10 @@ function isRetryableRenameError(error) {
   return code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
 }
 
-async function renameWithRetry(tempFile, filePath, retryDelaysMs = DEFAULT_RENAME_RETRY_DELAYS_MS) {
+async function renameWithRetry(tempFile, filePath, retryDelaysMs = DEFAULT_RENAME_RETRY_DELAYS_MS, renameImpl = rename) {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      await rename(tempFile, filePath);
+      await renameImpl(tempFile, filePath);
       return;
     } catch (error) {
       const delayMs = retryDelaysMs[attempt];

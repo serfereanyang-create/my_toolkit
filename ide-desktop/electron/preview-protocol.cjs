@@ -113,6 +113,9 @@ function mimeForKind(kind, filePath) {
     '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
     '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif',
     '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.svg': 'image/svg+xml',
+    '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json',
+    '.woff': 'font/woff', '.woff2': 'font/woff2',
     '.pdf': 'application/pdf',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   };

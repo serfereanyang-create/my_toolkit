@@ -1,5 +1,5 @@
-import { Plus, ShieldCheck, ArrowUp, Square, Gauge, Terminal, AtSign, FileEdit } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Plus, ShieldCheck, ArrowUp, Square, Gauge, Terminal, AtSign, FileEdit, ChevronDown } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { AppState, QueuedMessage, ReasoningEffort, ToolScope } from '../types';
 import { PluginMenu, type PluginItem } from './PluginMenu';
@@ -16,13 +16,13 @@ import { categorizeFile, getMediaType, getCategoryIcon, generateSmartPrompt, val
 import { sessionChangeTotals } from '../lib/state';
 import { loadInputHistory, pushInputHistory } from '../lib/inputHistory';
 import { modelReasoningCapability } from '../lib/modelCapabilities';
-import { normalizeChains } from '../lib/dispatchChains';
 import { contextBudget, estimateTokens, tokenBreakdown } from '../lib/tokenEstimate';
+import { appNotice } from './ToastLayer';
 
 // approvalLabel is imported from ApprovalMenu and used via approvalMenuLabel below.
 // No local duplicate needed.
 
-export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, onPickPlugin, onPickModel, onPickEffort, onPickToolScope, onToggleDispatchTier, onToggleDispatchPick, onManageModels, terminalOutput, queue, onQueueSendNow, onQueueEdit, onQueueRemove }: {
+export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, onPickPlugin, onPickModel, onPickEffort, onPickToolScope, onManageModels, terminalOutput, queue, queuePaused, onQueueResume, onQueueSendNow, onQueueEdit, onQueueRemove }: {
   state: AppState;
   prefill?: { text: string; nonce: number } | null;
   onSubmit: (text: string, files?: DetectedFile[], mentions?: MentionItem[]) => void;
@@ -32,14 +32,12 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   onPickModel: (providerId: string, model: string) => void;
   onPickEffort: (effort: ReasoningEffort) => void;
   onPickToolScope: (toolScope: ToolScope) => void;
-  /** Assign a model to a 省钱分级 tier (empty string clears it). */
-  onToggleDispatchTier?: (tier: 'expensive' | 'standard' | 'cheap', value: string) => void;
-  /** Check / uncheck a model in the dispatch set (multi-select). */
-  onToggleDispatchPick?: (value: string) => void;
   onManageModels: () => void;
   terminalOutput?: string;
   /** Messages submitted while the agent was busy, oldest first. */
   queue?: QueuedMessage[];
+  queuePaused?: boolean;
+  onQueueResume?: () => void;
   onQueueSendNow?: (id: string) => void;
   onQueueEdit?: (id: string, text: string) => void;
   onQueueRemove?: (id: string) => void;
@@ -61,10 +59,51 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   const [mentions, setMentions] = useState<MentionItem[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const resize = () => {
+      textarea.style.height = '0px';
+      textarea.style.height = `${Math.min(180, Math.max(56, textarea.scrollHeight))}px`;
+    };
+    resize();
+    let width = textarea.clientWidth;
+    const observer = new ResizeObserver((entries) => {
+      const nextWidth = entries[0]?.contentRect.width;
+      if (nextWidth !== undefined && nextWidth !== width) {
+        width = nextWidth;
+        resize();
+      }
+    });
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [text]);
+
   // Codex-style input history: persisted via localStorage, recalled with ↑/↓.
   const historyRef = useRef<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   useEffect(() => { historyRef.current = loadInputHistory(); }, []);
+
+  // An unsent draft belongs to the conversation it was typed in. `text` used to
+  // be a single piece of state for the whole composer, so switching sessions
+  // carried the draft across with no visible sign — the next Enter sent the
+  // previous conversation's prompt into this one. Keep one draft per session
+  // and swap it on switch, so going back finds the text where it was left.
+  const sessionId = state.activeSessionId ?? '';
+  const draftsRef = useRef<Map<string, string>>(new Map());
+  const draftSessionRef = useRef(sessionId);
+  const textRef = useRef(text);
+  textRef.current = text;
+  useEffect(() => {
+    if (sessionId === draftSessionRef.current) return;
+    draftsRef.current.set(draftSessionRef.current, textRef.current);
+    draftSessionRef.current = sessionId;
+    setText(draftsRef.current.get(sessionId) ?? '');
+    // The recall cursor is per-conversation too. Left alone, switching away
+    // mid-recall carried the index over and the new conversation's first ↑
+    // landed on the second-newest entry (and ↓ then "advanced" from there).
+    setHistoryIndex(-1);
+  }, [sessionId]);
 
   // 常规页开关的真实消费点：发送快捷键、上下文用量入口、插件入口。
   const prefs = state.settings?.preferences ?? {};
@@ -73,7 +112,10 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   const pluginsEnabled = prefs['gen.plugins'] !== false;
 
   useEffect(() => {
-    if (prefill) setText(prefill.text);
+    if (prefill) {
+      setText(prefill.text);
+      textareaRef.current?.focus();
+    }
   }, [prefill?.nonce]);
 
   // Bug-9 fix: depend on the full attachedFiles array reference (not just length)
@@ -128,8 +170,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   }, [running]);
   const provider = state.settings?.providers.find((item) => item.id === state.settings?.activeProviderId);
   const model = provider?.model ?? 'mock-code-agent-v1';
-  const modelLabel = provider && provider.type === 'custom' && provider.label
-    ? `${provider.label}/${model}` : model;
+  const modelLabel = model;
   const effortKey = `${state.settings?.activeProviderId ?? ''}/${model}`;
   const reasoningCapability = modelReasoningCapability(provider);
   const effort = state.settings?.preferences?.reasoningEffortByModel?.[effortKey]
@@ -225,13 +266,13 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
     const droppedFiles = Array.from(event.dataTransfer.files);
     const remaining = MAX_FILE_COUNT - attachedFiles.length;
     if (droppedFiles.length > remaining) {
-      alert(`最多只能选择 ${MAX_FILE_COUNT} 个文件，当前已有 ${attachedFiles.length} 个`);
+      appNotice('附件数量已达上限', `最多只能选择 ${MAX_FILE_COUNT} 个文件，当前已有 ${attachedFiles.length} 个。`, 'info');
       return;
     }
     const newFiles: DetectedFile[] = [];
     for (const file of droppedFiles) {
       const validation = validateFile(file);
-      if (!validation.valid) { alert(validation.error); continue; }
+      if (!validation.valid) { appNotice('文件无法添加', validation.error, 'error'); continue; }
       const category = categorizeFile(file.name);
       newFiles.push({ path: file.path || '', name: file.name, size: file.size, category,
         mediaType: getMediaType(file.name), icon: getCategoryIcon(category) });
@@ -259,7 +300,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
 
     const remaining = MAX_FILE_COUNT - attachedFiles.length;
     if (imageItems.length > remaining) {
-      alert(`最多只能选择 ${MAX_FILE_COUNT} 个文件，当前已有 ${attachedFiles.length} 个`);
+      appNotice('附件数量已达上限', `最多只能选择 ${MAX_FILE_COUNT} 个文件，当前已有 ${attachedFiles.length} 个。`, 'info');
       return;
     }
 
@@ -301,7 +342,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
         });
       } catch (error) {
         console.error('Failed to save pasted image:', error);
-        alert(`粘贴图片失败：${error instanceof Error ? error.message : String(error)}`);
+        appNotice('粘贴图片失败', error instanceof Error ? error.message : String(error), 'error');
       }
     }
 
@@ -315,6 +356,8 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
       <div className="composer-stack">
         <MessageQueue
           items={queue ?? []}
+          paused={queuePaused}
+          onResume={onQueueResume}
           onSendNow={onQueueSendNow ?? (() => {})}
           onEdit={onQueueEdit ?? (() => {})}
           onRemove={onQueueRemove ?? (() => {})}
@@ -326,9 +369,6 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
         {modelMenuOpen && state.settings && (
           <ModelMenu providers={state.settings.providers} activeProviderId={state.settings.activeProviderId}
             activeModel={model} onPick={onPickModel} onManage={onManageModels}
-            dispatchDefault={normalizeChains(state.settings.preferences?.dispatchDefault)}
-            onToggleTier={onToggleDispatchTier}
-            onTogglePick={onToggleDispatchPick}
             onClose={() => setModelMenuOpen(false)} />
         )}
         {thinkingMenuOpen && (
@@ -366,13 +406,13 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
             </div>
           )}
           {attachedFiles.length > 0 && <FileAttachmentList files={attachedFiles} onRemove={removeFile} />}
-          {/* chat_composer.rs: bold `›` prompt glyph at the input's left edge */}
           <div className="composer-input-row">
-            <span className="composer-caret">›</span>
             <textarea ref={textareaRef} value={text} onChange={handleTextChange}
               onPaste={handlePaste}
-              placeholder="随心输入，输入 @ 引用文件或符号，输入 / 使用指令" rows={1}
+              aria-label="输入任务或问题"
+              placeholder="描述你想完成的事，@ 引用文件，/ 使用指令" rows={1}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (mentionOpen) return;
               // ↑/↓ history recall (Codex CLI behavior): ↑ from an empty box or
               // caret-at-start walks back; ↓ walks forward; manual edit resets.
@@ -410,35 +450,47 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
             }} />
           </div>
           <div className="composer-bar">
+            <div className="composer-tools">
             {pluginsEnabled && (
-              <button className={`icon-button ${menuOpen ? 'active' : ''}`} title="插件与文件"
+              <button type="button" className={`icon-button ${menuOpen ? 'active' : ''}`} title="插件与文件" aria-label="插件与文件" aria-expanded={menuOpen}
                 onClick={() => setMenuOpen((o) => !o)}><Plus size={18} /></button>
             )}
-            <button className={`icon-button ${mentionOpen ? 'active' : ''}`} title="引用文件/符号 (@)"
+            <button type="button" className={`icon-button ${mentionOpen ? 'active' : ''}`} title="引用文件/符号 (@)" aria-label="引用文件或符号" aria-expanded={mentionOpen}
               onClick={() => { setText((t) => t + '@'); setMentionOpen(true); setMentionQuery(''); textareaRef.current?.focus(); }}>
               <AtSign size={15} /></button>
             <button
+              type="button"
               className={`composer-access ${approvalMenuOpen ? 'active' : ''}`}
-              title="审批模式"
+              title="审批模式" aria-label={`审批模式：${approvalMenuLabel[approval] ?? approval}`} aria-expanded={approvalMenuOpen}
               onClick={() => { setApprovalMenuOpen((o) => !o); setThinkingMenuOpen(false); setToolScopeMenuOpen(false); setModelMenuOpen(false); setContextMenuOpen(false); }}>
               <ShieldCheck size={15} />{approvalMenuLabel[approval] ?? approval}</button>
-            <span className="composer-spacer" />
+            <button type="button" className={`icon-button ${slashMenuOpen ? 'active' : ''}`} title="斜杠命令" aria-label="斜杠命令" aria-expanded={slashMenuOpen}
+              onClick={() => setSlashMenuOpen((o) => !o)}><Terminal size={15} /></button>
+            </div>
+            <div className="composer-settings">
             {showContextUsage && (
               <button type="button"
                 className={`composer-context ${contextMenuOpen ? 'active' : ''} ${state.contextStats ? 'has-data' : ''}`}
-                title={contextTitle}
+                title={contextTitle} aria-label={contextTitle} aria-expanded={contextMenuOpen}
                 onClick={() => { setContextMenuOpen((o) => !o); setThinkingMenuOpen(false); setToolScopeMenuOpen(false); setModelMenuOpen(false); }}>
                 <span className="composer-context-ring" style={{ '--context-pct': `${contextRate ?? 0}%` } as CSSProperties} />
               </button>
             )}
-            <button type="button" className={`composer-model ${modelMenuOpen ? 'active' : ''}`} title="选择模型"
+            <button type="button" className={`composer-model ${modelMenuOpen ? 'active' : ''}`} title={`选择模型：${provider?.label ?? ''} ${model}`} aria-label="选择模型" aria-expanded={modelMenuOpen}
               onClick={() => { setModelMenuOpen((o) => !o); setThinkingMenuOpen(false); setToolScopeMenuOpen(false); setContextMenuOpen(false); }}>
-              <span className="composer-model-label">{modelLabel}</span></button>
-            <button type="button" className={`composer-effort ${thinkingMenuOpen ? 'active' : ''}`} title="思考强度"
+              <span className="composer-model-label">{modelLabel}</span><ChevronDown size={12} /></button>
+            <button type="button" className={`composer-effort ${thinkingMenuOpen ? 'active' : ''}`} title="思考强度" aria-label={`思考强度：${effortLabel[effort]}`} aria-expanded={thinkingMenuOpen}
               onClick={() => { setThinkingMenuOpen((o) => !o); setToolScopeMenuOpen(false); setModelMenuOpen(false); setContextMenuOpen(false); }}>
               <Gauge size={15} /><span>{effortLabel[effort]}</span></button>
-            <button type="button" className={`icon-button ${slashMenuOpen ? 'active' : ''}`} title="斜杠命令"
-              onClick={() => setSlashMenuOpen((o) => !o)}><Terminal size={15} /></button>
+            </div>
+            {running
+              ? <button type="button" className="composer-send composer-stop" title="停止" aria-label="停止当前任务" onClick={onCancel}><Square size={15} /></button>
+              : <button type="button" className="composer-send" title="发送" aria-label="发送消息" onClick={submit} disabled={!text.trim()}><ArrowUp size={17} /></button>}
+          </div>
+        </div>
+        <div className="composer-footer">
+          <span className="composer-shortcut">{sendShortcut === 'mod-enter' ? 'Ctrl / ⌘ + Enter 发送' : 'Enter 发送 · Shift + Enter 换行'}</span>
+          <div className="composer-metrics">
             {changeTotals && (
               <span className="composer-changes" title={`本次会话累计变更：+${changeTotals.added} -${changeTotals.removed}`}>
                 <FileEdit size={13} />
@@ -457,18 +509,13 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
                 {draftTokens.toLocaleString()} tk
               </span>
             ) : null}
-            {running
-              ? <button className="composer-send" title="停止" onClick={onCancel}><Square size={15} /></button>
-              : <button className="composer-send" title="发送" onClick={submit} disabled={!text.trim()}><ArrowUp size={17} /></button>}
-          </div>
-          {/* footer.rs: while streaming show the live token output speed
-              centered; idle state renders nothing (hints row removed). */}
           {running && (
-            <div className="composer-hints composer-rate">
+            <span className="composer-hints composer-rate" role="status">
               <span className="composer-rate-value">{tokenRate === null ? '…' : tokenRate}</span>
               <span> tok/s</span>
-            </div>
+            </span>
           )}
+          </div>
         </div>
       </div>
     </div>

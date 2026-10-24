@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BarChart3, RefreshCw, FileCode2, AlertTriangle, FolderTree } from 'lucide-react';
+import { RefreshCw, FileCode2, AlertTriangle, FolderTree } from 'lucide-react';
 import { desktop, type CodeCensus } from '../lib/ipc';
 import { fuzzyRankItems } from '../lib/fuzzy';
 
@@ -85,10 +85,13 @@ export function CodeStatsPanel({ onOpenFile }: { onOpenFile: (path: string, line
 
   return (
     <div className="census-panel">
+      {/* The window topbar already says 代码普查 and carries the view glyph, so
+          this row is only the scan provenance (file count / duration) and the
+          rescan control — restating the title put the same words twice, 40px
+          apart. */}
       <div className="census-head">
-        <span><BarChart3 size={13} /> 代码普查</span>
         <span className="census-head-meta">
-          {loading ? progress : census && !census.error ? `${census.totalFiles} 文件 · ${census.elapsedMs} ms` : ''}
+          {loading ? progress : census && !census.error ? `${census.totalFiles} 个文件 · ${census.elapsedMs} ms` : ''}
           <button className="icon-button" title="重新扫描" onClick={() => { void run(); }} disabled={loading}><RefreshCw size={13} className={loading ? 'spin' : undefined} /></button>
         </span>
       </div>

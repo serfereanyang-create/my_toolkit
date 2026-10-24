@@ -112,3 +112,46 @@ test('all() covers live and pending bridges, for a bulk dispose', () => {
   assert.equal(registry.all().length, 0);
   assert.equal(registry.size, 0);
 });
+
+/*
+ * The sequence `agentManager.restartSession` performs, pinned end to end.
+ *
+ * A restart builds a NEW bridge (the old one's argv was captured at
+ * construction, so respawning it would keep the same model). The old child must
+ * stop being addressable before it is disposed, and the replacement must be
+ * adoptable when it announces — otherwise the session goes permanently
+ * unreachable and the model switch looks like it succeeded.
+ */
+test('a restart hand-off leaves the session addressable to the new bridge', () => {
+  const registry = new BridgeRegistry();
+  const old = fakeBridge('old');
+  registry.addPending(old);
+  assert.equal(registry.adopt(old, 'sess_a'), true);
+  assert.equal(registry.get('sess_a'), old);
+
+  // ── what restartSession does, in order ──
+  registry.removeBridge(old);
+  assert.equal(registry.get('sess_a'), undefined, 'the dying child must not stay addressable');
+
+  // The replacement is a different instance, already pending, and resumes the id.
+  const replacement = fakeBridge('new');
+  registry.addPending(replacement);
+  assert.equal(registry.adopt(replacement, 'sess_a'), true);
+  assert.equal(registry.get('sess_a'), replacement, 'the session must reach the new child');
+  assert.notEqual(registry.get('sess_a'), old, 'the old child must not be reachable again');
+});
+
+test('adopting over a live session is refused, which is why removeBridge comes first', () => {
+  // Guards the ordering above: if the replacement announced before the old
+  // bridge was forgotten, `adopt` would refuse it and the restart would leave
+  // the session bound to the child that is being torn down.
+  const registry = new BridgeRegistry();
+  const old = fakeBridge('old');
+  registry.addPending(old);
+  registry.adopt(old, 'sess_a');
+
+  const replacement = fakeBridge('new');
+  registry.addPending(replacement);
+  assert.equal(registry.adopt(replacement, 'sess_a'), false, 'a live owner is never silently evicted');
+  assert.equal(registry.get('sess_a'), old);
+});

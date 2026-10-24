@@ -31,36 +31,79 @@ function isNotFound(error) {
 }
 
 /**
- * Parse the ledger. `records` is the recent tail the panel renders; `total` is
- * how many edits the ledger really holds — the header must not shrink to the
- * page size once a user has more history than one read.
+ * Parse the ledger once into both shapes the panel needs.
+ *
+ * `records` is only the recent tail the timeline renders, but the counts must
+ * cover the whole file: aggregating from the tail alone made a project whose
+ * history had scrolled past the window disappear from the panel entirely, while
+ * the header above it still claimed "共 3000 次编辑". A project with 1000 older
+ * edits and 30 files showed up as nothing at all.
  */
 function parseLedger(raw) {
   const records = [];
+  const projects = new Map();
   let total = 0;
   for (const line of raw.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
+    let parsed;
     try {
-      const parsed = JSON.parse(trimmed);
-      if (typeof parsed?.at === 'string' && typeof parsed?.path === 'string' && typeof parsed?.workspace === 'string') {
-        total += 1;
-        records.push({
-          at: parsed.at,
-          project: typeof parsed.project === 'string' ? parsed.project : path.basename(parsed.workspace),
-          workspace: parsed.workspace,
-          action: parsed.action === 'rename' ? 'rename' : parsed.action === 'delete' ? 'delete' : 'write',
-          path: parsed.path,
-          from: typeof parsed.from === 'string' ? parsed.from : undefined,
-          created: parsed.created === true,
-        });
-      }
+      parsed = JSON.parse(trimmed);
     } catch {
       // A half-written line from a killed process: skip, never fail the read.
+      continue;
     }
+    if (typeof parsed?.at !== 'string' || typeof parsed?.path !== 'string' || typeof parsed?.workspace !== 'string') continue;
+    total += 1;
+    const record = {
+      at: parsed.at,
+      project: typeof parsed.project === 'string' ? parsed.project : path.basename(parsed.workspace),
+      workspace: parsed.workspace,
+      action: parsed.action === 'rename' ? 'rename' : parsed.action === 'delete' ? 'delete' : 'write',
+      path: parsed.path,
+      from: typeof parsed.from === 'string' ? parsed.from : undefined,
+      created: parsed.created === true,
+    };
+    records.push(record);
+    accumulate(projects, record);
   }
-  return { records: records.slice(-MAX_LEDGER_RECORDS), total };
+  return { records: records.slice(-MAX_LEDGER_RECORDS), total, projects };
 }
+
+/** Fold one record into its project's running totals. */
+function accumulate(projects, record) {
+  const key = workspaceKey(record.workspace);
+  let entry = projects.get(key);
+  if (!entry) {
+    entry = { project: record.project, workspace: record.workspace, edits: 0, lastAt: record.at, files: new Map() };
+    projects.set(key, entry);
+  }
+  entry.edits += 1;
+  if (record.at > entry.lastAt) entry.lastAt = record.at;
+  const file = entry.files.get(record.path);
+  if (file) {
+    file.count += 1;
+    if (record.at >= file.at) {
+      file.at = record.at;
+      // Only the latest action describes the file's current state.
+      file.renamed = record.action === 'rename';
+      file.deleted = record.action === 'delete';
+      // A file that was deleted and later written again is not "新建" any more,
+      // and a file created earlier and recreated now is.
+      if (record.created) file.created = true;
+    }
+    return;
+  }
+  entry.files.set(record.path, {
+    path: record.path,
+    at: record.at,
+    count: 1,
+    created: record.created,
+    renamed: record.action === 'rename',
+    deleted: record.action === 'delete',
+  });
+}
+
 
 /**
  * Two spellings of the same folder (trailing separator, drive-letter case) must
@@ -73,39 +116,8 @@ function workspaceKey(workspace) {
   return process.platform === 'win32' ? trimmed.toLowerCase() : trimmed;
 }
 
-/** Group raw records into one entry per workspace, newest project first. */
-function summariseProjects(records) {
-  const projects = new Map();
-  for (const record of records) {
-    const key = workspaceKey(record.workspace);
-    let entry = projects.get(key);
-    if (!entry) {
-      entry = { project: record.project, workspace: record.workspace, edits: 0, lastAt: record.at, files: new Map(), fileTotal: 0 };
-      projects.set(key, entry);
-    }
-    entry.edits += 1;
-    if (record.at > entry.lastAt) entry.lastAt = record.at;
-    const file = entry.files.get(record.path);
-    if (file) {
-      file.count += 1;
-      if (record.at >= file.at) {
-        file.at = record.at;
-        // Only the latest action describes the file's current state.
-        file.renamed = record.action === 'rename';
-        file.deleted = record.action === 'delete';
-      }
-    } else {
-      entry.files.set(record.path, {
-        path: record.path,
-        at: record.at,
-        count: 1,
-        created: record.created,
-        renamed: record.action === 'rename',
-        deleted: record.action === 'delete',
-      });
-      entry.fileTotal += 1;
-    }
-  }
+/** Turn the folded per-workspace totals into what the panel renders. */
+function summariseProjects(projects) {
   return [...projects.values()]
     .sort((a, b) => b.lastAt.localeCompare(a.lastAt))
     .map((entry) => ({
@@ -114,7 +126,7 @@ function summariseProjects(records) {
       edits: entry.edits,
       lastAt: entry.lastAt,
       // True number of files touched; `files` is only the newest slice.
-      fileTotal: entry.fileTotal,
+      fileTotal: entry.files.size,
       files: [...entry.files.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, MAX_FILES_PER_PROJECT),
     }));
 }
@@ -143,15 +155,15 @@ async function readGlobalMemory(options = {}) {
 
   let records = [];
   let total = 0;
+  let projects = [];
   try {
     const parsed = parseLedger(await readFile(ledgerPath, 'utf8'));
     records = parsed.records;
     total = parsed.total;
+    projects = summariseProjects(parsed.projects);
   } catch (error) {
     if (!isNotFound(error)) return { ok: false, error: error instanceof Error ? error.message : String(error), root };
   }
-
-  const projects = summariseProjects(records);
   return {
     ok: true,
     root,

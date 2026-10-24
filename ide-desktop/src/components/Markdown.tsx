@@ -17,8 +17,59 @@ type Block =
   | { kind: 'code'; lang: string; text: string }
   | { kind: 'heading'; level: number; text: string }
   | { kind: 'ul'; items: string[] }
-  | { kind: 'ol'; items: string[] }
-  | { kind: 'p'; text: string };
+  /** `start` preserves the number the model wrote — a loose list split by
+   *  blank lines used to render every block from 1. */
+  | { kind: 'ol'; items: string[]; start?: number }
+  /** `mono` keeps the source line breaks: column-aligned output (a table the
+   *  model typed with spaces, a file listing) collapses into one unreadable
+   *  run if it is joined into a paragraph. */
+  | { kind: 'p'; text: string; mono?: boolean }
+  | { kind: 'table'; header: string[]; align: Array<'left' | 'center' | 'right' | null>; rows: string[][] };
+
+/** Split a GFM table row on unescaped pipes. */
+function splitTableRow(line: string): string[] {
+  const cells: string[] = [];
+  let cell = '';
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '\\' && line[i + 1] === '|') { cell += '|'; i += 1; continue; }
+    if (ch === '|') { cells.push(cell); cell = ''; continue; }
+    cell += ch;
+  }
+  cells.push(cell);
+  // A leading/trailing pipe produces an empty first/last cell; drop those.
+  if (cells.length && cells[0].trim() === '') cells.shift();
+  if (cells.length && cells[cells.length - 1].trim() === '') cells.pop();
+  return cells.map((c) => c.trim());
+}
+
+/** `| --- | :--: |` under a header row — the marker that makes it a table. */
+function tableAlignments(line: string): Array<'left' | 'center' | 'right' | null> | null {
+  const cells = splitTableRow(line);
+  if (!cells.length) return null;
+  const align: Array<'left' | 'center' | 'right' | null> = [];
+  for (const cell of cells) {
+    if (!/^:?-{3,}:?$/.test(cell.replace(/\s/g, ''))) return null;
+    const left = cell.startsWith(':');
+    const right = cell.endsWith(':');
+    align.push(left && right ? 'center' : right ? 'right' : left ? 'left' : null);
+  }
+  return align;
+}
+
+/**
+ * Is this paragraph column-aligned output rather than prose?
+ *
+ * Models frequently type a small table with spaces (`行数    文件    1885`),
+ * and GitHub-flavoured markdown keeps that inside one paragraph. Joining the
+ * lines with " " — which is right for wrapped prose — runs every column
+ * together, which is exactly how the answer to a "top 5 by line count"
+ * question came out unreadable.
+ */
+function looksColumnar(lines: string[]): boolean {
+  if (lines.length < 2) return false;
+  return lines.some((line) => /\S {3,}\S/.test(line));
+}
 
 /** Assign unique anchor ids to a batch of heading texts, GitHub style. */
 export function headingAnchors(headings: string[]): string[] {
@@ -49,7 +100,12 @@ export function parseBlocks(src: string): Block[] {
         body.push(lines[i]);
         i++;
       }
-      i++; // skip closing fence
+      // An unterminated fence is a code block still being streamed, not prose.
+      // Treating it as a paragraph joined every line with a space, so a reply
+      // mid-code rendered as one unreadable run of text until the closing
+      // fence arrived. Keeping the line breaks makes the partial code look
+      // like code from the first token.
+      if (i < lines.length) i++; // skip closing fence
       blocks.push({ kind: 'code', lang, text: body.join('\n') });
       continue;
     }
@@ -68,12 +124,39 @@ export function parseBlocks(src: string): Block[] {
       continue;
     }
 
+    // GFM table: a row containing pipes followed by a delimiter row.
+    if (line.includes('|') && i + 1 < lines.length) {
+      const align = tableAlignments(lines[i + 1]);
+      if (align) {
+        const header = splitTableRow(line);
+        const rows: string[][] = [];
+        i += 2;
+        while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+          const row = splitTableRow(lines[i]);
+          // Pad short rows so every cell index exists at render time.
+          while (row.length < header.length) row.push('');
+          rows.push(row.slice(0, header.length));
+          i += 1;
+        }
+        blocks.push({ kind: 'table', header, align, rows });
+        continue;
+      }
+    }
+
     // Unordered list
     if (/^\s*[-*+]\s+/.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\s*[-*+]\s+/, ''));
-        i++;
+      while (i < lines.length) {
+        if (/^\s*[-*+]\s+/.test(lines[i])) {
+          items.push(lines[i].replace(/^\s*[-*+]\s+/, ''));
+          i++;
+          continue;
+        }
+        // Continue across a blank line only when another bullet follows:
+        // models routinely put a blank line between bullets, and stopping
+        // there split one list into a stack of one-item lists.
+        if (!lines[i].trim() && i + 1 < lines.length && /^\s*[-*+]\s+/.test(lines[i + 1])) { i++; continue; }
+        break;
       }
       blocks.push({ kind: 'ul', items });
       continue;
@@ -81,12 +164,18 @@ export function parseBlocks(src: string): Block[] {
 
     // Ordered list
     if (/^\s*\d+\.\s+/.test(line)) {
+      const start = Number(line.match(/^\s*(\d+)\./)?.[1] ?? 1);
       const items: string[] = [];
-      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\s*\d+\.\s+/, ''));
-        i++;
+      while (i < lines.length) {
+        if (/^\s*\d+\.\s+/.test(lines[i])) {
+          items.push(lines[i].replace(/^\s*\d+\.\s+/, ''));
+          i++;
+          continue;
+        }
+        if (!lines[i].trim() && i + 1 < lines.length && /^\s*\d+\.\s+/.test(lines[i + 1])) { i++; continue; }
+        break;
       }
-      blocks.push({ kind: 'ol', items });
+      blocks.push({ kind: 'ol', items, ...(start !== 1 ? { start } : {}) });
       continue;
     }
 
@@ -98,12 +187,17 @@ export function parseBlocks(src: string): Block[] {
       !/^```/.test(lines[i]) &&
       !/^(#{1,6})\s+/.test(lines[i]) &&
       !/^\s*[-*+]\s+/.test(lines[i]) &&
-      !/^\s*\d+\.\s+/.test(lines[i])
+      !/^\s*\d+\.\s+/.test(lines[i]) &&
+      !(lines[i].includes('|') && i + 1 < lines.length && tableAlignments(lines[i + 1]))
     ) {
       para.push(lines[i]);
       i++;
     }
-    blocks.push({ kind: 'p', text: para.join(' ') });
+    // Prose wraps: joining its lines with a space is correct. Column-aligned
+    // output does not — keep the line breaks and render it monospace.
+    blocks.push(looksColumnar(para)
+      ? { kind: 'p', text: para.join('\n'), mono: true }
+      : { kind: 'p', text: para.join(' ') });
   }
 
   return blocks;
@@ -195,12 +289,41 @@ export function Markdown({ text, anchorPrefix }: { text: string; anchorPrefix?: 
             );
           case 'ol':
             return (
-              <ol key={idx} className="md-list">
+              <ol key={idx} className="md-list" start={block.start}>
                 {block.items.map((it, j) => <li key={j}>{renderInline(it, `ol${idx}-${j}`)}</li>)}
               </ol>
             );
+          case 'table':
+            return (
+              <div className="md-table-wrap" key={idx}>
+                <table className="md-table">
+                  <thead>
+                    <tr>
+                      {block.header.map((cell, j) => (
+                        <th key={j} style={block.align[j] ? { textAlign: block.align[j]! } : undefined}>
+                          {renderInline(cell, `th${idx}-${j}`)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, r) => (
+                      <tr key={r}>
+                        {row.map((cell, j) => (
+                          <td key={j} style={block.align[j] ? { textAlign: block.align[j]! } : undefined}>
+                            {renderInline(cell, `td${idx}-${r}-${j}`)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
           default:
-            return <p key={idx} className="md-p">{renderInline(block.text, `p${idx}`)}</p>;
+            return block.mono
+              ? <pre key={idx} className="md-pre-text">{block.text}</pre>
+              : <p key={idx} className="md-p">{renderInline(block.text, `p${idx}`)}</p>;
         }
       })}
     </div>

@@ -14,7 +14,6 @@ const { createGuiControlService } = require('./gui-control.cjs');
 const git = require('./git.cjs');
 const { createCheckpointBackend } = require('./checkpoints.cjs');
 const { createFileSearchService } = require('./file-search.cjs');
-const { readSelection, resolveForUi, listOptions } = require('./dispatch-ipc.cjs');
 const { createResourceSampler } = require('./resource-sampler.cjs');
 const { createCommandsService } = require('./commands.cjs');
 const { exportSessionToFile, defaultExportPath } = require('./export-session.cjs');
@@ -38,7 +37,7 @@ function withDeadline(promise, timeoutMs, message) {
   });
 }
 
-function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, messageQueues, automation, agentManager, terminalManager, previewService, previewRuntime, backgroundBrowser, backgroundApp, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings, subagentRuns }) {
+function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, messageQueues, automation, agentManager, terminalManager, previewService, previewRuntime, backgroundBrowser, backgroundApp, guiControl, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings, subagentRuns }) {
   const queueScopes = new Set();
   const queueRoot = root => { if (typeof root !== 'string' || !path.isAbsolute(root)) throw new Error('需要绝对工作区路径。'); return path.resolve(root); };
   ipcMain.handle('messageQueue.load', async (_event, root) => {
@@ -118,31 +117,6 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     previewService?.hide();
   }
 
-  ipcMain.handle('dispatch.status', async (_event, sessionId) => {
-    // Resolve the tiers for a session so the UI shows the same provider/model
-    // the CLI would dispatch to, instead of re-deriving it in the renderer.
-    const id = typeof sessionId === 'string' ? sessionId : '';
-    if (!id) return { ok: false, configured: false, error: '缺少会话 ID' };
-    const sessionPath = typeof workspace.sessionAbsolutePath === 'function'
-      ? workspace.sessionAbsolutePath(id)
-      : null;
-    if (!sessionPath) return { ok: false, configured: false, error: '找不到会话文件' };
-    const selection = readSelection(sessionPath);
-    if (!selection) return { ok: false, configured: false, error: '该会话未配置分级调度' };
-    // resolveForUi awaits a dynamic import of the CLI's ESM router.
-    return await resolveForUi(selection);
-  });
-
-  ipcMain.handle('dispatch.options', async () => {
-    // The pickable provider/model pairs come from the CLI resolver, because
-    // the desktop's own provider labels don't match the v2 config names the
-    // dispatch actually resolves against.
-    try {
-      return { ok: true, options: await listOptions() };
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
-  });
 
   ipcMain.handle('workspace.getTree', async (_event, relativePath) => await workspace.tree(relativePath || '.'));
   // Reveal one workspace file in the OS file manager. Deliberately not a
@@ -358,8 +332,11 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   // to the workspace like every other fs handler.
   ipcMain.handle('media.prepare', async (_event, relativePath, expectedKind) => {
     const root = requireWorkspaceRoot();
-    const absolutePath = resolveWorkspacePath(root, relativePath);
-    assertInsideRoot(root, absolutePath);
+    // resolveWorkspacePath is async and already enforces containment, so
+    // awaiting it IS the check. It used to be called without await and with its
+    // arguments swapped, which made every call throw a TypeError about a
+    // non-string path and left the real rejection unhandled in the main process.
+    const { path: absolutePath } = await resolveWorkspacePath(relativePath, root);
     const preparation = await prepareMediaPreview({ filePath: absolutePath, expectedKind });
     return { ok: true, preparation };
   });
@@ -789,7 +766,6 @@ Edited code:`;
   // renderer never sees a generic "run any tool" channel, and the service
   // allowlists the nine computer_* tools. The CLI path it spawns re-validates
   // every input through the tool's own validate().
-  const guiControl = createGuiControlService({ cliRoot: path.resolve(__dirname, '..', '..', 'cli') });
   ipcMain.handle('guiControl.status', async () => guiControl.status());
   ipcMain.handle('guiControl.invoke', async (_event, tool, input) => guiControl.invoke(tool, input));
 

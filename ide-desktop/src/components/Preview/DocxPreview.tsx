@@ -67,7 +67,13 @@ export function DocxPreview({ tab, dispatch, workspaceRoot }: Props) {
 
     void render();
     return () => { cancelled = true; };
-  }, [tab.descriptor.relativePath, tab.descriptor.relativePath]);
+    // `revision` is what makes an agent's edit to this .docx actually re-render.
+    // The deps used to be [relativePath, relativePath] — the same value twice,
+    // which also meant React saw a 1-element dep list and the effect could never
+    // re-run for any other reason. `token` is a fresh token per describe, but
+    // the pane keeps its original one, so it is stable here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab.descriptor.relativePath, (tab.descriptor as { token?: string }).token, tab.revision]);
 
   if (error) {
     return (

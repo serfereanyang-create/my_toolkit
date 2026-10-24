@@ -86,6 +86,7 @@ export function SearchPanel({ onOpenHit, onOpenSession, workspaceRoot }: Props) 
   const [result, setResult] = useState<SearchResult | null>(null);
   const [sessionResult, setSessionResult] = useState<SessionSearchResult | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [activeHit, setActiveHit] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const seqRef = useRef(0);
@@ -141,6 +142,27 @@ export function SearchPanel({ onOpenHit, onOpenSession, workspaceRoot }: Props) 
   }
 
   const totalHits = result?.results.length ?? 0;
+  const hitCount = mode === 'files'
+    ? groups.reduce((total, group) => total + (collapsed.has(group.path) ? 0 : group.hits.length), 0)
+    : (sessionResult?.results ?? []).reduce((total, session) => total + (collapsed.has(session.sessionId) ? 0 : session.hits.length), 0);
+
+  useEffect(() => {
+    setActiveHit(0);
+  }, [mode, term, result, sessionResult, collapsed]);
+
+  function onSearchKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'ArrowDown' && hitCount > 0) {
+      event.preventDefault();
+      setActiveHit((value) => Math.min(hitCount - 1, value + 1));
+    } else if (event.key === 'ArrowUp' && hitCount > 0) {
+      event.preventDefault();
+      setActiveHit((value) => Math.max(0, value - 1));
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const target = document.querySelector<HTMLElement>('[data-search-active="true"]');
+      target?.click();
+    }
+  }
 
   return (
     <div className="search-panel">
@@ -157,16 +179,25 @@ export function SearchPanel({ onOpenHit, onOpenSession, workspaceRoot }: Props) 
         <input
           ref={inputRef}
           className="search-input"
+          // This field takes code identifiers and regex fragments, not prose.
+          // Left on, the OS spellchecker underlines every symbol as a typo —
+          // `useEffect` came up red in the results screenshot.
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
           placeholder={mode === 'files' ? '在工作区中搜索…' : '在所有会话记录中搜索…'}
           value={term}
           onChange={(e) => setTerm(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { void run(term); } }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && hitCount === 0) { void run(term); return; }
+            onSearchKeyDown(event);
+          }}
         />
-        {term && <button className="search-clear" onClick={() => { setTerm(''); setResult(null); setSessionResult(null); }}><X size={13} /></button>}
+        {term && <button type="button" className="search-clear" aria-label="清空搜索" onClick={() => { setTerm(''); setResult(null); setSessionResult(null); }}><X size={13} /></button>}
         <div className="search-toggles">
-          <button type="button" className={`search-toggle${caseSensitive ? ' on' : ''}`} title="区分大小写" onClick={() => setCaseSensitive((v) => !v)}><CaseSensitive size={15} /></button>
-          <button type="button" className={`search-toggle${wholeWord ? ' on' : ''}`} title="全词匹配" onClick={() => setWholeWord((v) => !v)}><WholeWord size={15} /></button>
-          <button type="button" className={`search-toggle${regex ? ' on' : ''}`} title="正则表达式" onClick={() => setRegex((v) => !v)}><Regex size={15} /></button>
+          <button type="button" aria-pressed={caseSensitive} className={`search-toggle${caseSensitive ? ' on' : ''}`} title="区分大小写" onClick={() => setCaseSensitive((v) => !v)}><CaseSensitive size={15} /></button>
+          <button type="button" aria-pressed={wholeWord} className={`search-toggle${wholeWord ? ' on' : ''}`} title="全词匹配" onClick={() => setWholeWord((v) => !v)}><WholeWord size={15} /></button>
+          <button type="button" aria-pressed={regex} className={`search-toggle${regex ? ' on' : ''}`} title="正则表达式" onClick={() => setRegex((v) => !v)}><Regex size={15} /></button>
           {mode === 'files' && (
             <button type="button" className={`search-toggle${showFilters ? ' on' : ''}`} title="包含 / 排除" onClick={() => setShowFilters((v) => !v)}>
               {showFilters ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
@@ -200,6 +231,11 @@ export function SearchPanel({ onOpenHit, onOpenSession, workspaceRoot }: Props) 
         {mode === 'sessions'
           ? (sessionResult?.results ?? []).map((session) => {
             const isCollapsed = collapsed.has(session.sessionId);
+            let hitOffset = 0;
+            for (const previous of (sessionResult?.results ?? [])) {
+              if (previous.sessionId === session.sessionId) break;
+              if (!collapsed.has(previous.sessionId)) hitOffset += previous.hits.length;
+            }
             return (
               <div key={session.sessionId} className="search-file">
                 <button type="button" className="search-file-head" onClick={() => toggleGroup(session.sessionId)}>
@@ -209,7 +245,7 @@ export function SearchPanel({ onOpenHit, onOpenSession, workspaceRoot }: Props) 
                   <span className="search-file-count">{session.hitCount}</span>
                 </button>
                 {!isCollapsed && session.hits.map((hit, hi) => (
-                  <button key={`${hit.messageIndex}-${hi}`} type="button" className="search-hit" onClick={() => onOpenSession(session.sessionId)}>
+                  <button key={`${hit.messageIndex}-${hi}`} type="button" data-search-active={activeHit === hitOffset + hi ? 'true' : undefined} className={`search-hit${activeHit === hitOffset + hi ? ' active' : ''}`} onClick={() => onOpenSession(session.sessionId)}>
                     <span className="search-hit-line">{hit.role === 'user' ? '我' : 'AI'}</span>
                     <span className="search-hit-preview">
                       {hit.context.map((line, li) => (
@@ -224,8 +260,9 @@ export function SearchPanel({ onOpenHit, onOpenSession, workspaceRoot }: Props) 
               </div>
             );
           })
-          : groups.map((group) => {
+          : groups.map((group, groupIndex) => {
           const isCollapsed = collapsed.has(group.path);
+            const hitOffset = groups.slice(0, groupIndex).reduce((total, previous) => total + (collapsed.has(previous.path) ? 0 : previous.hits.length), 0);
           const dir = group.path.includes('/') ? group.path.slice(0, group.path.lastIndexOf('/')) : '';
           const name = group.path.slice(group.path.lastIndexOf('/') + 1);
           return (
@@ -240,7 +277,8 @@ export function SearchPanel({ onOpenHit, onOpenSession, workspaceRoot }: Props) 
                 <button
                   key={hit.line + ':' + hi}
                   type="button"
-                  className="search-hit"
+                  data-search-active={activeHit === hitOffset + hi ? 'true' : undefined}
+                  className={`search-hit${activeHit === hitOffset + hi ? ' active' : ''}`}
                   onClick={() => onOpenHit(hit.path, hit.line)}
                 >
                   <span className="search-hit-line">{hit.line}</span>

@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, Circle, Copy, FileText, Loader2, Pause, Play, SkipForward, RotateCcw, AlertTriangle } from 'lucide-react';
 import type { TaskBoard } from '../types';
 import { Markdown } from './Markdown';
+import { copyText } from '../lib/clipboard';
+import { taskVerification, taskResultText, verificationLabels } from '../lib/taskVerification';
+import { TaskVerification } from './TaskVerification';
+import { inspectTaskGraph } from '../lib/taskGraph';
 
 type Action = 'confirm' | 'pause' | 'continue' | 'skip' | 'reopen';
 
@@ -11,14 +15,6 @@ const STATUS_LABEL: Record<string, string> = {
 
 /** Mirrors the collapsed height of `.task-board-plan-clip` in styles.css. */
 const PLAN_CLIP_PX = 240;
-
-function stageFor(task: TaskBoard['tasks'][number], tasks: TaskBoard['tasks']): number {
-  if (!task.dependsOn?.length) return 1;
-  return Math.min(4, 1 + Math.max(...task.dependsOn.map((id) => {
-    const parent = tasks.find((item) => item.id === id);
-    return parent ? stageFor(parent, tasks) : 0;
-  })));
-}
 
 function statusIcon(status: string) {
   if (status === 'done') return <Check size={14} />;
@@ -47,18 +43,22 @@ export function TaskBoardCard({ board, onAction }: { board: TaskBoard; onAction:
   const [copiedPlan, setCopiedPlan] = useState(false);
   const planContent = useRef<HTMLDivElement | null>(null);
   const [planMeasured, setPlanMeasured] = useState<boolean | null>(null);
+  const graph = useMemo(() => inspectTaskGraph(board.tasks), [board.tasks]);
+  const tasks = graph.tasks;
+  const invalidGraph = graph.issues.length > 0;
   const stages = useMemo(() => {
+    if (graph.issues.length) return [];
     const grouped = new Map<number, typeof board.tasks>();
-    board.tasks.forEach((task) => {
-      const stage = stageFor(task, board.tasks);
+    graph.tasks.forEach((task) => {
+      const stage = Math.min(4, graph.levels.get(task.id) ?? 1);
       grouped.set(stage, [...(grouped.get(stage) ?? []), task]);
     });
     return [...grouped.entries()].sort((a, b) => a[0] - b[0]);
-  }, [board.tasks]);
-  const done = board.tasks.filter((task) => task.status === 'done' || task.status === 'skipped').length;
-  const progress = board.tasks.length ? Math.round(done / board.tasks.length * 100) : 0;
+  }, [graph]);
+  const done = tasks.filter((task) => task.status === 'done' || task.status === 'skipped').length;
+  const progress = tasks.length ? Math.round(done / tasks.length * 100) : 0;
   const waiting = board.status === 'draft' || board.runtimeMode === 'awaiting_confirm';
-  const activeTask = board.tasks.find((task) => task.id === board.activeTaskId);
+  const activeTask = tasks.find((task) => task.id === board.activeTaskId);
   const plan = board.planMarkdown?.trim() ?? '';
   // Whether the collapsed box actually hides part of the plan. Measured against
   // the content's natural height so the answer does not change once expanded —
@@ -80,24 +80,12 @@ export function TaskBoardCard({ board, onAction }: { board: TaskBoard; onAction:
 
   async function copyPlan() {
     if (!plan) return;
-    let copied = false;
-    try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(plan);
-        copied = true;
-      }
-    } catch {
-      copied = false;
+    // Same order as every other copy button (main process first): the
+    // navigator API refuses while the window is unfocused.
+    if (await copyText(plan)) {
+      setCopiedPlan(true);
+      window.setTimeout(() => setCopiedPlan(false), 1600);
     }
-    if (!copied) {
-      // file:// is not a secure context in every Electron build, so the web
-      // clipboard API can be absent or refuse; the main process always can.
-      // Imported lazily: lib/ipc.ts reads window.zcodeDesktop at module scope.
-      const { desktop } = await import('../lib/ipc');
-      await desktop?.clipboard.write(plan).catch(() => undefined);
-    }
-    setCopiedPlan(true);
-    window.setTimeout(() => setCopiedPlan(false), 1600);
   }
 
   return (
@@ -106,13 +94,14 @@ export function TaskBoardCard({ board, onAction }: { board: TaskBoard; onAction:
         {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
         <span className="task-board-head-main">
           <strong>{board.title || '任务计划'}</strong>
-          <small>{waiting ? '等待确认' : board.status === 'completed' ? '已完成' : board.runtimeMode === 'paused' ? '已暂停' : '执行中'}</small>
+          <small>{invalidGraph ? '依赖异常' : waiting ? '等待确认' : board.status === 'cancelled' ? '已取消' : board.status === 'blocked' ? '已阻塞' : board.status === 'completed' ? '已完成' : board.runtimeMode === 'paused' ? '已暂停' : '执行中'}</small>
         </span>
-        <span className="task-board-count">{done}/{board.tasks.length}</span>
+        <span className="task-board-count">{done}/{tasks.length}</span>
       </button>
       {open && (
         <div className="task-board-body">
           <div className="task-board-goal">{board.goal}</div>
+          {invalidGraph ? <div className="task-board-graph-error" role="alert"><strong>任务依赖需要处理，暂不执行</strong><ul>{graph.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul><p>请修正依赖或重新提交计划。原任务与验证记录会保留。</p></div> : board.error && <div className="task-board-graph-error" role="alert">{board.error}</div>}
 
           {plan && (
             <section className="task-board-plan">
@@ -150,14 +139,17 @@ export function TaskBoardCard({ board, onAction }: { board: TaskBoard; onAction:
                     const isCurrent = task.id === board.activeTaskId;
                     const isExpanded = expandedTask === task.id;
                     const acceptance = acceptanceText(task.acceptance);
-                    const result = task.resultSummary;
-                    const hasDetail = Boolean(acceptance || result || task.error || task.detail);
+                    const result = task.resultSummary ? taskResultText(task.resultSummary) : '';
+                    const verification = taskVerification(task.verification);
+                    const latest = verification.at(-1);
+                    const hasDetail = Boolean(acceptance || result || task.error || task.detail || verification.length);
                     return (
-                      <div className={`task-board-item task-${task.status} ${isCurrent ? 'current' : ''}`} key={task.id}>
+                      <div className={`task-board-item task-${task.status} ${isCurrent ? 'current' : ''}`} key={task.id} data-task-id={task.id}>
                         <button className="task-board-item-head" onClick={() => setExpandedTask(isExpanded ? null : task.id)}>
                           <span className="task-board-item-icon">{statusIcon(task.status)}</span>
                           <span className="task-board-item-title">{task.title}</span>
                           {isCurrent && <em>当前</em>}
+                          {(latest || task.status === 'done') && <span className={`task-verification-badge verification-${latest?.status ?? 'unknown'}`} data-verification-status={latest?.status ?? 'unknown'}>{latest ? verificationLabels[latest.status] : '验证未记录'}</span>}
                           <span className="task-board-item-status">{STATUS_LABEL[task.status] ?? task.status}</span>
                           {hasDetail && (isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />)}
                         </button>
@@ -168,6 +160,7 @@ export function TaskBoardCard({ board, onAction }: { board: TaskBoard; onAction:
                             {acceptance && <div><strong>验收标准</strong><div>{acceptance}</div></div>}
                             {result && <div className="task-board-result">结果：{result}</div>}
                             {task.error && <div className="task-board-error">错误：{task.error}</div>}
+                            <TaskVerification attempts={verification} />
                           </div>
                         )}
                       </div>
@@ -179,11 +172,11 @@ export function TaskBoardCard({ board, onAction }: { board: TaskBoard; onAction:
           </div>
 
           <div className="task-board-actions">
-            {waiting && <button className="task-board-primary" onClick={() => onAction('confirm')}><Play size={14} /> 确认执行计划</button>}
-            {board.runtimeMode === 'executing' && <button onClick={() => onAction('pause')}><Pause size={14} /> 暂停</button>}
-            {board.runtimeMode === 'paused' && <button className="task-board-primary" onClick={() => onAction('continue')}><Play size={14} /> 继续执行</button>}
-            {activeTask && board.runtimeMode === 'executing' && <button onClick={() => onAction('skip', activeTask.id)}><SkipForward size={14} /> 跳过当前</button>}
-            {board.status === 'blocked' && activeTask && <button onClick={() => onAction('reopen', activeTask.id)}><RotateCcw size={14} /> 重新打开</button>}
+            {waiting && !invalidGraph && <button className="task-board-primary" onClick={() => onAction('confirm')}><Play size={14} /> 确认执行计划</button>}
+            {board.runtimeMode === 'executing' && <button aria-label="暂停任务计划" onClick={() => onAction('pause')}><Pause size={14} /> 暂停</button>}
+            {board.runtimeMode === 'paused' && !invalidGraph && board.status !== 'completed' && board.status !== 'cancelled' && <button className="task-board-primary" aria-label="继续任务计划" onClick={() => onAction('continue')}><Play size={14} /> 继续执行</button>}
+            {activeTask && board.runtimeMode === 'paused' && !invalidGraph && board.status !== 'cancelled' && activeTask.status !== 'done' && activeTask.status !== 'skipped' && <button onClick={() => onAction('skip', activeTask.id)}><SkipForward size={14} /> 跳过当前</button>}
+            {board.status === 'blocked' && activeTask && !invalidGraph && <button onClick={() => onAction('reopen', activeTask.id)}><RotateCcw size={14} /> 重新打开</button>}
           </div>
         </div>
       )}

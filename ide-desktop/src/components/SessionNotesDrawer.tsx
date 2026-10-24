@@ -12,17 +12,22 @@ import { desktop, type SessionNote } from '../lib/ipc';
  * doesn't lose a half-typed thought.
  */
 
-const DRAFT_KEY = 'zcode.notes.draft';
+export const NOTES_DRAFT_KEY = 'zcode.notes.draft';
 
-export function SessionNotesDrawer({ sessionId, onClose }: {
+/** Track-3 width while the drawer is open, matching the other side panels. */
+export const NOTES_WIDTH = 340;
+
+export function SessionNotesDrawer({ sessionId, onClose, onDraftChange }: {
   sessionId: string | null;
   onClose: () => void;
+  /** Whether an unsaved draft exists, so the toolbar button can mark it. */
+  onDraftChange?: (hasDraft: boolean) => void;
 }) {
   // Notes attached to a brand-new (unsaved) chat live under a reserved id so
   // they at least survive within the app session.
   const key = sessionId ?? '__draft__';
   const [notes, setNotes] = useState<SessionNote[]>([]);
-  const [text, setText] = useState(() => localStorage.getItem(DRAFT_KEY) ?? '');
+  const [text, setText] = useState(() => localStorage.getItem(NOTES_DRAFT_KEY) ?? '');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,9 +47,13 @@ export function SessionNotesDrawer({ sessionId, onClose }: {
 
   // Persist the half-typed draft across open/close.
   useEffect(() => {
-    if (text) localStorage.setItem(DRAFT_KEY, text);
-    else localStorage.removeItem(DRAFT_KEY);
+    if (text) localStorage.setItem(NOTES_DRAFT_KEY, text);
+    else localStorage.removeItem(NOTES_DRAFT_KEY);
   }, [text]);
+
+  useEffect(() => {
+    onDraftChange?.(text.trim().length > 0);
+  }, [text, onDraftChange]);
 
   async function add() {
     const trimmed = text.trim();

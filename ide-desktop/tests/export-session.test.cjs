@@ -17,6 +17,29 @@ test('fenced doubles the fence when content contains ```', () => {
   assert.ok(fenced('has ``` inside').startsWith('````\n'));
 });
 
+test('fenced outgrows the longest backtick run in the payload', () => {
+  // A run of four (or more) used to close the block early even though the
+  // document opened with four, so the rest of the payload became live markdown.
+  assert.ok(fenced('````').startsWith('`````\n'));
+  assert.ok(fenced('a `````` b').startsWith('```````\n'));
+  assert.ok(fenced('x ` y').startsWith('```\n'));
+
+  const payload = 'docs say use ```` for nesting\n````\n<img src=x onerror=alert(1)>\n````';
+  const block = fenced(payload);
+  const opening = block.split('\n')[0];
+  // No line of the payload may be usable as the closing fence.
+  const fenceLike = payload.match(/^`{3,}\s*$/gm) ?? [];
+  assert.deepEqual(fenceLike.filter((line) => line.trim().length >= opening.length), []);
+  assert.ok(block.endsWith(`\n${opening}`));
+  assert.ok(block.slice(opening.length + 1, -(opening.length + 1)) === payload);
+
+  const markdown = formatSessionMarkdown({
+    id: 's',
+    messages: [{ role: 'tool', name: 'read_file', content: payload }],
+  }).markdown;
+  assert.ok(markdown.includes(block), 'the exported document keeps the payload in one block');
+});
+
 test('formatSessionMarkdown renders roles and records unsupported kinds', () => {
   const record = {
     id: 'sess_x',

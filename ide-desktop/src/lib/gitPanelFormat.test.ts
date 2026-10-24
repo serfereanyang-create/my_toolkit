@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
-  formatGoalElapsed, taskProgress, stageProgress, computeStages,
+  formatGoalElapsed, taskProgress, stageProgress, computeStages, gitChangedFileCount,
 } from './gitPanelFormat';
+
+describe('gitChangedFileCount', () => {
+  it('counts a partially staged file once alongside untracked paths', () => {
+    expect(gitChangedFileCount({ ok: true, staged: [{ path: 'auth.ts', index: 'M', working: 'M' }], unstaged: [{ path: 'auth.ts', index: 'M', working: 'M' }], untracked: ['new.ts'] })).toBe(2);
+  });
+  it('handles missing file groups and an unavailable status', () => {
+    expect(gitChangedFileCount({ ok: true })).toBe(0);
+    expect(gitChangedFileCount(null)).toBe(0);
+  });
+});
 
 describe('formatGoalElapsed', () => {
   it('formats sub-minute durations as seconds only', () => {

@@ -152,9 +152,9 @@ function MonacoDiffView({ original, modified }: { original: string; modified: st
       const line = document.createElement('div');
       line.textContent = (row.type === 'del' ? '− ' : row.type === 'add' ? '+ ' : '  ') + row.text;
       line.style.cssText = row.type === 'del'
-        ? 'background:#c0453c12;color:var(--danger)'
+        ? 'background:color-mix(in srgb, var(--danger) 8%, transparent);color:var(--danger)'
         : row.type === 'add'
-          ? 'background:#4f8a5216;color:var(--ok)'
+          ? 'background:color-mix(in srgb, var(--ok) 10%, transparent);color:var(--ok)'
           : 'color:var(--fg-muted)';
       pre.appendChild(line);
     }

@@ -53,3 +53,23 @@ test('prepare rejects kind mismatches, missing files, and oversized payloads', a
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('a local url is percent-encoded, so # and spaces in a filename survive', async () => {
+  const { mkdtemp, writeFile, rm } = require('node:fs/promises');
+  const { tmpdir } = require('node:os');
+  const path = require('node:path');
+  const dir = await mkdtemp(path.join(tmpdir(), 'zcode-media-url-'));
+  try {
+    const file = path.join(dir, 'demo #1 take.mp4');
+    await writeFile(file, Buffer.from([0, 1, 2, 3]));
+    const preparation = await prepareMediaPreview({ filePath: file, expectedKind: 'video' });
+    assert.equal(preparation.kind, 'local-url');
+    // A hand-built `file:///` left these raw: the fragment cut the name at `#`
+    // and the query swallowed the rest, so the pane rendered nothing.
+    assert.ok(preparation.url.includes('%23'), 'the # must be escaped');
+    assert.ok(preparation.url.includes('%20'), 'the space must be escaped');
+    assert.ok(preparation.url.startsWith('file:///'));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

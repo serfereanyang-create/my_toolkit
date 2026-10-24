@@ -1,5 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { atomicWriteJson } = require('./atomic-file.cjs');
+const { quarantine } = require('./json-store.cjs');
 
 const defaultSettings = {
   activeProviderId: 'mock',
@@ -81,6 +83,26 @@ function parseSettings(raw) {
 
 function createSettingsStore(userDataDir) {
   const file = path.join(userDataDir, 'settings.json');
+  let writeQueue = Promise.resolve();
+
+  /**
+   * Merge a parsed file over the defaults, then repair the collection fields.
+   *
+   * `update` dereferences `providers.filter` and `recentWorkspaces.filter`, so a
+   * settings file carrying `recentWorkspaces: null` (or a hand-edited provider
+   * block that is not a list) made EVERY later save reject with a TypeError —
+   * the app kept running on the values it had loaded and silently stopped
+   * persisting anything, including a provider the user had just added.
+   */
+  function normalizeSettings(parsed) {
+    const merged = { ...defaultSettings, ...parsed };
+    if (!Array.isArray(merged.providers)) merged.providers = structuredClone(defaultSettings.providers);
+    if (!Array.isArray(merged.recentWorkspaces)) merged.recentWorkspaces = [];
+    if (!merged.preferences || typeof merged.preferences !== 'object' || Array.isArray(merged.preferences)) {
+      delete merged.preferences;
+    }
+    return merged;
+  }
 
   /*
    * Migrate the retired 沙箱模式 preference onto the approval mode.
@@ -111,34 +133,72 @@ function createSettingsStore(userDataDir) {
     return migrated;
   }
 
-  async function get() {
+  async function readSettings(options = {}) {
     try {
       const raw = await fs.readFile(file, 'utf8');
-      return migrateSandboxMode({ ...defaultSettings, ...parseSettings(raw) });
+      return migrateSandboxMode(normalizeSettings(parseSettings(raw)));
     } catch (error) {
-      if (error && error.code === 'ENOENT') return defaultSettings;
+      if (error && error.code === 'ENOENT') return structuredClone(defaultSettings);
       // JSON parse errors (e.g., trailing garbage from a partial write) are
-      // non-fatal: log the problem and fall back to defaults so the app can
-      // still start. The next settings.set() will overwrite the corrupt file.
+      // non-fatal: the app still starts on defaults. Saving, however, would
+      // replace a file the user can no longer read but we could still recover
+      // by hand — so a WRITE moves the unreadable copy aside first. A read
+      // never touches the file.
       if (error instanceof SyntaxError) {
-        console.error('[settings-store] unrecoverable settings JSON, resetting to defaults:', error.message);
-        return defaultSettings;
+        console.error('[settings-store] unrecoverable settings JSON, falling back to defaults:', error.message);
+        if (options.forWrite) {
+          await quarantine(file).catch(() => undefined);
+        }
+        return structuredClone(defaultSettings);
       }
       throw error;
     }
   }
 
+  async function get() {
+    await writeQueue;
+    return readSettings();
+  }
+
+  function update(change) {
+    const pending = writeQueue.then(async () => {
+      const current = await readSettings({ forWrite: true });
+      const next = change(current);
+      const { providerUpdates, removeProviderIds, ...fields } = next;
+      const merged = { ...current, ...fields };
+      if (next.preferences && typeof next.preferences === 'object') {
+        merged.preferences = { ...current.preferences, ...next.preferences };
+      }
+      if (Array.isArray(providerUpdates) || Array.isArray(removeProviderIds)) {
+        const removed = new Set(Array.isArray(removeProviderIds) ? removeProviderIds : []);
+        merged.providers = current.providers.filter((provider) => !removed.has(provider.id)).map((provider) => ({ ...provider }));
+        for (const patch of providerUpdates ?? []) {
+          if (!patch || typeof patch.id !== 'string' || !patch.id) throw new Error('Provider id is required');
+          const index = merged.providers.findIndex((provider) => provider.id === patch.id);
+          if (index < 0) {
+            if (!patch.type || typeof patch.baseUrl !== 'string') throw new Error('Provider configuration is incomplete');
+            merged.providers.push({ ...patch });
+          } else {
+            merged.providers[index] = { ...merged.providers[index], ...patch };
+          }
+        }
+      }
+      await atomicWriteJson(file, merged);
+      return merged;
+    });
+    writeQueue = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
+
   async function set(next) {
-    const merged = { ...await get(), ...next };
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, JSON.stringify(merged, null, 2), 'utf8');
-    return merged;
+    const snapshot = structuredClone(next);
+    return update(() => snapshot);
   }
 
   async function addRecentWorkspace(workspaceRoot) {
-    const current = await get();
-    const recentWorkspaces = [workspaceRoot, ...current.recentWorkspaces.filter((item) => item !== workspaceRoot)].slice(0, 10);
-    return await set({ recentWorkspaces });
+    return update((current) => ({
+      recentWorkspaces: [workspaceRoot, ...current.recentWorkspaces.filter((item) => item !== workspaceRoot)].slice(0, 10),
+    }));
   }
 
   return { get, set, addRecentWorkspace };

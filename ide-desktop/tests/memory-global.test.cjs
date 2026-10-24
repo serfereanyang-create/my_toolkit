@@ -120,6 +120,26 @@ test('the headline counts the whole ledger, not the page the panel renders', asy
   assert.ok(snapshot.records.length <= 2000);
 });
 
+test('a project whose history scrolled past the rendered window still shows up', async () => {
+  // 1000 old edits in one project, then 2000 newer ones in another: the tail
+  // the panel renders no longer contains the first project at all.
+  const lines = [];
+  for (let i = 0; i < 1000; i += 1) {
+    lines.push(record({ project: 'old', workspace: 'D:/old', path: `old-${i % 30}.ts`, at: `2026-10-01T00:00:${String(i % 60).padStart(2, '0')}.000Z` }));
+  }
+  for (let i = 0; i < 2000; i += 1) {
+    lines.push(record({ project: 'new', workspace: 'D:/new', path: `new-${i % 5}.ts`, at: `2026-10-02T00:00:${String(i % 60).padStart(2, '0')}.000Z` }));
+  }
+  const root = fixture(lines);
+  const snapshot = await readGlobalMemory({ root });
+  assert.equal(snapshot.totalEdits, 3000);
+  assert.equal(snapshot.totalFiles, 35, 'the files of both projects add up');
+  const old = snapshot.projects.find((project) => project.project === 'old');
+  assert.ok(old, 'the older project must not vanish from the panel');
+  assert.equal(old.edits, 1000);
+  assert.equal(old.fileTotal, 30);
+});
+
 test('a project reports how many files it really touched, beyond the row cap', async () => {
   const lines = [];
   for (let i = 0; i < 45; i += 1) lines.push(record({ path: `src/file-${i}.ts` }));

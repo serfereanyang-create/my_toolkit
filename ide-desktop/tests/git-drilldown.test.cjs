@@ -17,6 +17,8 @@ function makeRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gtx-drill-'));
   const run = (...args) => execFileSync('git', args, { cwd: dir, windowsHide: true });
   run('init', '-b', 'main');
+  run('config', 'core.autocrlf', 'false');
+  run('config', 'commit.gpgSign', 'false');
   run('config', 'user.email', 'test@example.com');
   run('config', 'user.name', 'Test');
   return { dir, run };
@@ -37,6 +39,17 @@ test('fileDiff returns one file diff, not the whole workspace', async () => {
   assert.equal(res.file, 'a.txt');
   assert.ok(res.diff.includes('a2'), 'the requested file change must be present');
   assert.ok(!res.diff.includes('b2'), 'another file must not leak into the diff');
+});
+
+test('fileDiff preserves significant trailing whitespace in changed text', async () => {
+  const { dir, run } = makeRepo();
+  fs.writeFileSync(path.join(dir, 'spaces.txt'), 'before\n');
+  run('add', 'spaces.txt');
+  run('commit', '-m', 'whitespace baseline');
+  fs.writeFileSync(path.join(dir, 'spaces.txt'), 'after  \t\n');
+  const result = await git.getFileDiff(dir, 'spaces.txt');
+  assert.equal(result.ok, true);
+  assert.ok(result.diff.includes('+after  \t\n'));
 });
 
 test('fileDiff separates the staged side from the working tree', async () => {
@@ -71,6 +84,65 @@ test('fileDiff renders an untracked file as an all-added listing', async () => {
   // The row would otherwise open to an empty pane.
   assert.ok(res.diff.includes('+alpha'));
   assert.ok(res.diff.includes('+beta'));
+  assert.match(res.diff, /^@@ -0,0 \+1,2 @@$/m, 'the renderer needs a valid hunk and exact added line count');
+  assert.equal(res.diff.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++')).length, 2);
+});
+
+test('fileDiff never substitutes unstaged new content for a staged diff', async () => {
+  const { dir } = makeRepo();
+  fs.writeFileSync(path.join(dir, 'new.txt'), 'not staged\n');
+  const result = await git.getFileDiff(dir, 'new.txt', true);
+  assert.equal(result.ok, true);
+  assert.equal(result.diff, '');
+  assert.equal(result.untracked, false);
+});
+
+test('fileDiff reports an untracked binary without decoding it as text', async () => {
+  const { dir } = makeRepo();
+  fs.writeFileSync(path.join(dir, 'image.bin'), Buffer.from([137, 80, 78, 71, 0, 255, 10]));
+  const result = await git.getFileDiff(dir, 'image.bin');
+  assert.equal(result.ok, true);
+  assert.equal(result.binary, true);
+  assert.equal(result.diff, '');
+});
+
+test('fileDiff preserves a new empty file without a phantom added line', async () => {
+  const { dir } = makeRepo();
+  fs.writeFileSync(path.join(dir, 'empty.txt'), '');
+  const result = await git.getFileDiff(dir, 'empty.txt');
+  assert.equal(result.ok, true);
+  assert.equal(result.untracked, true);
+  assert.equal(result.diff, '');
+});
+
+test('fileDiff labels a shortened new-file preview and keeps its hunk consistent', async () => {
+  const { dir } = makeRepo();
+  fs.writeFileSync(path.join(dir, 'long.txt'), Array.from({ length: 2100 }, (_, index) => `line ${index + 1}`).join('\n'));
+  const result = await git.getFileDiff(dir, 'long.txt');
+  assert.equal(result.ok, true);
+  assert.equal(result.truncated, true);
+  assert.match(result.diff, /^@@ -0,0 \+1,2000 @@$/m);
+  assert.doesNotMatch(result.diff, /\+line 2001/);
+});
+
+test('fileDiff labels a new file above the preview byte limit', async () => {
+  const { dir } = makeRepo();
+  fs.writeFileSync(path.join(dir, 'large.txt'), Buffer.alloc(2 * 1024 * 1024 + 1, 97));
+  const result = await git.getFileDiff(dir, 'large.txt');
+  assert.equal(result.ok, true);
+  assert.equal(result.truncated, true);
+  assert.equal(result.diff, '');
+});
+
+test('fileDiff marks a tracked binary change as binary', async () => {
+  const { dir, run } = makeRepo();
+  fs.writeFileSync(path.join(dir, 'image.bin'), Buffer.from([0, 1, 2]));
+  run('add', 'image.bin');
+  run('commit', '-m', 'binary baseline');
+  fs.writeFileSync(path.join(dir, 'image.bin'), Buffer.from([0, 3, 4]));
+  const result = await git.getFileDiff(dir, 'image.bin');
+  assert.equal(result.ok, true);
+  assert.equal(result.binary, true);
 });
 
 test('fileDiff with a commit ref shows that commit change, not the working tree', async () => {
@@ -189,6 +261,22 @@ test('fileDiff works when the workspace is a SUBDIRECTORY of the repo', async ()
   assert.equal(res.ok, true);
   assert.ok(res.diff, 'the diff must not be empty for a subdirectory workspace');
   assert.ok(res.diff.includes('+l2'), 'the actual change must be present');
+  assert.equal(res.workspacePath, 'a.txt');
+  assert.equal(res.outsideWorkspace, false);
+});
+
+test('fileDiff identifies a file outside the opened subdirectory without an editor path', async () => {
+  const { dir, run } = makeRepo();
+  const sub = path.join(dir, 'inner');
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(dir, 'outer.txt'), 'before\n');
+  run('add', 'outer.txt'); run('commit', '-m', 'outer baseline');
+  fs.writeFileSync(path.join(dir, 'outer.txt'), 'after\n');
+  const result = await git.getFileDiff(sub, 'outer.txt');
+  assert.equal(result.ok, true);
+  assert.ok(result.diff.includes('+after'));
+  assert.equal(result.outsideWorkspace, true);
+  assert.equal(result.workspacePath, undefined);
 });
 
 test('fileChangeRanges also resolves paths from a subdirectory workspace', async () => {

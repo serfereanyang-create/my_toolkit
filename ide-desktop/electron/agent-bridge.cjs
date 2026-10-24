@@ -18,24 +18,19 @@ class AgentBridge extends EventEmitter {
     this.apiKey = options.apiKey;
     this.approval = options.approval || 'ask';
     this.resumeSessionId = options.resumeSessionId || null;
-    // Provider-agnostic reasoning tier ('off'|'low'|'medium'|'high'|'max').
-    // Passed at spawn as the initial value and updated live per prompt.
+    this.sessionId = this.resumeSessionId;
     this.reasoningEffort = options.reasoningEffort || 'auto';
     this.customProvider = options.customProvider === true;
     this.computerAnyApp = options.computerAnyApp === true;
     this.allowedApps = Array.isArray(options.allowedApps) ? options.allowedApps : [];
     this.excelAutomation = options.excelAutomation === true;
+    // --background-browser-only implies --background-browser in the CLI too.
+    this.backgroundBrowserOnly = options.backgroundBrowserOnly === true;
+    this.backgroundBrowser = options.backgroundBrowser === true || this.backgroundBrowserOnly;
     this.toolScope = options.toolScope || 'auto';
     this.confirmPlan = options.confirmPlan === true;
-    // Auto-review risky actions with a second model call instead of prompting.
     this.autoReview = options.autoReview === true;
-    // Sub-agent delegation eagerness. Normalized here rather than forwarded
-    // verbatim: the CLI's arg parser rejects an unknown value outright, and a
-    // corrupted preference must not make the agent fail to start.
     this.delegation = DELEGATION_LEVELS.has(options.delegation) ? options.delegation : undefined;
-    // Token size of the active model's context window. When known, the CLI's
-    // pre-turn auto-compact (90% threshold) becomes active in this bridge via
-    // AICODE_CONTEXT_WINDOW; undefined leaves compaction manual-only.
     this.contextWindowTokens = Number.isFinite(options.contextWindowTokens) && options.contextWindowTokens > 0
       ? Math.floor(options.contextWindowTokens)
       : undefined;
@@ -43,9 +38,6 @@ class AgentBridge extends EventEmitter {
     this.killProcessTree = options.killTree || killTree;
     this.child = null;
     this.buffer = '';
-    // Every child process gets its own generation. A killed process can emit
-    // `exit` after a replacement has already been spawned; stale callbacks must
-    // never clear or report on the replacement child.
     this.generation = 0;
     this.readyGeneration = 0;
     this.ready = false;
@@ -53,15 +45,31 @@ class AgentBridge extends EventEmitter {
     this.readyResolve = null;
     this.readyReject = null;
     this.readyTimer = null;
+    // Detached children are still owned until they actually exit. Clearing
+    // `child` on cancel must not make dispose()/restart() forget a live process.
+    this.processes = new Map();
+    this.taskBoard = null;
+    this.requestTimeoutMs = Number.isSafeInteger(options.requestTimeoutMs) && options.requestTimeoutMs > 0 && options.requestTimeoutMs <= 2_147_483_647 ? options.requestTimeoutMs : 300_000;
+    this.interruptTimeoutMs = Number.isSafeInteger(options.interruptTimeoutMs) && options.interruptTimeoutMs > 0 ? options.interruptTimeoutMs : 2000;
   }
 
   async waitForExit(child, timeoutMs = 1500) {
-    if (!child || !child.pid || (child.exitCode !== null && child.exitCode !== undefined)) return;
-    await new Promise((resolve) => {
-      let timer = setTimeout(resolve, timeoutMs);
-      const done = () => { clearTimeout(timer); timer = null; resolve(); };
+    const record = this.processes.get(child);
+    if (!child || record?.exited || (child.exitCode !== null && child.exitCode !== undefined) || child.signalCode) return true;
+    // Manually assigned test/legacy bridges have no OS process to wait on.
+    if (!child.pid) return true;
+    return await new Promise((resolve) => {
+      let timer;
+      const done = () => finish(true);
+      const finish = (exited) => {
+        clearTimeout(timer);
+        child.removeListener?.('exit', done);
+        child.removeListener?.('close', done);
+        resolve(exited);
+      };
       child.once?.('exit', done);
       child.once?.('close', done);
+      timer = setTimeout(() => finish(false), timeoutMs);
     });
   }
 
@@ -69,13 +77,9 @@ class AgentBridge extends EventEmitter {
     this.resumeSessionId = resumeSessionId || null;
   }
 
-  /**
-   * The CLI argv for this bridge.
-   *
-   * Extracted from start() so the flag set is testable without spawning a
-   * child: a preference that reaches the bridge but not the argv is invisible
-   * — the CLI just applies its own default and nothing reports a mismatch.
-   */
+  isRunning() { return this.processes.get(this.child)?.turnActive === true; }
+
+  /** Build only flags implemented by the CLI; preferences never become raw argv. */
   buildArgs() {
     const args = [
       path.join(this.cliRoot, 'dist', 'src', 'index.js'),
@@ -87,69 +91,63 @@ class AgentBridge extends EventEmitter {
       '--session-dir', this.sessionDir,
     ];
     if (this.baseUrl) args.push('--base-url', this.baseUrl);
+    args.push('--request-timeout-ms', String(this.requestTimeoutMs));
     if (this.customProvider) args.push('--custom-provider');
     if (this.computerAnyApp) args.push('--computer-any-app');
     if (this.allowedApps.length > 0) args.push('--allowed-apps', this.allowedApps.join(','));
     if (this.excelAutomation) args.push('--excel');
+    if (this.backgroundBrowser) args.push('--background-browser');
+    if (this.backgroundBrowserOnly) args.push('--background-browser-only');
     if (this.resumeSessionId) args.push('--resume', this.resumeSessionId);
     if (this.reasoningEffort && this.reasoningEffort !== 'off') args.push('--reasoning-effort', this.reasoningEffort);
     if (this.toolScope) args.push('--tool-scope', this.toolScope);
     if (this.confirmPlan) args.push('--confirm-plan');
     if (this.autoReview) args.push('--auto-review');
-    // Only when set: omitting it lets the CLI apply its own default, so the two
-    // sides cannot drift into disagreeing about what "unset" means.
     if (this.delegation) args.push('--delegation', this.delegation);
     return args;
   }
 
   start() {
-    if (this.child) return this.readyPromise || Promise.resolve();
+    if (this.child) return this.readyPromise || Promise.resolve({ sessionId: this.sessionId });
+    const stopping = [...this.processes.values()].filter((record) => !record.exited);
+    if (stopping.length) {
+      return Promise.all(stopping.map((record) => this.stopChild(record.child, false))).then(() => this.start());
+    }
     const generation = ++this.generation;
+    this.taskBoard = null;
     this.buffer = '';
+    this.sessionId = this.resumeSessionId;
     this.readyGeneration = generation;
     this.ready = false;
     this.readyPromise = new Promise((resolve, reject) => {
       this.readyResolve = resolve;
       this.readyReject = reject;
     });
-    // Callers that use the historical fire-and-forget start() API must not
-    // create an unhandled rejection if the child fails before bridge_ready.
+    // Fire-and-forget callers must not create an unhandled start rejection.
     this.readyPromise.catch(() => {});
     this.readyTimer = setTimeout(() => {
       if (this.generation !== generation || this.readyGeneration !== generation || this.ready) return;
       const error = new Error('Timed out waiting for agent bridge_ready');
       const child = this.child;
-      this.child = null;
-      this.generation += 1;
-      this.rejectReady(generation, error);
-      if (child && !child.killed) child.kill();
+      this.detach(child, error);
       this.emit('event', { type: 'error', message: error.message });
-      this.emit('event', { type: 'agent_offline', code: -1 });
+      const record = this.processes.get(child);
+      if (record) this.emitOffline(record, -1);
+      if (child) void this.stopChild(child, false).catch(() => {});
     }, 15000);
-    if (typeof this.readyTimer.unref === 'function') this.readyTimer.unref();
-
-    const args = this.buildArgs();
+    this.readyTimer.unref?.();
 
     const env = { ...process.env };
-    // When the desktop app is launched via the packaged shortcut, process.execPath
-    // is the Electron binary, not node. Spawning it on the CLI entry would boot a
-    // second GUI instance instead of running the script. ELECTRON_RUN_AS_NODE=1
-    // makes that same binary behave as a plain Node runtime so the bridge child
-    // runs the CLI and streams JSON events back. Harmless under `node` in tests.
+    // In a packaged app process.execPath is Electron; this prevents a second GUI.
     env.ELECTRON_RUN_AS_NODE = '1';
-    // Bug-13 fix: use the shared apiKeyEnvVar() helper from provider-map instead
-    // of duplicating the openai/anthropic conditional here.
     const envVar = apiKeyEnvVar(this.provider);
     if (envVar && this.apiKey) env[envVar] = this.apiKey;
-    // The CLI reads AICODE_CONTEXT_WINDOW (autoCompact.resolveContextWindowTokens)
-    // to arm pre-turn auto-compaction. Never inherit a stale value from the
-    // parent env — the desktop setting is the single source of truth.
     delete env.AICODE_CONTEXT_WINDOW;
     if (this.contextWindowTokens) env.AICODE_CONTEXT_WINDOW = String(this.contextWindowTokens);
 
     let child;
     try {
-      child = this.spawnProcess(process.execPath, args, {
+      child = this.spawnProcess(process.execPath, this.buildArgs(), {
         cwd: this.cliRoot,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -157,86 +155,99 @@ class AgentBridge extends EventEmitter {
     } catch (error) {
       this.generation += 1;
       this.rejectReady(generation, error);
+      this.emit('event', { type: 'error', message: redact(error.message) });
+      this.emit('event', { type: 'agent_offline', code: -1, ...(this.sessionId ? { sessionId: this.sessionId } : {}) });
       throw error;
     }
     this.attach(child, generation);
     return this.readyPromise;
   }
 
-  /**
-   * Wire one child process into the bridge. Every handler closes over its own
-   * child AND its generation, so once cancel()/dispose()/restart replaces the
-   * child, all events from the stale process are dropped: the old bridge can
-   * never mark a freshly started one offline or leak old turn output.
-   */
+  /** Stale turn output is dropped, but exit always closes the original session. */
   attach(child, generation = ++this.generation) {
     this.child = child;
-
+    const record = { child, generation, sessionId: this.resumeSessionId, exited: false, offline: false, stopping: false, stopPromise: null };
+    this.processes.set(child, record);
     child.stdout.setEncoding?.('utf8');
     child.stdout.on('data', (chunk) => this.handleStdout(chunk, generation, child));
     child.stderr.setEncoding?.('utf8');
     child.stderr.on('data', (chunk) => {
-      // An old child may flush stderr after restart. Never surface stale errors
-      // or let them affect the replacement bridge.
       if (generation !== this.generation || this.child !== child) return;
-      const text = String(chunk);
-      // Suppress Node.js ExperimentalWarning lines line-wise — they are
-      // informational and must never surface as agent errors. Matching per
-      // line keeps a real error that shares a chunk with a warning visible.
-      const lines = text.split(/\r?\n/);
-      for (const line of lines) {
+      for (const line of String(chunk).split(/\r?\n/)) {
         if (!line.trim()) continue;
         if (line.includes('ExperimentalWarning') || (line.includes('(node:') && line.includes('Warning:'))) continue;
-        // The trailing explainer line Node/Electron prints after any warning
-        // ("(Use `electron --trace-warnings ...` to show where the warning was
-        // created)") is not an error either.
         if (line.includes('--trace-warnings')) continue;
         this.emit('event', { type: 'error', message: redact(line) });
       }
     });
     child.once('error', (error) => {
       if (generation !== this.generation || this.child !== child) return;
-      this.child = null;
-      this.generation += 1;
-      this.clearReadyWait(generation);
-      this.rejectReady(generation, error);
+      this.detach(child, error);
       this.emit('event', { type: 'error', message: redact(error.message) });
-      this.emit('event', { type: 'agent_offline', code: -1 });
+      this.emitOffline(record, -1);
+      // A failed spawn has no pid/exit; a running process reporting an error
+      // is still owned and must be terminated rather than silently forgotten.
+      if (!child.pid) this.finishChild(record, -1);
+      else void this.stopChild(child, false).catch(() => {});
     });
-    child.once('exit', (code) => {
-      // The child that was cancelled/replaced is intentionally stale. Its exit
-      // event must not null out or report offline for the current generation.
-      if (generation !== this.generation || this.child !== child) return;
-      // Flush a trailing event that never received its newline before death;
-      // dropping it would silently lose e.g. the final turn_done.
-      this.flushStdoutBuffer();
-      this.child = null;
-      this.generation += 1;
-      this.clearReadyWait(generation);
-      this.rejectReady(generation, new Error(`Agent bridge exited before bridge_ready (code ${code ?? 'unknown'})`));
-      this.ready = false;
-      this.emit('event', { type: 'agent_offline', code });
+    child.once('exit', (code) => this.finishChild(record, code));
+    child.once('close', (code) => this.finishChild(record, code));
+  }
+
+  detach(child, error) {
+    if (!child || this.child !== child) return;
+    const generation = this.generation;
+    this.generation += 1;
+    this.child = null;
+    this.ready = false;
+    this.buffer = '';
+    this.rejectReady(generation, error);
+  }
+
+  emitOffline(record, code) {
+    if (record.offline) return;
+    record.offline = true;
+    this.emit('event', {
+      type: 'agent_offline', code,
+      ...(record.sessionId ? { sessionId: record.sessionId } : {}),
+      ...(record.stopping || record.interrupting ? { expected: true } : {}),
     });
   }
 
+  finishChild(record, code) {
+    if (record.exited) return;
+    record.exited = true;
+    if (record.generation === this.generation && this.child === record.child) {
+      this.flushStdoutBuffer(record.child);
+      this.detach(record.child, new Error(`Agent bridge exited before bridge_ready (code ${code ?? 'unknown'})`));
+    }
+    this.processes.delete(record.child);
+    // Intentionally detached children still report offline for THEIR session,
+    // never for a replacement child. cancel() has already emitted it once.
+    this.emitOffline(record, code);
+  }
+
   async waitUntilReady() {
-    if (!this.child) throw new Error('Agent bridge is not running');
-    // Keep direct/manual AgentBridge users compatible: a child assigned without
-    // start() has no readiness handshake to await and is already usable.
-    if (this.ready || !this.readyPromise) return;
-    await this.readyPromise;
-    if (!this.child || !this.ready) throw new Error('Agent bridge is not ready');
+    const child = this.child;
+    const generation = this.generation;
+    if (!child) throw new Error('Agent bridge is not running');
+    if (!this.ready && this.readyPromise) await this.readyPromise;
+    if (this.child !== child || this.generation !== generation || (this.readyPromise && !this.ready)) {
+      throw new Error('Agent bridge is not ready');
+    }
   }
 
   send(command) {
     if (!this.child || !this.child.stdin.writable) throw new Error('Agent bridge is not running');
+    if (['user_message', 'task_board_action', 'automation_task'].includes(command.type)) {
+      const record = this.processes.get(this.child);
+      if (record) { record.turnActive = true; record.suppressOutput = false; }
+    }
     this.child.stdin.write(`${JSON.stringify(command)}\n`);
   }
 
   async prompt(text, files, toolScope) {
     await this.waitUntilReady();
-    // Carry the current effort tier with each message so the live change takes
-    // effect on the very next turn without restarting the child.
     const command = { type: 'user_message', text };
     if (this.reasoningEffort) command.reasoningEffort = this.reasoningEffort;
     if (toolScope || this.toolScope) command.toolScope = toolScope || this.toolScope;
@@ -256,17 +267,12 @@ class AgentBridge extends EventEmitter {
 
   setEffort(reasoningEffort) {
     this.reasoningEffort = reasoningEffort;
-    // Update the running child too (no-op if not started; start() will pass it).
-    if (this.child && this.ready && this.child.stdin.writable) {
-      this.send({ type: 'set_effort', reasoningEffort });
-    }
+    if (this.child && this.ready && this.child.stdin.writable) this.send({ type: 'set_effort', reasoningEffort });
   }
 
   setToolScope(toolScope) {
     this.toolScope = toolScope;
-    if (this.child && this.ready && this.child.stdin.writable) {
-      this.send({ type: 'set_tool_scope', toolScope });
-    }
+    if (this.child && this.ready && this.child.stdin.writable) this.send({ type: 'set_tool_scope', toolScope });
   }
 
   async approve(requestId, decision) {
@@ -274,16 +280,19 @@ class AgentBridge extends EventEmitter {
     this.send({ type: 'approval_response', requestId, decision });
   }
 
-  // Revert one turn's file writes by their CLI checkpoint ids. The CLI replies
-  // with an `undo_done` event carrying the same undoId so the renderer can
-  // match the result back to the turn card that requested the undo.
+  async guardConfirmation(requestId, selectedLabel) {
+    await this.waitUntilReady();
+    this.send({ type: 'guard_confirmation_response', requestId, selectedLabel });
+  }
+
+  async sendHostToolResponse(requestId, result) {
+    await this.waitUntilReady();
+    this.send({ type: 'host_tool_response', requestId, result });
+  }
+
   async undo(checkpointIds, undoId) {
     await this.waitUntilReady();
-    this.send({
-      type: 'undo',
-      undoId: undoId ?? `undo_${Date.now()}`,
-      checkpointIds: Array.isArray(checkpointIds) ? checkpointIds : [],
-    });
+    this.send({ type: 'undo', undoId: undoId ?? `undo_${Date.now()}`, checkpointIds: Array.isArray(checkpointIds) ? checkpointIds : [] });
   }
 
   clearReadyWait(generation) {
@@ -299,7 +308,7 @@ class AgentBridge extends EventEmitter {
     const resolve = this.readyResolve;
     this.readyResolve = null;
     this.readyReject = null;
-    if (resolve) resolve();
+    if (resolve) resolve({ sessionId: this.sessionId });
   }
 
   rejectReady(generation, error) {
@@ -311,53 +320,137 @@ class AgentBridge extends EventEmitter {
     if (reject) reject(error);
   }
 
+  interrupt() {
+    const child = this.child;
+    if (!child) {
+      const owned = [...this.processes.values()].filter(record => !record.exited);
+      return owned.length ? Promise.all(owned.map(record => this.stopChild(record.child, false))).then(() => ({ mode: 'terminated' })) : Promise.resolve({ mode: 'idle' });
+    }
+    const record = this.processes.get(child) || this.manualRecord(child);
+    if (!this.ready) return this.cancel().then(() => ({ mode: 'terminated' }));
+    if (!record.turnActive) return Promise.resolve({ mode: 'idle' });
+    if (record.interruptPromise) return record.interruptPromise;
+    record.interrupting = true;
+    record.suppressOutput = true;
+    record.interruptPromise = new Promise((resolve, reject) => {
+      let forced = false;
+      const cleanup = () => { clearTimeout(timer); this.removeListener('event', onEvent); child.removeListener?.('exit', onExit); child.removeListener?.('close', onExit); };
+      const finish = result => { cleanup(); resolve(result); };
+      const onExit = () => { if (!forced) finish({ mode: 'terminated' }); };
+      const onEvent = event => {
+        if (forced || child !== this.child || record.generation !== this.generation) return;
+        if (event.type === 'turn_done') finish({ mode: 'cooperative' });
+        else if (event.type === 'agent_offline') finish({ mode: 'terminated' });
+      };
+      const force = () => {
+        if (forced) return;
+        forced = true;
+        cleanup();
+        this.stopChild(child, false).then(() => {
+          this.emit('event', { type: 'turn_done', status: 'cancelled', ...(this.sessionId ? { sessionId: this.sessionId } : {}) });
+          finish({ mode: 'terminated' });
+        }, error => { cleanup(); reject(error); });
+      };
+      const timer = setTimeout(force, this.interruptTimeoutMs);
+      this.on('event', onEvent);
+      child.once?.('exit', onExit);
+      child.once?.('close', onExit);
+      try { this.send({ type: 'cancel', ...(this.sessionId ? { sessionId: this.sessionId } : {}) }); }
+      catch { force(); }
+    }).finally(() => { record.interrupting = false; record.interruptPromise = null; });
+    return record.interruptPromise;
+  }
+
+  /** Detach synchronously, terminate asynchronously; never lose ownership. */
   cancel() {
     const child = this.child;
-    if (!child) return;
-    // Invalidate this generation before killing the process. Windows may emit
-    // `exit` after a replacement has spawned; its stale callback is ignored.
-    const generation = this.generation;
-    this.generation += 1;
-    this.child = null;
-    this.ready = false;
-    this.rejectReady(generation, new Error('Agent bridge cancelled'));
-    if (!child.killed) this.killProcessTree(child);
-    // Emit turn_done synchronously so the UI stops the spinner immediately,
-    // then emit agent_offline so the next prompt correctly starts a new bridge.
-    this.emit('event', { type: 'turn_done', status: 'cancelled' });
-    this.emit('event', { type: 'agent_offline', code: -1 });
+    if (!child) return Promise.all([...this.processes.values()].map((record) => this.stopChild(record.child, false)));
+    const record = this.processes.get(child) || this.manualRecord(child);
+    record.stopping = true;
+    this.detach(child, new Error('Agent bridge cancelled'));
+    if (record.turnActive) this.emit('event', { type: 'turn_done', status: 'cancelled' });
+    record.turnActive = false;
+    this.emitOffline(record, -1);
+    const stopping = this.stopChild(child, false);
+    stopping.catch(() => {});
+    return stopping;
   }
 
   async restart(resumeSessionId) {
-    if (resumeSessionId !== undefined) this.setResumeSessionId(resumeSessionId);
-    const child = this.child;
-    this.cancel();
-    await this.waitForExit(child);
+    this.setResumeSessionId(resumeSessionId === undefined ? this.sessionId : resumeSessionId);
+    await this.cancel();
+    await this.dispose();
     return this.start();
   }
 
+  manualRecord(child) {
+    const record = { child, generation: this.generation, sessionId: this.sessionId, exited: false, offline: false, stopping: false, stopPromise: null };
+    this.processes.set(child, record);
+    return record;
+  }
+
+  stopChild(child, graceful) {
+    const record = this.processes.get(child) || this.manualRecord(child);
+    if (record.exited) return Promise.resolve();
+    if (record.stopPromise) return record.stopPromise;
+    record.stopping = true;
+    this.detach(child, new Error('Agent bridge disposed'));
+    record.stopPromise = (async () => {
+      let killTimer;
+      try {
+        if (graceful) {
+          try {
+            if (child.stdin.writable) child.stdin.write(`${JSON.stringify({ type: 'shutdown' })}\n`);
+          } catch { /* stdin closed; the hard-kill fallback still runs. */ }
+          killTimer = setTimeout(() => this.killProcessTree(child), 1000);
+        } else {
+          this.killProcessTree(child);
+        }
+        let exited = await this.waitForExit(child);
+        if (!exited) {
+          this.killProcessTree(child);
+          exited = await this.waitForExit(child);
+        }
+        if (!exited) throw new Error(`Agent child ${child.pid} did not exit after termination`);
+        this.finishChild(record, child.exitCode ?? -1);
+      } finally {
+        clearTimeout(killTimer);
+        // A failed kill is retryable; do not permit a fresh start until it exits.
+        record.stopPromise = null;
+      }
+    })();
+    record.stopPromise.catch(() => {});
+    return record.stopPromise;
+  }
+
   async dispose() {
-    const child = this.child;
-    if (!child) return;
-    const generation = this.generation;
-    this.generation += 1;
-    this.child = null;
-    this.ready = false;
-    this.rejectReady(generation, new Error('Agent bridge disposed'));
-    // Ask for a graceful shutdown, then guarantee termination. The CLI releases
-    // its stdin on `shutdown`, but a hard-kill fallback avoids leaking a child
-    // process if the graceful path stalls.
-    try {
-      if (child.stdin.writable) child.stdin.write(`${JSON.stringify({ type: 'shutdown' })}\n`);
-    } catch {
-      // stdin already closed; fall through to kill.
+    if (this.child && !this.processes.has(this.child)) this.manualRecord(this.child);
+    // Teardown waits for every owned child, but a child that refuses to die is
+    // not an error a caller can act on — the process is exiting, or the next
+    // start() must be the one to insist. It is not forgotten either: the record
+    // stays in `processes`, so start() still refuses to spawn over it.
+    await Promise.all([...this.processes.values()].map((record) =>
+      this.stopChild(record.child, true).catch(() => undefined)));
+  }
+
+  emitCliEvent(event, generation, child) {
+    if (!event || typeof event !== 'object' || typeof event.type !== 'string') return;
+    if (event.type === 'task_board_updated') this.taskBoard = event;
+    const current = this.processes.get(child);
+    if (current) {
+      if (event.type === 'turn_start') current.turnActive = true;
+      if (event.type === 'turn_done') current.turnActive = false;
+      if (current.suppressOutput && ['assistant_delta', 'assistant_message', 'thinking_delta', 'tool_start'].includes(event.type)) return;
     }
-    const killTimer = setTimeout(() => {
-      if (!child.killed) this.killProcessTree(child);
-    }, 1000);
-    if (typeof killTimer.unref === 'function') killTimer.unref();
-    await this.waitForExit(child, 1500);
-    clearTimeout(killTimer);
+    if (event.type === 'bridge_ready') {
+      const record = this.processes.get(child);
+      this.sessionId = event.sessionId || this.resumeSessionId;
+      if (record) record.sessionId = this.sessionId;
+      this.resolveReady(generation);
+    }
+    this.emit('event', event);
+    if (event.type === 'host_tool_request') this.emit('host_tool_request', event);
+    if (event.type === 'host_tool_cancel') this.emit('host_tool_cancel', event);
   }
 
   handleStdout(chunk, generation = this.generation, child = this.child) {
@@ -366,37 +459,27 @@ class AgentBridge extends EventEmitter {
     const lines = this.buffer.split(/\r?\n/);
     this.buffer = lines.pop() || '';
     for (const line of lines) {
+      if (generation !== this.generation || child !== this.child) break;
       if (!line.trim()) continue;
-      try {
-        const event = normalizeCliEvent(JSON.parse(line));
-        if (event.type === 'bridge_ready') this.resolveReady(generation);
-        this.emit('event', event);
-      } catch {
-        // Not JSON: library chatter on stdout (tool progress logs like
-        // "[GraphBuilder] ...", dependency warnings). The protocol handshake is
-        // bridge_ready; a broken protocol surfaces as a start timeout, so
-        // chatty lines must not become conversation errors.
-      }
+      let event;
+      try { event = normalizeCliEvent(JSON.parse(line)); } catch { continue; }
+      // Listener failures are not JSON/protocol errors and must not be swallowed.
+      this.emitCliEvent(event, generation, child);
     }
   }
 
-  /** Parse and emit any complete JSON line left in the buffer (child died). */
-  flushStdoutBuffer() {
+  /** Parse a complete JSON event that never received its newline before exit. */
+  flushStdoutBuffer(child = this.child) {
     const rest = this.buffer;
     this.buffer = '';
     if (!rest.trim()) return;
-    try {
-      this.emit('event', normalizeCliEvent(JSON.parse(rest)));
-    } catch {
-      // Trailing garbage without a newline — same policy as chatty lines.
-    }
+    let event;
+    try { event = normalizeCliEvent(JSON.parse(rest)); } catch { return; }
+    this.emitCliEvent(event, this.generation, child);
   }
 }
 
-/**
- * Terminate a child and its whole process tree. `child.kill()` alone leaves
- * CLI-spawned shell grandchildren running on Windows; taskkill /T reaches them.
- */
+/** Terminate CLI-spawned shell grandchildren too (especially on Windows). */
 function killTree(child) {
   if (!child.pid) {
     child.kill?.();
@@ -404,11 +487,10 @@ function killTree(child) {
   }
   if (process.platform === 'win32') {
     try {
-      spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      killer.once('error', () => child.kill?.());
       return;
-    } catch {
-      // taskkill unavailable — fall through to the plain kill.
-    }
+    } catch { /* taskkill unavailable: fall through. */ }
   }
   child.kill?.();
 }

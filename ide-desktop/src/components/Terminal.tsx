@@ -31,9 +31,31 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
 
   const terminalTheme = () => {
     const dark = typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark';
-    return dark
-      ? { background: '#202022', foreground: '#f5f5f5', cursor: '#f5f5f5', selectionBackground: '#38383c' }
-      : { background: '#ffffff', foreground: '#172033', cursor: '#315fbb', selectionBackground: '#dce8f8' };
+    const token = (name: string, fallback: string) => {
+      if (typeof document === 'undefined') return fallback;
+      const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      return value || fallback;
+    };
+    return {
+      background: token('--bg-input-solid', dark ? '#2b2b2b' : '#ffffff'),
+      foreground: token('--fg', dark ? '#d4d4d4' : '#262626'),
+      cursor: token('--blue', dark ? '#80beff' : '#0066dd'),
+      selectionBackground: dark ? '#45454a' : '#dce8f8',
+    };
+  };
+
+  // xterm draws to a canvas, so it needs a resolved number rather than a CSS
+  // var. Read it off a throwaway element rather than parsing the token: the
+  // stylesheet's default is `calc(var(--fs-base) - 1px)`, and the computed value
+  // of a custom property keeps the unevaluated calc() rather than collapsing it.
+  const codeFontSize = () => {
+    if (typeof document === 'undefined') return 12;
+    const probe = document.createElement('span');
+    probe.style.cssText = 'position:absolute;visibility:hidden;font-size:var(--fs-code,12px)';
+    document.body.appendChild(probe);
+    const px = parseFloat(getComputedStyle(probe).fontSize);
+    probe.remove();
+    return Number.isFinite(px) && px > 0 ? px : 12;
   };
 
   useEffect(() => {
@@ -55,7 +77,7 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
   async function createTab() {
     const term = new Xterm({
       fontFamily: "'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', 'Noto Sans Mono CJK SC', Consolas, monospace",
-      fontSize: 12, cursorBlink: true,
+      fontSize: codeFontSize(), cursorBlink: true,
       theme: terminalTheme(),
       convertEol: false,
     });
@@ -92,9 +114,16 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
     const root = document.documentElement;
     const observer = new MutationObserver(() => {
       const theme = terminalTheme();
-      for (const tab of tabsRef.current.values()) tab.term.options.theme = theme;
+      const size = codeFontSize();
+      for (const tab of tabsRef.current.values()) {
+        tab.term.options.theme = theme;
+        if (tab.term.options.fontSize !== size) {
+          tab.term.options.fontSize = size;
+          try { tab.fit.fit(); void desktop.terminal.resize(tab.id, tab.term.cols, tab.term.rows); } catch { /* ignore */ }
+        }
+      }
     });
-    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme', 'style'] });
     return () => observer.disconnect();
   }, []);
 
@@ -102,8 +131,18 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
     const host = hostRef.current;
     const tab = tabsRef.current.get(activeId);
     if (!host || !tab) return;
-    host.replaceChildren();
-    tab.term.open(host);
+    // xterm keeps its own DOM subtree per instance. Re-parenting the SAME
+    // instance on every switch is fine, but calling open() again on an
+    // instance that is already parented elsewhere tears down the element the
+    // previous render put in `host` — which is why switching tabs used to
+    // leave an empty panel. Only open an instance that is not yet mounted;
+    // otherwise move the existing element in.
+    const alreadyHere = tab.term.element && tab.term.element.parentElement === host;
+    if (!alreadyHere) {
+      host.replaceChildren();
+      if (tab.term.element) host.appendChild(tab.term.element);
+      else tab.term.open(host);
+    }
     tab.fit.fit();
     tab.term.focus();
     void desktop.terminal.resize(tab.id, tab.term.cols, tab.term.rows);
@@ -118,22 +157,23 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
     <section className="terminal-panel">
       <div className="terminal-tabs">
         {tabs.map((tab) => (
-          <div key={tab.id} className={`terminal-tab ${tab.id === activeId ? 'active' : ''}`}>
-            <button className="terminal-tab-label" onClick={() => setActiveId(tab.id)} title={tab.title}>
+          <div key={tab.id} className={`terminal-tab ${tab.id === activeId ? 'active' : ''}`} role="tab" tabIndex={tab.id === activeId ? 0 : -1} aria-selected={tab.id === activeId}
+            onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setActiveId(tab.id); } }}>
+            <button type="button" className="terminal-tab-label" onClick={() => setActiveId(tab.id)} title={tab.title} aria-label={`切换到终端 ${tab.title}`}>
               <TerminalSquare size={13} /><span>{tab.title}</span>
             </button>
-            <button className="terminal-tab-close" onClick={() => closeTab(tab.id)} aria-label="关闭标签页"><X size={12} /></button>
+            <button type="button" className="terminal-tab-close" onClick={() => closeTab(tab.id)} aria-label={`关闭终端 ${tab.title}`}><X size={12} /></button>
           </div>
         ))}
-        <button className="terminal-new" onClick={() => void createTab()} aria-label="新建终端"><Plus size={14} /></button>
+        <button type="button" className="terminal-new" onClick={() => void createTab()} aria-label="新建终端"><Plus size={14} /></button>
         <span className="terminal-tabs-spacer" />
         {onCaptureOutput && (
-          <button className="terminal-capture-btn" onClick={() => onCaptureOutput(outputBufRef.current.join('\n'))}
+          <button type="button" className="terminal-capture-btn" onClick={() => onCaptureOutput(outputBufRef.current.join('\n'))}
             title="引用输出到对话 (@terminal)">
             <ClipboardCopy size={13} /> 引用输出
           </button>
         )}
-        <button className="terminal-close" onClick={onClose} aria-label="关闭终端面板"><X size={15} /></button>
+        <button type="button" className="terminal-close" onClick={onClose} aria-label="关闭终端面板"><X size={15} /></button>
       </div>
       <div className="terminal-host" ref={hostRef} />
     </section>

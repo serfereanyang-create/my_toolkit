@@ -77,6 +77,7 @@ test('cancel() emits turn_done+agent_offline exactly once; late exit is suppress
 
   const child = fakeChild();
   bridge.attach(child);
+  bridge.send({ type: 'user_message', text: 'active fixture' });
   bridge.cancel();
 
   assert.deepEqual(events.map((e) => e.type), ['turn_done', 'agent_offline']);

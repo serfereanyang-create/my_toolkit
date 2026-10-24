@@ -1,7 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { MonacoEditor, type MonacoEditorOptions } from './MonacoEditor';
 import { EditorTabs, type EditorTab } from './EditorTabs';
 import { FileText } from 'lucide-react';
+import { ConfirmDialog } from '../ConfirmDialog';
 
 export interface ExternalFileSnapshot {
   content: string;
@@ -87,13 +88,14 @@ export function EditorView({
   onRevealDone,
 }: EditorViewProps) {
   const tabs: EditorTab[] = openFiles.map(f => ({ path: f.path, dirty: f.dirty, stale: f.stale }));
+  const [pendingClose, setPendingClose] = useState<string | null>(null);
 
   const handleTabClose = useCallback((path: string) => {
     const file = openFiles.find(f => f.path === path);
     if (file?.dirty) {
       // Dirty tab close asks for confirmation so local edits never vanish silently.
-      const confirmed = confirm(`${path} 有未保存的更改。是否关闭？`);
-      if (!confirmed) return;
+      setPendingClose(path);
+      return;
     }
     onCloseFile(path);
   }, [openFiles, onCloseFile]);
@@ -105,7 +107,21 @@ export function EditorView({
   }, [activeFile, onContentChange]);
 
   const activeFileData = openFiles.find(f => f.path === activeFile);
-  const prefersDark = typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark';
+  // The theme is on <html data-theme>, which React does not know about — reading
+  // it during render left a Monaco instance stuck on the theme it mounted with
+  // when the user switched 浅色/深色. Track the attribute instead.
+  const [prefersDark, setPrefersDark] = useState(
+    () => typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark',
+  );
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    const sync = () => setPrefersDark(root.dataset.theme === 'dark');
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
 
   if (openFiles.length === 0) {
     return (
@@ -118,6 +134,7 @@ export function EditorView({
   }
 
   return (
+    <>
     <div className="editor-view">
       <EditorTabs
         tabs={tabs}
@@ -140,5 +157,15 @@ export function EditorView({
         />
       )}
     </div>
+    <ConfirmDialog
+      open={pendingClose !== null}
+      title="关闭未保存文件？"
+      message={`${pendingClose ?? ''} 有未保存的更改，关闭后这些修改会丢失。`}
+      confirmLabel="关闭文件"
+      danger
+      onConfirm={() => { const path = pendingClose; setPendingClose(null); if (path) onCloseFile(path); }}
+      onCancel={() => setPendingClose(null)}
+    />
+    </>
   );
 }

@@ -469,12 +469,18 @@ function predictCacheHitRate(entries, model, now = new Date(), windowDays = 30, 
   let sumPredicted = 0;
   let samples = 0;
 
+  // Weight by the whole prompt (net input + cache read): a turn that read 1.1M
+  // cached tokens is not the same sample as a 200-token first turn, so
+  // weighting by the net input alone let tiny turns dominate the prediction.
+  const promptTokens = (entry) => entry.input + (entry.cacheRead || 0);
+
   for (const entry of entries) {
     if (!inWindow(entry.ts, window)) continue;
     if (model && entry.model !== model) continue;
-    if (typeof entry.localPredicted !== 'number' || entry.input <= 0) continue;
-    sumInput += entry.input;
-    sumPredicted += entry.localPredicted * entry.input;
+    const weight = promptTokens(entry);
+    if (typeof entry.localPredicted !== 'number' || weight <= 0) continue;
+    sumInput += weight;
+    sumPredicted += entry.localPredicted * weight;
     samples += 1;
   }
 
@@ -494,17 +500,19 @@ function predictCacheHitRate(entries, model, now = new Date(), windowDays = 30, 
   for (const entry of entries) {
     if (!inWindow(entry.ts, window)) continue;
     if (model && entry.model !== model) continue;
-    if (typeof entry.cacheRead !== 'number' || entry.input <= 0) continue;
+    if (typeof entry.cacheRead !== 'number') continue;
+    if (promptTokens(entry) <= 0) continue;
     sumInput += entry.input;
     sumCacheRead += entry.cacheRead;
     samples += 1;
   }
 
-  if (samples < minSamples || sumInput <= 0) {
+  if (samples < minSamples || sumInput + sumCacheRead <= 0) {
     return { predicted: null, samples, model: model || null, windowDays: normalizedWindowDays, source: USAGE_SOURCES.PROVIDER_REPORTED };
   }
   return {
-    predicted: Math.max(0, Math.min(1, sumCacheRead / sumInput)),
+    // `input` is stored net of the cached part, so the denominator is both.
+    predicted: Math.max(0, Math.min(1, sumCacheRead / (sumInput + sumCacheRead))),
     samples,
     model: model || null,
     windowDays: normalizedWindowDays,

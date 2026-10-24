@@ -8,7 +8,7 @@ import { desktop } from '../lib/ipc';
 import type { AppState, ChatItem, ToolChatItem } from '../types';
 import type { GitStatus, GitBranchList } from '../lib/ipc';
 import { BranchMenu } from './GitPanel';
-import { formatGoalElapsed } from '../lib/gitPanelFormat';
+import { formatGoalElapsed, gitChangedFileCount } from '../lib/gitPanelFormat';
 import { sessionChangeTotals, activeTurnProgress } from '../lib/state';
 
 /*
@@ -71,7 +71,7 @@ function GitSection({ onCommitPush }: { onCommitPush: () => void }) {
 
   if (!status?.ok) return null;
 
-  const changed = (status.staged?.length ?? 0) + (status.unstaged?.length ?? 0) + (status.untracked?.length ?? 0);
+  const changed = gitChangedFileCount(status);
 
   const doCheckout = async (b: string) => {
     const r = await desktop.git.checkout(b);
@@ -101,7 +101,7 @@ function GitSection({ onCommitPush }: { onCommitPush: () => void }) {
                 <span className="ip-del">−{stats?.removed ?? 0}</span>
               </>
             ) : (
-              <span style={{ color: 'var(--fg-dim)', fontSize: 11 }}>干净</span>
+              <span style={{ color: 'var(--fg-dim)', fontSize: 'var(--fs-2)' }}>干净</span>
             )}
           </div>
           {/* 分支行：点击弹出 Codex 风格分支下拉 */}
@@ -174,7 +174,7 @@ function PlanSection({ state }: { state: AppState }) {
               <div className="ip-row">
                 <span className="ip-row-label" style={{ color: 'var(--fg-dim)' }}>进程</span>
                 <span className="ip-row-spacer"/>
-                <span style={{ fontSize: 12 }}>{boardDone}/{taskBoard.tasks.length}</span>
+                <span style={{ fontSize: 'var(--fs-3)' }}>{boardDone}/{taskBoard.tasks.length}</span>
               </div>
               {taskBoard.tasks.slice(-6).map((t) => (
                 <div key={t.id} className="ip-step-row">
@@ -198,7 +198,7 @@ function PlanSection({ state }: { state: AppState }) {
                 <div className="ip-row">
                   <span className="ip-row-label" style={{ color: 'var(--fg-dim)' }}>进程</span>
                   <span className="ip-row-spacer"/>
-                  <span style={{ fontSize: 12 }}>{done}/{total}</span>
+                  <span style={{ fontSize: 'var(--fs-3)' }}>{done}/{total}</span>
                 </div>
               )}
               {allSteps.slice(-3).reverse().map((step) => (
@@ -240,13 +240,13 @@ function TerminalSection({ state, onOpenTerminal }: { state: AppState; onOpenTer
         <span className="ip-section-label">终端</span>
         <span className="ip-row-spacer"/>
         {progress ? (
-          <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+          <span style={{ fontSize: 'var(--fs-2)', color: 'var(--fg-muted)' }}>
             {fmt(Date.now() - (Date.now() - progress.elapsedMs))}
           </span>
         ) : state.bottomOpen ? (
-          <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>已打开</span>
+          <span style={{ fontSize: 'var(--fs-2)', color: 'var(--fg-dim)' }}>已打开</span>
         ) : (
-          <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>点击打开</span>
+          <span style={{ fontSize: 'var(--fs-2)', color: 'var(--fg-dim)' }}>点击打开</span>
         )}
       </button>
     </div>
@@ -298,7 +298,7 @@ function AgentSection({ state }: { state: AppState }) {
           {progress ? (
             <>
               <div className="ip-row">
-                <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                <span style={{ fontSize: 'var(--fs-2)', color: 'var(--fg-muted)' }}>
                   已用 {fmt(progress.elapsedMs)} · {progress.stepCount} 步
                 </span>
               </div>
@@ -319,7 +319,7 @@ function AgentSection({ state }: { state: AppState }) {
           ) : lastTurn && lastTurn.steps.length > 0 ? (
             <>
               <div className="ip-row">
-                <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                <span style={{ fontSize: 'var(--fs-2)', color: 'var(--fg-muted)' }}>
                   上次工作 {lastTurnSec}秒 · {lastTurn.steps.length} 步
                 </span>
               </div>
@@ -333,7 +333,7 @@ function AgentSection({ state }: { state: AppState }) {
                   }
                   <span className="ip-step-label">{step.tool}</span>
                   {step.durationMs != null && (
-                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--fg-dim)' }}>
+                    <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-1)', color: 'var(--fg-dim)' }}>
                       {(step.durationMs / 1000).toFixed(1)}s
                     </span>
                   )}
@@ -342,7 +342,7 @@ function AgentSection({ state }: { state: AppState }) {
             </>
           ) : (
             <div className="ip-row">
-              <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>
+              <span style={{ fontSize: 'var(--fs-2)', color: 'var(--fg-dim)' }}>
                 {state.agentStatus === 'offline' ? '尚未连接 · 发送消息时自动连接' : '还没有工作记录'}
               </span>
             </div>
@@ -433,7 +433,7 @@ export function InfoPanel({
                 <span className="ip-del">−{changes.removed}</span>
               </>
             ) : (
-              <span style={{ fontSize: 11, color: 'var(--fg-dim)' }}>干净</span>
+              <span style={{ fontSize: 'var(--fs-2)', color: 'var(--fg-dim)' }}>干净</span>
             )}
             <div className="info-panel-actions" style={{ marginLeft: 8 }} onMouseDown={e => e.stopPropagation()}>
               <button className="icon-button ip-btn" title="展开" onClick={(e) => { e.stopPropagation(); setMinimized(false); }}>

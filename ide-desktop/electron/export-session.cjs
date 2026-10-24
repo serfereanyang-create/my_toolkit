@@ -2,8 +2,8 @@
  * Session markdown export — ported from zcode's conversation-share
  * sharedContextFormatter, adapted to this app's session records.
  *
- * Same contract as upstream: fenced tool I/O with a taller fence when the
- * payload itself contains ```, a sha256 over the final document, and unknown
+ * Same contract as upstream: fenced tool I/O with a fence taller than any
+ * backtick run in the payload, a sha256 over the final document, and unknown
  * message roles recorded as unsupportedKinds instead of failing the export.
  */
 
@@ -11,8 +11,16 @@ const { createHash } = require('node:crypto');
 const path = require('node:path');
 const { atomicWriteText } = require('./atomic-file.cjs');
 
+/**
+ * Fence length = the longest backtick run in the payload + 1, never below 3.
+ * "Use four when the payload contains ```" is not enough: a run of four
+ * backticks then closes the block early, and every line after it renders as
+ * live markdown/HTML in the exported document. Tool output is not trusted text
+ * — it is whatever the repo the agent was working in happened to contain.
+ */
 function fenced(value) {
-  const fence = value.includes('```') ? '````' : '```';
+  const longestRun = (String(value).match(/`+/g) ?? []).reduce((longest, run) => Math.max(longest, run.length), 0);
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
   return `${fence}\n${value}\n${fence}`;
 }
 

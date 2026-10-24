@@ -20,6 +20,41 @@ const TRIGGER_TYPES = new Set(['cron', 'file_watch', 'git_event', 'manual']);
 const FILE_EVENTS = new Set(['create', 'modify', 'delete']);
 const GIT_EVENTS = new Set(['commit', 'push', 'pull']);
 
+/**
+ * Session scope for unattended runs.
+ *
+ * A scheduled run must not append to a conversation the user is reading, and
+ * must not be resumable as one from the session list — so it gets its own
+ * directory rather than sharing `.aicode/sessions`. Kept here (rather than
+ * inline in main.cjs) so the scope can be asserted without booting Electron.
+ */
+function automationSessionDir(workspaceRoot) {
+  return path.join(workspaceRoot, '.aicode', 'sessions-automation');
+}
+
+/**
+ * Whether an unattended run may proceed on the configured approval mode.
+ *
+ * `ask` and `plan` both mean "stop and wait for a person". A scheduled run has
+ * no person, so the CLI's own approval deadline would deny every prompt and the
+ * task would fail for a reason that has nothing to do with the work — and
+ * nothing in the UI can answer it either, because the run is background.
+ *
+ * The two modes that CAN run unattended are not interchangeable, so this does
+ * not pick one for the user: `auto` widens the writable scope to the whole
+ * machine (see cli/src/safety/policy.ts pathScopeFor), which is a real
+ * escalation for someone who chose `ask`. `deny` (read-only) is honoured as-is
+ * — it is a deliberate choice, not a prompt tier. Anything that needs a person
+ * is refused with a reason the user can act on.
+ */
+function unattendedApprovalDecision(configured) {
+  if (configured === 'auto' || configured === 'deny') return { ok: true, approval: configured };
+  return {
+    ok: false,
+    reason: '自动化在后台无人值守运行，无法等待人工确认。请把批准模式改为「完全访问」或「拒绝写入」后再触发。',
+  };
+}
+
 function createAutomationService({ workspace, agentManager, mainWindow }) {
   const active = new Map();
   const pendingRuns = new Map();
@@ -141,6 +176,35 @@ function createAutomationService({ workspace, agentManager, mainWindow }) {
     return task;
   }
 
+  /**
+   * Record one run's outcome and settle its caller, whatever happens.
+   *
+   * `finishRun` reads and writes the task and history files, so it can throw —
+   * a read-only workspace, a full disk, a JSON parse error. Every caller used to
+   * write `.then(resolve, reject)` itself, and the ones that omitted the
+   * rejection handler (the completion listener, and the bridge-gone path) left
+   * the awaiting IPC call pending for good when that happened. One helper is how
+   * all four settle sites — watchdog, dispatch failure, completion, dead child —
+   * give the same guarantee.
+   *
+   * If recording *also* fails, the run is still reported to the caller: `busy`
+   * is only a filing problem, and a caller left hanging is the worse outcome.
+   */
+  function settleRun(taskId, status, reason, startedAt, trigger, resolve) {
+    finishRun(taskId, status, reason, startedAt, trigger).then(resolve, (error) => {
+      const message = `${errorMessage(error)}（自动化结果未能写入历史）`;
+      resolve({
+        ok: status === 'ok',
+        taskId,
+        status: status === 'ok' ? 'success' : status === 'busy' ? 'blocked' : 'failed',
+        reason: reason ? `${reason}；${message}` : message,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        trigger,
+      });
+    });
+  }
+
   async function runTask(taskId, reason = { type: 'manual' }) {
     const task = await requireTask(taskId);
     if (running.has(taskId)) return { ok: false, status: 'busy', taskId };
@@ -150,11 +214,13 @@ function createAutomationService({ workspace, agentManager, mainWindow }) {
     // Avoid the "async executor" anti-pattern: unhandled throws inside an async
     // executor are swallowed by the Promise constructor and never reject the
     // outer promise.  Instead wrap in a plain Promise and forward via callbacks.
-    return new Promise((resolve, reject) => {
+    // The executor's `reject` is deliberately unused: a run always ends with a
+    // result object, never a rejection, so an IPC caller cannot be left hanging
+    // by a failure it has no way to observe.
+    return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         pendingRuns.delete(taskId);
-        finishRun(taskId, 'failed', 'Automation timed out', startedAt, reason)
-          .then(resolve, reject);
+        settleRun(taskId, 'failed', 'Automation timed out', startedAt, reason, resolve);
       }, 60 * 60 * 1000);
       if (typeof timeout.unref === 'function') timeout.unref();
       pendingRuns.set(taskId, { resolve, timeout, startedAt, reason });
@@ -162,13 +228,16 @@ function createAutomationService({ workspace, agentManager, mainWindow }) {
       agentManager.automationTask(taskId, task.action.goal).catch((error) => {
         clearTimeout(timeout);
         pendingRuns.delete(taskId);
-        finishRun(taskId, 'failed', errorMessage(error), startedAt, reason)
-          .then(resolve, reject);
+        settleRun(taskId, 'failed', errorMessage(error), startedAt, reason, resolve);
       });
     });
   }
 
   async function finishRun(taskId, status, reason, startedAt, trigger) {
+    // Released before the first `await`: the run is over the moment we are
+    // called, and `getTask` below can itself throw on a malformed tasks.json. If
+    // that happened while the id were still in the set, the task would answer
+    // `busy` to every later trigger for the lifetime of the process.
     running.delete(taskId);
     const task = await getTask(taskId);
     const finishedAt = new Date().toISOString();
@@ -308,20 +377,47 @@ function createAutomationService({ workspace, agentManager, mainWindow }) {
   async function disposeAll() {
     const ids = [...active.keys()];
     for (const id of ids) await deactivate(id);
-    for (const [taskId, pending] of pendingRuns) {
-      clearTimeout(pending.timeout);
-      pending.resolve({
+    // Deliberately not recorded in history: a run stopped by a workspace change
+    // never really ran, so counting it as a failure would push a task toward the
+    // three-strike auto-disable for the user's own window switch. Clearing the
+    // map (synchronously, before any await) is also what keeps `bridgeGone` from
+    // finding these entries when the child's `agent_offline` arrives afterwards.
+    const pending = [...pendingRuns];
+    pendingRuns.clear();
+    for (const [taskId, entry] of pending) {
+      clearTimeout(entry.timeout);
+      entry.resolve({
         ok: false,
         taskId,
         status: 'blocked',
         reason: 'Automation stopped because the workspace changed or the app closed',
-        startedAt: pending.startedAt,
+        startedAt: entry.startedAt,
         finishedAt: new Date().toISOString(),
-        trigger: pending.reason,
+        trigger: entry.reason,
       });
     }
-    pendingRuns.clear();
     running.clear();
+  }
+
+  /**
+   * Fail every in-flight run because the agent child died.
+   *
+   * A run is resolved by the child's own `automation_done`. A child that exits
+   * mid-run never sends one, so without this the task stayed in `running` and
+   * every later trigger was answered `busy` until the one-hour watchdog fired —
+   * the user saw a task permanently "running" for a run that had died in
+   * seconds, and could not start it again.
+   *
+   * Triggers are deliberately left active. The child is respawned on the next
+   * run (`startAutomationBridge` checks `child`, which the exit handler nulls),
+   * so a cron schedule should keep working rather than silently stop.
+   */
+  function bridgeGone(reason) {
+    for (const [taskId, pending] of [...pendingRuns]) {
+      clearTimeout(pending.timeout);
+      pendingRuns.delete(taskId);
+      settleRun(taskId, 'failed', reason, pending.startedAt, pending.reason, pending.resolve);
+    }
   }
 
   // Bug-12 fix: use the module-level automationBus EventEmitter instead of
@@ -332,8 +428,12 @@ function createAutomationService({ workspace, agentManager, mainWindow }) {
     if (!pending) return;
     clearTimeout(pending.timeout);
     pendingRuns.delete(event.taskId);
-    void finishRun(event.taskId, event.status, event.reason, pending.startedAt, pending.reason).then(pending.resolve);
+    settleRun(event.taskId, event.status, event.reason, pending.startedAt, pending.reason, pending.resolve);
   });
+
+  // The child dying is not a completion, so it arrives on its own event — see
+  // bridgeGone for why silence here is not an option.
+  automationBus.on('automation.bridge_gone', (event) => bridgeGone(event && event.reason));
 
   function emitChanged() {
     if (!mainWindow.isDestroyed()) mainWindow.webContents.send('automation.changed');
@@ -443,4 +543,4 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-module.exports = { createAutomationService, normalizeTask, normalizeTrigger, classifyGitEvent, automationBus };
+module.exports = { createAutomationService, normalizeTask, normalizeTrigger, classifyGitEvent, automationBus, automationSessionDir, unattendedApprovalDecision };

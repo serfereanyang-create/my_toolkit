@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtemp, readFile, rm, writeFile, mkdir } = require('node:fs/promises');
+const { mkdtemp, readFile, readdir, rm, writeFile, mkdir } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
@@ -139,6 +139,38 @@ test('corrupt index heals on next write', async () => {
     assert.equal((await fx.store.list(FILE)).length, 1);
     // index.json is now valid JSON again
     JSON.parse(await readFile(path.join(fx.dir, 'file-history', 'index.json'), 'utf8'));
+  } finally { await fx.cleanup(); }
+});
+
+test('a corrupt index is kept aside instead of being overwritten', async () => {
+  const fx = await freshStore();
+  try {
+    const dir = path.join(fx.dir, 'file-history');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'index.json'), '{"abc":{"path":"/proj/src/app.ts","entries":', 'utf8');
+
+    assert.deepEqual(await fx.store.list(FILE), []);
+    const files = (await readdir(dir)).filter((name) => name.includes('.corrupt-'));
+    assert.equal(files.length, 1, 'the unreadable index still exists to recover from');
+    assert.match(await readFile(path.join(dir, files[0]), 'utf8'), /app\.ts/, 'with the paths it listed');
+
+    // The store keeps working from an empty index.
+    await fx.store.recordSave(FILE, 'first', 'second');
+    assert.equal((await fx.store.list(FILE)).length, 1);
+  } finally { await fx.cleanup(); }
+});
+
+test('a snapshot whose bytes on disk do not match the index is refused, not offered', async () => {
+  const fx = await freshStore();
+  try {
+    await fx.store.recordSave(FILE, 'the whole original content', 'saved');
+    const [snapshot] = await fx.store.list(FILE);
+    assert.equal(await fx.store.read(FILE, snapshot.id), 'the whole original content');
+
+    // Simulate a snapshot torn by a crash: shorter than the index says.
+    const key = keyFor(FILE);
+    await writeFile(path.join(fx.dir, 'file-history', key, snapshot.id), 'the whole ori', 'utf8');
+    assert.equal(await fx.store.read(FILE, snapshot.id), null, 'a truncated snapshot must not be restorable');
   } finally { await fx.cleanup(); }
 });
 

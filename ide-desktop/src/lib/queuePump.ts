@@ -25,6 +25,7 @@ export type PumpDecision =
   | { action: 'send'; message: QueuedMessage };
 
 export type PumpInput = {
+  paused?: boolean;
   queue: QueuedMessage[];
   sessionId: string | null;
   /** The conversation already has a turn in flight. */
@@ -64,6 +65,7 @@ export type PumpInput = {
 export function decideQueuePump(input: PumpInput): PumpDecision {
   const message = nextQueued(input.queue, input.sessionId);
   if (!message) return { action: 'idle' };
+  if (input.paused) return { action: 'wait' };
   if (input.sendInFlight || !input.bridgeReady) return { action: 'wait' };
   // `justFinished` overrides the stale running flag for the turn that just ended.
   if (input.sessionRunning && !input.justFinished) return { action: 'wait' };

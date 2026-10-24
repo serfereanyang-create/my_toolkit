@@ -5,8 +5,8 @@
  * in the renderer (src/lib/keybindings.ts); this store only sanitises shapes
  * — object of string->string, keys matching ^[a-z0-9-]+$, values <= 32 chars.
  */
-const fs = require('node:fs/promises');
 const path = require('node:path');
+const { createJsonStore } = require('./json-store.cjs');
 
 const ID_RE = /^[a-z0-9-]{1,40}$/;
 
@@ -25,56 +25,30 @@ function sanitizeMap(raw) {
 
 function createKeybindingsStore(userDataDir) {
   const file = path.join(userDataDir, 'keybindings.json');
-  let chain = Promise.resolve();
-  let cache = null; // Map-like plain object, loaded lazily
-
-  async function loadLocked() {
-    if (cache) return;
-    cache = {};
-    try {
-      cache = sanitizeMap(JSON.parse(await fs.readFile(file, 'utf8')));
-    } catch { /* missing or corrupt file heals to empty */ }
-  }
-
-  async function saveLocked() {
-    await fs.mkdir(userDataDir, { recursive: true });
-    const tmp = file + '.tmp';
-    await fs.writeFile(tmp, JSON.stringify(cache, null, 2), 'utf8');
-    await fs.rename(tmp, file);
-  }
-
-  function mutate(fn) {
-    const run = chain.then(async () => {
-      await loadLocked();
-      const out = await fn();
-      return out;
-    });
-    // Swallow errors on the chain itself; the caller sees the rejection.
-    chain = run.then(() => undefined, () => undefined);
-    return run;
-  }
-
+  // Durable plumbing lives in json-store.cjs: atomic replace, rename retry,
+  // corrupt-file quarantine, serialized mutations.
+  const store = createJsonStore({ file: () => file, normalize: sanitizeMap });
   async function getAll() {
-    return mutate(async () => ({ ...cache }));
+    return store.inspect((current) => ({ ...current }));
   }
 
   /** Set one override; empty/null removes it (falls back to default). */
   async function setOne(actionId, chord) {
     if (!ID_RE.test(String(actionId))) return { ok: false, error: '非法的快捷键 ID' };
-    return mutate(async () => {
+    return store.mutate((current) => {
       const v = typeof chord === 'string' ? chord.trim().slice(0, 32) : '';
-      if (!v) delete cache[actionId];
-      else cache[actionId] = v;
-      await saveLocked();
+      if (!v) delete current[actionId];
+      else current[actionId] = v;
       return { ok: true, actionId, chord: v || null };
     });
   }
 
   async function replaceAll(rawMap) {
-    return mutate(async () => {
-      cache = sanitizeMap(rawMap);
-      await saveLocked();
-      return { ok: true, count: Object.keys(cache).length };
+    return store.mutate((current) => {
+      const next = sanitizeMap(rawMap);
+      for (const key of Object.keys(current)) delete current[key];
+      Object.assign(current, next);
+      return { ok: true, count: Object.keys(next).length };
     });
   }
 

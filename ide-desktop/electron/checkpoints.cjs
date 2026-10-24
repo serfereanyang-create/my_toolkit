@@ -18,6 +18,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { isAbsolute, join, resolve, sep } = require('node:path');
+const { renameWithRetry } = require('./atomic-file.cjs');
 
 const REF_PREFIX = 'refs/yoycode/checkpoints';
 
@@ -395,8 +396,9 @@ async function deleteCheckpointRef(params) {
 // replaced atomically via temp file + rename.
 // ---------------------------------------------------------------------------
 
-function createCheckpointStore(rootDir) {
+function createCheckpointStore(rootDir, options = {}) {
   const writeChains = new Map();
+  const renameImpl = options.rename ?? rename;
 
   function checkpointFilePath(workspacePath, checkpointId) {
     return join(rootDir, getWorkspaceHash(workspacePath), `${checkpointId}.json`);
@@ -435,7 +437,15 @@ function createCheckpointStore(rootDir) {
         await mkdir(join(filePath, '..'), { recursive: true });
         const tempPath = `${filePath}.${process.pid}.${Date.now().toString(36)}.tmp`;
         await writeFile(tempPath, `${JSON.stringify(meta, null, 2)}\n`, 'utf-8');
-        await rename(tempPath, filePath);
+        // A checkpoint manifest is the handle /undo needs: a rename blocked by a
+        // virus scanner (EPERM/EBUSY on Windows) must be retried, not turned into
+        // a checkpoint that silently never existed.
+        try {
+          await renameWithRetry(tempPath, filePath, undefined, renameImpl);
+        } catch (error) {
+          await rm(tempPath, { force: true }).catch(() => undefined);
+          throw error;
+        }
       });
     },
     async load(workspacePath, checkpointId) {

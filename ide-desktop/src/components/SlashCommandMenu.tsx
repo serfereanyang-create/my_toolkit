@@ -112,6 +112,16 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const CATEGORIES = ['ai', 'dialogue', 'project', 'analysis', 'model', 'search', 'quicktools', 'session', 'git', 'tools', 'advanced'] as const;
 
+/** The list the menu actually shows, in the order it shows it.
+ *
+ *  Selection used to index SLASH_COMMANDS directly while the sections were
+ *  rendered in CATEGORIES order. The declaration order differs (all of 高级
+ *  comes last in the source but 高级's categories interleave elsewhere), so
+ *  the highlight and Enter disagreed: the 40th visible row read /git status
+ *  while Enter inserted /tools. One array now backs both. */
+const ORDERED_COMMANDS: SlashCommand[] = CATEGORIES.flatMap((category) =>
+  SLASH_COMMANDS.filter((cmd) => cmd.category === category));
+
 export function SlashCommandMenu({ onPick, onClose, initialQuery = '' }: {
   onPick: (command: string) => void;
   onClose: () => void;
@@ -126,12 +136,12 @@ export function SlashCommandMenu({ onPick, onClose, initialQuery = '' }: {
   const lower = search.toLowerCase();
 
   const visibleItems = lower
-    ? SLASH_COMMANDS.filter(
+    ? ORDERED_COMMANDS.filter(
         (cmd) =>
           cmd.command.toLowerCase().includes(lower) ||
           cmd.description.toLowerCase().includes(lower),
       )
-    : SLASH_COMMANDS;
+    : ORDERED_COMMANDS;
 
   const filtered = lower ? visibleItems : null;
 
@@ -279,7 +289,7 @@ export function SlashCommandMenu({ onPick, onClose, initialQuery = '' }: {
             (() => {
               let globalIdx = 0;
               return CATEGORIES.map((category) => {
-                const commands = SLASH_COMMANDS.filter((cmd) => cmd.category === category);
+                const commands = ORDERED_COMMANDS.filter((cmd) => cmd.category === category);
                 if (!commands.length) return null;
                 const section = (
                   <div key={category} className="slash-menu-section">

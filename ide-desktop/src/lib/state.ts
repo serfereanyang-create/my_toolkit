@@ -1,18 +1,24 @@
-import type { AgentEvent, AppState, ChatItem, ContextStats, DesktopSettings, PendingDiff, PreviewTab, QueuedMessage, ReviewFinding, SupervisorSnapshot, ToolChatItem, TreeNode, TurnFileChange, WorkLogEntry, TaskBoard } from '../types';
+import type { AgentEvent, AppState, ChatItem, ContextStats, DesktopSettings, GuardConfirmation, PendingDiff, PreviewLayout, PreviewTab, QueuedMessage, ReviewFinding, SupervisorSnapshot, ToolChatItem, TreeNode, TurnFileChange, WorkLogEntry, TaskBoard } from '../types';
 
 export type AppAction =
   | { type: 'settings/loaded'; settings: DesktopSettings }
   | { type: 'workspace/opened'; root: string }
   | { type: 'tree/loaded'; tree: TreeNode[] }
   | { type: 'view/set'; view: AppState['activeView'] }
-  | { type: 'chat/user'; text: string }
+  | { type: 'chat/user'; text: string; sessionId?: string }
   | { type: 'chat/clear' }
+  | { type: 'agent/bind'; sessionId: string }
+  | { type: 'guard/decided'; requestId: string }
   | { type: 'chat/load'; sessionId: string; chat: ChatItem[] }
   | { type: 'agent/status'; status: AppState['agentStatus'] }
   | { type: 'agent/event'; event: AgentEvent }
   | { type: 'approval/decided'; requestId: string; decision: 'allow_once' | 'allow_session' | 'deny' }
   // Message queue: submissions made while the agent was busy.
   | { type: 'queue/add'; message: QueuedMessage }
+  | { type: 'queue/restore'; messages: QueuedMessage[] }
+  | { type: 'queue/hydrate'; messages: QueuedMessage[]; pausedSessions: string[] }
+  | { type: 'queue/pause'; sessionId: string }
+  | { type: 'queue/resume'; sessionId: string }
   | { type: 'queue/remove'; id: string }
   | { type: 'queue/update'; id: string; text: string }
   | { type: 'queue/promote'; id: string }
@@ -31,6 +37,9 @@ export type AppAction =
   | { type: 'preview/update'; id: string; patch: Partial<PreviewTab> }
   | { type: 'preview/toggle' }
   | { type: 'preview/setWidth'; width: number }
+  | { type: 'preview/setLayout'; layout: PreviewLayout }
+  /** A file the open panes show changed on disk; re-render whichever tab owns it. */
+  | { type: 'preview/changed'; absolutePath: string }
   // Diff review actions
   | { type: 'diff/queue'; diff: PendingDiff }
   | { type: 'diff/decide'; id: string; decision: 'accepted' | 'rejected' }
@@ -58,7 +67,7 @@ export const initialState: AppState = {
   contextStats: null,
   taskSummary: null,
   contextCompaction: null,
-  preview: { open: false, width: DEFAULT_PREVIEW_WIDTH, tabs: [], activeTabId: null },
+  preview: { open: false, width: DEFAULT_PREVIEW_WIDTH, tabs: [], activeTabId: null, layout: 'single' },
   pendingDiffs: [],
   sideChatOpen: false,
   sideChatWidth: 400,
@@ -73,6 +82,9 @@ export const initialState: AppState = {
   runningSessions: [],
   sessionApprovals: {},
   messageQueue: [],
+  queuePausedSessions: [],
+  readySessions: [],
+  guardRequests: [],
 };
 
 export function appReducer(state: AppState, action: AppAction): AppState {
@@ -80,13 +92,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'settings/loaded':
       return { ...state, settings: action.settings };
     case 'workspace/opened':
-      return { ...state, workspaceRoot: action.root, tree: [], agentStatus: 'offline', contextStats: null, pendingDiffs: [] };
+      return {
+        ...initialState,
+        settings: state.settings,
+        activeView: state.activeView,
+        workspaceRoot: action.root,
+        preview: { ...initialState.preview, width: state.preview.width },
+        sideChatWidth: state.sideChatWidth,
+        browserWidth: state.browserWidth,
+      };
     case 'tree/loaded':
       return { ...state, tree: action.tree };
     case 'view/set':
       return { ...state, activeView: action.view };
     case 'chat/user':
-      return { 
+      if (action.sessionId && action.sessionId !== state.activeSessionId) return state;
+      return {
         ...state, 
         // Bug-10 fix: use crypto.randomUUID() instead of Date.now() to avoid
         // millisecond-level key collisions when messages are dispatched rapidly.
@@ -94,13 +115,20 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         taskSummary: { title: extractTaskTitle(action.text), expanded: false }
       };
     case 'chat/clear':
-      // Detach from any live bridge so the next prompt starts a fresh session.
-      // pendingDiffs belong to the old session's approvals — drop them too.
-      return { ...state, chat: [], activeSessionId: null, agentStatus: 'offline', contextStats: null, taskSummary: null, pendingDiffs: [] };
+      return { ...state, chat: [], activeSessionId: null, agentStatus: 'offline', contextStats: null, taskSummary: null, pendingDiffs: [], contextCompaction: null, taskBoard: null, supervisor: null, workLog: [], workPhase: 'idle' };
     case 'chat/load':
-      // Go offline so the next prompt re-starts the bridge with --resume for
-      // the loaded session, keeping desktop chat and CLI session in sync.
-      return { ...state, chat: action.chat, activeSessionId: action.sessionId, agentStatus: 'offline', contextStats: null, taskSummary: null, pendingDiffs: [] };
+      return { ...state, chat: action.chat, activeSessionId: action.sessionId, agentStatus: 'offline', contextStats: null, taskSummary: null, pendingDiffs: [], contextCompaction: null, taskBoard: null, supervisor: null, workLog: [], workPhase: 'idle' };
+    case 'agent/bind':
+      return {
+        ...state,
+        activeSessionId: action.sessionId,
+        readySessions: [...new Set([...state.readySessions, action.sessionId])],
+        agentStatus: state.runningSessions.includes(action.sessionId) ? 'running' : 'ready',
+        messageQueue: state.messageQueue.map((message) => message.sessionId ? message : { ...message, sessionId: action.sessionId }),
+        queuePausedSessions: [...new Set((state.queuePausedSessions ?? []).map(sessionId => sessionId || action.sessionId))],
+      };
+    case 'guard/decided':
+      return { ...state, guardRequests: state.guardRequests.filter((request) => request.requestId !== action.requestId) };
     case 'agent/status':
       return { ...state, agentStatus: action.status };
     case 'agent/event':
@@ -131,6 +159,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     case 'queue/add':
       return { ...state, messageQueue: [...state.messageQueue, action.message] };
+    case 'queue/restore': {
+      const known = new Set(state.messageQueue.map(message => message.id));
+      const returned = action.messages.filter(message => !known.has(message.id));
+      return { ...state, messageQueue: [...returned, ...state.messageQueue] };
+    }
+    case 'queue/hydrate': {
+      const adopt = (message: QueuedMessage) => !message.sessionId && state.activeSessionId ? { ...message, sessionId: state.activeSessionId } : message;
+      const current = new Map(state.messageQueue.map(message => [message.id, message]));
+      const messages = action.messages.map(message => adopt(current.get(message.id) ?? message));
+      const restored = new Set(messages.map(message => message.id));
+      return { ...state, messageQueue: [...messages, ...state.messageQueue.filter(message => !restored.has(message.id)).map(adopt)], queuePausedSessions: [...new Set([...(state.queuePausedSessions ?? []), ...action.pausedSessions].map(sessionId => sessionId || state.activeSessionId || ''))] };
+    }
+    case 'queue/pause':
+      return { ...state, queuePausedSessions: [...new Set([...(state.queuePausedSessions ?? []), action.sessionId || state.activeSessionId || ''])] };
+    case 'queue/resume':
+      return { ...state, queuePausedSessions: (state.queuePausedSessions ?? []).filter(sessionId => sessionId !== (action.sessionId || state.activeSessionId || '') && !(sessionId === '' && action.sessionId === state.activeSessionId)) };
     case 'queue/remove':
       return { ...state, messageQueue: state.messageQueue.filter((item) => item.id !== action.id) };
     case 'queue/update':
@@ -223,6 +267,32 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, preview: { ...state.preview, open: !state.preview.open } };
     case 'preview/setWidth':
       return { ...state, preview: { ...state.preview, width: Math.max(300, Math.min(720, action.width)) } };
+    case 'preview/setLayout':
+      return { ...state, preview: { ...state.preview, layout: action.layout } };
+    case 'preview/changed': {
+      // A pane shows one file, and the file it shows is named by the descriptor
+      // — matched on the absolute path because that is what the watcher reports
+      // and what the descriptor carries verbatim.
+      //
+      // The revision bump is the whole point: the panes are plain React
+      // components keyed on `revision`, so without it the component instance is
+      // reused, its effects never re-run, and the pane keeps showing the bytes
+      // the agent just replaced. Only the matching tab is touched, so one file's
+      // change cannot blank the other panes.
+      //
+      // `web` panes are deliberately skipped: a dev server's own reload owns
+      // them, and forcing a native view reload on every workspace file write
+      // would fight it.
+      let touched = false;
+      const tabs = state.preview.tabs.map((tab) => {
+        if (tab.kind === 'web' || tab.kind === 'text') return tab;
+        const absolutePath = (tab.descriptor as { absolutePath?: unknown })?.absolutePath;
+        if (typeof absolutePath !== 'string' || !sameFile(absolutePath, action.absolutePath)) return tab;
+        touched = true;
+        return { ...tab, revision: (tab.revision ?? 0) + 1 };
+      });
+      return touched ? { ...state, preview: { ...state.preview, tabs } } : state;
+    }
     // ── Diff review ──────────────────────────────────────────────────────────
     case 'diff/queue':
       return { ...state, pendingDiffs: [...state.pendingDiffs.filter((d) => d.id !== action.diff.id), action.diff] };
@@ -250,7 +320,40 @@ export function appReducer(state: AppState, action: AppAction): AppState {
   }
 }
 
+/**
+ * Whether an event from `eventSession` belongs to the conversation on screen.
+ *
+ * With a session on screen the answer is exact: the ids match or they do not.
+ * With none — a fresh chat, or the window before `agent/bind` lands — the id
+ * cannot decide on its own, so an event is adopted only when its session is not
+ * already known to be working elsewhere. That keeps a conversation the user left
+ * running behind from streaming into the new, empty chat, which is the case a
+ * plain `activeSessionId === null` check cannot tell apart from our own startup.
+ */
+/**
+ * Whether two paths name the same file.
+ *
+ * Windows paths are case-insensitive and can be spelled with either separator,
+ * and the two sides come from different places (the watcher's `path.relative`
+ * output vs. the descriptor's resolved path), so neither `===` nor a plain
+ * `startsWith` is reliable here.
+ */
+function sameFile(left: string, right: string): boolean {
+  const normalize = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  return normalize(left) === normalize(right);
+}
+
+function belongsToVisibleChat(state: AppState, event: AgentEvent, eventSession: string | null): boolean {
+  if (event.background === true) return false;
+  if (eventSession === null) return true;
+  if (state.activeSessionId !== null) return eventSession === state.activeSessionId;
+  return !state.runningSessions.includes(eventSession);
+}
+
 function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
+  const eventRoot = typeof event.workspaceRoot === 'string' ? event.workspaceRoot : null;
+  const normalizeRoot = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  if (eventRoot && normalizeRoot(eventRoot) !== normalizeRoot(state.workspaceRoot)) return state;
   const now = Date.now();
   const addLog = (entry: Omit<WorkLogEntry, 'id' | 'ts'>, phase: AppState['workPhase'] = state.workPhase, base: AppState = state): AppState => ({
     ...base,
@@ -265,7 +368,34 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
   // updates the cross-session facts the UI needs: which sessions are working,
   // and which have an approval waiting.
   const eventSession = typeof event.sessionId === 'string' && event.sessionId ? event.sessionId : null;
-  if (eventSession && state.activeSessionId && eventSession !== state.activeSessionId) {
+  if (eventSession && event.type === 'bridge_ready') {
+    state = { ...state, readySessions: [...new Set([...state.readySessions, eventSession])] };
+  } else if (eventSession && event.type === 'agent_offline') {
+    state = {
+      ...state,
+      readySessions: state.readySessions.filter((id) => id !== eventSession),
+      guardRequests: state.guardRequests.filter((request) => request.sessionId !== eventSession),
+    };
+  }
+  if (event.type === 'guard_confirmation_needed' && eventSession && typeof event.requestId === 'string') {
+    const options = Array.isArray(event.options) ? event.options.flatMap((option) => {
+      if (!option || typeof option !== 'object' || typeof (option as { label?: unknown }).label !== 'string') return [];
+      const entry = option as { label: string; description?: string };
+      return [{ label: entry.label, description: entry.description }];
+    }) : [];
+    const request: GuardConfirmation = {
+      requestId: event.requestId,
+      sessionId: eventSession,
+      title: String(event.title ?? '需求确认'),
+      question: String(event.question ?? ''),
+      options,
+    };
+    return { ...state, guardRequests: [...state.guardRequests.filter((item) => item.requestId !== request.requestId), request] };
+  }
+  if (event.type === 'guard_confirmation_resolved' && typeof event.requestId === 'string') {
+    return { ...state, guardRequests: state.guardRequests.filter((request) => request.requestId !== event.requestId) };
+  }
+  if (eventSession && !belongsToVisibleChat(state, event, eventSession)) {
     const running = new Set(state.runningSessions);
     if (event.type === 'turn_start') running.add(eventSession);
     else if (event.type === 'turn_done' || event.type === 'agent_offline') running.delete(eventSession);
@@ -300,7 +430,9 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
     const startedAt = boardId && state.taskBoard && state.taskBoard.id === boardId && state.taskBoard.startedAt
       ? state.taskBoard.startedAt
       : now;
-    return { ...addLog({ type: 'task', phase: 'info', title: '任务计划已更新', detail: String(event.title ?? '') , data: event.tasks }, state.workPhase), taskBoard: { ...board, id: boardId, startedAt } };
+    const taskBoard = { ...board, id: boardId, startedAt };
+    const detail = board.runtimeMode === 'paused' ? '任务已暂停，可从当前任务继续执行' : String(event.title ?? '');
+    return { ...addLog({ type: 'task', phase: 'info', title: board.runtimeMode === 'paused' ? '任务已暂停' : '任务计划已更新', detail, data: event.tasks }, state.workPhase), taskBoard };
   }
   if (event.type === 'supervisor_updated') {
     // The whole snapshot arrives each time, so this is a replace, not a merge —
@@ -315,7 +447,11 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
     return {
       ...addLog({ type: 'info', phase: 'info', title: '智能体已连接', detail: `${String(event.provider ?? '')} / ${String(event.model ?? '')}` }, 'idle'),
       agentStatus: 'ready',
-      ...(sessionId ? { activeSessionId: sessionId } : {}),
+      // A ready bridge is the one this chat has been waiting for: adopt its
+      // session so events that follow are attributed to the visible chat even
+      // if `agent/bind` has not landed yet. Only reachable for a session the
+      // background gate above did not send away.
+      ...(sessionId ? { activeSessionId: state.activeSessionId ?? sessionId, readySessions: [...new Set([...state.readySessions, sessionId])] } : {}),
     };
   }
   if (event.type === 'model_start') return addLog({ type: 'model', phase: 'running', title: '思考中', detail: '模型正在分析当前任务' }, 'thinking');
@@ -448,7 +584,12 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
     // "执行失败". Record the reason as the same kind:'error' item the bridge
     // errors use, so it stays readable after the toast is gone.
     const reason = event.status === 'error' ? String(event.reason ?? '').trim() : '';
-    const closed = endTurn(state);
+    const closed = endTurn(state, event.status === 'cancelled');
+    if (event.status === 'cancelled') {
+      const last = closed.chat.at(-1);
+      const text = typeof event.cancelledReply === 'string' && event.cancelledReply ? event.cancelledReply : last?.kind === 'assistant' && last.id === 'assistant-live' ? `${last.text}\n\n（本轮已停止。）` : '本轮已停止，已完成的操作和输出仍保留。';
+      return { ...markSessionRunning(finalizeAssistant(closed, text), state.activeSessionId, false), agentStatus: state.readySessions.includes(state.activeSessionId ?? '') ? 'ready' : 'offline', workPhase: 'done' };
+    }
     // A failed turn must always say something. Previously an empty reason left
     // the turn to close silently, so the user saw a failure with no explanation
     // at all — worse than a vague one, because there was nothing to act on.
@@ -461,7 +602,7 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
   if (event.type === 'agent_offline') {
     // Close any open turn that never received a turn_done (e.g. process crash).
     // Without this, subsequent tool_start events get appended to the zombie turn.
-    const closed = endTurn(state);
+    const closed = endTurn(state, event.expected === true);
     // Pending approvals belonged to the dead bridge: the CLI broker is gone, so
     // clicking them would hit "Unknown approval request". Per the desktop spec,
     // dismissed approvals are DENIED — mark their cards and diffs accordingly.
@@ -496,9 +637,11 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
       if (item.kind === 'turn' && item.endedAt === undefined) {
         chat[index] = {
           ...item,
-          ctxTokens: contextStats.inputTokens,
-          cacheRate: contextStats.providerCacheReported && contextStats.inputTokens > 0
-            ? Math.min(100, Math.round((contextStats.cacheReadTokens / contextStats.inputTokens) * 100))
+          // The context window holds the whole prompt: net input plus the part
+          // served from cache.
+          ctxTokens: contextStats.inputTokens + contextStats.cacheReadTokens,
+          cacheRate: contextStats.providerCacheReported && contextStats.inputTokens + contextStats.cacheReadTokens > 0
+            ? Math.min(100, Math.round((contextStats.cacheReadTokens / (contextStats.inputTokens + contextStats.cacheReadTokens)) * 100))
             : null,
         };
         break;
@@ -603,14 +746,14 @@ function startTurn(state: AppState): AppState {
   return appendChat(running, { id: `turn-${Date.now()}`, kind: 'turn', startedAt: Date.now(), steps: [], files: [], added: 0, removed: 0, undo: 'idle' });
 }
 
-function endTurn(state: AppState): AppState {
+function endTurn(state: AppState, cancelled = false): AppState {
   const index = openTurnIndex(state);
   if (index === -1) return state;
   const turn = state.chat[index];
   if (turn.kind !== 'turn') return state;
   // A pure-chat reply with no tool steps needs no "worked/changes" summary.
   if (turn.steps.length === 0) return { ...state, chat: state.chat.filter((_, i) => i !== index) };
-  return replaceChat(state, index, { ...turn, endedAt: Date.now() });
+  return replaceChat(state, index, { ...turn, endedAt: Date.now(), ...(cancelled ? { cancelled: true, steps: turn.steps.map(step => step.status === 'running' ? { ...step, status: 'done' as const, cancelled: true, output: step.output || '操作已停止' } : step) } : {}) });
 }
 
 function addTurnStep(state: AppState, step: ToolChatItem): AppState {
@@ -653,6 +796,7 @@ function finishTurnStep(state: AppState, event: AgentEvent): AppState {
   const ok = event.ok !== false;
   const output = String(event.output || '');
   const data = isRecord(event.data) ? event.data : undefined;
+  const cancelled = data?.cancelled === true;
   const added = data && typeof data.added === 'number' ? data.added : 0;
   const removed = data && typeof data.removed === 'number' ? data.removed : 0;
   const filePath = data && typeof data.path === 'string' ? data.path : undefined;
@@ -666,7 +810,7 @@ function finishTurnStep(state: AppState, event: AgentEvent): AppState {
   const index = openTurnIndex(state);
   if (index === -1) {
     // No active turn: emit a standalone done card as before.
-    return appendChat(state, { id: `tool-${Date.now()}`, kind: 'tool', status: ok ? 'done' : 'failed', tool, output, ok, added: added || undefined, removed: removed || undefined, screenshot });
+    return appendChat(state, { id: `tool-${Date.now()}`, kind: 'tool', status: ok || cancelled ? 'done' : 'failed', cancelled, tool, output, ok, added: added || undefined, removed: removed || undefined, screenshot });
   }
   const turn = state.chat[index];
   if (turn.kind !== 'turn') return state;
@@ -677,18 +821,25 @@ function finishTurnStep(state: AppState, event: AgentEvent): AppState {
     if (steps[i].status === 'running' && steps[i].tool === tool) {
       const startedAt = steps[i].startedAt;
       const durationMs = startedAt ? Date.now() - startedAt : undefined;
-      steps[i] = { ...steps[i], status: ok ? 'done' : 'failed', output, ok, added: added || undefined, removed: removed || undefined, durationMs, screenshot };
+      steps[i] = { ...steps[i], status: ok || cancelled ? 'done' : 'failed', cancelled, output, ok, added: added || undefined, removed: removed || undefined, durationMs, screenshot };
       matched = true;
       break;
     }
   }
   if (!matched) {
-    steps.push({ id: `tool-${Date.now()}`, kind: 'tool', status: ok ? 'done' : 'failed', tool, output, ok, added: added || undefined, removed: removed || undefined, screenshot });
+    steps.push({ id: `tool-${Date.now()}`, kind: 'tool', status: ok || cancelled ? 'done' : 'failed', cancelled, tool, output, ok, added: added || undefined, removed: removed || undefined, screenshot });
   }
   // Track distinct changed files for the "N 个文件已更改" summary. A file
   // written twice in one turn merges its line counts and keeps every
   // checkpoint id so undo reverts all of them.
-  const files = mergeTurnFile(turn.files, ok ? filePath : undefined, added, removed, checkpointId);
+  //
+  // `data.path` alone does not mean the file changed: read_file, grep, stat
+  // and a dozen other read-only tools all report the path they looked at.
+  // Counting those made a pure read turn claim "1 个文件已更改" and offer an
+  // Undo button that did nothing (files with no checkpoint are not undoable).
+  // A real write either moved lines or produced a checkpoint.
+  const touched = ok && Boolean(checkpointId || added || removed);
+  const files = mergeTurnFile(turn.files, touched ? filePath : undefined, added, removed, checkpointId);
   return replaceChat(state, index, { ...turn, steps, files, added: turn.added + added, removed: turn.removed + removed });
 }
 
@@ -813,6 +964,43 @@ export function sessionChangeTotals(chat: ChatItem[]): { added: number; removed:
   return added > 0 || removed > 0 ? { added, removed } : null;
 }
 
+export type SessionChangedFile = { path: string; added: number; removed: number };
+
+/**
+ * Per-file change totals for THIS conversation, newest file order preserved.
+ *
+ * The inspector's change counts used to come from `git diff` alone, which
+ * reports the whole working tree: a conversation that changed nothing showed
+ * the same +2945 −212 as every other one. This is the conversation's own
+ * ledger — the same numbers the turn cards count — grouped by path so the
+ * panel can list what this chat actually touched.
+ */
+export function sessionChangedFiles(chat: ChatItem[]): SessionChangedFile[] {
+  const byPath = new Map<string, SessionChangedFile>();
+  const add = (path: string | undefined, added: number, removed: number) => {
+    if (!path) return;
+    const previous = byPath.get(path);
+    if (previous) {
+      previous.added += added;
+      previous.removed += removed;
+    } else {
+      byPath.set(path, { path, added, removed });
+    }
+  };
+  for (const item of chat) {
+    if (item.kind === 'turn') {
+      for (const file of item.files ?? []) add(file.path, file.added, file.removed);
+      continue;
+    }
+    if (item.kind !== 'tool') continue;
+    // A standalone tool card carries the path on its input, not a diff payload.
+    const input = isRecord(item.input) ? item.input : undefined;
+    const path = input && typeof input.path === 'string' ? input.path : undefined;
+    add(path, item.added ?? 0, item.removed ?? 0);
+  }
+  return [...byPath.values()].sort((a, b) => b.added + b.removed - (a.added + a.removed));
+}
+
 /**
  * Real-time progress data for the currently running turn (if any).
  * Returns null when no turn is active (agent idle/offline).
@@ -890,11 +1078,31 @@ export function languageForPath(path: string) {
 // messages are skipped; tool messages become collapsed "done" tool cards so a
 // resumed conversation reads like it did live.
 export function sessionToChat(record: {
-  messages?: { role: string; content: string; name?: string; createdAt?: string }[];
+  messages?: { role: string; content: string; name?: string; createdAt?: string; interrupted?: boolean; displayText?: string }[];
+  toolCalls?: unknown[];
 }): ChatItem[] {
   const messages = Array.isArray(record?.messages) ? record.messages : [];
   const items: ChatItem[] = [];
   let index = 0;
+
+  // Messages carry the tool name and output but not its input, so a restored
+  // step row fell back to the raw tool id ("list_files") instead of the path,
+  // query or command the live row showed. toolCalls[] has the missing input —
+  // and, being in call order, lines up with the tool messages one-for-one
+  // (each call appends exactly one). Only use an entry when its name matches,
+  // so a partial or reordered record degrades to the old behaviour rather
+  // than labelling a step with another call's arguments.
+  const calls = Array.isArray(record?.toolCalls)
+    ? record.toolCalls.filter((call): call is { tool: string; input?: unknown; ok?: boolean; data?: unknown } =>
+        Boolean(call) && typeof (call as { tool?: unknown }).tool === 'string')
+    : [];
+  const takeInput = (toolName: string): { input?: unknown; ok?: boolean; data?: unknown } => {
+    while (calls.length > 0) {
+      const call = calls.shift()!;
+      if (call?.tool === toolName) return { input: call.input, ok: call.ok, data: call.data };
+    }
+    return {};
+  };
 
   // Consecutive tool messages belong to one agent working round. Buffer them
   // and flush as a `turn` card when the round is terminated by an assistant
@@ -902,7 +1110,13 @@ export function sessionToChat(record: {
   // expandable step-by-step view the live stream produces.
   let toolBuffer: ToolChatItem[] = [];
   let toolBufferStartedAt: number | undefined;
-  const flushTurn = (endedAt?: number) => {
+  // The changed-file summary lives in toolCalls[].data (path/added/removed/
+  // checkpointId), so a restored turn can show the same 文件已更改 bar and
+  // Undo button the live turn had. A live turn only counts a file when the
+  // write produced a checkpoint or moved lines; mirror that test so a pure
+  // read tool that merely reports `path` is not counted.
+  let fileBuffer: TurnFileChange[] = [];
+  const flushTurn = (endedAt?: number, cancelled = false) => {
     if (toolBuffer.length === 0) return;
     items.push({
       id: `load-turn-${index++}`,
@@ -910,12 +1124,38 @@ export function sessionToChat(record: {
       startedAt: toolBufferStartedAt ?? endedAt ?? Date.now(),
       endedAt: endedAt ?? toolBufferStartedAt ?? Date.now(),
       steps: toolBuffer,
-      files: [],
-      added: 0,
-      removed: 0,
+      files: fileBuffer,
+      added: fileBuffer.reduce((sum, file) => sum + file.added, 0),
+      removed: fileBuffer.reduce((sum, file) => sum + file.removed, 0),
+      elapsedUnknown: true,
+      ...(cancelled ? { cancelled: true } : {}),
     });
     toolBuffer = [];
+    fileBuffer = [];
     toolBufferStartedAt = undefined;
+  };
+
+  const changedFileFor = (data: unknown): TurnFileChange | undefined => {
+    if (!data || typeof data !== 'object') return undefined;
+    const record = data as { path?: unknown; added?: unknown; removed?: unknown; checkpointId?: unknown };
+    const path = typeof record.path === 'string' ? record.path : '';
+    const added = typeof record.added === 'number' ? record.added : 0;
+    const removed = typeof record.removed === 'number' ? record.removed : 0;
+    const checkpointId = typeof record.checkpointId === 'string' ? record.checkpointId : '';
+    if (!path || !(checkpointId || added || removed)) return undefined;
+    return { path, added, removed, checkpointIds: checkpointId ? [checkpointId] : [] };
+  };
+  const mergeFile = (file: TurnFileChange | undefined) => {
+    if (!file) return;
+    const existing = fileBuffer.findIndex((f) => f.path === file.path);
+    if (existing === -1) { fileBuffer.push(file); return; }
+    const current = fileBuffer[existing];
+    fileBuffer[existing] = {
+      path: file.path,
+      added: current.added + file.added,
+      removed: current.removed + file.removed,
+      checkpointIds: [...current.checkpointIds, ...file.checkpointIds],
+    };
   };
 
   for (const message of messages) {
@@ -923,13 +1163,19 @@ export function sessionToChat(record: {
     const ts = message.createdAt ? Date.parse(message.createdAt) || undefined : undefined;
     if (message.role === 'tool') {
       if (toolBuffer.length === 0) toolBufferStartedAt = ts;
-      toolBuffer.push({ id: `load-tool-${index++}`, kind: 'tool', status: 'done', tool: message.name || 'tool', output: message.content, ok: true });
+      const call = takeInput(message.name || 'tool');
+      if (call.ok !== false) mergeFile(changedFileFor(call.data));
+      toolBuffer.push({
+        id: `load-tool-${index++}`, kind: 'tool', status: 'done',
+        tool: message.name || 'tool', output: message.content,
+        ok: call.ok ?? true, input: call.input,
+      });
       continue;
     }
     // A user or assistant message terminates the tool round above it.
-    flushTurn(ts);
+    flushTurn(ts, message.role === 'assistant' && message.interrupted === true);
     if (message.role === 'user') {
-      items.push({ id: `load-user-${index++}`, kind: 'user', text: message.content, ts });
+      items.push({ id: `load-user-${index++}`, kind: 'user', text: typeof message.displayText === 'string' ? message.displayText : message.content, ts });
     } else if (message.role === 'assistant') {
       items.push({ id: `load-assistant-${index++}`, kind: 'assistant', text: message.content });
     }

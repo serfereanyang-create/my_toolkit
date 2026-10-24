@@ -1,0 +1,4 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>多窗口验收</title>
+<style>body{padding:64px;background:#111318;color:#fff;font:24px "Microsoft YaHei",sans-serif}button,input{font:inherit;padding:12px;border-radius:8px}#screen{font-size:42px}</style>
+<h1 id="screen"></h1><button id="advance">进入主界面</button><button id="close-secondary">关闭辅助窗口</button>
+<script>const screen=new URLSearchParams(location.search).get('screen');document.title=screen;document.querySelector('#screen').textContent=screen;document.body.style.background=screen==='辅助窗口'?'#244238':'#111318';document.querySelector('#advance').addEventListener('click',()=>window.multi.transition());document.querySelector('#close-secondary').addEventListener('click',()=>window.multi.closeSecondary());</script></html>

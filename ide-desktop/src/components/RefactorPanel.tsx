@@ -489,7 +489,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         }
         
         .refactor-panel {
-          background: #FBF9F5;
+          background: var(--bg-app);
           border-radius: 8px;
           width: 90%;
           max-width: 900px;
@@ -505,21 +505,21 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
           justify-content: space-between;
           align-items: center;
           padding: 20px 24px;
-          border-bottom: 1px solid #E7E1D7;
+          border-bottom: 1px solid var(--border);
         }
         
         .refactor-panel-header h2 {
           margin: 0;
-          font-family: 'DM Serif Display', serif;
+          font-family: var(--font-ui);
           font-size: 24px;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .close-btn {
           background: none;
           border: none;
           font-size: 32px;
-          color: #5C635D;
+          color: var(--fg-muted);
           cursor: pointer;
           padding: 0;
           width: 32px;
@@ -530,7 +530,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         }
         
         .close-btn:hover {
-          color: #C4612F;
+          color: var(--blue);
         }
         
         .refactor-panel-content {
@@ -548,10 +548,10 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         .refactor-type-selector button {
           flex: 1;
           padding: 12px 24px;
-          border: 1px solid #E7E1D7;
+          border: 1px solid var(--border);
           border-radius: 999px;
-          background: white;
-          color: #1F2421;
+          background: var(--bg-elevated);
+          color: var(--fg);
           font-size: 14px;
           font-weight: 500;
           cursor: pointer;
@@ -559,14 +559,14 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         }
         
         .refactor-type-selector button:hover:not(:disabled) {
-          border-color: #C4612F;
+          border-color: var(--blue);
           transform: translateY(-1px);
         }
         
         .refactor-type-selector button.active {
-          background: #C4612F;
-          color: white;
-          border-color: #C4612F;
+          background: var(--blue);
+          color: var(--accent-fg);
+          border-color: var(--blue);
         }
         
         .refactor-type-selector button:disabled {
@@ -575,10 +575,10 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         }
         
         .refactor-form {
-          background: white;
+          background: var(--bg-elevated);
           padding: 20px;
           border-radius: 8px;
-          border: 1px solid #E7E1D7;
+          border: 1px solid var(--border);
           margin-bottom: 24px;
         }
         
@@ -595,17 +595,17 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
           margin-bottom: 8px;
           font-size: 14px;
           font-weight: 500;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .form-group input[type="text"],
         .form-group input[type="number"] {
           width: 100%;
           padding: 10px 12px;
-          border: 1px solid #E7E1D7;
+          border: 1px solid var(--border);
           border-radius: 6px;
           font-size: 14px;
-          font-family: 'Monaco', 'Courier New', monospace;
+          font-family: var(--font-mono);
         }
         
         .form-group input[type="checkbox"] {
@@ -627,8 +627,8 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
           padding: 12px 24px;
           border: none;
           border-radius: 999px;
-          background: #C4612F;
-          color: white;
+          background: var(--blue);
+          color: var(--accent-fg);
           font-size: 14px;
           font-weight: 500;
           cursor: pointer;
@@ -638,7 +638,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         
         .preview-btn:hover:not(:disabled),
         .apply-btn:hover:not(:disabled) {
-          background: #A94E22;
+          background: var(--blue);
           transform: translateY(-1px);
         }
         
@@ -649,18 +649,18 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         }
         
         .error-message {
-          background: #FFE5E5;
-          border: 1px solid #FF4444;
+          background: var(--danger-soft);
+          border: 1px solid var(--danger);
           border-radius: 6px;
           padding: 12px;
           margin-bottom: 16px;
-          color: #CC0000;
+          color: var(--danger);
           font-size: 14px;
         }
         
         .refactor-preview {
-          background: white;
-          border: 1px solid #E7E1D7;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border);
           border-radius: 8px;
           padding: 20px;
         }
@@ -669,13 +669,13 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         .refactor-preview h4 {
           margin-top: 0;
           margin-bottom: 16px;
-          font-family: 'DM Serif Display', serif;
-          color: #1F2421;
+          font-family: var(--font-ui);
+          color: var(--fg);
         }
         
         .variable-analysis,
         .rename-summary {
-          background: #F7F4EF;
+          background: var(--bg-hover);
           padding: 16px;
           border-radius: 6px;
           margin-bottom: 16px;
@@ -696,14 +696,14 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         
         .analysis-row .label,
         .summary-row .label {
-          color: #5C635D;
+          color: var(--fg-muted);
           font-weight: 500;
         }
         
         .analysis-row .value,
         .summary-row .value {
-          color: #1F2421;
-          font-family: 'Monaco', 'Courier New', monospace;
+          color: var(--fg);
+          font-family: var(--font-mono);
         }
         
         .safety-indicator {
@@ -715,26 +715,26 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         }
         
         .safety-indicator.safe {
-          background: #E8F5E9;
-          color: #2E7D32;
+          background: color-mix(in srgb, var(--ok) 12%, transparent);
+          color: var(--ok);
         }
         
         .safety-indicator.unsafe {
-          background: #FFE5E5;
-          color: #CC0000;
+          background: var(--danger-soft);
+          color: var(--danger);
         }
         
         .warnings,
         .errors {
-          background: #FFF3E0;
-          border-left: 3px solid #FF9800;
+          background: color-mix(in srgb, var(--warn) 12%, transparent);
+          border-left: 3px solid var(--warn);
           padding: 12px 16px;
           margin-bottom: 16px;
         }
         
         .errors {
-          background: #FFE5E5;
-          border-left-color: #FF4444;
+          background: var(--danger-soft);
+          border-left-color: var(--danger);
         }
         
         .warnings h4,
@@ -757,12 +757,12 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         }
         
         .code-preview pre {
-          background: #1F2421;
-          color: #F7F4EF;
+          background: var(--fg);
+          color: var(--bg-hover);
           padding: 16px;
           border-radius: 6px;
           overflow-x: auto;
-          font-family: 'Monaco', 'Courier New', monospace;
+          font-family: var(--font-mono);
           font-size: 13px;
           line-height: 1.5;
         }
@@ -772,7 +772,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         }
         
         .file-change {
-          background: #F7F4EF;
+          background: var(--bg-hover);
           padding: 12px;
           border-radius: 6px;
           margin-bottom: 12px;
@@ -781,21 +781,21 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         .file-path {
           font-weight: 500;
           margin-bottom: 8px;
-          color: #1F2421;
+          color: var(--fg);
         }
         
         .replacements {
           font-size: 13px;
-          color: #5C635D;
+          color: var(--fg-muted);
         }
         
         .replacement {
           padding: 4px 0;
-          font-family: 'Monaco', 'Courier New', monospace;
+          font-family: var(--font-mono);
         }
         
         .more {
-          color: #C4612F;
+          color: var(--blue);
           font-style: italic;
           margin-top: 4px;
         }

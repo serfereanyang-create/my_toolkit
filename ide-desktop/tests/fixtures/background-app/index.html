@@ -1,0 +1,5 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>YOYcode 后台应用验收</title>
+<style>body{margin:0;padding:64px;font:20px "Microsoft YaHei",sans-serif;background:#111318;color:#f4f5f7}h1{font-size:38px}small{color:#aeb7c4}input,button{font:inherit;padding:14px;border-radius:8px;border:1px solid #666}input{background:#242932;color:white}button{background:#fafafa;color:#14161a;margin-left:12px}#result{margin-top:40px;padding:28px;background:#242932;border-radius:12px;min-height:100px}</style>
+<small>YOYCODE · HIDDEN ELECTRON RENDERING</small><h1>应用在后台，真实界面在这里。</h1><p>保留真实主进程、预加载和 IPC。</p>
+<input id="name" aria-label="名称" value="首次截图"><button id="submit">验证交互</button><div id="result">等待调用真实 IPC</div>
+<script>document.querySelector('#submit').addEventListener('click',async()=>{document.querySelector('#result').textContent=await window.fixture.message(document.querySelector('#name').value);document.querySelector('#result').style.background='#20473b';});</script></html>

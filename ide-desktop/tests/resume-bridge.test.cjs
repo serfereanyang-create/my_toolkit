@@ -87,3 +87,56 @@ test('AgentBridge resumes a persisted session and keeps its message history', as
 
   await rm(workspace, { recursive: true, force: true });
 });
+
+test('a restart keeps the session and re-announces it, so settings can change', async () => {
+  /*
+   * Why this matters for the model switcher: provider, model, approval mode and
+   * the background-browser flags are all passed to the CLI as argv, so a child
+   * that was already running keeps announcing its OLD model in bridge_ready
+   * forever. `agent/bind` after a restart is the renderer's only way to learn
+   * the settings actually took effect — so the replacement child must announce
+   * the session again, under the same id, having picked up the new argv.
+   */
+  const workspace = await mkdtemp(path.join(tmpdir(), 'zcode-restart-'));
+  const sessionDir = path.join(workspace, '.aicode', 'sessions');
+
+  const events = [];
+  const bridge = new AgentBridge({
+    cliRoot: CLI_ROOT,
+    workspaceRoot: workspace,
+    sessionDir,
+    provider: 'mock',
+    model: 'mock-code-agent-v1',
+    approval: 'auto',
+  });
+  bridge.on('event', (event) => events.push(event));
+  await bridge.start();
+  await waitFor(events, 'bridge_ready');
+  const sessionId = events.find((event) => event.type === 'bridge_ready').sessionId;
+  assert.ok(sessionId);
+
+  bridge.prompt('first turn');
+  await waitFor(events, 'turn_done');
+
+  // What settings.set + agent.restart does: swap the model, respawn, rebind.
+  events.length = 0;
+  bridge.setModel?.('mock-code-agent-v1');
+  const restarted = await bridge.restart(sessionId);
+  assert.equal(restarted.sessionId, sessionId, 'the restart reports the same session id');
+  const ready = events.find((event) => event.type === 'bridge_ready');
+  assert.ok(ready, 'the replacement child must announce bridge_ready again');
+  assert.equal(ready.sessionId, sessionId, 'the session id survives the restart');
+  assert.equal(ready.model, 'mock-code-agent-v1', 'bridge_ready re-reports the model the child actually runs');
+
+  // The session must still be usable after the restart, on the same file.
+  events.length = 0;
+  bridge.prompt('after restart');
+  await waitFor(events, 'turn_done');
+  const files = (await readdir(sessionDir)).filter((n) => n.endsWith('.json') && n !== '.desktop-meta.json');
+  assert.equal(files.length, 1, 'a restart must not fork the session');
+  const record = await readSession(sessionDir, sessionId);
+  assert.ok(record.messages.length > 0, 'the restarted session kept its history');
+
+  await bridge.dispose();
+  await rm(workspace, { recursive: true, force: true });
+});

@@ -75,8 +75,9 @@ function entry(level: InspectorLevel): InspectorEntry {
 }
 
 /** A fresh stack showing the overview. */
-export function initialStack(): InspectorStack {
-  return { entries: [entry({ kind: 'overview' })] };
+export function initialStack(level: InspectorLevel = { kind: 'overview' }): InspectorStack {
+  const overview = entry({ kind: 'overview' });
+  return { entries: level.kind === 'overview' ? [overview] : [overview, entry(level)] };
 }
 
 /**

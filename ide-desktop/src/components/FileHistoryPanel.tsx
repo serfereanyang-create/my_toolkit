@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { History, RefreshCw, RotateCcw, Trash2, FileClock, ChevronDown, ChevronRight } from 'lucide-react';
 import { desktop, type HistoryEntry, type TrackedFile } from '../lib/ipc';
 import { diffLines } from '../lib/lineDiff';
+import { ConfirmDialog } from './ConfirmDialog';
 
 /**
  * Iteration 7 — save-history browser.
@@ -51,6 +52,7 @@ export function FileHistoryPanel({ onOpenFile }: { onOpenFile: (path: string) =>
   // Iteration 8: preview renders as a line diff vs the file on disk, not raw.
   const [previewDiff, setPreviewDiff] = useState<ReturnType<typeof diffLines> | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<{ kind: 'restore' | 'clear'; path: string; id?: string } | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -96,7 +98,10 @@ export function FileHistoryPanel({ onOpenFile }: { onOpenFile: (path: string) =>
   }
 
   async function restore(p: string, id: string) {
-    if (!window.confirm('恢复此快照将覆盖当前文件内容（当前内容会先进入历史，可再次撤销）。继续？')) return;
+    setConfirmAction({ kind: 'restore', path: p, id });
+  }
+
+  async function confirmRestore(p: string, id: string) {
     setBusy(true);
     try {
       const res = await desktop.history.restore(p, id);
@@ -119,7 +124,10 @@ export function FileHistoryPanel({ onOpenFile }: { onOpenFile: (path: string) =>
   }
 
   async function clearFile(p: string) {
-    if (!window.confirm(`清除「${fileNameOf(p)}」的全部保存历史？`)) return;
+    setConfirmAction({ kind: 'clear', path: p });
+  }
+
+  async function confirmClearFile(p: string) {
     await desktop.history.clear(p);
     setExpanded(null);
     await refresh();
@@ -216,6 +224,23 @@ export function FileHistoryPanel({ onOpenFile }: { onOpenFile: (path: string) =>
           );
         })}
       </div>
+      <ConfirmDialog
+        open={confirmAction !== null}
+        title={confirmAction?.kind === 'restore' ? '恢复历史快照？' : '清除保存历史？'}
+        message={confirmAction?.kind === 'restore'
+          ? `恢复 ${fileNameOf(confirmAction.path)} 的快照会覆盖当前文件；当前内容会先进入历史，之后仍可撤销。`
+          : `“${fileNameOf(confirmAction?.path ?? '')}”的全部保存历史将被清除。`}
+        confirmLabel={confirmAction?.kind === 'restore' ? '恢复快照' : '清除历史'}
+        danger={confirmAction?.kind === 'clear'}
+        onConfirm={() => {
+          const action = confirmAction;
+          setConfirmAction(null);
+          if (!action) return;
+          if (action.kind === 'restore' && action.id) void confirmRestore(action.path, action.id);
+          else if (action.kind === 'clear') void confirmClearFile(action.path);
+        }}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   );
 }
