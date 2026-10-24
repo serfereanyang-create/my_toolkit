@@ -12,6 +12,8 @@
  * both layers collapse into this single wrapper here.
  */
 
+import { abortable, abortableDelay, throwIfAborted } from '../utils/cancellation.js';
+
 export const DEFAULT_REQUEST_RETRIES = 4;
 export const REQUEST_RETRY_BASE_DELAY_MS = 200;
 const MAX_REQUEST_RETRIES = 100; // model-provider-info/lib.rs upper bound
@@ -66,7 +68,7 @@ export function isRetryableModelError(error: unknown): boolean {
     ?? (error as { statusCode?: number }).statusCode;
   // Genuine cancellation: AbortError raised by our turn-cancel, not a network abort.
   if (name === 'CancelledError' || name === 'AgentCancelledError') return false;
-  if (name === 'AbortError' && !NETWORK_PATTERNS.some((pattern) => message.includes(pattern))) return false;
+  if (name === 'AbortError') return false;
   if (typeof explicitRetryable === 'boolean') return explicitRetryable;
   if (typeof status === 'number') {
     return status >= 500 && status <= 599; // retry_5xx = true; retry_429 = false
@@ -87,6 +89,7 @@ export function backoffDelayMs(attempt: number, baseMs = REQUEST_RETRY_BASE_DELA
 }
 
 export type ModelRetryOptions = {
+  signal?: AbortSignal;
   maxRetries?: number;
   baseDelayMs?: number;
   /** UI hook — upstream emits StreamError("Reconnecting... n/max") per retry. */
@@ -101,13 +104,17 @@ export async function withModelRetry<T>(
   const baseDelayMs = options.baseDelayMs ?? REQUEST_RETRY_BASE_DELAY_MS;
   let attempt = 0;
   for (;;) {
+    throwIfAborted(options.signal);
     try {
-      return await fn(attempt);
+      const result = await abortable(fn(attempt), options.signal);
+      throwIfAborted(options.signal);
+      return result;
     } catch (error) {
+      throwIfAborted(options.signal);
       if (!isRetryableModelError(error) || attempt >= maxRetries) throw error;
       const delayMs = backoffDelayMs(attempt + 1, baseDelayMs);
       options.onRetry?.(attempt + 1, maxRetries, delayMs, error);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await abortableDelay(delayMs, options.signal);
       attempt += 1;
     }
   }

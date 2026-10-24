@@ -41,6 +41,7 @@ export type LastTurnRecord = {
   parts?: MessagePart[];
   /** Lifecycle status: running while executing, done/failed after completion. */
   status: 'running' | 'done' | 'failed';
+  outcome?: 'done' | 'failed' | 'cancelled';
   /** ISO timestamp when this turn started. */
   startedAt: string;
 };
@@ -55,6 +56,15 @@ export type SessionRecord = {
   messages: AgentMessage[];
   toolCalls: ToolCallRecord[];
   finalAnswers: string[];
+  /**
+   * Title set by `/rename`. Lives on the record itself so every reader can find
+   * it; the desktop keeps ITS title in a sidecar overlay that wins when both
+   * exist. `/rename` used to write the title into `finalAnswers[0]`, which
+   * destroyed the session's first answer and was read by nobody.
+   */
+  title?: string;
+  /** Pinned by `/pin`. The desktop keeps its own pin in the same overlay. */
+  pinned?: boolean;
   guard?: {
     lazyDev?: LazyDevGuardState;
   };
@@ -84,6 +94,20 @@ export class SessionStore {
     private readonly sessionDir: string,
     private readonly options: SessionStoreOptions = {},
   ) {}
+
+  /**
+   * A store writing beside this one, for records that are not the user's
+   * conversations.
+   *
+   * Sub-agents create a session per segment, and the desktop lists every
+   * record in the session directory as a conversation: the user's sidebar
+   * filled up with untitled shells and `## 主任务背景` runs that were never
+   * opened. Keeping them in a sibling directory leaves the chat list to the
+   * chats, while the ids stay valid and loadable by `filePath`.
+   */
+  sibling(name: string) {
+    return new SessionStore(join(dirname(this.sessionDir), name), this.options);
+  }
 
   async create(options: { provider: ProviderName; model: string; workspaceRoot: string }) {
     const now = new Date().toISOString();
@@ -203,7 +227,25 @@ export class SessionStore {
   async load(id: string) {
     const safeId = assertSafeSessionId(id);
     const file = this.filePath(safeId);
-    return parseSession(JSON.parse(await readFile(file, 'utf8')), safeId);
+    const raw = await readFile(file, 'utf8');
+    try {
+      return parseSession(JSON.parse(raw), safeId);
+    } catch (error) {
+      // A session file we cannot parse is the ONLY copy of that conversation, and
+      // `save()` writes this same path. Left in place, the next turn on this id
+      // would replace it with a fresh record. Move it aside once — the new name no
+      // longer ends in `.json`, so nothing lists it or saves over it — and say
+      // where it went instead of surfacing a bare JSON SyntaxError.
+      const backup = `${file}.corrupt-${Date.now()}.json`;
+      const preserved = await this.renameWithRetry(file, backup).then(() => true, () => false);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Session ${safeId} is unreadable (${message}). `
+        + (preserved
+          ? `The file was preserved as ${backup}.`
+          : 'The file could not be moved aside and was left untouched.'),
+      );
+    }
   }
 
   async save(session: SessionRecord) {

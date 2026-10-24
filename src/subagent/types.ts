@@ -39,11 +39,11 @@ export type SubAgentSpec = {
    */
   reasoningEffort?: ReasoningEffort;
   /**
-   * 分级调度档位：'cheap' 让这个子任务跑在便宜档模型上，'expensive' 强制贵档。
-   * 省略时继承父模型（旧行为）。档位到具体 provider 的解析在
-   * runner.applyTierOverride 里完成，失败会回落继承并留下说明。
+   * 分级调度档位：'cheap' 让这个子任务跑在便宜档模型上，'expensive' 强制贵档，
+   * 'standard' 用中档（普通功能开发）。省略时继承父模型（旧行为）。档位到具体
+   * provider 的解析在 runner.applyTierOverride 里完成，失败会回落继承并留下说明。
    */
-  tier?: 'expensive' | 'cheap';
+  tier?: 'expensive' | 'standard' | 'cheap';
   /**
    * 单段最大执行步数覆盖（默认 DEFAULT_SUBAGENT_SEGMENT_STEPS = 40）。
    * 这是**每段**预算，不是总预算：用尽后框架会新开一个会话、带着交接摘要继续
@@ -56,6 +56,10 @@ export type SubAgentSpec = {
    * 此字段用于额外补充主 agent 认为子 agent 需要知道的上下文。
    */
   contextHint?: string;
+  /** 数字越大越优先；同优先级保持声明顺序。 */
+  priority?: number;
+  /** 工作区相对路径；重叠写路径的任务不会同时运行。 */
+  writePaths?: string[];
 };
 
 /**

@@ -23,6 +23,7 @@ function bridgeOne(client: McpClient, tool: McpToolDescriptor): ToolDefinition<R
     name,
     description,
     inputHint,
+    ...(tool.inputSchema ? { inputSchema: tool.inputSchema } : {}),
     risk,
     validate(input) {
       if (input === undefined || input === null) return {};

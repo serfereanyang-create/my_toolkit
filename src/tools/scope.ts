@@ -60,6 +60,14 @@ const COMPACT_ALLOW = new Set([
   'path_exists', 'path_normalize', 'path_join', 'path_relative', 'path_dirname', 'path_basename', 'path_extname', 'path_parts', 'path_is_absolute', 'path_change_ext', 'path_ancestors', 'path_depth', 'path_common_prefix', 'path_matches_glob', 'path_compare', 'path_stem', 'path_parent', 'nearest_ancestor_with', 'hidden_files', 'duplicate_filenames', 'sibling_files',
   'list_count', 'list_unique', 'list_sort', 'list_reverse', 'list_slice', 'list_chunk', 'list_union', 'list_intersect', 'list_diff', 'list_contains', 'list_frequency', 'list_join', 'list_index_of', 'list_flatten', 'list_zip_pairs',
   'dependency_tree', 'outdated_deps', 'list_scripts', 'which_command', 'env_get',
+  // Web reading is a *read* act in every way that matters to this scope: it
+  // inspects something outside the repository and changes nothing locally. It
+  // used to be excluded, so "打开 https://arxiv.org 找一篇论文" resolved to
+  // compact and then had no fetch_url, no web_search and no download_file — the
+  // agent could not carry out the request it had just been told was small. All
+  // three still pass the network gate (evaluateNetworkTarget + decideApproval),
+  // which is where the actual permission decision belongs.
+  'fetch_url', 'web_search', 'download_file', 'html_links',
 ]);
 
 const STANDARD_EXTRA_ALLOW = new Set([

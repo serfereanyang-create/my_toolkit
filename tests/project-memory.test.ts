@@ -10,7 +10,7 @@ import { extractMemoryCandidates, isDuplicateMemory, isUsefulMemoryText } from '
 import { formatMemories } from '../src/memory/format.js';
 import { maybeRecordTaskMemory } from '../src/memory/record.js';
 import { selectRelevantMemories } from '../src/memory/select.js';
-import { ProjectMemoryStore } from '../src/memory/store.js';
+import { ProjectMemoryStore, deriveKeywords } from '../src/memory/store.js';
 import type { ProjectMemoryEntry } from '../src/memory/types.js';
 import { createMockProvider } from '../src/providers/mock.js';
 import { SessionStore } from '../src/session/store.js';
@@ -113,6 +113,49 @@ test('extractMemoryCandidates skips duplicates', () => {
   });
   assert.equal(candidates.length, 0);
   assert.equal(isDuplicateMemory(existing, 'Prefer npm test for verification after code changes'), true);
+});
+
+test('a Chinese goal finds the memory that is about its topic', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-memory-cjk-'));
+  try {
+    const store = new ProjectMemoryStore(workspace);
+    // Keywords are derived, not passed: this is what the store does for real
+    // entries, and it used to keep a whole Chinese sentence as one keyword.
+    await store.add({ kind: 'note', summary: '数据库连接池默认 5 个连接，跑批量任务要调大。', source: { type: 'user' } });
+    await store.add({ kind: 'note', summary: '这个仓库的构建脚本在 Windows 上要带 --force 参数。', source: { type: 'user' } });
+    await store.add({ kind: 'note', summary: '前端路由使用 hash 模式，部署不需要 nginx 重写。', source: { type: 'user' } });
+
+    const entries = await store.list();
+    const pool = selectRelevantMemories({ entries, goal: '批量任务连接池要调多大？' });
+    assert.equal(pool.length, 1, 'only the connection-pool note is relevant');
+    assert.match(pool[0].summary, /连接池/);
+
+    const upload = selectRelevantMemories({ entries, goal: '上传大文件报错 413 怎么办' });
+    assert.equal(upload.length, 0, 'no note is about uploads');
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('common English words do not turn every memory into a hit', () => {
+  const mk = (id: string, summary: string): ProjectMemoryEntry => ({
+    id,
+    kind: 'note',
+    summary,
+    keywords: deriveKeywords(summary),
+    source: { type: 'user' },
+    createdAt: '2026-10-01T00:00:00.000Z',
+    updatedAt: '2026-10-01T00:00:00.000Z',
+    active: true,
+  });
+  const entries = [
+    mk('en1', 'The build script needs a --force flag on Windows.'),
+    mk('en2', 'The upload endpoint returns 413 above 20MB, so chunk the file first.'),
+    mk('en3', 'The database connection pool defaults to 5 connections.'),
+  ];
+  const pool = selectRelevantMemories({ entries, goal: 'how big should the connection pool be for a batch job?' });
+  assert.deepEqual(pool.map((entry) => entry.id), ['en3'], 'the pool note wins, and the others are not "hits"');
+  assert.deepEqual(selectRelevantMemories({ entries, goal: 'the a of to for is' }), [], 'function words alone match nothing');
 });
 
 test('selectRelevantMemories ranks keyword hits and falls back to conventions/decisions', () => {

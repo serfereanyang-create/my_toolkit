@@ -4,6 +4,7 @@ import { pathScopeFor, resolveReadablePath, resolveWorkspacePath } from '../safe
 import { lineDiff } from './lineDiff.js';
 import { parseCsv, writeCsv } from './csv.js';
 import type { ToolDefinition } from './types.js';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
 /*
  * datatools2 — high-value tools that mainstream coding agents (Claude Code,
@@ -76,7 +77,6 @@ export const globFilesTool: ToolDefinition<{ pattern: string; path: string; maxR
   },
 };
 
-const IGNORED_WALK_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.aicode', '.aicode-smoke', '.gradle']);
 
 async function walkFiles(current: string, root: string, regex: RegExp, out: string[], limit: number): Promise<void> {
   if (out.length >= limit) return;
@@ -90,7 +90,7 @@ async function walkFiles(current: string, root: string, regex: RegExp, out: stri
     if (out.length >= limit) return;
     const full = join(current, entry.name);
     if (entry.isDirectory()) {
-      if (IGNORED_WALK_DIRS.has(entry.name)) continue;
+      if (isIgnoredDirName(entry.name)) continue;
       await walkFiles(full, root, regex, out, limit);
     } else {
       const rel = relative(root, full).replace(/\\/g, '/');
@@ -383,7 +383,7 @@ async function treeInto(dir: string, prefix: string, depth: number, maxDepth: nu
   for (let i = 0; i < entries.length; i += 1) {
     if (counter.n >= maxEntries) return;
     const entry = entries[i];
-    if (entry.isDirectory() && IGNORED_WALK_DIRS.has(entry.name)) continue;
+    if (entry.isDirectory() && isIgnoredDirName(entry.name)) continue;
     const last = i === entries.length - 1;
     out.push(`${prefix}${last ? '└─ ' : '├─ '}${entry.name}${entry.isDirectory() ? '/' : ''}`);
     counter.n += 1;

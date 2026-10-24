@@ -1,5 +1,7 @@
 import type { AgentMessage, ProviderRequest } from '../providers/types.js';
 import { withModelRetry } from '../providers/retry.js';
+import { withRequestControl } from '../providers/requestControl.js';
+import { throwIfAborted } from '../utils/cancellation.js';
 import type { AgentRuntime } from './agent.js';
 import { autoCompactTokenLimit, resolveModelContextWindow } from './modelWindows.js';
 
@@ -122,13 +124,16 @@ async function runAutoCompact(
   emitCompact?.({ phase: 'started', auto: true, before: messages.length });
   try {
     const request: ProviderRequest = {
+      signal: runtime.requestSignal,
+      timeoutMs: runtime.config.requestTimeoutMs,
       messages: buildCompactRequestMessages(messages),
       tools: [],
       workspaceRoot: runtime.config.workspaceRoot,
     };
-    const response = await withModelRetry(() => runtime.provider.complete(request), {
+    const response = await withRequestControl(request, controlled => withModelRetry(() => runtime.provider.complete(controlled), {
+      signal: controlled.signal,
       onRetry: (attempt, maxRetries) => runtime.ui.info(`Reconnecting… ${attempt}/${maxRetries} (compaction)`),
-    });
+    }));
     const summary = response.actions
       .filter((action): action is Extract<typeof action, { type: 'message' }> => action.type === 'message')
       .map((action) => action.content.trim())
@@ -157,6 +162,10 @@ async function runAutoCompact(
     emitCompact?.({ phase: 'completed', auto: true, before: messages.length, after: runtime.session.messages.length });
     return true;
   } catch (error) {
+    if (runtime.requestSignal?.aborted) {
+      emitCompact?.({ phase: 'failed', auto: true, reason: '上下文压缩已取消' });
+      throwIfAborted(runtime.requestSignal);
+    }
     runtime.ui.info(
       `Auto-compact failed (${error instanceof Error ? error.message : String(error)}); keeping full history — char-budget compaction still applies.`,
     );

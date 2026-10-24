@@ -3,16 +3,26 @@
  *
  * 与 ProjectMemoryStore 同构：串行写队列 + temp/rename 原子落盘 +
  * 上限裁剪（按 hits+recency 保留最近 200 条）。
+ *
+ * 这个文件只有一份：它是智能体在项目里"踩过的坑"。因此三条纪律：
+ *   - 读取失败（不是"还没创建"，而是锁住/EPERM）时绝不回写，否则一次瞬时
+ *     占用就把整份教训清空；
+ *   - 解析失败时先另存副本再当空文件用，副本还留在磁盘上可人工恢复；
+ *   - 串行队列按文件路径共享（ReflectionStore 每次调用都是新实例：
+ *     tools.ts、commands.ts、runtime 各持一个，实例级队列根本挡不住并发）。
  */
 
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { renameWithRetry, serializeWrites as serialize, writeFileAtomic } from '../utils/atomic.js';
 import { formatReflections, type ReflectionEntry, type ReflectionKind } from './types.js';
 
 const MAX_ENTRIES = 200;
 const TOPIC_LIMIT = 160;
 const FAILURE_LIMIT = 400;
+
+const KINDS: ReflectionKind[] = ['tool_failure', 'max_steps', 'exception', 'cancelled', 'manual'];
 
 export interface AddReflectionInput {
   topic: string;
@@ -21,16 +31,42 @@ export interface AddReflectionInput {
   kind: ReflectionKind;
 }
 
+/** 读到的条目 + 能不能安全回写（读不到内容时不能）。 */
+type ReflectionRead = { entries: ReflectionEntry[]; writable: boolean };
+
+/**
+ * 只留下所有读取方都能用的条目：`selectRelevant` 会对 topic/failure 做
+ * 词法切分、`formatReflections` 会拼字符串，一个数字或 null 就会让它们抛
+ * TypeError —— 而调用点（loadReflectionBlock）是静默 catch 的，表现为
+ * "反思从此再也不出现"，很难查。
+ */
+function normalizeStoredEntry(value: unknown): ReflectionEntry | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.topic !== 'string' || typeof raw.failure !== 'string') return undefined;
+  const hits = typeof raw.hits === 'number' && Number.isFinite(raw.hits) ? Math.max(1, Math.floor(raw.hits)) : 1;
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id : `ref_${randomUUID()}`,
+    topic: raw.topic,
+    failure: raw.failure,
+    lesson: typeof raw.lesson === 'string' ? raw.lesson : '',
+    kind: KINDS.includes(raw.kind as ReflectionKind) ? (raw.kind as ReflectionKind) : 'exception',
+    at: typeof raw.at === 'string' && !Number.isNaN(Date.parse(raw.at)) ? raw.at : new Date(0).toISOString(),
+    hits,
+  };
+}
+
 export class ReflectionStore {
   private readonly filePath: string;
-  private writeQueue: Promise<void> = Promise.resolve();
+  /** 损坏的副本最多挪走一次。 */
+  private quarantined = false;
 
   constructor(workspaceRoot: string) {
     this.filePath = join(workspaceRoot, '.aicode', 'reflections.json');
   }
 
   async list(): Promise<ReflectionEntry[]> {
-    return this.readEntries();
+    return (await this.readEntries()).entries;
   }
 
   /** 追加（按 topic+kind 去重：命中则 hits+1 并刷新 lesson）。 */
@@ -44,6 +80,9 @@ export class ReflectionStore {
       at: new Date().toISOString(),
       hits: 1,
     };
+    // 命中既有条目时返回的就是那一条：返回一个没落盘的 id 会让调用方
+    // （例如之后按 id 去 forget）永远找不到它。
+    let stored: ReflectionEntry = entry;
     await this.enqueue((entries) => {
       const existing = entries.find(
         (e) => e.kind === entry.kind && e.topic === entry.topic && e.failure === entry.failure,
@@ -52,6 +91,7 @@ export class ReflectionStore {
         existing.hits += 1;
         existing.at = entry.at;
         if (entry.lesson) existing.lesson = entry.lesson;
+        stored = existing;
         return undefined;
       }
       entries.unshift(entry);
@@ -59,7 +99,7 @@ export class ReflectionStore {
       if (entries.length > MAX_ENTRIES) entries.length = MAX_ENTRIES;
       return undefined;
     });
-    return entry;
+    return stored;
   }
 
   async forget(id: string): Promise<boolean> {
@@ -113,39 +153,67 @@ export class ReflectionStore {
     return formatReflections(reflections);
   }
 
-  /** 串行写队列：读-改-写全部经过同一队列，避免并发覆盖。 */
+  /**
+   * 串行写队列：读-改-写全部经过同一队列。队列按文件路径在模块级共享，
+   * 因为同一进程里同时存在多个 ReflectionStore 实例（见文件头注释）。
+   */
   private enqueue(mutate: (entries: ReflectionEntry[]) => void | ReflectionEntry[]): Promise<void> {
-    const task = this.writeQueue.then(async () => {
-      const entries = await this.readEntries();
+    return serialize(this.filePath, async () => {
+      const { entries, writable } = await this.readEntries();
       const result = mutate(entries);
+      // 读不到原文件内容时宁可丢掉这次新增，也不要把整份教训覆盖掉。
+      if (!writable) return;
       const next = Array.isArray(result) ? result : entries;
       await this.persist(next);
     });
-    // 队列永不 reject 到调用方之前的 await；错误在当前 task 抛出。
-    this.writeQueue = task.catch(() => undefined);
-    return task;
   }
 
   /** 读回条目数组（兼容 {version, entries} 信封与裸数组两种落盘形态）。 */
-  private async readEntries(): Promise<ReflectionEntry[]> {
+  private async readEntries(): Promise<ReflectionRead> {
+    let raw: string;
     try {
-      const raw = await readFile(this.filePath, 'utf-8');
-      const data = JSON.parse(raw) as unknown;
-      if (Array.isArray(data)) return data as ReflectionEntry[];
-      if (data && typeof data === 'object' && Array.isArray((data as { entries?: unknown }).entries)) {
-        return (data as { entries: ReflectionEntry[] }).entries;
-      }
-      return [];
-    } catch {
-      return [];
+      raw = await readFile(this.filePath, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { entries: [], writable: true };
+      // 文件在，但我们读不到（被占用/权限）：内容未知，禁止回写。
+      return { entries: [], writable: false };
     }
+    let data: unknown;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = undefined;
+    }
+    const list = Array.isArray(data)
+      ? (data as unknown[])
+      : data && typeof data === 'object' && Array.isArray((data as { entries?: unknown }).entries)
+        ? ((data as { entries: unknown[] }).entries)
+        : undefined;
+    const entries = (list ?? []).map(normalizeStoredEntry).filter((entry): entry is ReflectionEntry => entry !== undefined);
+    // 整个文件没有一条能用（截断/外来格式）：先留副本，再当作空历史继续。
+    // 只要还有能用的条目就保持原文件不动（多出来的未知条目只是被忽略）；
+    // 结构完好但内容为空的文件也不算损坏——不然每次读空文件都要挪一个副本。
+    const unusable = list === undefined || (list.length > 0 && entries.length === 0);
+    if (unusable) {
+      const preserved = await this.quarantine();
+      if (!preserved) return { entries, writable: false };
+    }
+    return { entries, writable: true };
+  }
+
+  /** 把损坏的文件挪到 *.corrupt-*.json；返回 true 表示原路径已经空出来了。 */
+  private async quarantine(): Promise<boolean> {
+    if (this.quarantined) return true;
+    this.quarantined = true;
+    const target = `${this.filePath}.corrupt-${new Date().toISOString().replace(/[-:.TZ]/g, '')}.json`;
+    return await renameWithRetry(this.filePath, target).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
+    );
   }
 
   private async persist(entries: ReflectionEntry[]): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tmp, JSON.stringify({ version: 1, entries }, null, 2), 'utf-8');
-    await rename(tmp, this.filePath);
+    await writeFileAtomic(this.filePath, `${JSON.stringify({ version: 1, entries }, null, 2)}\n`);
   }
 }
 

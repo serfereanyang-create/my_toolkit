@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { renameWithRetry, serializeWrites as serialize, writeFileAtomic } from '../utils/atomic.js';
 import type { NewMemoryInput, ProjectMemoryEntry, ProjectMemoryFile } from './types.js';
+import { memoryTokens } from './tokens.js';
 
 const MAX_SUMMARY = 240;
 
@@ -126,13 +127,9 @@ export function truncateSummary(value: string) {
 }
 
 export function deriveKeywords(summary: string) {
-  return uniqueKeywords(
-    summary
-      .toLowerCase()
-      .split(/[^a-z0-9\u4e00-\u9fff]+/i)
-      .map((part) => part.trim())
-      .filter((part) => part.length >= 2),
-  );
+  // Memory tokens, not a punctuation split: Chinese has no spaces, so the old
+  // split kept a whole sentence as one keyword that nothing could ever match.
+  return uniqueKeywords(memoryTokens(summary));
 }
 
 export function uniqueKeywords(values: string[]) {

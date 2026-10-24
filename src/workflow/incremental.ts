@@ -13,11 +13,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile, writeFile, readdir, stat, mkdir } from 'node:fs/promises';
 import { join, relative, dirname, extname } from 'node:path';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
 const execFileAsync = promisify(execFile);
 
 const TS_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.git', '.aicode']);
 
 export type ChangeType = 'added' | 'modified' | 'deleted' | 'renamed';
 
@@ -257,7 +257,7 @@ export class DependencyGraphBuilder {
       const entries = await readdir(current, { withFileTypes: true });
       for (const entry of entries) {
         if (files.length >= this.maxFiles) break;
-        if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
+        if (isIgnoredDirName(entry.name) || entry.name.startsWith('.')) continue;
         await this.walkFiles(join(current, entry.name), root, files);
       }
     } catch {

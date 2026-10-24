@@ -1,6 +1,8 @@
 import type { AgentAction, AgentMessage, ProviderRequest, ProviderToolSpec } from './types.js';
 import type { DelegationLevel } from '../config/types.js';
 import { cacheControl } from './cacheStrategy.js';
+import { createRequestControl } from './requestControl.js';
+import { abortable, abortableDelay, throwIfAborted } from '../utils/cancellation.js';
 
 /**
  * Runtime facts the model would otherwise have to guess or discover via a tool
@@ -42,7 +44,9 @@ export function buildToolSystemPromptParts(
     `You are aicode, a local coding CLI agent${identity?.desktopBridge ? ', running embedded as the backend of the YOYcode Desktop IDE' : ''}. The user writes natural language. When answering requires local project inspection, file edits, search, or command execution, call a tool and wait for the tool result.`,
     'Prefer native tool calling when available. If you must fall back to text, return exactly one tool call as JSON only (raw or fenced), with no extra prose.',
     'For multi-step tasks, request exactly one tool at a time. After the tool result is provided, request the next tool. Only write the final answer after all required tool results are available.',
-    'If a tool fails and the failure is recoverable, choose a better dedicated tool or a platform-correct fallback instead of asking the user to run the command manually.',
+    'Investigate before you edit code: read the files you are about to change (read_file, search_text, glob_files, list_files) and say in one or two sentences which files you will change and how, then make the edit. Writing to an existing file or patching code before reading anything is refused.',
+    'If a tool fails, do not end the turn and do not repeat the same call. Try a different route: a better dedicated tool, a corrected path or argument, or an equivalent command. Only stop when it genuinely cannot be done, and then say what you tried and why each attempt failed.',
+    'If a tool call is blocked by the safety policy, do not look for a way around it — use the dedicated tool that does the same job (read_file instead of shell `type`, apply_patch instead of shell redirection), or tell the user which permission is missing.',
     'If the user asks to create a Word document or .docx file, use create_docx. Do not use run_command for Word document creation.',
     'After create_docx succeeds, stop. Reply with a short confirmation only — do not call create_docx again for the same file.',
     'To read Desktop Word files use read_file with path like desktop/测试.docx or an absolute Desktop path. read_file extracts .docx text. Do not use workspace-relative desktop/ under the project root.',
@@ -88,7 +92,7 @@ export function toOpenAITools(tools: ProviderToolSpec[]) {
     function: {
       name: tool.name,
       description: `${tool.description} Risk: ${tool.risk}.`,
-      parameters: schemaFromInputHint(tool.inputHint),
+      parameters: toolInputSchema(tool),
     },
   }));
 }
@@ -98,7 +102,7 @@ export function toAnthropicTools(tools: ProviderToolSpec[]) {
     const entry: Record<string, unknown> = {
       name: tool.name,
       description: `${tool.description} Risk: ${tool.risk}.`,
-      input_schema: schemaFromInputHint(tool.inputHint),
+      input_schema: toolInputSchema(tool),
     };
     // Anthropic evaluates tools before system. This breakpoint caches the tool
     // schema prefix independently; it cannot cover system content that follows.
@@ -156,8 +160,13 @@ export function toOpenAIResponsesTools(tools: ProviderToolSpec[]) {
     type: 'function',
     name: tool.name,
     description: `${tool.description} Risk: ${tool.risk}.`,
-    parameters: schemaFromInputHint(tool.inputHint),
+    parameters: toolInputSchema(tool),
+    strict: false,
   }));
+}
+
+export function toolInputSchema(tool: ProviderToolSpec): Record<string, unknown> {
+  return tool.inputSchema ?? schemaFromInputHint(tool.inputHint);
 }
 
 export function schemaFromInputHint(inputHint: string): Record<string, unknown> {
@@ -188,9 +197,14 @@ export function schemaFromInputHint(inputHint: string): Record<string, unknown> 
 }
 
 function inferJsonTypeFromHint(hint: string, key: string): string {
-  const snippet = hint.slice(Math.max(0, hint.indexOf(key) - 5), hint.indexOf(key) + key.length + 24);
-  if (/"?\d+"?/.test(snippet) || /number|max|limit|hours|bytes|timeout/i.test(key)) return 'number';
-  if (/true|false|boolean/i.test(snippet)) return 'boolean';
+  const field = new RegExp(`"${key}"\\s*:\\s*`).exec(hint);
+  if (field) {
+    const value = hint.slice(field.index + field[0].length);
+    if (value.startsWith('"')) return 'string';
+    if (/^(?:true|false)\b/.test(value)) return 'boolean';
+    if (/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?(?:\s*[,}]|$)/.test(value)) return 'number';
+  }
+  if (/number|max|limit|hours|bytes|timeout/i.test(key)) return 'number';
   return 'string';
 }
 
@@ -440,37 +454,31 @@ export type ProviderTimeouts = {
 
 export async function fetchWithRetry(url: string, init: Parameters<typeof fetch>[1], attempts = 3, timeouts: ProviderTimeouts = {}) {
   const totalTimeoutMs = timeouts.totalTimeoutMs ?? 300_000;
+  const control = createRequestControl(init?.signal, totalTimeoutMs);
   let lastError: unknown;
+  try {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), totalTimeoutMs);
-    const inputSignal = init?.signal;
-    const abortInput = () => controller.abort();
-    if (inputSignal) {
-      if (inputSignal.aborted) controller.abort();
-      else inputSignal.addEventListener('abort', abortInput, { once: true });
-    }
+    throwIfAborted(control.signal);
     try {
-      const response = await fetch(url, { ...init, signal: controller.signal });
+      const response = await abortable(fetch(url, { ...init, signal: control.signal }), control.signal);
       if (response.ok || response.status < 500 || attempt === attempts) return response;
       lastError = new Error(`HTTP ${response.status}`);
+      if (response.body) void response.body.cancel().catch(() => undefined);
     } catch (error) {
-      lastError = error instanceof DOMException && error.name === 'AbortError'
-        ? new Error(`Provider request timed out after ${totalTimeoutMs}ms`)
-        : error;
+      throwIfAborted(control.signal);
+      lastError = error;
       if (attempt === attempts) break;
-    } finally {
-      clearTimeout(timer);
-      if (inputSignal) inputSignal.removeEventListener('abort', abortInput);
     }
-    await delay(400 * attempt);
+    await abortableDelay(400 * attempt, control.signal);
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  } finally { control.dispose(); }
 }
 
-export async function* iterateSseDataLines(response: Response, idleTimeoutMs = 90_000): AsyncGenerator<string> {
+export async function* iterateSseDataLines(response: Response, idleTimeoutMs = 90_000, signal?: AbortSignal): AsyncGenerator<string> {
+  throwIfAborted(signal);
   if (!response.body) {
-    const text = await response.text();
+    const text = await abortable(response.text(), signal);
     for (const line of text.split(/\r?\n/)) {
       const data = extractSseData(line);
       if (data !== undefined) yield data;
@@ -481,14 +489,17 @@ export async function* iterateSseDataLines(response: Response, idleTimeoutMs = 9
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let finished = false;
   try {
     while (true) {
-      const readResult = await Promise.race([
+      throwIfAborted(signal);
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      const readResult = await abortable(Promise.race([
         reader.read(),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Provider stream idle timeout after ${idleTimeoutMs}ms`)), idleTimeoutMs)),
-      ]);
+        new Promise<never>((_, reject) => { idleTimer = setTimeout(() => reject(new Error(`Provider stream idle timeout after ${idleTimeoutMs}ms`)), idleTimeoutMs); }),
+      ]), signal).finally(() => { if (idleTimer !== undefined) clearTimeout(idleTimer); });
       const { done, value } = readResult;
-      if (done) break;
+      if (done) { finished = true; break; }
       buffer += decoder.decode(value, { stream: true });
       const parts = buffer.split(/\r?\n/);
       buffer = parts.pop() ?? '';
@@ -502,6 +513,7 @@ export async function* iterateSseDataLines(response: Response, idleTimeoutMs = 9
       if (data !== undefined) yield data;
     }
   } catch (error) {
+    throwIfAborted(signal);
     // Flush any complete SSE lines already buffered before rethrowing (partial recovery).
     if (buffer.trim()) {
       for (const line of buffer.split(/\r?\n/)) {
@@ -511,6 +523,7 @@ export async function* iterateSseDataLines(response: Response, idleTimeoutMs = 9
     }
     throw error;
   } finally {
+    if (!finished) void reader.cancel().catch(() => undefined);
     try {
       reader.releaseLock();
     } catch {
@@ -525,8 +538,5 @@ function extractSseData(line: string): string | undefined {
   return trimmed.slice(5).trimStart();
 }
 
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export type { ProviderRequest };

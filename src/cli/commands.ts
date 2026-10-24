@@ -3,7 +3,7 @@ import type { AppConfig } from '../config/types.js';
 import { archiveCurrentRequirement, cancelCurrentRequirement, ensureLazyDevGuard, resumeBlockedRequirement } from '../guard/lazyDevGuard.js';
 import { describeTier, resolveTiers, TIER_ORDER, DISPATCH_TIER_LABELS, TIER_KEY_TO_ID } from '../dispatch/tierRouter.js';
 import type { TierSelection } from '../dispatch/tierRouter.js';
-import { readDispatchHistory } from '../dispatch/dispatchLedger.js';
+import { dispatchLedgerPath, readDispatchHistory } from '../dispatch/dispatchLedger.js';
 import { clampMaxAttempts, parseStrictness } from '../guard/config.js';
 import type { LazyDevGuardState, LazyDevRequirement } from '../guard/types.js';
 import { formatMemoryList } from '../memory/format.js';
@@ -28,6 +28,7 @@ import {
   skipTask,
 } from '../tasks/runtime.js';
 import { TaskBoardStore } from '../tasks/store.js';
+import { inspectTaskGraph } from '../tasks/graph.js';
 import type { ToolRegistry } from '../tools/index.js';
 import { formatMcpStatus, type McpManager } from '../mcp/manager.js';
 import {
@@ -217,6 +218,15 @@ export async function handleSlashCommand(options: {
   if (command === '/clear') {
     options.session.messages = [];
     options.session.finalAnswers = [];
+    // "A fresh context" has to mean the provider-side chain as well: with
+    // `previousResponseId` still set, the next request resumes the conversation
+    // the user just cleared, so the model keeps answering from history that is
+    // no longer in the session (and the prompt stays billed at the old size).
+    // The retry payload and the tool log go too, so /status, /copy and /retry
+    // stop reporting a turn that no longer exists.
+    options.session.providerContinuation = undefined;
+    delete options.session.lastTurn;
+    options.session.toolCalls = [];
     await options.sessions.save(options.session);
     return 'Session history cleared. The next message starts a fresh context.';
   }
@@ -366,7 +376,7 @@ export async function handleSlashCommand(options: {
       return options.sessions.filePath(options.session.id);
     case '/sessions': {
       const sessions = await options.sessions.list();
-      return sessions.slice(0, 10).map((session) => `${session.id} ${session.updatedAt} ${session.provider}/${session.model}`).join('\n') || '(no sessions)';
+      return sessions.slice(0, 10).map((session) => `${session.id} ${session.updatedAt} ${session.provider}/${session.model}${session.title ? ` "${session.title}"` : ''}`).join('\n') || '(no sessions)';
     }
     case '/actions':
     case '/menu':
@@ -661,8 +671,8 @@ async function handlePlanCommand(
     const board = await store.load(boardId);
     options.session.taskRuntime = {
       boardId: board.id,
-      activeTaskId: board.tasks.find((task) => task.status === 'in_progress')?.id,
-      mode: board.status === 'draft' ? 'awaiting_confirm' : options.session.taskRuntime?.mode === 'paused' ? 'paused' : 'executing',
+      activeTaskId: Array.isArray(board.tasks) ? board.tasks.find((task) => task?.status === 'in_progress')?.id : undefined,
+      mode: inspectTaskGraph(board.tasks).issues.length ? 'paused' : board.status === 'draft' ? 'awaiting_confirm' : options.session.taskRuntime?.mode === 'paused' ? 'paused' : 'executing',
       lastSyncAt: nowIso,
     };
     await options.sessions.save(options.session);
@@ -674,6 +684,8 @@ async function handlePlanCommand(
 
   switch (action) {
     case 'confirm': {
+      const graph = inspectTaskGraph(board.tasks);
+      if (graph.issues.length) throw new Error(`计划依赖无效，未开始执行：${graph.issues.join('；')}`);
       if (board.status !== 'draft' && board.status !== 'active') {
         return `Board ${board.id} cannot be confirmed from status ${board.status}`;
       }
@@ -708,12 +720,12 @@ async function handlePlanCommand(
     case 'continue': {
       options.session.taskRuntime = {
         boardId: board.id,
-        activeTaskId: board.tasks.find((task) => task.status === 'blocked' || task.status === 'in_progress')?.id,
+        activeTaskId: Array.isArray(board.tasks) ? board.tasks.find((task) => task?.status === 'blocked' || task?.status === 'in_progress')?.id : undefined,
         mode: 'executing',
         lastSyncAt: nowIso,
       };
       if (board.status === 'blocked') {
-        const blocked = board.tasks.find((task) => task.status === 'blocked');
+        const blocked = Array.isArray(board.tasks) ? board.tasks.find((task) => task?.status === 'blocked') : undefined;
         if (blocked) {
           reopenTask(board, blocked.id, nowIso);
           await store.save(board);
@@ -723,6 +735,8 @@ async function handlePlanCommand(
       return `${formatBoard(board)}\nContinue enabled.`;
     }
     case 'skip': {
+      const graph = inspectTaskGraph(board.tasks);
+      if (graph.issues.length) throw new Error(`请先修正计划依赖：${graph.issues.join('；')}`);
       const taskId = rest[0];
       if (!taskId) return 'Usage: /plan skip <taskId>';
       skipTask(board, taskId, nowIso);
@@ -731,6 +745,8 @@ async function handlePlanCommand(
       return formatBoard(board);
     }
     case 'reopen': {
+      const graph = inspectTaskGraph(board.tasks);
+      if (graph.issues.length) throw new Error(`请先修正计划依赖：${graph.issues.join('；')}`);
       const taskId = rest[0];
       if (!taskId) return 'Usage: /plan reopen <taskId>';
       reopenTask(board, taskId, nowIso);
@@ -781,14 +797,24 @@ async function handleDispatchCommand(command: string, session: SessionRecord, se
   const args = command.slice('/省钱分级'.length).trim();
   if (!args) {
     const current = session.dispatch;
-    if (!current?.expensive || !current?.cheap) {
+    // A partially filled selection is legitimate (the router allows any one of
+    // the three tiers), so only a truly empty selection counts as unconfigured.
+    const hasAnyTier = Boolean(
+      current && TIER_ORDER.some((tier) => {
+        const value = current[tier];
+        return Array.isArray(value) ? value.length > 0 : Boolean(value);
+      }),
+    );
+    if (!hasAnyTier) {
       return [
-        '当前会话未配置分级调度。用法：',
+        '当前会话未手动配置分级调度 —— 不需要配置：每次模型调用都会按这一步的用途',
+        '（计划/常规/跟进工具/失败重试）自动挑档，档位由已配好的模型自动归类。',
+        '只想手动指定时才用它：',
         '  /省钱分级 贵=GLM-5.3 便宜=GLM-5.3-Flash',
-        '配置只作用于本会话，新会话需重新配置。',
+        '手动配置只作用于本会话。',
       ].join('\n');
     }
-    const tiers = resolveTiers(current);
+    const tiers = resolveTiers(current ?? {});
     if ('error' in tiers) return `分级配置无法解析：${tiers.error}`;
     // One line per configured tier; the first model is the primary and the
     // rest are fallbacks, so the order is meaningful and shown as-is.
@@ -800,6 +826,19 @@ async function handleDispatchCommand(command: string, session: SessionRecord, se
       const suffix = fallbacks.length > 0 ? `（备选 ${fallbacks.map((f) => f.model).join(' → ')}）` : '';
       lines.push(`  ${DISPATCH_TIER_LABELS[tier]}：${describeTier(primary)}${suffix}`);
     }
+    // Recent tiered calls, so the user can see the ledger actually filling up
+    // instead of having to open the jsonl by hand.
+    const history = readDispatchHistory().slice(-5);
+    if (history.length > 0) {
+      const total = history.reduce((sum, row) => sum + (row.totalTokens || 0), 0);
+      lines.push('', `最近 ${history.length} 笔分级调用（合计 ${total} tok）：`);
+      for (const row of history) {
+        lines.push(
+          `  ${row.ts.slice(5, 19).replace('T', ' ')} ${DISPATCH_TIER_LABELS[row.tier]} ${row.provider}/${row.model} ${row.ok ? '✓' : '✗'} ${row.totalTokens} tok`,
+        );
+      }
+    }
+    lines.push('', `台账：${dispatchLedgerPath()}`);
     return lines.join('\n');
   }
   return applyDispatchSelection(args, session, sessions);
@@ -1580,9 +1619,12 @@ async function handleRenameCommand(
 ): Promise<string> {
   const title = command.slice('/rename'.length).trim();
   if (!title) return 'Usage: /rename <new title>';
-  // Store title as first finalAnswer acting as title (desktop overlay reads this)
-  if (!options.session.finalAnswers.length) options.session.finalAnswers.push(title);
-  else options.session.finalAnswers[0] = title;
+  // Store the title on the record, where /sessions and the desktop sidebar both
+  // look for it. This used to overwrite finalAnswers[0] instead: that destroyed
+  // the session's first answer (every reader of finalAnswers treats [0] as an
+  // answer — /status, /copy and the compaction hint all do) and stored the title
+  // somewhere no reader ever looked, so the rename was invisible everywhere.
+  options.session.title = title.slice(0, 120);
   await options.sessions.save(options.session);
   return `Session renamed to: ${title}`;
 }
@@ -1590,11 +1632,14 @@ async function handleRenameCommand(
 async function handlePinCommand(
   options: { session: SessionRecord; sessions: SessionStore },
 ): Promise<string> {
-  // Use a guard field to store pin state since SessionRecord has no pinned field
-  const guard = options.session.guard ?? {};
-  const pinned = !((guard as Record<string, unknown>).pinned as boolean);
-  (guard as Record<string, unknown>).pinned = pinned;
-  options.session.guard = guard;
+  // The pin belongs on the record: the desktop sidebar and the empty-session
+  // cleanup both read it there. It used to hide in `guard.pinned`, which no
+  // reader consulted, so pinning had no visible effect anywhere (and cleanup
+  // still considered the session deletable). `guard.pinned` is read once more as
+  // a fallback so a pin written by an older build still toggles correctly.
+  const legacy = ((options.session.guard as Record<string, unknown> | undefined)?.pinned) === true;
+  const pinned = !(options.session.pinned ?? legacy);
+  options.session.pinned = pinned;
   await options.sessions.save(options.session);
   return pinned ? 'Session pinned.' : 'Session unpinned.';
 }

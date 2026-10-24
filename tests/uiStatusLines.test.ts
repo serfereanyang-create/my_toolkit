@@ -16,7 +16,23 @@ test('formatContextFooter shows real tokens and cache rate when reported', () =>
     1300,
   );
   // Segments only — the caller joins with ` · ` per footer.rs convention.
-  assert.equal(line, '14.2K used · out 1.3K · cache 93%');
+  // `inputTokens` is net of the cached part, so "used" is 27406 and the cache
+  // share is 13206/27406, not 13206/14200.
+  assert.equal(line, '27.4K used · out 1.3K · cache 48%');
+});
+
+test('formatContextFooter keeps a heavily cached turn under 100%', () => {
+  // A real DeepSeek turn: 1167549 prompt tokens of which 1149568 were cached.
+  // Dividing by the net input (17981) used to clamp to a meaningless 100%.
+  const line = formatContextFooter(
+    { inputTokens: 17981, outputTokens: 300, cacheReadTokens: 1149568, cacheReported: true },
+  );
+  assert.ok(line.includes('1.17M used'), line);
+  assert.ok(line.includes('cache 98%'), line);
+  // Still renders when the provider billed nothing for new input.
+  assert.ok(formatContextFooter(
+    { inputTokens: 0, outputTokens: 10, cacheReadTokens: 5000, cacheReported: true },
+  ).includes('cache 100%'));
 });
 
 test('formatContextFooter omits cache when the provider never reported it', () => {

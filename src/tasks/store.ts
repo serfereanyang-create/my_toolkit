@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import type { TaskBoard, TaskBoardIndexEntry } from './types.js';
+import { inspectTaskGraph } from './graph.js';
 
 /** 租约新鲜度窗口：超过此时长且 pid 不存活才视为崩溃遗留。 */
 const LEASE_TTL_MS = 5 * 60_000;
@@ -146,6 +147,7 @@ export class TaskBoardStore {
       } catch {
         continue; // unreadable board: leave it for the corrupt-file path
       }
+      if (inspectTaskGraph(board.tasks).issues.length) continue;
       const interrupted = board.tasks.filter((task) => task.status === 'in_progress');
       if (interrupted.length === 0) continue;
       if (await this.isLeaseLive(board.id)) continue; // a live runner owns it

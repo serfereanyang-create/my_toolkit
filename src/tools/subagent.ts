@@ -27,7 +27,7 @@ type SpawnSubAgentInput = {
    * cheaper provider resolved by the tier router, which is what makes
    * /省钱分级 a real dispatch instead of a prompt convention.
    */
-  tier?: 'expensive' | 'cheap';
+  tier?: 'expensive' | 'standard' | 'cheap';
 };
 
 export const spawnSubAgentTool: ToolDefinition<SpawnSubAgentInput> = {
@@ -62,7 +62,7 @@ export const spawnSubAgentTool: ToolDefinition<SpawnSubAgentInput> = {
       label: typeof obj.label === 'string' && obj.label.trim()
         ? obj.label.trim()
         : 'subagent',
-      tier: obj.tier === 'expensive' || obj.tier === 'cheap' ? obj.tier : undefined,
+      tier: obj.tier === 'expensive' || obj.tier === 'standard' || obj.tier === 'cheap' ? obj.tier : undefined,
     };
   },
 

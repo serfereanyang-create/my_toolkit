@@ -49,6 +49,13 @@ export function parseArgs(argv: string[]): CliArgs {
       case '--computer-any-app':
         args.computerAnyApp = true;
         break;
+      case '--background-browser':
+        args.backgroundBrowser = true;
+        break;
+      case '--background-browser-only':
+        args.backgroundBrowserOnly = true;
+        args.backgroundBrowser = true;
+        break;
       case '--excel':
         args.excelAutomation = true;
         break;
@@ -113,6 +120,12 @@ export function parseArgs(argv: string[]): CliArgs {
         const value = Number(readValue());
         if (!Number.isInteger(value) || value < 1) throw new Error('--max-tokens must be a positive integer');
         args.maxTokens = value;
+        break;
+      }
+      case '--request-timeout-ms': {
+        const value = Number(readValue());
+        if (!Number.isSafeInteger(value) || value < 1 || value > 2_147_483_647) throw new Error('--request-timeout-ms must be a positive supported integer');
+        args.requestTimeoutMs = value;
         break;
       }
       case '--no-banner':
@@ -182,6 +195,19 @@ export function parseArgs(argv: string[]): CliArgs {
       case '--tool-input':
         // Inline JSON, or '-' to read the JSON payload from stdin.
         args.toolInput = readValue();
+        break;
+      case '--gui-tool': {
+        // Headless single GUI action for the desktop 电脑操控 panel. Separate
+        // from --invoke-tool because that one refuses every non-read tool.
+        const value = readValue();
+        if (!value.trim()) throw new Error('--gui-tool requires a tool name');
+        args.guiTool = value.trim();
+        args.noBanner = true;
+        break;
+      }
+      case '--gui-input':
+        // Inline JSON, or '-' to read the JSON payload from stdin.
+        args.guiInput = readValue();
         break;
       case '--help':
       case '-h':

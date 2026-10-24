@@ -1,6 +1,8 @@
 import type { AgentRuntime } from '../agent/agent.js';
 import type { ProviderRequest } from '../providers/types.js';
 import { withModelRetry } from '../providers/retry.js';
+import { withRequestControl, ProviderRequestTimeoutError } from '../providers/requestControl.js';
+import { throwIfAborted } from '../utils/cancellation.js';
 import type { ApprovalRequest } from '../tools/types.js';
 
 /**
@@ -153,6 +155,8 @@ export async function reviewAction(
 ): Promise<AutoReviewDecision> {
   const timeoutMs = options?.timeoutMs ?? AUTO_REVIEW_TIMEOUT_MS;
   const providerRequest: ProviderRequest = {
+    signal: runtime.requestSignal,
+    timeoutMs,
     // No tools: the reviewer physically cannot act. Stronger than any filter.
     tools: [],
     messages: [{ role: 'user', content: buildReviewerMessage(request, options?.recentContext), createdAt: new Date().toISOString() }],
@@ -162,15 +166,8 @@ export async function reviewAction(
     projectContext: AUTO_REVIEW_PROMPT,
   };
 
-  let timer: NodeJS.Timeout | undefined;
   try {
-    const response = await Promise.race([
-      withModelRetry(() => runtime.provider.complete(providerRequest)),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`审核超时（${Math.round(timeoutMs / 1000)}s）`)), timeoutMs);
-        if (typeof timer.unref === 'function') timer.unref();
-      }),
-    ]);
+    const response = await withRequestControl(providerRequest, controlled => withModelRetry(() => runtime.provider.complete(controlled), { signal: controlled.signal }));
     const text = response.actions
       .filter((action): action is Extract<typeof action, { type: 'message' }> => action.type === 'message')
       .map((action) => action.content)
@@ -178,9 +175,9 @@ export async function reviewAction(
     if (!text.trim()) return { decision: 'abstain', reason: '审核没有返回内容' };
     return parseReviewVerdict(text);
   } catch (error) {
+    throwIfAborted(runtime.requestSignal);
+    if (error instanceof ProviderRequestTimeoutError) return { decision: 'abstain', reason: `审核超时（${Math.round(timeoutMs / 1000)}s）` };
     return { decision: 'abstain', reason: `审核失败：${error instanceof Error ? error.message : String(error)}` };
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 

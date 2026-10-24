@@ -83,7 +83,8 @@ test('Anthropic compatible relay reads vendor cache-hit aliases from nested usag
       workspaceRoot: process.cwd(),
       customProvider: true,
     });
-    assert.deepEqual(result.usage, { inputTokens: 100, outputTokens: 4, cacheReadTokens: 72, cacheCreationTokens: 28 });
+    // prompt_tokens is inclusive: 100 = 72 cached reads + 28 cache writes + 0 fresh.
+    assert.deepEqual(result.usage, { inputTokens: 0, outputTokens: 4, cacheReadTokens: 72, cacheCreationTokens: 28 });
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -102,7 +103,8 @@ test('Anthropic compatible relay JSON response preserves usage and text', async 
       tools,
       workspaceRoot: process.cwd(),
     });
-    assert.deepEqual(result.usage, { inputTokens: 50, outputTokens: 7, cacheReadTokens: 40 });
+    // prompt_tokens is inclusive of the cached part: 50 - 40 = 10 fresh tokens.
+    assert.deepEqual(result.usage, { inputTokens: 10, outputTokens: 7, cacheReadTokens: 40 });
     assert.deepEqual(result.actions, [{ type: 'message', content: 'json answer' }]);
   } finally {
     globalThis.fetch = originalFetch;

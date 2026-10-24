@@ -1,4 +1,5 @@
 import type { AgentAction, Provider, ProviderRequest, ProviderResponse } from './types.js';
+import { controlledProvider } from './requestControl.js';
 import { fetchWithRetry, iterateSseDataLines, toOpenAIResponsesTools, buildToolSystemPromptParts } from './protocol.js';
 import { isReasoningParamRejection, openaiReasoningEffort } from './reasoning.js';
 
@@ -35,12 +36,15 @@ function collectThinking(output: unknown): string | undefined {
 function usageFromResponse(value: unknown) {
   if (!value || typeof value !== 'object') return undefined;
   const usage = value as Record<string, unknown>;
-  const inputTokens = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
+  const promptTokens = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
   const outputTokens = typeof usage.output_tokens === 'number' ? usage.output_tokens : 0;
   const details = usage.input_tokens_details;
   const cached = details && typeof details === 'object' && typeof (details as Record<string, unknown>).cached_tokens === 'number'
     ? (details as Record<string, number>).cached_tokens : undefined;
-  if (inputTokens <= 0 && outputTokens <= 0) return undefined;
+  if (promptTokens <= 0 && outputTokens <= 0) return undefined;
+  // `input_tokens` includes the cached part; see usageFromOpenAI for why the
+  // shared shape is net-of-cache.
+  const inputTokens = cached === undefined ? promptTokens : Math.max(0, promptTokens - cached);
   return { inputTokens, outputTokens, ...(cached !== undefined ? { cacheReadTokens: cached } : {}) };
 }
 
@@ -57,7 +61,7 @@ function parseResponseActions(output: unknown): AgentAction[] {
 }
 
 export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOptions): Provider {
-  return {
+  const provider: Provider = {
     name: 'openai-responses',
     model: options.model,
     async complete(request: ProviderRequest): Promise<ProviderResponse> {
@@ -112,7 +116,7 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
       const effort = openaiReasoningEffort(request.reasoningEffort);
       if (effort) body.reasoning = { effort };
       body.stream = true;
-      const postResponses = () => fetchWithRetry(`${base}/responses`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${options.apiKey}` }, body: JSON.stringify(body) });
+      const postResponses = () => fetchWithRetry(`${base}/responses`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${options.apiKey}` }, body: JSON.stringify(body), signal: request.signal });
       let response = await postResponses();
       if (!response.ok) {
         const errorText = await response.text();
@@ -143,8 +147,9 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
       const events: unknown[] = [];
       let responseId: string | undefined;
       let usage: ProviderResponse['usage'];
-      for await (const data of iterateSseDataLines(response)) {
-        if (!data || data === '[DONE]') continue;
+      for await (const data of iterateSseDataLines(response, undefined, request.signal)) {
+        if (data === '[DONE]') break;
+        if (!data) continue;
         let event: Record<string, unknown>;
         try { event = JSON.parse(data) as Record<string, unknown>; } catch { continue; }
         events.push(event);
@@ -188,4 +193,5 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
       return { actions: toolActions.length ? toolActions : [{ type: 'message', content: text || '(empty response)' }], thinking: thinkingParts.join('') || undefined, continuation, usage, raw: { events, responseId } };
     },
   };
+  return controlledProvider(provider);
 }

@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { decideApproval, pathScopeFor, resolveWorkspacePath } from '../safety/policy.js';
 import { formatApprovalOutcome, formatApprovalPrompt } from '../i18n/messages.js';
 import { toolToProviderSpec, type ApprovalRequest, type ToolContext, type ToolDefinition, type ToolResult } from './types.js';
+import { throwIfAborted } from '../utils/cancellation.js';
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
@@ -36,6 +37,7 @@ export class ToolRegistry {
   }
 
   async execute(name: string, input: unknown, context: ToolContext): Promise<ToolResult> {
+    throwIfAborted(context.signal);
     const locale = context.locale ?? 'en';
     const tool = this.tools.get(name);
     if (!tool) {
@@ -115,6 +117,7 @@ export class ToolRegistry {
       // here once skipped the tool entirely.
       let approved: boolean;
       const autoReview = await context.autoReview?.(request);
+      throwIfAborted(context.signal);
       if (autoReview?.decision === 'allow') {
         approved = true;
       } else if (autoReview?.decision === 'deny') {
@@ -136,11 +139,15 @@ export class ToolRegistry {
     }
 
     try {
+      throwIfAborted(context.signal);
       await context.hooks?.beforeTool({ tool: name, input: parsed });
+      throwIfAborted(context.signal);
       const result = await tool.execute(parsed, context);
+      if (context.signal?.aborted) return result;
       await context.hooks?.afterTool({ tool: name, input: parsed, result });
       return result;
     } catch (error) {
+      if (context.signal?.aborted) return { ok: false, output: formatApprovalOutcome({ locale, kind: 'cancelled', tool: name }), data: { cancelled: true } };
       await context.hooks?.onError({ tool: name, input: parsed, error });
       return {
         ok: false,

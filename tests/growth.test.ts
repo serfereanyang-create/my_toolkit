@@ -9,8 +9,11 @@ import { createDefaultToolRegistry } from '../src/tools/index.js';
 
 test('disk_growth reports recent large files in a bounded path', async () => {
   const workspace = await mkdtemp(join(tmpdir(), 'aicode-growth-'));
-  await mkdir(join(workspace, 'out'), { recursive: true });
-  await writeFile(join(workspace, 'out', 'large.bin'), Buffer.alloc(2 * 1024 * 1024));
+  // Deliberately not `out/`: build-output names are skipped by the shared
+  // walker policy (`src/workspace/ignored.ts`), and this test is about finding a
+  // large file, not about which directories are searched.
+  await mkdir(join(workspace, 'data'), { recursive: true });
+  await writeFile(join(workspace, 'data', 'large.bin'), Buffer.alloc(2 * 1024 * 1024));
 
   const result = await createDefaultToolRegistry().execute('disk_growth', { path: '.', hours: 48, minMb: 1, maxFiles: 10 }, { workspaceRoot: workspace, approval: 'auto' });
 

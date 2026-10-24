@@ -51,6 +51,7 @@ export function validateProposePlanInput(raw: unknown): ProposedPlan {
     if (task['dependsOn'] !== undefined && !Array.isArray(task['dependsOn'])) {
       throw new Error(`propose_plan: tasks[${index}].dependsOn must be an array or omitted`);
     }
+    if (Array.isArray(task['dependsOn']) && task['dependsOn'].some(dependency => typeof dependency !== 'string' || !dependency.trim())) throw new Error(`propose_plan: tasks[${index}].dependsOn must contain nonempty task ids`);
     return {
       id: typeof task['id'] === 'string' ? task['id'] : undefined,
       title: task['title'],

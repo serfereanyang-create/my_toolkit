@@ -9,6 +9,8 @@ export type MessagePart =
   | { type: 'image'; mediaType: string; data: string; path?: string };
 
 export type AgentMessage = {
+  displayText?: string;
+  interrupted?: boolean;
   role: AgentRole;
   content: string;
   name?: string;
@@ -38,6 +40,8 @@ export type AgentAction =
 export type ReasoningEffort = 'auto' | 'off' | 'low' | 'medium' | 'high' | 'max';
 
 export type ProviderRequest = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
   messages: AgentMessage[];
   tools: ProviderToolSpec[];
   workspaceRoot: string;
@@ -68,6 +72,7 @@ export type ProviderToolSpec = {
   name: string;
   description: string;
   inputHint: string;
+  inputSchema?: Record<string, unknown>;
   risk: 'read' | 'write' | 'shell' | 'network';
 };
 

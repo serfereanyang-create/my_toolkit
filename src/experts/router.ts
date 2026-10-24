@@ -1,6 +1,11 @@
 import type { ExpertProfile, ExpertIntent, ExpertRoutingContext, ExpertRoutingResult } from './types.js';
 import { allExperts, generalExpert } from './profiles.js';
 
+export function selectExpertForGoal(goal: string): ExpertProfile {
+  const intent = classifyTaskIntent(goal.toLowerCase());
+  return allExperts.find((expert) => expert.intent === intent) ?? generalExpert;
+}
+
 /**
  * 核心路由函数 - 根据任务信息选择最合适的专家
  * 
@@ -94,6 +99,19 @@ function classifyTaskIntent(text: string): ExpertIntent | 'unknown' {
   ])) {
     return 'git_ops';
   }
+
+  const specialistRules: Array<[ExpertIntent, string[]]> = [
+    ['security_review', ['security review', 'security audit', 'vulnerability', 'vulnerabilities', '安全审查', '安全审计', '漏洞', '权限审查']],
+    ['architecture', ['architecture', 'system design', '架构', '模块边界', '接口设计', '技术方案']],
+    ['web_research', ['web search', 'official docs', 'online research', '网上检索', '联网搜索', '官方文档', '资料检索']],
+    ['performance', ['performance', 'benchmark', 'profiling', '性能', '慢路径', '内存泄漏', '资源占用']],
+    ['devops', ['deployment', 'ci/cd', 'docker', 'pipeline', '运维', '部署', '打包', '构建流水线']],
+    ['debugging', ['debug', 'reproduce', 'root cause', '排查', '复现', '根因', '诊断']],
+    ['refactor', ['refactor', '重构', '提取方法', '符号重命名']],
+  ];
+  for (const [specialistIntent, keywords] of specialistRules) {
+    if (hasAny(text, keywords)) return specialistIntent;
+  }
   
   // 测试/验证关键词
   if (hasAny(text, [
@@ -134,9 +152,12 @@ function classifyTaskIntent(text: string): ExpertIntent | 'unknown' {
     '实现', '修复', '重构', '修改', '添加', '更新', '编辑',
   ]);
   const hasReadOnlyKeywords = hasAny(text, [
-    'inspect', 'read', 'find', 'search', 'locate', 'understand',
-    '调研', '查找', '搜索', '查看', '了解', '理解', 'investigate',
+    'inspect', 'read', 'find', 'search', 'locate', 'understand', 'review',
+    '调研', '查找', '搜索', '查看', '了解', '理解', '检查', '读取', '审查', '审阅', 'investigate',
   ]);
+
+  if (!hasReadOnlyKeywords && hasAny(text, ['frontend', 'react', 'css', '前端', '页面交互', '界面', '可访问性'])) return 'frontend';
+  if (!hasReadOnlyKeywords && hasAny(text, ['backend', 'api endpoint', 'database', '后端', '接口实现', '数据库'])) return 'backend';
   
   if (hasEditKeywords && !hasReadOnlyKeywords) {
     return 'code_edit';
@@ -152,7 +173,38 @@ function classifyTaskIntent(text: string): ExpertIntent | 'unknown' {
 
 /**
  * 辅助函数：检查文本是否包含任意关键词
+ *
+ * 英文关键词按**词边界**匹配，而不是裸的子串包含。roster 里有 read / test /
+ * word / excel 这类短词，子串匹配会在无关词内部命中它们：thread 和 spread 命中
+ * read，latest 和 contest 命中 test，password 命中 word，excellent 命中 excel。
+ * 后果不是措辞问题——`Fix the spread operator bug` 会被路由到**只读**的调研专家，
+ * 而它的 toolFilter 会滤掉所有写工具，任务根本无法完成。
+ *
+ * 允许一个常见的词形后缀，这样复数/进行时仍然匹配（tests、testing、implemented）。
+ * 中文按子串匹配——中文没有词边界。
  */
+const ENGLISH_WORD_PATTERN_CACHE = new Map<string, RegExp>();
+
+function englishWordPattern(needle: string): RegExp {
+  let pattern = ENGLISH_WORD_PATTERN_CACHE.get(needle);
+  if (!pattern) {
+    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    pattern = new RegExp(`\\b${escaped}(?:s|es|ed|d|ing)?\\b`);
+    ENGLISH_WORD_PATTERN_CACHE.set(needle, pattern);
+  }
+  return pattern;
+}
+
+function hasChineseCharacter(value: string): boolean {
+  return /[一-鿿]/.test(value);
+}
+
 function hasAny(text: string, keywords: string[]): boolean {
-  return keywords.some((kw) => text.includes(kw));
+  const value = text.toLowerCase();
+  return keywords.some((keyword) => {
+    const needle = keyword.toLowerCase();
+    return hasChineseCharacter(needle)
+      ? value.includes(needle)
+      : englishWordPattern(needle).test(value);
+  });
 }

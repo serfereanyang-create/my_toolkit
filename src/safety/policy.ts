@@ -3,6 +3,8 @@ import { stdin as input, stdout as output } from 'node:process';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { ApprovalMode } from '../providers/types.js';
+import { analyzeCommand, isCredentialPath } from './commandAnalysis.js';
+import { evaluateNetworkTarget } from './network.js';
 
 export type ToolRisk = 'read' | 'write' | 'shell' | 'network';
 
@@ -38,10 +40,14 @@ export type ApprovalDecision = {
   needsPrompt: boolean;
 };
 
+/**
+ * Legacy pattern list. `rm -rf` / `del /s` / `rmdir /s` used to live here and were
+ * refused unconditionally — including `rm -rf ./dist`, which the agent needs to
+ * clean build output. Those now go through `analyzeCommand`, which judges the
+ * TARGET: system paths and anywhere outside the workspace are blocked, inside
+ * the workspace is a prompt. What stays here is what no target can redeem.
+ */
 const blockedCommandPatterns = [
-  /(^|[;&|])\s*rm\s+-rf(\s|$)/i,
-  /(^|[;&|])\s*del\s+\/s(\s|$)/i,
-  /(^|[;&|])\s*rmdir\s+\/s(\s|$)/i,
   /(^|[;&|])\s*format(\s|$)/i,
   /(^|[;&|])\s*shutdown(\.exe)?(\s|$)/i,
   /(^|[;&|])\s*poweroff(\s|$)/i,
@@ -168,6 +174,20 @@ export function isInsideWorkspace(workspaceRoot: string, targetPath: string) {
   }
 }
 
+/**
+ * Paths whose contents are credentials, not project files (list lives in
+ * commandAnalysis so the shell analyser and this fence agree on one set).
+ * Checked after the allowlist, so even `home` being allowed does not open them.
+ */
+/**
+ * Roots a read may land in without further argument: the workspace plus the
+ * user's own documents folders. Exported because the shell analyser judges
+ * `cat`/`type` arguments by the same list — two copies of this would drift.
+ */
+export function readableRootsFor(workspaceRoot: string): string[] {
+  return allowedReadRoots(workspaceRoot).map((root) => resolve(root));
+}
+
 function allowedReadRoots(workspaceRoot: string) {
   const home = homedir();
   return [
@@ -180,6 +200,9 @@ function allowedReadRoots(workspaceRoot: string) {
 }
 
 function assertUnderAllowedReadRoot(resolved: string, workspaceRoot: string) {
+  if (isCredentialPath(resolved)) {
+    throw new Error(`Path not allowed for read: ${resolved}. Credential stores are off limits.`);
+  }
   const roots = allowedReadRoots(workspaceRoot);
   if (roots.some((root) => isPathInside(root, resolved))) return;
   throw new Error(`Path not allowed for read: ${resolved}. Allowed: workspace, Desktop, Documents, Downloads, home.`);
@@ -190,10 +213,20 @@ function isPathInside(root: string, target: string) {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
-export function isBlockedCommand(command: string) {
+/**
+ * Structured check, not just a regex sweep.
+ *
+ * The patterns above only recognise dangerous SPELLINGS (`rm -rf`, `del /s` at
+ * the start of a segment). The analysis below recognises dangerous STRUCTURE:
+ * interpreter wrappers (`cmd /c`, `powershell -EncodedCommand`), pipes into a
+ * shell (`curl … | sh`), recursive deletes by any spelling or alias, and the
+ * disk/boot/account-level programs the patterns never listed at all.
+ */
+export function isBlockedCommand(command: string, workspaceRoot?: string) {
   const trimmed = command.trim();
   if (blockedCommandPatterns.some((pattern) => pattern.test(trimmed))) return true;
-  return isDestructiveGitCommand(trimmed);
+  if (isDestructiveGitCommand(trimmed)) return true;
+  return analyzeCommand(trimmed, { workspaceRoot }).verdict === 'blocked';
 }
 
 export function isAutoAllowedCommand(command: string) {
@@ -288,78 +321,10 @@ export function isAutoAllowedWrite(
 }
 
 /**
- * Parse a URL and decide whether the network policy permits reaching its host.
- * Returns a structured verdict so `decideApproval` can turn it into an
- * ApprovalDecision. The rules (in order):
- *   1. URL must parse and use http/https.
- *   2. Host must not resolve to a private / loopback / link-local literal IP
- *      (SSRF guard). Literal IPs are checked directly; hostnames are checked for
- *      obvious localhost forms. DNS is NOT resolved here (that happens at fetch
- *      time) so this blocks the blatant cases without a network round-trip.
- *   3. Host must match the allowlist (exact host or a parent domain suffix).
+ * Network verdicts live in `./network.ts` (the shell analyser shares them) and
+ * are re-exported here so existing imports keep working.
  */
-export function evaluateNetworkTarget(rawUrl: string, allowlist: string[]): {
-  ok: boolean;
-  host?: string;
-  reason: string;
-} {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return { ok: false, reason: 'invalid URL' };
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    return { ok: false, reason: `unsupported protocol ${url.protocol}` };
-  }
-  const host = url.hostname.toLowerCase();
-  if (isBlockedNetworkHost(host)) {
-    return { ok: false, host, reason: 'target resolves to a private or loopback address (SSRF blocked)' };
-  }
-  if (!hostMatchesAllowlist(host, allowlist)) {
-    return { ok: false, host, reason: 'host is not in the network allowlist' };
-  }
-  return { ok: true, host, reason: 'host is in the network allowlist' };
-}
-
-// Block loopback, private, link-local, and other non-public literal addresses,
-// plus localhost hostnames. This is a best-effort SSRF guard against literal
-// targets; DNS-based rebinding is out of scope for a pre-flight check.
-function isBlockedNetworkHost(host: string): boolean {
-  if (host === 'localhost' || host.endsWith('.localhost') || host === '' ) return true;
-  // Strip IPv6 brackets if present.
-  const bare = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
-  // IPv6 loopback / unique-local / link-local.
-  if (bare === '::1' || bare === '::') return true;
-  if (/^f[cd][0-9a-f]{2}:/i.test(bare)) return true; // fc00::/7 unique local
-  if (/^fe80:/i.test(bare)) return true; // link-local
-  // IPv4 literal checks.
-  const v4 = bare.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (v4) {
-    const octets = v4.slice(1, 5).map((n) => Number(n));
-    if (octets.some((n) => n > 255)) return true; // malformed → block
-    const [a, b] = octets;
-    if (a === 10) return true; // 10.0.0.0/8
-    if (a === 127) return true; // loopback
-    if (a === 0) return true; // 0.0.0.0/8
-    if (a === 169 && b === 254) return true; // link-local
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
-  }
-  return false;
-}
-
-// A host matches when it equals an allowlist entry or is a subdomain of one.
-// Allowlist entries are compared case-insensitively; a leading dot is tolerated.
-function hostMatchesAllowlist(host: string, allowlist: string[]): boolean {
-  for (const raw of allowlist) {
-    const entry = raw.trim().toLowerCase().replace(/^\./, '');
-    if (!entry) continue;
-    if (host === entry || host.endsWith(`.${entry}`)) return true;
-  }
-  return false;
-}
+export { evaluateNetworkTarget, isBlockedNetworkHost, hostMatchesAllowlist } from './network.js';
 
 export function decideApproval(options: {
   mode: ApprovalMode;
@@ -420,11 +385,39 @@ export function decideApproval(options: {
 
   if (options.risk === 'shell') {
     const command = options.command ?? '';
-    // Destructive patterns are ALWAYS blocked — anyApp/allowedApps never lift this.
-    if (isBlockedCommand(command)) return { allowed: false, needsPrompt: false, reason: 'blocked destructive command pattern' };
+    const analysis = analyzeCommand(command, {
+      workspaceRoot: options.workspaceRoot,
+      // 读工具的白名单和网络白名单同样约束 shell：`cat` 与 `curl` 不该
+      // 因为换了层就绕过去。
+      readRoots: readableRootsFor(options.workspaceRoot),
+      networkAllowlist: options.networkAllowlist,
+    });
+    // Destructive commands are ALWAYS blocked — anyApp/allowedApps never lift
+    // this. The structured verdict comes first so the refusal names the real
+    // reason (which target, which program) instead of a generic pattern hit.
+    const legacyBlocked =
+      analysis.verdict !== 'blocked' &&
+      (blockedCommandPatterns.some((pattern) => pattern.test(command.trim())) || isDestructiveGitCommand(command.trim()));
+    if (analysis.verdict === 'blocked' || legacyBlocked) {
+      return {
+        allowed: false,
+        needsPrompt: false,
+        reason:
+          analysis.verdict === 'blocked'
+            ? `blocked destructive command pattern: ${analysis.reason}`
+            : 'blocked destructive command pattern',
+      };
+    }
     // Explicitly allowed apps run without confirmation in both auto and ask mode.
     if (isAllowedAppCommand(command, options.allowedApps)) {
       return { allowed: true, needsPrompt: false, reason: 'command runs an always-allowed app' };
+    }
+    // Structural suspicion that is not automatically fatal — a workspace-scoped
+    // recursive delete, a script host, an undecodable -EncodedCommand — must be
+    // seen by a human even in auto mode. 完全访问 means "don't ask about the
+    // ordinary", not "don't ask about this".
+    if (analysis.verdict === 'prompt') {
+      return { allowed: true, needsPrompt: true, reason: `confirmation required: ${analysis.reason}` };
     }
     // "任意应用": auto mode may run any non-destructive command.
     if (options.mode === 'auto' && options.computerAnyApp) {

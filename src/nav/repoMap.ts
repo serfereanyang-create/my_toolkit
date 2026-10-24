@@ -1,6 +1,7 @@
 import { readdir, readFile, stat, writeFile, readFile as readCache, mkdir } from 'node:fs/promises';
 import { join, relative, extname, dirname } from 'node:path';
 import * as ts from 'typescript';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
 export interface RepositoryMap {
   version: 1;
@@ -87,7 +88,7 @@ async function walkFiles(current: string, root: string, files: string[], maxFile
       if (files.length >= maxFiles) break;
       const name = entry.name;
       // Skip common large/generated directories
-      if (name === 'node_modules' || name === 'dist' || name === 'build' || name === '.git' || name === '.aicode') continue;
+      if (isIgnoredDirName(name)) continue;
       if (name.startsWith('.')) continue;
 
       const fullPath = join(current, name);

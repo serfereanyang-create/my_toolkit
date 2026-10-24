@@ -3,8 +3,8 @@ import { join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveWorkspacePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
-const ignoredDirs = new Set(['node_modules', '.git', 'dist', 'build', '.gradle']);
 
 type DiskGrowthInput = {
   path: string;
@@ -83,7 +83,7 @@ async function walk(current: string, root: string, since: number, minMb: number,
   }
   for (const entry of entries) {
     if (visited.count >= maxVisited) return;
-    if (entry.isDirectory() && ignoredDirs.has(entry.name)) continue;
+    if (entry.isDirectory() && isIgnoredDirName(entry.name)) continue;
     await walk(join(current, entry.name), root, since, minMb, maxVisited, visited, files);
   }
 }

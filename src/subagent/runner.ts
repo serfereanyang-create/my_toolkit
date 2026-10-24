@@ -1,7 +1,14 @@
 import type { AgentRuntime } from '../agent/agent.js';
 import { supervisorFor } from '../agent/agent.js';
 import { createProvider } from '../providers/index.js';
-import { resolveTiers, readGlobalDispatchDefault } from '../dispatch/tierRouter.js';
+import { resolveTiers, type ResolvedTier } from '../dispatch/tierRouter.js';
+import { resolveDispatchSelection } from '../dispatch/plan.js';
+import { completeWithFallback, configForTier, isFallbackWorthy, tierProvider } from '../dispatch/tierProvider.js';
+
+// Re-exported so the existing importers (tests, tools) keep one entry point;
+// the implementation lives in dispatch/tierProvider.ts, shared with the main
+// loop now that every call is routed.
+export { completeWithFallback, configForTier, isFallbackWorthy, tierProvider };
 import { allExperts, expertById } from '../experts/profiles.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { TerminalUI } from '../ui/terminal.js';
@@ -17,25 +24,21 @@ import type { SubAgentResult, SubAgentSpec } from './types.js';
  * case we fall back to inheriting rather than failing the delegation, but we
  * say so instead of pretending the cheap model ran.
  */
-function applyTierOverride(
+export function applyTierOverride(
   tier: 'expensive' | 'standard' | 'cheap' | undefined,
   parentRuntime: AgentRuntime,
-): { provider?: AgentRuntime['provider']; config?: AgentRuntime['config']; note?: string } {
+): { provider?: AgentRuntime['provider']; config?: AgentRuntime['config']; chain?: ResolvedTier[]; note?: string } {
   if (!tier) return {};
-  // Session selection wins; a session that never ran /省钱分级 falls back to
-  // the global default the desktop settings panel writes.
-  const selection = parentRuntime.session.dispatch ?? readGlobalDispatchDefault();
-  if (!selection) {
-    return { note: `[dispatch] 未配置分级（会话未执行 /省钱分级，也没有全局默认），${tier} 档回落到父模型 ${parentRuntime.config.model}` };
-  }
+  // Same precedence as the main loop: an explicit /省钱分级 selection wins,
+  // otherwise the tiers are derived from the models actually configured. There
+  // is no settings-panel default to read any more — that UI is gone.
   let chain;
   try {
-    const tiers = resolveTiers(selection);
-    // resolveTiers reports a bad selection as `{ error }` rather than throwing.
-    if ('error' in tiers) {
-      return { note: `[dispatch] ${tier} 档解析失败（${tiers.error}），回落到父模型 ${parentRuntime.config.model}` };
+    const selection = resolveDispatchSelection(parentRuntime);
+    if (!selection) {
+      return { note: `[dispatch] 无法确定分档（没有显式配置，也没有可推导的模型），${tier} 档回落到父模型 ${parentRuntime.config.model}` };
     }
-    chain = tiers[tier];
+    chain = selection.tiers[tier];
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     return { note: `[dispatch] ${tier} 档解析失败（${msg}），回落到父模型 ${parentRuntime.config.model}` };
@@ -43,19 +46,15 @@ function applyTierOverride(
   if (!chain || chain.length === 0) {
     return { note: `[dispatch] ${tier} 档未配置，回落到父模型 ${parentRuntime.config.model}` };
   }
-  // The first model in the chain is the primary; the rest are fallbacks the
-  // caller can retry with when the primary is rate limited or unavailable.
+  // The first model in the chain is the primary; the rest are fallbacks for
+  // when the primary is rate limited or unavailable. Both are returned so the
+  // caller can build a provider that actually fails over (see tierProvider).
   const resolved = chain[0];
-  const providerConfig = {
-    ...parentRuntime.config,
-    provider: resolved.provider as AgentRuntime['config']['provider'],
-    model: resolved.model,
-    ...(resolved.baseUrl ? { baseUrl: resolved.baseUrl } : {}),
-    ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
-  };
+  const providerConfig = configForTier(parentRuntime.config, resolved);
   return {
     provider: createProvider(providerConfig),
     config: providerConfig,
+    chain,
     note: `[dispatch] ${tier} 档 → ${resolved.providerName}/${resolved.model}`,
   };
 }
@@ -178,10 +177,22 @@ export async function runSubAgent(
    * inheriting the parent's provider/config/sessions.
    */
   const createSegment = async (segmentGoal: string) => {
+    // The tier override is resolved before the session is created so the
+    // sub-session records the provider/model that will actually run. This used
+    // to read the parent's, which was wrong twice over: it ignored the tier,
+    // and it disagreed with the provider the turn was switched to.
+    const tierOverride = applyTierOverride(spec.tier, parentRuntime);
+    if (tierOverride.note) parentRuntime.ui?.info(tierOverride.note);
+
     // ── 2. 创建独立 Session ────────────────────────────────────────────────────
-    const subSession = await parentRuntime.sessions.create({
-      provider: parentRuntime.provider.name,
-      model: parentRuntime.provider.model,
+    // 子会话写进同级的 sessions-subagents，而不是用户会话目录：桌面端把会话目录
+    // 里的每条记录都当一次对话列出来，子智能体每段建一个，侧栏因此塞满了空壳和
+    // 以「## 主任务背景」开头的内部记录。目录由 SessionStore.sibling 从父目录推出，
+    // 所以 CLI 单独运行和桌面端带 --session-dir 的形态都适用。
+    const subStore = parentRuntime.sessions.sibling('sessions-subagents');
+    const subSession = await subStore.create({
+      provider: tierOverride.provider?.name ?? parentRuntime.provider.name,
+      model: tierOverride.provider?.model ?? parentRuntime.provider.model,
       workspaceRoot: parentRuntime.config.workspaceRoot,
     });
     if (!firstSessionId) firstSessionId = subSession.id;
@@ -199,16 +210,30 @@ export async function runSubAgent(
     // Tier override: a 'cheap' sub-agent runs on the router's cheap provider
     // instead of inheriting the parent model. This is the single point where
     // /省钱分级 turns from a prompt convention into an actual dispatch.
-    const tierOverride = applyTierOverride(spec.tier, parentRuntime);
+    // The provider walks the tier's whole chain, so a rate-limited primary
+    // falls over to its fallbacks instead of failing the delegation.
+    const tierConfig = tierOverride.chain && tierOverride.chain.length > 1
+      ? configForTier(parentRuntime.config, tierOverride.chain[0])
+      : tierOverride.config;
     const subRuntime: AgentRuntime = {
       ...parentRuntime,
       // Spread the tier's provider/config over the parent's so the whole
       // sub-turn (and any nested delegation) runs on the cheap model.
-      ...(tierOverride.provider ? { provider: tierOverride.provider } : {}),
-      ...(tierOverride.config ? { config: tierOverride.config } : {}),
+      ...(tierOverride.chain
+        ? { provider: tierProvider(parentRuntime.config, tierOverride.chain, (failed, next, error) => {
+            parentRuntime.ui?.info(
+              `[dispatch] ${failed.providerName}/${failed.model} 不可用（${error instanceof Error ? error.message : String(error)}），降级到 ${next.providerName}/${next.model}`,
+            );
+          }) }
+        : {}),
+      ...(tierConfig ? { config: tierConfig } : {}),
       session: subSession,
+      // 保存也必须走子会话库：展开父 runtime 会把 sessions 一并继承过来，
+      // 那样每轮的 appendMessage 仍写回父会话文件，隔离就只做了一半。
+      sessions: subStore,
       tools: filteredTools,
       allTools: filteredTools,
+      toolFilter: tool => profile.toolFilter(tool) && (parentRuntime.toolFilter?.(tool) ?? true),
       ui: subUI,
       // 子 agent 不继承 git safety 单元（避免嵌套 unit 污染父 session）
       gitSafety: undefined,
@@ -223,13 +248,17 @@ export async function runSubAgent(
       // 关键工具裁掉（test_verify 就整个失效）。任务板路径一直有这层覆盖，子
       // agent 路径漏了。
       toolScope: profile.toolScopeOverride ?? parentRuntime.toolScope,
-      // 每段一个步数预算：用尽即换新段续跑，而不是让整轮失败。
-      config: { ...parentRuntime.config, maxSteps: segmentSteps },
+      // 每段一个步数预算：用尽即换新段续跑，而不是让整轮失败。必须基于上面已
+      // 合入档位的 config 再覆盖 maxSteps —— 写成 parentRuntime.config 会把档位的
+      // provider/model/apiKey 一起丢掉，等于档位没生效。
+      config: { ...(tierConfig ?? parentRuntime.config), maxSteps: segmentSteps },
       // 子 agent 使用简单的自动批准确认（headless 模式）
       confirm: () => Promise.resolve(true),
       toolConfirm: () => Promise.resolve(true),
       // 深度递增：子 agent 再派生时 spawn_subagent 会检查该值（root=0，子=+1）
       subAgentDepth: (parentRuntime.subAgentDepth ?? 0) + 1,
+      // Stamp the tier so the turn's usage block can write the dispatch ledger.
+      ...(spec.tier ? { dispatchTier: spec.tier } : {}),
       // 超时/父级取消经由调度器注入的判据，与父 runtime 的取或。
       // 覆盖父值是有意的：子 agent 必须同时受自己那条超时线和父级取消支配。
       cancelRequested: options?.cancelRequested

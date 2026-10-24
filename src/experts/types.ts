@@ -5,6 +5,15 @@ import type { TaskBoard, TaskItem } from '../tasks/types.js';
  * 与 toolStrategy 的 ToolIntent 互补但更粗粒度，专注任务板场景的专家分派
  */
 export type ExpertIntent =
+  | 'architecture'
+  | 'frontend'
+  | 'backend'
+  | 'debugging'
+  | 'security_review'
+  | 'performance'
+  | 'refactor'
+  | 'web_research'
+  | 'devops'
   | 'code_edit'       // 代码编辑/重构/修复
   | 'code_search'     // 代码调研/查找/理解
   | 'git_ops'         // git 操作（add/commit/branch/stash/merge）

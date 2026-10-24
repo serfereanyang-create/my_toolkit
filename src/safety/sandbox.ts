@@ -1,5 +1,23 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { resolveResourceLimits, runWithResourceLimits, wrapWithUlimits } from './resourceLimits.js';
+
+/**
+ * The limits layer can degrade (no PowerShell, or the CLI already runs inside a
+ * job object). Say so once per process on stderr, then keep going quietly —
+ * a warning per command would drown the transcript.
+ */
+let warnedAboutLimits = false;
+function limitWarning(reason: string) {
+  if (warnedAboutLimits) return;
+  warnedAboutLimits = true;
+  try {
+    process.stderr.write(`aicode: resource limits unavailable (${reason}); running with timeout and process-tree kill only\n`);
+  } catch {
+    // stderr gone; nothing useful left to do
+  }
+}
+
 const SECRET_ENV_KEYS = [
   /^OPENAI_API_KEY$/i,
   /^ANTHROPIC_API_KEY$/i,
@@ -63,6 +81,7 @@ const KEEP_ENV_KEYS = [
 ];
 
 export type SandboxOptions = {
+  signal?: AbortSignal;
   command: string;
   cwd: string;
   timeoutMs?: number;
@@ -73,6 +92,7 @@ export type SandboxOptions = {
 };
 
 export type SandboxResult = {
+  cancelled?: boolean;
   stdout: string;
   stderr: string;
   code: number | null;
@@ -225,6 +245,7 @@ export function prepareShellCommand(command: string, isWin: boolean): string {
 }
 
 export async function runSandboxedCommand(options: SandboxOptions): Promise<SandboxResult> {
+  options.signal?.throwIfAborted();
   validateSandboxCommand(options.command);
   const cwd = resolve(options.cwd);
   const timeoutMs = options.timeoutMs ?? 30_000;
@@ -238,7 +259,43 @@ export async function runSandboxedCommand(options: SandboxOptions): Promise<Sand
   // string reaches cmd.exe, and switch the console to UTF-8 so Chinese tool
   // output survives our utf8 decoding (the OEM GBK default was the mojibake
   // root cause).
-  const finalCommand = isWin ? buildWindowsShellCommand(unescapeAmpEntities(options.command)) : unescapeAmpEntities(options.command);
+  const prepared = isWin ? buildWindowsShellCommand(unescapeAmpEntities(options.command)) : unescapeAmpEntities(options.command);
+
+  // Resource ceilings. Declared in the plan for this layer: a command that fits
+  // every policy rule can still eat the machine (`for(;;)a.push(Buffer.alloc())`
+  // is not a destructive command pattern, it is just a memory bomb).
+  const limits = resolveResourceLimits(options.env ?? process.env);
+
+  if (limits.enabled && isWin) {
+    const limited = await runWithResourceLimits({
+      command: prepared,
+      cwd,
+      env,
+      timeoutMs,
+      maxBuffer,
+      signal: options.signal,
+      limits,
+    });
+    if (!limited.unavailable) {
+      return {
+        stdout: limited.stdout,
+        stderr: limited.stderr,
+        code: limited.code,
+        signal: null,
+        timedOut: limited.timedOut,
+        ...(limited.cancelled ? { cancelled: true } : {}),
+        scrubbed,
+        pid: limited.pid,
+      };
+    }
+    // Job Object unavailable (no PowerShell, or the job could not be created —
+    // e.g. the CLI itself already runs inside a job). Falling back silently is
+    // the right trade: no kernel limits, but the command still runs, still has
+    // a timeout and a process-tree kill.
+    limitWarning(limited.unavailable);
+  }
+
+  const finalCommand = isWin ? prepared : wrapWithUlimits(prepared, limits);
   const spawnOpts: SpawnOptions = {
     cwd,
     env,
@@ -260,21 +317,32 @@ export async function runSandboxedCommand(options: SandboxOptions): Promise<Sand
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let cancelled = false;
+    let killPromise: Promise<void> | undefined;
     let settled = false;
     let stdoutBytes = 0;
     let stderrBytes = 0;
 
-    const finish = (result: SandboxResult) => {
+    const finish = async (result: SandboxResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
+      if (killPromise) await killPromise;
       resolvePromise(result);
     };
 
     const timer = setTimeout(() => {
       timedOut = true;
-      killProcessTree(child.pid, isWin);
+      killPromise = killProcessTree(child.pid, isWin);
     }, timeoutMs);
+    const abort = () => {
+      if (settled) return;
+      cancelled = true;
+      killPromise = killProcessTree(child.pid, isWin);
+    };
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdoutBytes += chunk.length;
@@ -288,18 +356,20 @@ export async function runSandboxedCommand(options: SandboxOptions): Promise<Sand
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
       rejectPromise(error);
     });
-    child.on('close', (code, signal) => {
+    child.on('close', async (code, signal) => {
       if (stdoutBytes > maxBuffer || stderrBytes > maxBuffer) {
         stderr = `${stderr}\n(output truncated: maxBuffer ${maxBuffer} bytes)`.trim();
       }
-      finish({
+      await finish({
         stdout,
         stderr,
         code,
         signal,
         timedOut,
+        ...(cancelled ? { cancelled: true } : {}),
         scrubbed,
         pid: child.pid,
       });
@@ -308,6 +378,7 @@ export async function runSandboxedCommand(options: SandboxOptions): Promise<Sand
 }
 
 export function formatSandboxResult(result: SandboxResult, command: string) {
+  if (result.cancelled) return { ok: false as const, output: `Command cancelled; process tree stopped.\n${joinStreams(result)}`.trim(), data: { command, cancelled: true, timedOut: false, scrubbed: result.scrubbed, code: result.code, signal: result.signal } };
   if (result.timedOut) {
     return {
       ok: false as const,
@@ -333,19 +404,23 @@ function joinStreams(result: SandboxResult) {
   return [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n');
 }
 
-function killProcessTree(pid: number | undefined, isWin: boolean) {
-  if (!pid || !Number.isFinite(pid)) return;
+function killProcessTree(pid: number | undefined, isWin: boolean): Promise<void> {
+  if (!pid || !Number.isFinite(pid)) return Promise.resolve();
   try {
     if (isWin) {
-      spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      return;
+      return new Promise(resolve => {
+        const killer = spawn(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        killer.once('close', () => resolve()); killer.once('error', () => resolve());
+      });
     }
     try {
       process.kill(-pid, 'SIGKILL');
     } catch {
       process.kill(pid, 'SIGKILL');
     }
+    return Promise.resolve();
   } catch {
     // ignore kill races
+    return Promise.resolve();
   }
 }

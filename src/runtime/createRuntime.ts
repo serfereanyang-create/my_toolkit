@@ -62,6 +62,7 @@ export async function createAgentRuntime(config: AppConfig) {
   const session = config.resumeSessionId
     ? await sessions.load(config.resumeSessionId)
     : await sessions.create({ provider: provider.name, model: provider.model, workspaceRoot: config.workspaceRoot });
+  if (config.resumeSessionId && session.lastTurn?.status === 'running') session.providerContinuation = undefined;
 
   const hooks = createNoopHooks();
   const commandJobs = new CommandJobManager();

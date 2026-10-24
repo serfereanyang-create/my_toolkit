@@ -238,6 +238,16 @@ export function nextStepHint(tool: string, output: string, outputLength: number)
  */
 const DELEGATION_SHARED_TAIL = `
 **expert 角色选择指南：**
+- 架构、模块边界、技术方案 → architecture
+- React、页面、交互、样式、可访问性 → frontend
+- API、服务、数据库、业务逻辑 → backend
+- 复现错误、定位根因、修复回归 → debugging
+- 安全、权限、漏洞、密钥和依赖风险 → security_review
+- 慢路径、基准、性能和资源占用 → performance
+- 保持行为兼容的符号/模块整理 → refactor
+- 官方文档、网页资料、外部检索 → web_research
+- 构建、依赖、CI/CD、打包和环境 → devops
+- 独立代码审查 → code_review
 - 只需读代码/查找符号 → code_search
 - 实现/修改/重构代码 → code_edit
 - 编写或运行测试 → test_verify
@@ -250,6 +260,8 @@ const DELEGATION_SHARED_TAIL = `
 **dependsOn 使用规则：**
 - 无数据依赖的任务 → 不设 dependsOn，框架自动并行
 - B 需要 A 的结果 → B.dependsOn = ["A"]，框架自动串行并将 A 的答案注入 B 的 prompt
+- 同时修改同一文件或目录 → 给任务写 writePaths，调度器会自动错峰；独立路径继续并行
+- 关键任务提高 priority；长任务设置 timeoutMs，上游失败默认阻断下游
 
 **你的职责：** spawn_subagent 完成后，读取每个子 agent 的答案并整合给用户一个完整的最终回复。
 `.trim();

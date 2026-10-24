@@ -2,8 +2,8 @@ import { readdir, stat } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
-const IGNORED = new Set(['node_modules', '.git', 'dist', 'build', '.aicode']);
 
 function asRecord(input: unknown): Record<string, unknown> {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new Error('expected an object');
@@ -139,7 +139,7 @@ async function walk(root: string, onFile: (file: string) => Promise<void>): Prom
   for (const entry of entries) {
     const full = join(root, entry.name);
     if (entry.isDirectory()) {
-      if (IGNORED.has(entry.name)) continue;
+      if (isIgnoredDirName(entry.name)) continue;
       await walk(full, onFile);
     } else if (entry.isFile()) {
       await onFile(full);
@@ -150,7 +150,7 @@ async function walk(root: string, onFile: (file: string) => Promise<void>): Prom
 async function walkDirs(baseRoot: string, current: string, out: string[], maxResults: number): Promise<void> {
   let entries;
   try { entries = await readdir(current, { withFileTypes: true }); } catch { return; }
-  const visible = entries.filter((entry) => !IGNORED.has(entry.name));
+  const visible = entries.filter((entry) => !isIgnoredDirName(entry.name));
   if (visible.length === 0 && current !== baseRoot) {
     out.push(relative(baseRoot, current).replace(/\\/g, '/'));
     if (out.length >= maxResults) return;

@@ -2,7 +2,7 @@
  * Workflow storage and persistence
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WorkflowDefinition, WorkflowExecution } from './types.js';
 
@@ -71,14 +71,16 @@ export class WorkflowStore {
     }
     
     try {
-      const fs = require('node:fs');
-      fs.unlinkSync(filePath);
+      // A bare require() throws ReferenceError in this ESM package, and the
+      // catch below turned that into a quiet `false` — so every delete
+      // reported failure and left the file on disk. The import is static now.
+      unlinkSync(filePath);
       return true;
     } catch {
       return false;
     }
   }
-  
+
   // Execution operations
   
   saveExecution(execution: WorkflowExecution): void {
@@ -133,14 +135,13 @@ export class WorkflowStore {
     }
     
     try {
-      const fs = require('node:fs');
-      fs.unlinkSync(filePath);
+      unlinkSync(filePath);
       return true;
     } catch {
       return false;
     }
   }
-  
+
   // Query operations
   
   findWorkflowsByTag(tag: string): WorkflowDefinition[] {

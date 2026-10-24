@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import type { AgentRuntime } from '../agent/agent.js';
 import { runSubAgent } from './runner.js';
 import type { SubAgentBatchInput, SubAgentResult, SubAgentSpec } from './types.js';
@@ -17,6 +18,23 @@ import type { SubAgentBatchInput, SubAgentResult, SubAgentSpec } from './types.j
 export const DEFAULT_SUBAGENT_CONCURRENCY = 4;
 export const MAX_SUBAGENT_CONCURRENCY = 16;
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 600_000;
+export const MAX_SUBAGENTS_PER_BATCH = 64;
+
+function normalizeWorkspacePath(workspaceRoot: string, path: string): string {
+  const normalize = (value: string) => value.replace(/\\/g, '/').replace(/\/$/, '');
+  const rootValue = normalize(resolve(workspaceRoot));
+  const absoluteValue = normalize(resolve(workspaceRoot, path));
+  const root = process.platform === 'win32' ? rootValue.toLowerCase() : rootValue;
+  const absolute = process.platform === 'win32' ? absoluteValue.toLowerCase() : absoluteValue;
+  if (absolute !== root && !absolute.startsWith(`${root}/`)) {
+    throw new Error(`writePaths must stay inside the workspace: ${path}`);
+  }
+  return absolute;
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
 
 function clampConcurrency(value: number | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_SUBAGENT_CONCURRENCY;
@@ -33,6 +51,9 @@ function validateSpecs(subagents: SubAgentSpec[]): {
   byId: Map<string, SubAgentSpec>;
   deps: Map<string, string[]>;
 } {
+  if (subagents.length > MAX_SUBAGENTS_PER_BATCH) {
+    throw new Error(`spawn_subagent: maximum ${MAX_SUBAGENTS_PER_BATCH} sub-agents per call`);
+  }
   const byId = new Map<string, SubAgentSpec>();
   for (const spec of subagents) {
     if (byId.has(spec.id)) throw new Error(`spawn_subagent: 重复的子 agent ID "${spec.id}"`);
@@ -101,6 +122,13 @@ export async function runSubAgentBatch(
   const results = new Map<string, SubAgentResult>();
   const indeg = new Map(subagents.map((s) => [s.id, deps.get(s.id)!.length]));
   const ready: string[] = subagents.filter((s) => deps.get(s.id)!.length === 0).map((s) => s.id);
+  ready.sort((left, right) => (byId.get(right)?.priority ?? 0) - (byId.get(left)?.priority ?? 0));
+  const workspaceRoot = parentRuntime.config?.workspaceRoot ?? process.cwd();
+  const writePaths = new Map<string, string[]>();
+  for (const spec of subagents) {
+    writePaths.set(spec.id, (spec.writePaths ?? []).map((path) => normalizeWorkspacePath(workspaceRoot, path)));
+  }
+  const activeWritePaths = new Map<string, string[]>();
 
   let settled = 0;
   let inFlight = 0;
@@ -150,6 +178,7 @@ export async function runSubAgentBatch(
       }
       ready.push(next);
     }
+    ready.sort((left, right) => (byId.get(right)?.priority ?? 0) - (byId.get(left)?.priority ?? 0));
     notify();
   }
 
@@ -210,8 +239,18 @@ export async function runSubAgentBatch(
 
   const worker = async (): Promise<void> => {
     while (settled < total) {
-      if (parentCancelled) return;
-      const id = ready.shift();
+      if (parentCancelled || parentRuntime.cancelRequested?.() === true) {
+        parentCancelled = true;
+        notify();
+        return;
+      }
+      const readyIndex = ready.findIndex((candidate) => {
+        const candidatePaths = writePaths.get(candidate) ?? [];
+        return ![...activeWritePaths.values()].some((activePaths) =>
+          candidatePaths.some((candidatePath) => activePaths.some((activePath) => pathsOverlap(candidatePath, activePath))),
+        );
+      });
+      const id = readyIndex >= 0 ? ready.splice(readyIndex, 1)[0] : undefined;
       if (id === undefined) {
         // Nothing runnable right now. If nothing is running either, the DAG is
         // inconsistent — bail out rather than park forever.
@@ -219,7 +258,13 @@ export async function runSubAgentBatch(
         await waitForWork();
         continue;
       }
-      await runOne(id);
+      activeWritePaths.set(id, writePaths.get(id) ?? []);
+      try {
+        await runOne(id);
+      } finally {
+        activeWritePaths.delete(id);
+        notify();
+      }
     }
   };
 

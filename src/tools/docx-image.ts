@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, extname } from 'node:path';
+import { deflateRawSync } from 'node:zlib';
 import type { ToolDefinition } from './types.js';
 import { escapeXml, resolveDesktopPath, zip } from './docx.js';
 
@@ -202,7 +203,9 @@ function zipMixed(files: Map<string, string | Buffer>): Buffer {
   for (const [name, content] of files) {
     const nameBuffer = Buffer.from(name);
     const data = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
-    const compressed = require('node:zlib').deflateRawSync(data);
+    // ESM package — a bare require() throws ReferenceError at call time. See
+    // the same fix in pptx.ts.
+    const compressed = deflateRawSync(data);
     const crc = crc32(data);
     
     const local = Buffer.alloc(30);

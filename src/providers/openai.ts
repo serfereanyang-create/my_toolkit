@@ -12,6 +12,8 @@ import type { VendorProfile, VendorOpenAIUsage } from './vendors.js';
 import { VENDOR_PROFILES, detectVendor } from './vendors.js';
 import { buildToolSystemPromptParts } from './protocol.js';
 import { buildAutoCacheMessages } from './cacheStrategy.js';
+import { controlledProvider } from './requestControl.js';
+import { throwIfAborted } from '../utils/cancellation.js';
 
 export type OpenAIProviderOptions = {
   apiKey?: string;
@@ -22,7 +24,7 @@ export type OpenAIProviderOptions = {
 };
 
 export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
-  return {
+  const provider: Provider = {
     name: 'openai',
     model: options.model,
     async complete(request: ProviderRequest): Promise<ProviderResponse> {
@@ -72,8 +74,10 @@ export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
           reasoningEffort: effort,
           vendorExtra,
           vendor,
+          signal: request.signal,
         });
       } catch (streamError) {
+        throwIfAborted(request.signal);
         // Stream drops (undici "terminated", proxy idle kill) are common on long tool turns.
         // Retry once non-streaming so the agent can still finish after tools ran.
         try {
@@ -86,6 +90,7 @@ export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
             reasoningEffort: effort,
             vendorExtra,
             vendor,
+            signal: request.signal,
           });
         } catch {
           throw streamError instanceof Error ? streamError : new Error(String(streamError));
@@ -93,9 +98,11 @@ export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
       }
     },
   };
+  return controlledProvider(provider);
 }
 
 async function completeStreaming(options: {
+  signal?: AbortSignal;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -134,6 +141,7 @@ async function completeStreaming(options: {
       accept: 'text/event-stream',
     },
     body: JSON.stringify(buildBody(withExtras)),
+    signal: options.signal,
   });
 
   // Transparent passthrough with automatic downgrade. Two attempts:
@@ -154,8 +162,9 @@ async function completeStreaming(options: {
   let streamError: unknown;
 
   try {
-    for await (const data of iterateSseDataLines(response)) {
-      if (!data || data === '[DONE]') continue;
+    for await (const data of iterateSseDataLines(response, undefined, options.signal)) {
+      if (data === '[DONE]') break;
+      if (!data) continue;
       let json: OpenAIStreamChunk;
       try {
         json = JSON.parse(data) as OpenAIStreamChunk;
@@ -186,6 +195,7 @@ async function completeStreaming(options: {
       }
     }
   } catch (error) {
+    throwIfAborted(options.signal);
     streamError = error;
   }
 
@@ -213,6 +223,7 @@ async function completeStreaming(options: {
 }
 
 async function completeNonStreaming(options: {
+  signal?: AbortSignal;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -245,6 +256,7 @@ async function completeNonStreaming(options: {
       authorization: `Bearer ${options.apiKey}`,
     },
     body: JSON.stringify(buildBody(withExtras)),
+    signal: options.signal,
   });
 
   // Transparent passthrough + automatic downgrade. Two attempts:
@@ -316,14 +328,22 @@ function parseArgs(value: string): unknown {
 // Normalize OpenAI's usage block to our real-token shape. Returns undefined when
 // no usage was reported so we never persist fabricated zeros.
 // Vendor-aware: DeepSeek 等厂商的缓存命中在专有字段 prompt_cache_hit_tokens。
-function usageFromOpenAI(
+//
+// `inputTokens` is reported NET of cache, because that is what Anthropic's
+// `input_tokens` means and every consumer downstream adds the two together:
+// cache-hit rate is `read / (input + read)`, cost bills input and cache read at
+// different prices, and the usage page sums `input + cacheRead`. OpenAI's
+// `prompt_tokens` already INCLUDES the cached part, so leaving it as-is counted
+// the cached tokens twice and halved every hit rate — a DeepSeek turn with 384896
+// cached of 444742 prompt tokens showed 46% instead of 86%.
+export function usageFromOpenAI(
   usage: VendorOpenAIUsage | undefined,
   vendor?: VendorProfile
 ): { inputTokens: number; outputTokens: number; cacheReadTokens?: number } | undefined {
   if (!usage) return undefined;
-  const inputTokens = typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0;
+  const promptTokens = typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0;
   const outputTokens = typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0;
-  if (inputTokens === 0 && outputTokens === 0) return undefined;
+  if (promptTokens === 0 && outputTokens === 0) return undefined;
 
   const cacheReadTokens = vendor?.extractCacheReadTokens
     ? vendor.extractCacheReadTokens(usage)
@@ -331,7 +351,11 @@ function usageFromOpenAI(
       ? usage.prompt_tokens_details.cached_tokens
       : undefined;
 
-  return cacheReadTokens !== undefined ? { inputTokens, outputTokens, cacheReadTokens } : { inputTokens, outputTokens };
+  if (cacheReadTokens === undefined) return { inputTokens: promptTokens, outputTokens };
+  // Guard against a proxy that reports a cache hit larger than the prompt: never
+  // return a negative input count.
+  const inputTokens = Math.max(0, promptTokens - cacheReadTokens);
+  return { inputTokens, outputTokens, cacheReadTokens };
 }
 
 // A custom proxy or non-reasoning model rejects unknown params with 400/404/422.

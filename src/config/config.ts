@@ -53,6 +53,8 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
     baseUrl: args.baseUrl ?? baseUrlFromEnv(provider, env) ?? mergedFileConfig.baseUrl,
     customProvider: args.customProvider ?? false,
     computerAnyApp: args.computerAnyApp ?? false,
+    backgroundBrowser: args.backgroundBrowserOnly === true || args.backgroundBrowser === true,
+    backgroundBrowserOnly: args.backgroundBrowserOnly ?? false,
     excelAutomation: args.excelAutomation ?? false,
     allowedApps: args.allowedApps,
     apiKey: apiKeyFromEnv(provider, env) ?? mergedFileConfig.apiKey,
@@ -63,6 +65,7 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
     prompt: args.prompt,
     maxSteps: args.maxSteps ?? maxStepsFromEnv(env) ?? mergedFileConfig.maxSteps,
     maxTokens: args.maxTokens ?? maxTokensFromEnv(env) ?? mergedFileConfig.maxTokens,
+    requestTimeoutMs: args.requestTimeoutMs ?? mergedFileConfig.requestTimeoutMs,
     noBanner: args.noBanner ?? false,
     version: args.version ?? false,
     json: args.json ?? false,
@@ -77,6 +80,8 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
     doctor: args.doctor ?? false,
     invokeTool: args.invokeTool,
     toolInput: args.toolInput,
+    guiTool: args.guiTool,
+    guiInput: args.guiInput,
     completionShell: args.completionShell,
     confirmPlan: args.confirmPlan ?? false,
     autoReview: args.autoReview ?? autoReviewFromEnv(env) ?? mergedFileConfig.autoReview ?? false,
@@ -85,13 +90,22 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
     usageLog: args.usageLog ?? env.AICODE_USAGE_LOG,
     reasoningEffort: args.reasoningEffort ?? reasoningEffortFromEnv(env) ?? mergedFileConfig.reasoningEffort,
     toolScope: args.toolScope ?? toolScopeFromEnv(env) ?? mergedFileConfig.toolScope,
+    // Per-call tier dispatch is ON for a real CLI/desktop run (this function is
+    // the only place that assembles the user's live config) and OFF for
+    // hand-built runtimes, which is what keeps tests and fixtures on one model:
+    // routing a fixture to a live provider would turn `node --test` into network
+    // traffic. `--base-url` is an explicit "use exactly this endpoint" request
+    // (a local fixture, a proxy, a self-hosted gateway), so routing those calls
+    // to registry models would break the one thing the caller asked for. A
+    // config file or profile can still force it either way.
+    dispatch: mergedFileConfig.dispatch ?? !args.baseUrl,
     network: resolveNetworkConfig(env, mergedFileConfig),
   };
 }
 
 // A conservative default allowlist of read-only reference sources. Users extend
 // this via .aicode/config.json `network.allowlist` or AICODE_NETWORK_ALLOWLIST.
-const DEFAULT_NETWORK_ALLOWLIST = [
+export const DEFAULT_NETWORK_ALLOWLIST = [
   'wikipedia.org',
   'developer.mozilla.org',
   'api.github.com',
@@ -130,6 +144,7 @@ export function safeConfig(config: AppConfig) {
     profile: config.profile,
     maxSteps: config.maxSteps,
     maxTokens: config.maxTokens,
+    requestTimeoutMs: config.requestTimeoutMs,
     json: config.json,
     noColor: config.noColor,
     quiet: config.quiet,
@@ -283,7 +298,9 @@ function normalizeProfile(input: Record<string, unknown>): FileProfileConfig {
     sessionDir: typeof input.sessionDir === 'string' ? input.sessionDir : undefined,
     maxSteps: typeof input.maxSteps === 'number' && Number.isInteger(input.maxSteps) && input.maxSteps > 0 ? input.maxSteps : undefined,
     maxTokens: typeof input.maxTokens === 'number' && Number.isInteger(input.maxTokens) && input.maxTokens > 0 ? input.maxTokens : undefined,
+    requestTimeoutMs: typeof input.requestTimeoutMs === 'number' && Number.isSafeInteger(input.requestTimeoutMs) && input.requestTimeoutMs > 0 && input.requestTimeoutMs <= 2_147_483_647 ? input.requestTimeoutMs : undefined,
     autoReview: typeof input.autoReview === 'boolean' ? input.autoReview : undefined,
+    dispatch: typeof input.dispatch === 'boolean' ? input.dispatch : undefined,
     delegation: delegationValue(input.delegation),
     toolScope: toolScopeValue(input.toolScope),
     network: normalizeNetwork(input.network),

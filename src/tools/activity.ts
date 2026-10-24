@@ -5,9 +5,9 @@ import { promisify } from 'node:util';
 import type { SessionRecord } from '../session/store.js';
 import { resolveWorkspacePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
 const execFileAsync = promisify(execFile);
-const ignoredDirs = new Set(['node_modules', 'dist', '.git', '.gradle', 'build']);
 
 type RecentActivityInput = {
   maxSessions: number;
@@ -79,7 +79,7 @@ async function walk(current: string, workspaceRoot: string, files: Array<{ path:
   const entries = await readdir(current, { withFileTypes: true });
   for (const entry of entries) {
     if (files.length >= maxFiles) return;
-    if (entry.isDirectory() && ignoredDirs.has(entry.name)) continue;
+    if (entry.isDirectory() && isIgnoredDirName(entry.name)) continue;
     await walk(join(current, entry.name), workspaceRoot, files, maxFiles);
   }
 }

@@ -2,8 +2,8 @@ import { readdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
-const IGNORED = new Set(['node_modules', '.git', 'dist', 'build', '.aicode']);
 
 function asRecord(input: unknown): Record<string, unknown> {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new Error('expected an object');
@@ -45,7 +45,7 @@ async function walk(current: string, out: string[], maxResults: number, match: (
     if (out.length >= maxResults) return;
     const full = join(current, entry.name);
     if (entry.isDirectory()) {
-      if (IGNORED.has(entry.name)) continue;
+      if (isIgnoredDirName(entry.name)) continue;
       await walk(full, out, maxResults, match);
       continue;
     }

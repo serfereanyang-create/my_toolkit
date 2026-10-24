@@ -95,6 +95,21 @@ test('compact and standard scopes expose progressively larger registries', () =>
   assert.ok(full.includes('git_commit'));
 });
 
+test('compact can still do web reading, which is what a lookup prompt asks for', () => {
+  // "打开 https://... 找一篇论文" is classified small, so it runs in compact.
+  // Without these three the agent literally cannot do what it was asked, which
+  // is the reported failure: the tools to download and analyse material were
+  // missing. They stay behind the network gate in decideApproval.
+  const compact = names('compact');
+  assert.ok(compact.includes('fetch_url'));
+  assert.ok(compact.includes('web_search'));
+  assert.ok(compact.includes('download_file'));
+  assert.ok(compact.includes('pdf_to_text'));
+  // Downloading writes, so compact still must not expose arbitrary writes.
+  assert.ok(!compact.includes('write_file'));
+  assert.ok(!compact.includes('run_command'));
+});
+
 test('limitProviderTools passes a small list through untouched', () => {
   const tools = createDefaultToolRegistry().list().slice(0, 5);
   const result = limitProviderTools(tools, { max: 10 });

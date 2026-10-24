@@ -1,32 +1,11 @@
 import type { NavLanguage } from './types.js';
 
-export const NAV_IGNORED_DIRS = new Set([
-  'node_modules',
-  'dist',
-  'build',
-  'coverage',
-  '.git',
-  '.gradle',
-  '.aicode',
-  '.aicode-smoke',
-  '.smoke',
-  '.turbo',
-  '.next',
-  'out',
-  'target',
-  'vendor',
-  '__pycache__',
-  '.venv',
-  'venv',
-  '.mypy_cache',
-  '.pytest_cache',
-  '.idea',
-  '.vs',
-]);
-
-export function isIgnoredDirName(name: string): boolean {
-  return NAV_IGNORED_DIRS.has(name) || name.startsWith('.aicode');
-}
+/**
+ * Nav-specific view of the shared walker policy: there is exactly one list of
+ * ignored directories (`src/workspace/ignored.ts`), re-exported here so the nav
+ * code keeps its local entry point without a second copy drifting again.
+ */
+export { IGNORED_DIR_NAMES as NAV_IGNORED_DIRS, isIgnoredDirName } from '../workspace/ignored.js';
 
 export function isTsJsFile(path: string): boolean {
   return /\.([cm]?[jt]sx?)$/i.test(path);

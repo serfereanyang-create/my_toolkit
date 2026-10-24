@@ -90,6 +90,31 @@ test('fetch_url rejects invalid input at validate', async () => {
   assert.equal(result.ok, false);
 });
 
+test('download_file passes the same network gate as fetch_url', async () => {
+  // download_file is now reachable from the compact scope, so the gate is the
+  // only thing standing between a small prompt and an arbitrary outbound
+  // request. It must refuse exactly as fetch_url does.
+  const registry = createDefaultToolRegistry();
+  const result = await registry.execute(
+    'download_file',
+    { url: 'https://evil.example.com/paper.pdf', to: 'downloads/paper.pdf' },
+    { workspaceRoot: process.cwd(), approval: 'auto', networkAllowlist: ALLOWLIST },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.output, /blocked|allowlist/i);
+});
+
+test('download_file refuses an SSRF target even when it is allowlisted', async () => {
+  const registry = createDefaultToolRegistry();
+  const result = await registry.execute(
+    'download_file',
+    { url: 'http://169.254.169.254/latest/meta-data/', to: 'downloads/meta.json' },
+    { workspaceRoot: process.cwd(), approval: 'auto', networkAllowlist: ['169.254.169.254'] },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.output, /SSRF|blocked/i);
+});
+
 test('htmlToText strips tags/scripts and decodes entities', () => {
   const html = '<html><head><style>.x{color:red}</style></head><body><h1>Title</h1><script>evil()</script><p>Hello&nbsp;&amp; welcome</p><ul><li>one</li><li>two</li></ul></body></html>';
   const text = htmlToText(html);

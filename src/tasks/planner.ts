@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { inspectTaskGraph } from './graph.js';
 import { classifyTaskComplexity } from './complexity.js';
 import type { TaskBoard, TaskItem } from './types.js';
 
@@ -103,6 +104,8 @@ export function planBoardFromModel(goal: string, proposal: ProposedPlan, now = n
   const createdAt = now.toISOString();
   const id = `board_${createdAt.replace(/[-:.TZ]/g, '').slice(0, 14)}_${randomUUID().slice(0, 8)}`;
   const tasks = normalizeProposedTasks(proposal.tasks, goal);
+  const graph = inspectTaskGraph(tasks);
+  if (graph.issues.length) throw new Error(`计划依赖无效：${graph.issues.join('；')}`);
 
   return {
     id,
@@ -117,25 +120,30 @@ export function planBoardFromModel(goal: string, proposal: ProposedPlan, now = n
 }
 
 /**
- * Fill in the fields the model may have left out and drop ids it invented that
- * would break dependency resolution (a `dependsOn` naming a task that is not in
- * the list would leave that task permanently unrunnable — `nextRunnableTask`
- * waits for a dependency that never becomes done).
+ * Resolve omitted ids without changing explicit dependency relationships.
+ * The graph check rejects ambiguous references before a proposal is persisted.
  */
 function normalizeProposedTasks(tasks: ProposedTask[], goal: string): TaskItem[] {
+  const explicitIds = new Set<string>();
+  for (const task of tasks) {
+    const id = task.id?.trim();
+    if (!id) continue;
+    if (explicitIds.has(id)) throw new Error(`任务编号重复：${id}`);
+    explicitIds.add(id);
+  }
   const finalIds = new Set<string>();
   const resolved = tasks.map((task, index) => {
     let id = (task.id ?? '').trim() || `task_${index + 1}`;
     // A duplicate id would make `dependsOn` ambiguous and let one task's
     // completion satisfy two nodes.
     let suffix = 2;
-    while (finalIds.has(id)) id = `${id}_${suffix++}`;
+    while (finalIds.has(id) || !task.id?.trim() && explicitIds.has(id)) id = `task_${index + 1}_${suffix++}`;
     finalIds.add(id);
     return { task, index, id };
   });
 
   return resolved.map(({ task, index, id }) => {
-    const dependsOn = (task.dependsOn ?? []).filter((dep) => finalIds.has(dep) && dep !== id);
+    const dependsOn = [...new Set((task.dependsOn ?? []).map(dep => dep.trim()))];
     return {
       id,
       title: task.title.trim() || `Step ${index + 1}`,

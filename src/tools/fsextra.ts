@@ -2,6 +2,7 @@ import { mkdir, readdir, stat, copyFile, rm } from 'node:fs/promises';
 import { dirname, join, relative, basename } from 'node:path';
 import { pathScopeFor, resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
 /*
  * Extra filesystem tools. Reads use resolveReadablePath (workspace + Desktop/
@@ -148,7 +149,6 @@ export const countFilesTool: ToolDefinition<{ path: string }> = {
   },
 };
 
-const IGNORED = new Set(['node_modules', '.git', 'dist', 'build', '.gradle', '.aicode']);
 
 async function walk(dir: string, regex: RegExp, out: string[], max: number): Promise<void> {
   if (out.length >= max) return;
@@ -161,7 +161,7 @@ async function walk(dir: string, regex: RegExp, out: string[], max: number): Pro
   for (const entry of entries) {
     if (out.length >= max) return;
     if (entry.isDirectory()) {
-      if (IGNORED.has(entry.name)) continue;
+      if (isIgnoredDirName(entry.name)) continue;
       await walk(join(dir, entry.name), regex, out, max);
     } else if (regex.test(entry.name)) {
       out.push(join(dir, entry.name));
@@ -178,7 +178,7 @@ async function walkCount(dir: string, onFile: (name: string) => void): Promise<v
   }
   for (const entry of entries) {
     if (entry.isDirectory()) {
-      if (IGNORED.has(entry.name)) continue;
+      if (isIgnoredDirName(entry.name)) continue;
       await walkCount(join(dir, entry.name), onFile);
     } else {
       onFile(entry.name);

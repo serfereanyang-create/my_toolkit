@@ -2,8 +2,8 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { pathScopeFor, resolveWorkspacePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
-const ignoredDirs = new Set(['node_modules', 'dist', '.git', '.gradle', 'build', '.aicode', '.aicode-smoke']);
 
 export const searchTextTool: ToolDefinition<{ query: string; path: string; maxMatches: number }> = {
   name: 'search_text',
@@ -37,7 +37,7 @@ async function search(current: string, workspaceRoot: string, query: string, max
     const entries = await readdir(current, { withFileTypes: true });
     for (const entry of entries) {
       if (matches.length >= maxMatches) return;
-      if (entry.isDirectory() && ignoredDirs.has(entry.name)) continue;
+      if (entry.isDirectory() && isIgnoredDirName(entry.name)) continue;
       await search(join(current, entry.name), workspaceRoot, query, maxMatches, matches);
     }
     return;

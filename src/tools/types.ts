@@ -33,12 +33,13 @@ export type SubAgentOptions = {
    * 'cheap' swaps in the tier router's cheap provider so a delegated
    * mechanical task costs less than running it on the main model.
    */
-  tier?: 'expensive' | 'cheap';
+  tier?: 'expensive' | 'standard' | 'cheap';
 };
 
 export type ParallelSafety = 'safe' | 'unsafe';
 
 export type ToolContext = {
+  signal?: AbortSignal;
   workspaceRoot: string;
   approval: ApprovalMode;
   confirm?: (message: string, request?: ApprovalRequest) => Promise<ApprovalDecision>;
@@ -97,6 +98,7 @@ export type ToolDefinition<TInput = unknown> = {
   name: string;
   description: string;
   inputHint: string;
+  inputSchema?: Record<string, unknown>;
   risk: ToolRisk;
   /** Only tools explicitly marked safe may run in a read-only batch. */
   parallelSafe?: boolean;
@@ -124,6 +126,7 @@ export function toolToProviderSpec(tool: ToolDefinition): ProviderToolSpec {
     name: tool.name,
     description: tool.description,
     inputHint: tool.inputHint,
+    ...(tool.inputSchema ? { inputSchema: tool.inputSchema } : {}),
     risk: tool.risk,
   };
 }

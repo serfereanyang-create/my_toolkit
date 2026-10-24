@@ -103,33 +103,24 @@ test('planBoardFromModel keeps the model prose and its own steps', () => {
   assert.equal(board.tasks[0].acceptance, '工具落盘并置为待批准');
 });
 
-test('planBoardFromModel drops dependency ids that name no step', () => {
-  const board = planBoardFromModel(LARGE_GOAL, {
+test('planBoardFromModel refuses missing and self references rather than silently dropping them', () => {
+  assert.throws(() => planBoardFromModel(LARGE_GOAL, {
     planMarkdown: 'body',
     tasks: [
       { id: 'a', title: 'A', dependsOn: ['ghost', 'a'] },
       { title: 'B', dependsOn: ['a'] },
     ],
-  });
-  // 'ghost' names nothing and 'a' is the task itself: either would leave the
-  // task waiting on a dependency that can never become done.
-  assert.deepEqual(board.tasks[0].dependsOn, []);
-  assert.deepEqual(board.tasks[1].dependsOn, ['a']);
-  assert.equal(board.tasks[1].id, 'task_2');
+  }), /依赖/);
 });
 
-test('planBoardFromModel keeps ids unique when the model repeats one', () => {
-  const board = planBoardFromModel(LARGE_GOAL, {
+test('planBoardFromModel rejects ambiguous repeated explicit ids', () => {
+  assert.throws(() => planBoardFromModel(LARGE_GOAL, {
     planMarkdown: 'body',
     tasks: [
       { id: 'dup', title: 'A' },
       { id: 'dup', title: 'B' },
     ],
-  });
-  const ids = board.tasks.map((task) => task.id);
-  assert.equal(new Set(ids).size, 2);
-  assert.equal(ids[0], 'dup');
-  assert.equal(ids[1], 'dup_2');
+  }), /编号重复/);
 });
 
 test('validateProposePlanInput rejects a plan with no body or no steps', () => {

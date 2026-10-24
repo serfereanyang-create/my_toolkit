@@ -275,6 +275,41 @@ describe('runSubAgentBatch — 失败传播', () => {
 });
 
 describe('runSubAgentBatch — 超时与父级取消', () => {
+  it('父级在批次启动前已取消时不启动任何子任务', async () => {
+    mockRun.mockImplementation(async (task) => okResult(task));
+    const results = await runSubAgentBatch(
+      { subagents: [spec('a'), spec('b'), spec('after', ['a'])], concurrency: 3 },
+      runtime({ cancelRequested: () => true }),
+    );
+
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(results).toHaveLength(3);
+    for (const result of results) {
+      expect(result.cancelled).toBe(true);
+      expect(result.ok).toBe(false);
+      expect(result.sessionId).toBe('');
+    }
+  });
+
+  it('任务完成时父级已经取消，即使任务未轮询也不再启动后续任务', async () => {
+    let cancelled = false;
+    mockRun.mockImplementation(async (task) => {
+      cancelled = true;
+      return okResult(task);
+    });
+    const results = await runSubAgentBatch(
+      { subagents: [spec('first'), spec('next'), spec('after', ['first'])], concurrency: 1 },
+      runtime({ cancelRequested: () => cancelled }),
+    );
+
+    expect(calledIds()).toEqual(['first']);
+    expect(results[0].ok).toBe(true);
+    for (const result of results.slice(1)) {
+      expect(result.cancelled).toBe(true);
+      expect(result.sessionId).toBe('');
+    }
+  });
+
   it('单任务超时按协作式中止，标记 timedOut 并保留中止说明', async () => {
     mockRun.mockImplementation(async (s, _rt, _up, _goal, options) => {
       // 模拟子 agent 在安全检查点轮询中止判据：真实 runAgentTurn 就是这么停的。
@@ -324,5 +359,49 @@ describe('runSubAgentBatch — 超时与父级取消', () => {
     expect(by.get('b')!.sessionId).toBe('');
     expect(by.get('c')!.cancelled).toBe(true);
     expect(results).toHaveLength(3);
+  });
+});
+
+describe('runSubAgentBatch — 优先级与写入互斥', () => {
+  it('同一就绪队列按 priority 从高到低启动', async () => {
+    mockRun.mockImplementation(async (s) => okResult(s));
+    await runSubAgentBatch({
+      concurrency: 1,
+      subagents: [
+        { ...spec('low'), priority: 1 },
+        { ...spec('high'), priority: 10 },
+        { ...spec('medium'), priority: 5 },
+      ],
+    }, runtime());
+    expect(calledIds()).toEqual(['high', 'medium', 'low']);
+  });
+
+  it('重叠 writePaths 不同时运行，但不冲突的任务仍可并行', async () => {
+    const events: string[] = [];
+    mockRun.mockImplementation(async (s) => {
+      events.push(`start:${s.id}`);
+      await sleep(8);
+      events.push(`done:${s.id}`);
+      return okResult(s);
+    });
+
+    await runSubAgentBatch({
+      concurrency: 3,
+      subagents: [
+        { ...spec('owner'), writePaths: ['src/shared'] },
+        { ...spec('nested'), writePaths: ['src/shared/file.ts'] },
+        { ...spec('other'), writePaths: ['src/other.ts'] },
+      ],
+    }, runtime());
+
+    expect(events.indexOf('done:owner')).toBeLessThan(events.indexOf('start:nested'));
+    expect(events.indexOf('start:other')).toBeLessThan(events.indexOf('done:owner'));
+  });
+
+  it('拒绝越出工作区的 writePaths', async () => {
+    await expect(runSubAgentBatch({
+      subagents: [{ ...spec('escape'), writePaths: ['../outside.ts'] }],
+    }, runtime({ config: { workspaceRoot: 'C:/workspace' } })).then(() => undefined))
+      .rejects.toThrow(/writePaths must stay inside/);
   });
 });

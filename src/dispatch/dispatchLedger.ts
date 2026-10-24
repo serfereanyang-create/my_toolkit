@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { DISPATCH_TIER_LABELS } from './tierRouter.js';
 import type { DispatchTier } from './tierRouter.js';
 
 export type DispatchLedgerEntry = {
@@ -22,22 +23,50 @@ export function dispatchLedgerPath(): string {
 }
 
 /**
+ * The 省钱分级 usage ledger the /省钱分级 spec names
+ * (`<workspace>/.shengqian-logs/usage-ledger.jsonl`).
+ *
+ * The spec requires every tiered call to append here, and the desktop settings
+ * panel tells the user their calls are recorded — but nothing ever wrote to
+ * either that file or the .aicode one. This is the workspace-scoped path the
+ * dispatcher is contracted to use; the .aicode path stays for the legacy
+ * global view.
+ */
+export function shengqianLedgerPath(workspaceRoot: string): string {
+  return resolve(workspaceRoot, '.shengqian-logs', 'usage-ledger.jsonl');
+}
+
+/**
  * Append one dispatch row. Never throws into the agent loop: losing a ledger
  * line must not fail a turn that already produced a result.
+ *
+ * Writes both the global .aicode ledger and, when a workspace is known, the
+ * spec's per-workspace .shengqian-logs ledger.
  */
-export function recordDispatch(entry: DispatchLedgerEntry, path = dispatchLedgerPath()): void {
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, `${JSON.stringify(entry)}\n`, 'utf-8');
-  } catch {
-    // Accounting is best-effort by design.
+export function recordDispatch(
+  entry: DispatchLedgerEntry,
+  path = dispatchLedgerPath(),
+  workspaceRoot?: string,
+): void {
+  const targets = workspaceRoot ? [path, shengqianLedgerPath(workspaceRoot)] : [path];
+  for (const target of targets) {
+    try {
+      mkdirSync(dirname(target), { recursive: true });
+      appendFileSync(target, `${JSON.stringify(entry)}\n`, 'utf-8');
+    } catch {
+      // Accounting is best-effort by design.
+    }
   }
 }
 
-/** The status line the command prints before dispatching. */
+/**
+ * The status line the command prints before dispatching.
+ *
+ * Reads the label from the router's own table rather than hardcoding two of
+ * the three tiers: the ternary this replaced rendered `standard` as "便宜档".
+ */
 export function formatDispatchStatus(stage: string, tier: DispatchTier, provider: string, model: string): string {
-  const label = tier === 'expensive' ? '贵档' : '便宜档';
-  return `[${stage}] ${label} · ${provider}/${model}`;
+  return `[${stage}] ${DISPATCH_TIER_LABELS[tier]} · ${provider}/${model}`;
 }
 
 /** Read the ledger back, newest last. Missing file yields an empty list. */

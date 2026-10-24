@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { deflateRawSync } from 'node:zlib';
 import type { ToolDefinition } from './types.js';
 import { escapeXml, resolveDesktopPath } from './docx.js';
 
@@ -195,7 +196,12 @@ function zipFiles(files: Map<string, string>): Buffer {
   for (const [name, content] of files) {
     const nameBuffer = Buffer.from(name);
     const data = Buffer.from(content, 'utf8');
-    const compressed = require('node:zlib').deflateRawSync(data);
+    // `require` does not exist here: this package is ESM ("type": "module",
+    // module: NodeNext), so the built .js is loaded as ESM and a bare require()
+    // throws `ReferenceError: require is not defined` at call time. It only
+    // ever surfaced when create_pptx actually ran — nothing type-checks it,
+    // and no test executed the tool.
+    const compressed = deflateRawSync(data);
     const crc = crc32(data);
     
     const local = Buffer.alloc(30);

@@ -36,6 +36,11 @@ test('extracts high-confidence readonly intents and slots', () => {
   assert.equal(extractCommand('average hit rate').intent, 'cache_probe');
   // Longer code-oriented cache talk should NOT force probe (leave to model/search).
   assert.notEqual(extractCommand('帮我实现一个缓存机制并搜索 cacheKey').intent, 'cache_probe');
+  // Explanatory questions about the concept must reach the model: the probe
+  // answers about this process's lookup counters, which is not the question.
+  assert.notEqual(extractCommand('解释一下缓存命中率').intent, 'cache_probe');
+  assert.notEqual(extractCommand('用三句话说说缓存为什么能省钱').intent, 'cache_probe');
+  assert.notEqual(extractCommand('explain what cache hit rate means').intent, 'cache_probe');
 });
 
 test('extracts desktop and absolute docx paths for one-shot read', () => {

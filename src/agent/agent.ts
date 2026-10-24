@@ -27,31 +27,41 @@ import { globalToolHealth } from './toolHealth.js';
 import { buildToolSystemPrompt, buildToolSystemPromptParts } from '../providers/protocol.js';
 import { planLocalFallback } from './fallback.js';
 import { PLANNING_TURN_FINAL_CALL, PLANNING_TURN_INSTRUCTION, PLANNING_TURN_MAX_STEPS, shouldUseTaskBoard } from '../tasks/planner.js';
+import { SURVEY_READ_TOOLS, shouldSurveyFirst, surveyBlocksTool, surveyRefusal } from '../tasks/survey.js';
 import { formatToolStrategy, planToolStrategy, recentToolResultsFromSession, recoveryHintForToolFailure, nextStepHint } from './toolStrategy.js';
 import { detectLocale, resolveSessionLocale, type Locale } from '../i18n/locale.js';
 import { isBlockedOutput } from '../i18n/messages.js';
 import { formatResultCard, isMetaTranslatedDone } from '../ui/resultCard.js';
 import { appendUsage, resolveUsageLogPath } from '../usage/ledger.js';
+import { recordDispatch } from '../dispatch/dispatchLedger.js';
+import { createDispatchPlan, type DispatchPlan } from '../dispatch/plan.js';
+import { pickStepTier } from '../dispatch/stepRouter.js';
+import type { DispatchTier } from '../dispatch/tierRouter.js';
 import { recordTrajectory, TRAJECTORY_TAIL } from '../session/modelTrajectory.js';
 import { buildLowCacheHint, collectCacheProbe } from '../probe/cacheProbe.js';
 import { MAX_SUBAGENT_DEPTH } from '../tools/subagent.js';
-import type { SubAgentOptions } from '../tools/types.js';
+import type { SubAgentOptions, ToolDefinition } from '../tools/types.js';
 import { getReasoningCapability, clampReasoningEffort } from '../providers/capabilities.js';
 import { analyzeTaskComplexity } from '../tasks/complexity.js';
 import { COMPUTER_USE_STRATEGY, computerUseShouldWake } from '../tools/computer.js';
+import { BACKGROUND_BROWSER_STRATEGY, createBackgroundBrowserTools } from '../tools/backgroundBrowser.js';
+import { BACKGROUND_APP_STRATEGY, createBackgroundAppTools } from '../tools/backgroundApp.js';
+import { BACKGROUND_NATIVE_STRATEGY, createBackgroundNativeTools } from '../tools/backgroundNative.js';
 import { Supervisor } from '../supervisor/supervisor.js';
 import { AutoReviewGate, reviewAction } from '../safety/autoReview.js';
+import { withRequestControl } from '../providers/requestControl.js';
 
 type PromptCacheBasis = {
   stablePrefix: string;
   totalChars: number;
 };
+const activeTurnControllers = new WeakMap<AgentRuntime, Set<AbortController>>();
 
 /**
  * Post-turn bookkeeping (the automatic memory entry, the reflexion lesson) is
  * started but not awaited, so a slow disk never delays the answer. Those writes
- * still have to finish before the process or a test temp workspace goes away;
- * close() drains this set.
+ * still have to finish before the process — or a test's temp workspace — goes
+ * away; close() drains this set.
  */
 const backgroundWrites = new Set<Promise<unknown>>();
 
@@ -68,10 +78,14 @@ export async function flushBackgroundWrites() {
 }
 
 export type AgentRuntime = {
+  requestSignal?: AbortSignal;
+  cancelCurrentTurn?: () => void;
   config: AppConfig;
   provider: Provider;
   tools: ToolRegistry;
   allTools?: ToolRegistry;
+  toolFilter?: (tool: Pick<ToolDefinition, 'name' | 'risk' | 'description'>) => boolean;
+  hostToolInvoke?: import('../cli/hostToolBroker.js').HostToolInvoker;
   sessions: SessionStore;
   checkpoints?: CheckpointStore;
   session: SessionRecord;
@@ -150,6 +164,14 @@ export type AgentRuntime = {
    * prevent unbounded recursion.
    */
   subAgentDepth?: number;
+  /**
+   * Which 省钱分级 tier this runtime runs on, when it runs on one.
+   *
+   * Set by the sub-agent runner after applyTierOverride resolves the tier; the
+   * turn's usage block reads it to write the tiered-dispatch ledger, which is
+   * the only place real token counts are available.
+   */
+  dispatchTier?: 'expensive' | 'standard' | 'cheap';
   /**
    * Injected by repl.ts so spawn_subagent can invoke a new agent turn
    * without a dynamic import (which would create a circular dependency).
@@ -334,10 +356,26 @@ export class CancelledError extends Error {
 
 /** Abort the turn at the current checkpoint when a cancel was requested. */
 export function throwIfCancelled(runtime: AgentRuntime): void {
-  if (runtime.cancelRequested?.()) throw new CancelledError();
+  if (runtime.cancelRequested?.() || runtime.requestSignal?.aborted) throw new CancelledError();
 }
 
 export async function runAgentTurn(runtime: AgentRuntime, prompt: string, options: AgentTurnOptions = {}): Promise<AgentTurnResult> {
+  const previousSignal = runtime.requestSignal;
+  const previousCancel = runtime.cancelCurrentTurn;
+  const controller = new AbortController();
+  const controllers = activeTurnControllers.get(runtime) ?? new Set<AbortController>();
+  controllers.add(controller);
+  activeTurnControllers.set(runtime, controllers);
+  runtime.requestSignal = previousSignal ? AbortSignal.any([previousSignal, controller.signal]) : controller.signal;
+  runtime.cancelCurrentTurn = () => { for (const active of controllers) active.abort(new CancelledError()); };
+  try { return await runControlledAgentTurn(runtime, prompt, options); }
+  finally {
+    try { if (runtime.requestSignal.aborted) await runtime.commandJobs?.settleCancellation?.(runtime.requestSignal); }
+    finally { controllers.delete(controller); if (!controllers.size) activeTurnControllers.delete(runtime); runtime.requestSignal = previousSignal; runtime.cancelCurrentTurn = previousCancel; }
+  }
+}
+
+async function runControlledAgentTurn(runtime: AgentRuntime, prompt: string, options: AgentTurnOptions): Promise<AgentTurnResult> {
   runtime.ui.turnStart(options.displayText ?? prompt);
 
   const ownsUnit = !options.gitSafetyUnit && Boolean(runtime.gitSafety);
@@ -361,6 +399,24 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
   // persist one ledger line with the turn total. Written whether the turn
   // succeeds or fails, so genuine usage is never lost.
   const usageTotals: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number; localCachePredictedRate?: number } = { inputTokens: 0, outputTokens: 0 };
+  /**
+   * The same totals, split by dispatch tier.
+   *
+   * A turn is no longer on one tier from start to finish — the plan/final-answer
+   * calls run on the expensive model and the mechanical follow-through on the
+   * cheap one — so a single ledger row stamped with the tier of whichever call
+   * happened to be last would misreport both halves. One row per tier that
+   * actually answered.
+   */
+  const tierUsage = new Map<DispatchTier, { inputTokens: number; outputTokens: number; calls: number }>();
+  /**
+   * Per-turn dispatch plan (see dispatch/plan.ts): which tiers exist this turn
+   * and one provider per tier. Built once per turn — resolving reads a config
+   * file and constructs clients, and a plan that changed mid-turn would make the
+   * ledger lie about what actually ran. `null` means "no tiering this turn",
+   * which is the normal case on a machine with a single provider.
+   */
+  const dispatchPlan = createDispatchPlan(runtime);
   // Correlation fields for the usage ledger: turn identity, tool activity,
   // and task-board linkage make per-session/per-task drill-down possible.
   const turnId = `turn_${randomUUID().slice(0, 8)}`;
@@ -375,12 +431,17 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
   });
 
   let coreResult: AgentTurnResult = { ok: true, session: runtime.session, outcome: 'done' };
+  const transcript = { partial: '' };
   let thrown: unknown;
   try {
-    coreResult = await runAgentTurnCore(runtime, prompt, options, usageTotals);
+    coreResult = await runAgentTurnCore(runtime, prompt, options, usageTotals, transcript, tierUsage, dispatchPlan);
   } catch (error) {
     thrown = error;
-    if (error instanceof CancelledError) {
+    if (error instanceof CancelledError || runtime.cancelRequested?.() || runtime.requestSignal?.aborted) {
+      runtime.session.providerContinuation = undefined;
+      const stoppedReply = transcript.partial.trim() ? `${transcript.partial}\n\n（本轮已停止，以上为中断前收到的内容。）` : '本轮已停止，已完成的操作和输出仍保留。';
+      try { await runtime.sessions.appendMessage(runtime.session, { role: 'assistant', content: stoppedReply, interrupted: true }); }
+      catch (saveError) { runtime.ui.info(`已停止，但保存中断回复失败：${errorMessage(saveError)}`); }
       // A user cancel is NOT a terminal failure: no fallback/recover, no
       // "failed" record. Tools that already ran keep their results in the
       // session; /retry replays the same prompt fresh. It also completes the
@@ -392,6 +453,7 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
         reason: 'cancelled by user',
         outcome: 'cancelled',
         hadTerminalFailure: false,
+        finalAnswer: stoppedReply,
       };
     } else {
       coreResult = {
@@ -431,7 +493,8 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
       prompt,
       ...(options.displayText !== undefined ? { displayText: options.displayText } : {}),
       ...(options.parts !== undefined ? { parts: options.parts } : {}),
-      status: coreResult.ok ? 'done' : 'failed',
+      status: coreResult.ok || coreResult.outcome === 'cancelled' ? 'done' : 'failed',
+      ...(coreResult.outcome === 'cancelled' ? { outcome: 'cancelled' as const } : {}),
       startedAt: new Date(turnStartedAt).toISOString(),
     });
   } catch { /* status persistence is best-effort */ }
@@ -471,6 +534,46 @@ export async function runAgentTurn(runtime: AgentRuntime, prompt: string, option
         : {}),
       durationMs: Date.now() - turnStartedAt,
     });
+    // 省钱分级台账：这是唯一能拿到真实 token 数的地方。一次 turn 现在可能同时
+    // 跑过贵/中/便宜三档（规划用贵、跟进用便宜），所以按档位各写一行——只写
+    // "最后一个调用所在的档位"会把两半的花费都算错。
+    const rows = tierUsage && tierUsage.size > 0
+      ? [...tierUsage.entries()]
+      : runtime.dispatchTier
+        ? [[runtime.dispatchTier, { inputTokens: usageTotals.inputTokens, outputTokens: usageTotals.outputTokens, calls: 1 }] as [DispatchTier, { inputTokens: number; outputTokens: number; calls: number }]]
+        : [];
+    for (const [tier, bucket] of rows) {
+      recordDispatch(
+        {
+          ts: new Date().toISOString(),
+          task: runtime.session.goal ?? runtime.session.id,
+          stage: runtime.subAgentDepth ? 'subagent' : 'main',
+          tier,
+          provider: runtime.provider.name,
+          model: runtime.provider.model,
+          inputTokens: bucket.inputTokens,
+          outputTokens: bucket.outputTokens,
+          totalTokens: bucket.inputTokens + bucket.outputTokens,
+          ok: coreResult.ok,
+        },
+        undefined,
+        runtime.config.workspaceRoot,
+      );
+    }
+  }
+
+  // Say which tiers this turn actually used, once, at the end: the router
+  // silently swapping models is exactly the sort of thing that should be
+  // visible without opening a log file.
+  if (dispatchPlan && tierUsage && tierUsage.size > 0 && !runtime.config.desktopBridge) {
+    const used = [...tierUsage.entries()]
+      .sort((a, b) => b[1].calls - a[1].calls)
+      .map(([tier, bucket]) => `${tier}×${bucket.calls}`);
+    runtime.ui.info(
+      resolveSessionLocale({ text: options.displayText ?? prompt, previous: runtime.locale }) === 'zh'
+        ? `本轮分档：${used.join('，')}（${dispatchPlan.source === 'derived' ? '自动推导' : '会话配置'}）`
+        : `Tiers this turn: ${used.join(', ')} (${dispatchPlan.source})`,
+    );
   }
 
   // Auto-record memory from successful turns. Failures to write are
@@ -521,6 +624,9 @@ async function runAgentTurnCore(
   prompt: string,
   options: AgentTurnOptions = {},
   usageTotals?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number; localCachePredictedRate?: number },
+  transcript = { partial: '' },
+  tierUsage?: Map<DispatchTier, { inputTokens: number; outputTokens: number; calls: number }>,
+  dispatchPlan?: DispatchPlan | null,
 ): Promise<AgentTurnResult> {
   // codex turn.rs:1231-1260 — pre-turn auto-compact fires BEFORE the new user
   // input enters history, when the conversation nears the context window.
@@ -535,6 +641,7 @@ async function runAgentTurnCore(
     role: 'user',
     content: prompt,
     parts: options.parts,
+    ...(options.displayText !== undefined ? { displayText: options.displayText } : {}),
   });
   const baseContext = formatProjectContext(await readProjectContext(runtime.config.workspaceRoot));
   // Inject relevant project memories (.aicode/memory) so ordinary chat turns —
@@ -576,7 +683,7 @@ async function runAgentTurnCore(
   //    the session record) — tools available under normal approval gating.
   // 2) Auto: full access (approval 'auto') + desktop "任意应用" — the agent may
   //    wake computer control on its own whenever a task needs the GUI.
-  runtime.computerUseActive = computerUseShouldWake({
+  runtime.computerUseActive = runtime.config.backgroundBrowserOnly !== true && computerUseShouldWake({
     approval: runtime.config.approval,
     computerAnyApp: runtime.config.computerAnyApp === true,
     sessionArmed: runtime.session.computerUse === true,
@@ -587,9 +694,15 @@ async function runAgentTurnCore(
       recentTools,
       workspaceRoot: runtime.config.workspaceRoot,
     }));
-  const toolStrategy = runtime.computerUseActive
-    ? [baseToolStrategy, COMPUTER_USE_STRATEGY].filter(Boolean).join('\n')
-    : baseToolStrategy;
+  const backgroundBrowserActive = (runtime.config.backgroundBrowser === true || runtime.config.backgroundBrowserOnly === true) && Boolean(runtime.hostToolInvoke);
+  const toolStrategy = [
+    baseToolStrategy,
+    backgroundBrowserActive ? BACKGROUND_BROWSER_STRATEGY : '',
+    backgroundBrowserActive ? BACKGROUND_APP_STRATEGY : '',
+    backgroundBrowserActive ? BACKGROUND_NATIVE_STRATEGY : '',
+    runtime.computerUseActive ? COMPUTER_USE_STRATEGY : '',
+    runtime.config.backgroundBrowserOnly ? 'Background-only mode is active. Use hidden browser tools for web/HTML and background_app tools for supported local Electron projects. Never start, focus, click or type into foreground native applications. Other native GUI tasks require an isolated desktop environment. Shell commands must not bypass this restriction.' : '',
+  ].filter(Boolean).join('\n');
   const requestedEffort = runtime.reasoningEffort ?? runtime.config.reasoningEffort ?? 'off';
   const capability = getReasoningCapability(runtime.provider.name, runtime.provider.model);
   const taskComplexity = analyzeTaskComplexity(prompt);
@@ -618,6 +731,17 @@ async function runAgentTurnCore(
   // Tools registered below are injected AFTER scope selection, so they are not
   // in the scoped set. Record their names to keep them off the trim list.
   const injectedToolNames: string[] = [];
+  if (backgroundBrowserActive && runtime.hostToolInvoke) {
+    for (const tool of [...createBackgroundBrowserTools(runtime.hostToolInvoke), ...createBackgroundAppTools(runtime.hostToolInvoke), ...createBackgroundNativeTools(runtime.hostToolInvoke)]) {
+      runtime.tools.register(tool, { replace: true });
+      injectedToolNames.push(tool.name);
+    }
+  }
+  if (runtime.config.backgroundBrowserOnly === true) {
+    for (const tool of runtime.tools.list()) {
+      if (tool.name.startsWith('computer_') || tool.name === 'excel_automate') runtime.tools.unregister(tool.name);
+    }
+  }
 
   // Inject the computer-control tools post-scope so they exist regardless of
   // tool scope, mirroring the spawn_subagent pattern below.
@@ -670,6 +794,11 @@ async function runAgentTurnCore(
   // post-scope tools push the serialized array back over the provider ceiling —
   // the exact 400 this cap exists to prevent. Those injected tools are the ones
   // the agent cannot work without, so they are protected from trimming.
+  if (runtime.toolFilter) {
+    for (const tool of runtime.tools.list()) {
+      if (!runtime.toolFilter(tool)) runtime.tools.unregister(tool.name);
+    }
+  }
   const limited = limitProviderTools(runtime.tools.list(), {
     protectedNames: new Set(injectedToolNames),
   });
@@ -681,6 +810,14 @@ async function runAgentTurnCore(
   }
 
   const planningBlock = runtime.planGoal ? PLANNING_TURN_INSTRUCTION : undefined;
+  /**
+   * Ordinary code-change turns get the light survey gate: read something before
+   * editing, and say what the change is before making it. A planning turn has a
+   * stricter contract of its own, so the gate stands down there.
+   */
+  const surveyTurn = shouldSurveyFirst(taskComplexity, Boolean(planningBlock));
+  /** Set once a reconnaissance tool has actually run this turn. */
+  let surveyed = false;
   // A planning turn keeps a small cap — that cap is about producing a plan
   // promptly, not about bounding the work. An explicit --max-steps still lowers
   // it further.
@@ -701,6 +838,12 @@ async function runAgentTurnCore(
    */
   const tokenBudget = runtime.config.maxTokens;
   let spentTokens = 0;
+  /** Which tiers answered a call this turn — for the closing one-liner. */
+  const tiersUsed = new Set<DispatchTier>();
+  /** Set once a tool call succeeds; the follow-through step then runs cheap. */
+  let turnRanTool = false;
+  /** Whether the immediately preceding step ended in a tool failure. */
+  let lastStepFailed = false;
   // On the final budgeted step of a planning turn the read tools are withdrawn,
   // leaving propose_plan as the only tool that can advance the turn. Nudging in
   // prose was not enough: a model mid-survey reads the nudge as one more thing
@@ -708,6 +851,61 @@ async function runAgentTurnCore(
   const planningOnlyTools = planningBlock
     ? ToolRegistry.fromTools(runtime.tools.list().filter((tool) => tool.name === 'propose_plan'))
     : undefined;
+
+  /**
+   * Failures one turn may absorb before it gives up.
+   *
+   * A single failing tool call used to end the turn outright: one wrong path or
+   * one unavailable command and the user got a bare failure, with no attempt at
+   * another route. Now the failure goes back to the model as an instruction to
+   * try differently, and only a streak this long (or the user's own denial)
+   * ends it — a model that keeps repeating the same broken call must not be
+   * given an unbounded budget.
+   */
+  const MAX_TOOL_FAILURE_RETRIES = 3;
+  /**
+   * A blocked command gets one retry, not three: the policy refusing something
+   * usually means the model picked the wrong tool (shell `type` where read_file
+   * belongs), and one correction is enough to see that. A model that keeps
+   * reaching for blocked variants after being told not to is no longer fixing
+   * anything — it is probing the policy.
+   */
+  const MAX_BLOCKED_RETRIES = 1;
+  let consecutiveToolFailures = 0;
+  let consecutiveBlockedFailures = 0;
+  /**
+   * Refusals the survey gate may return before it steps aside.
+   *
+   * A gate with no exit deadlocks the turn: the model repeats the same edit, the
+   * gate refuses it again, and with no step budget (the default) that is an
+   * infinite loop. Two refusals is enough for a model that never read anything to
+   * change course; past that, the instruction has been delivered and refusing
+   * again only burns the turn. The refusal stays in the transcript either way.
+   */
+  const MAX_SURVEY_REFUSALS = 2;
+  let surveyRefusals = 0;
+  /**
+   * Failures one turn may absorb in total, across resets of the consecutive
+   * streak. A model that alternates "read (ok) → write (fails)" never builds a
+   * streak, and without this it would retry until the session is closed.
+   */
+  const MAX_TOTAL_TOOL_FAILURES = 8;
+  let totalToolFailures = 0;
+  /**
+   * Steps that only re-requested an already-completed call.
+   *
+   * A response made entirely of duplicate calls changes nothing — no tool runs,
+   * no message is added, so the next request is identical and the model asks for
+   * the same thing again. With no step budget (the default) that is an infinite
+   * loop, and it is reachable by any model that repeats itself, not just by a
+   * fixture. Two such steps are tolerated (a duplicate is often a model
+   * re-reading its own plan); the third ends the turn with a plain explanation.
+   */
+  const MAX_STUCK_STEPS = 3;
+  let stuckSteps = 0;
+  /** Set on a recoverable failure; injected into the next step's newest message. */
+  let pendingRecoveryHint: string | undefined;
+  let lastFailureReason: string | undefined;
 
   let finalAnswer: string | undefined;
   let warnedAboutCompaction = false;
@@ -741,6 +939,36 @@ async function runAgentTurnCore(
       && step === planningStepBudget - 1
       && !runtime.planProposed;
     const stepTools = lastCall && planningOnlyTools ? planningOnlyTools : runtime.tools;
+    // ── Dispatch: which model answers THIS call ──────────────────────────────
+    // Every round-trip is routed, not just the first: a plan/answer step buys
+    // the expensive model, the mechanical follow-through (read the tool output,
+    // write the patch, report back) runs cheap. Swapped before the request is
+    // packed so the context budget and the prompt-cache basis are computed for
+    // the model that will actually answer.
+    if (dispatchPlan) {
+      const wanted = pickStepTier({
+        planning: Boolean(planningBlock),
+        complexity: taskComplexity.complexity,
+        step,
+        stepBudget,
+        ranTool: turnRanTool,
+        lastStepFailed,
+        consecutiveFailures: consecutiveToolFailures,
+      });
+      const tier = dispatchPlan.nearest(wanted);
+      const provider = tier ? dispatchPlan.providerFor(tier) : undefined;
+      if (tier && provider) {
+        if (runtime.dispatchTier !== tier) {
+          runtime.dispatchTier = tier;
+          runtime.ui.info(locale === 'zh'
+            ? `分档：本步（${describeStepKind({ step, planning: Boolean(planningBlock), ranTool: turnRanTool, lastStepFailed })}）走${tier}档 → ${dispatchPlan.labelFor(tier)}`
+            : `Dispatch: this step (${describeStepKind({ step, planning: Boolean(planningBlock), ranTool: turnRanTool, lastStepFailed })}) runs on the ${tier} tier → ${dispatchPlan.labelFor(tier)}`);
+        }
+        runtime.provider = provider;
+        tiersUsed.add(tier);
+      }
+    }
+    lastStepFailed = false;
     let response;
     try {
       runtime.ui.modelStart();
@@ -803,6 +1031,21 @@ async function runAgentTurnCore(
           };
         }
       }
+      // Survey guidance lives in the stable system prompt, not here: a per-turn
+      // instruction appended to the user message would be read as part of the
+      // user's request (providers that plan from the newest message see new
+      // wording every turn) and the refusal below is what actually enforces it.
+      // Recovery turn: the previous step's tool failed, so the model gets the
+      // reason and an explicit "try another route" instruction. Appended to the
+      // message list (not folded into the cached prefix) and cleared once used.
+      if (pendingRecoveryHint) {
+        packed.messages.push({
+          role: 'user',
+          content: pendingRecoveryHint,
+          createdAt: new Date().toISOString(),
+        });
+        pendingRecoveryHint = undefined;
+      }
       // Last call: the budget is nearly gone and the model has not proposed.
       // Appending here (rather than trusting the opening instruction) is what
       // makes the cap a guarantee instead of a hope.
@@ -842,27 +1085,32 @@ async function runAgentTurnCore(
       // codex-rs two-tier retry collapsed onto the single complete() entry:
       // transport-class failures (5xx/network/timeout) back off exponentially
       // and re-issue the whole request; 429/4xx and user cancels propagate.
-      response = await withModelRetry(
-        () => runtime.provider.complete({
+      response = await withRequestControl({
+          signal: runtime.requestSignal,
+          timeoutMs: runtime.config.requestTimeoutMs,
           messages: packed.messages,
           tools: stepTools.specs(),
           workspaceRoot: runtime.config.workspaceRoot,
           projectContext,
           toolStrategy,
-          onTextDelta: (delta) => runtime.ui.assistantDelta(delta),
+          onTextDelta: (delta) => { transcript.partial += delta; runtime.ui.assistantDelta(delta); },
           onThinkingDelta: (delta) => runtime.ui.thinkingDelta(delta),
           reasoningEffort: effectiveEffort,
           desktopBridge: runtime.config.desktopBridge,
           delegation: runtime.config.delegation,
           customProvider: runtime.config.customProvider,
           continuation: runtime.session.providerContinuation,
-        }),
+        }, request => withModelRetry(
+        () => runtime.provider.complete(request),
         {
+          signal: request.signal,
           onRetry: (attempt, maxRetries, delayMs, error) => {
             runtime.ui.info(`Reconnecting… ${attempt}/${maxRetries} (${delayMs}ms) — ${error instanceof Error ? error.message : String(error)}`);
           },
         },
-      );
+      ));
+      throwIfCancelled(runtime);
+      transcript.partial = '';
       // Record this round-trip for the trajectory viewer: what was sent, what
       // came back, and how long it took. Best-effort — a trace failure must
       // never break the turn.
@@ -879,8 +1127,11 @@ async function runAgentTurnCore(
         startedAt: new Date(callStartedAt).toISOString(),
         completedAt: new Date().toISOString(),
         durationMs: Date.now() - callStartedAt,
-        model: runtime.config.model,
-        provider: String(runtime.config.provider),
+        // A tier provider may have moved from its primary to a fallback by the
+        // time complete() returns. The runtime provider identity is updated by
+        // that router; config still describes the primary selection.
+        model: runtime.provider.model,
+        provider: runtime.provider.name,
         step: stepsTaken,
         // A round-trip that reached the model has succeeded at this point —
         // retryable transport failures threw before here.
@@ -895,7 +1146,11 @@ async function runAgentTurnCore(
         toolNames: response.actions.filter((action) => action.type === 'tool').map((action) => action.tool ?? ''),
         promptChars,
         usage: response.usage
-          ? { inputTokens: response.usage.inputTokens, outputTokens: response.usage.outputTokens }
+          ? {
+              inputTokens: response.usage.inputTokens,
+              outputTokens: response.usage.outputTokens,
+              ...(typeof response.usage.cacheReadTokens === 'number' ? { cacheReadTokens: response.usage.cacheReadTokens } : {}),
+            }
           : undefined,
       });
       // Accumulate the real token usage this step reported (if any).
@@ -903,8 +1158,10 @@ async function runAgentTurnCore(
         response.usage.localCachePredictedRate = predictedPromptCacheRate;
         // Counted for the turn's token budget. Input tokens dominate on a long
         // run (the whole history is resent each step), which is exactly the
-        // spend a step cap was a crude proxy for.
-        spentTokens += response.usage.inputTokens + response.usage.outputTokens;
+        // spend a step cap was a crude proxy for. `inputTokens` is net of the
+        // cached part, so add the cache read back: a cached token is still a
+        // token the model had to read.
+        spentTokens += response.usage.inputTokens + (response.usage.cacheReadTokens ?? 0) + response.usage.outputTokens;
       }
       if (usageTotals && response.usage) {
         usageTotals.inputTokens += response.usage.inputTokens;
@@ -918,6 +1175,14 @@ async function runAgentTurnCore(
         if (typeof predictedPromptCacheRate === 'number') {
           usageTotals.localCachePredictedRate = predictedPromptCacheRate;
         }
+        const tier = runtime.dispatchTier;
+        if (tierUsage && tier) {
+          const bucket = tierUsage.get(tier) ?? { inputTokens: 0, outputTokens: 0, calls: 0 };
+          bucket.inputTokens += response.usage.inputTokens;
+          bucket.outputTokens += response.usage.outputTokens;
+          bucket.calls += 1;
+          tierUsage.set(tier, bucket);
+        }
       }
       runtime.lastPromptCacheBasis = promptCacheBasis;
       // Emit a real per-turn context/cache snapshot so the desktop can show the
@@ -930,6 +1195,7 @@ async function runAgentTurnCore(
       runtime.ui.modelEnd();
     } catch (error) {
       runtime.ui.modelEnd();
+      throwIfCancelled(runtime);
       const fallbackActions = planLocalFallback(prompt, runtime.session);
       if (fallbackActions.length > 0) {
         runtime.ui.assistant(
@@ -938,8 +1204,10 @@ async function runAgentTurnCore(
             : `Model request failed: ${errorMessage(error)}. Falling back to local tool planning.`,
         );
         for (const action of fallbackActions) {
+          throwIfCancelled(runtime);
           const execution = await executeToolAction(runtime, action, locale);
           await appendToolActionResult(runtime, execution);
+          throwIfCancelled(runtime);
           if (!execution.ok) {
             // Never invent a generic reason: `output` is what the tool actually
             // said, and dropping it leaves the user with a bare "tool failed".
@@ -988,7 +1256,10 @@ async function runAgentTurnCore(
     let sawTool = false;
     const responseToolOutputs: Array<{ callId: string; output: string }> = [];
     let terminalCreateDone: { tool: string; output: string } | undefined;
+    /** Whether anything actually happened this step (a tool ran, or a call was refused). */
+    let stepProgressed = false;
     for (let actionIndex = 0; actionIndex < response.actions.length; actionIndex += 1) {
+      throwIfCancelled(runtime);
       const action = response.actions[actionIndex]!;
       if (action.type === 'message') {
         const card = maybeUpgradeMetaMessage(runtime, action.content, lastToolName, locale);
@@ -1048,7 +1319,41 @@ async function runAgentTurnCore(
         if (batch.length === 0) continue;
       }
 
+      // Survey turn: a blind edit is refused until something has been read.
+      // The instruction above is the nudge; this is the guarantee. Refusals are
+      // recorded as real tool results so the model sees why on its next step.
+      if (surveyTurn && !surveyed && surveyRefusals < MAX_SURVEY_REFUSALS) {
+        const workspaceRoot = runtime.config.workspaceRoot;
+        const edits = batch.filter((item) => surveyBlocksTool(item.tool, item.input, workspaceRoot));
+        if (edits.length > 0) {
+          for (const item of edits) {
+            const refusal = surveyRefusal(item.tool);
+            await runtime.sessions.appendToolCall(runtime.session, {
+              tool: item.tool,
+              input: item.input,
+              ok: false,
+              output: refusal,
+              providerCallId: item.callId,
+            });
+            if (item.callId) responseToolOutputs.push({ callId: item.callId, output: refusal });
+            runtime.ui.info(locale === 'zh'
+              ? `拒绝在调查之前调用 ${item.tool}：先读相关代码。`
+              : `Refused ${item.tool} before any reading: survey the code first.`);
+          }
+          surveyRefusals += 1;
+          stepProgressed = true;
+          batch.splice(0, batch.length, ...batch.filter((item) => !surveyBlocksTool(item.tool, item.input, workspaceRoot)));
+          if (batch.length === 0) {
+            // Nothing left to run, but the turn must continue: the model now has
+            // the refusal and a step to act on it.
+            sawTool = true;
+            continue;
+          }
+        }
+      }
+
       sawTool = true;
+      stepProgressed = true;
       const executions = batch.length > 1
         ? await Promise.all(batch.map((item) => executeToolAction(runtime, item, locale)))
         : [await executeToolAction(runtime, action, locale)];
@@ -1056,18 +1361,49 @@ async function runAgentTurnCore(
         const batchAction = batch[batchIndex]!;
         const toolResult = await appendToolActionResult(runtime, executions[batchIndex]!);
         lastToolName = batchAction.tool;
+        // A successful read is what unlocks the edit tools for the rest of this
+        // turn; a failed one does not, or a typo'd path would open the gate.
+        if (toolResult.ok && SURVEY_READ_TOOLS.has(batchAction.tool)) surveyed = true;
         if (batchAction.callId) responseToolOutputs.push({ callId: batchAction.callId, output: toolResult.output ?? toolResult.reason ?? '' });
         if (!toolResult.ok) {
           const reason = toolFailureReason(toolResult, batchAction.tool, locale);
-          return {
-            ok: false,
-            session: runtime.session,
-            reason,
-            finalAnswer: reason,
-            hadTerminalFailure: true,
-            outcome: toolResult.outcome ?? 'failed',
-          };
+          lastFailureReason = reason;
+          consecutiveToolFailures += 1;
+          totalToolFailures += 1;
+          const outcome = toolResult.outcome ?? 'failed';
+          lastStepFailed = true;
+          if (outcome === 'blocked') consecutiveBlockedFailures += 1;
+          // A cancellation is the user pressing stop: never retried. A block is
+          // retried exactly MAX_BLOCKED_RETRIES times, so the comparison is
+          // strict: hitting the cap means "no retry left".
+          const blockedOut = outcome === 'blocked' && consecutiveBlockedFailures > MAX_BLOCKED_RETRIES;
+          if (outcome === 'cancelled' || blockedOut || consecutiveToolFailures >= MAX_TOOL_FAILURE_RETRIES || totalToolFailures >= MAX_TOTAL_TOOL_FAILURES) {
+            // The final answer is written here, not in appendToolActionResult:
+            // a refusal that the model gets a chance to work around must not
+            // leave a "stopped here" line in the transcript first.
+            await runtime.sessions.appendFinalAnswer(runtime.session, reason);
+            return {
+              ok: false,
+              session: runtime.session,
+              reason,
+              finalAnswer: reason,
+              hadTerminalFailure: true,
+              outcome,
+            };
+          }
+          pendingRecoveryHint = outcome === 'blocked'
+            ? buildBlockedRecoveryHint(batchAction.tool, reason, locale, consecutiveBlockedFailures, MAX_BLOCKED_RETRIES + 1)
+            : buildToolRecoveryHint(batchAction.tool, reason, locale, consecutiveToolFailures, MAX_TOOL_FAILURE_RETRIES);
+          runtime.ui.info(locale === 'zh'
+            ? `${batchAction.tool} 失败，换一种做法（${outcome === 'blocked' ? `被拦 ${consecutiveBlockedFailures}/${MAX_BLOCKED_RETRIES + 1}` : `第 ${consecutiveToolFailures}/${MAX_TOOL_FAILURE_RETRIES} 次`}）`
+            : `${batchAction.tool} failed; trying another route (${outcome === 'blocked' ? `blocked ${consecutiveBlockedFailures}/${MAX_BLOCKED_RETRIES + 1}` : `${consecutiveToolFailures}/${MAX_TOOL_FAILURE_RETRIES}`})`);
+          // Keep the turn alive: remaining actions in this batch still run, and
+          // the next step sees the failure plus the recovery instruction.
+          continue;
         }
+        consecutiveToolFailures = 0;
+        consecutiveBlockedFailures = 0;
+        turnRanTool = true;
         if (isTerminalCreateTool(batchAction.tool)) {
           const prior = latestSuccessfulTool(runtime, batchAction.tool);
           terminalCreateDone = { tool: batchAction.tool, output: prior?.output ?? '' };
@@ -1075,6 +1411,25 @@ async function runAgentTurnCore(
       }
       actionIndex += batch.length - 1;
     }
+
+    if (stepProgressed) {
+      stuckSteps = 0;
+    } else if (!planningBlock) {
+      // A planning turn is already bounded by PLANNING_TURN_MAX_STEPS, and its
+      // remedy for a model that keeps re-reading is the final-call nudge, not an
+      // early exit — so the stall guard must not fire there.
+      stuckSteps += 1;
+      if (stuckSteps >= MAX_STUCK_STEPS) {
+        const message = locale === 'zh'
+          ? `连续 ${stuckSteps} 步都在重复请求已经完成的工具调用，本回合结束。换个说法或告诉我下一步做什么，我接着来。`
+          : `The same completed tool call was re-requested for ${stuckSteps} steps, so this turn ends. Rephrase, or tell me what to do next.`;
+        runtime.ui.assistant(message);
+        await runtime.sessions.appendFinalAnswer(runtime.session, message);
+        return { ok: false, session: runtime.session, reason: message, finalAnswer: message, hadTerminalFailure: true, outcome: 'failed' };
+      }
+    }
+
+    throwIfCancelled(runtime);
 
     if (response.continuation && responseToolOutputs.length > 0 && runtime.provider.name === 'openai-responses') {
       runtime.session.providerContinuation = {
@@ -1162,13 +1517,13 @@ type ToolActionExecution = {
 };
 
 /**
- * computer_screenshot returns the PNG as base64 in `data.computerImage`; turn
- * it into an image part so the model actually sees the screen on the next
- * step. Only the CURRENT turn's screenshot is kept — stripHistoricalImages
- * removes older ones to bound token cost.
+ * computer_screenshot (and computer_window_shot) return the PNG as base64 in
+ * `data.computerImage`; turn it into an image part so the model actually sees
+ * the screen on the next step. Only the CURRENT turn's screenshot is kept —
+ * stripHistoricalImages removes older ones to bound token cost.
  */
 function computerScreenshotImageParts(tool: string, result: { ok: boolean; data?: unknown }): import('../providers/types.js').MessagePart[] | undefined {
-  if (tool !== 'computer_screenshot' || result.ok !== true) return undefined;
+  if (!['computer_screenshot', 'computer_window_shot', 'background_browser_screenshot', 'background_app_screenshot', 'background_native_window_screenshot'].includes(tool) || result.ok !== true) return undefined;
   const data = result.data as { computerImage?: { mediaType?: unknown; data?: unknown; path?: unknown } } | undefined;
   const image = data?.computerImage;
   if (!image || typeof image.mediaType !== 'string' || typeof image.data !== 'string' || !image.data) return undefined;
@@ -1183,6 +1538,7 @@ async function executeToolAction(
   action: Extract<AgentAction, { type: 'tool' }>,
   locale: Locale = 'en',
 ): Promise<ToolActionExecution> {
+  throwIfCancelled(runtime);
   // Circuit breaker: a tool still cooling down from repeated failures is
   // refused without execution, and the model is told to route around it.
   if (globalToolHealth.inCooldown(action.tool)) {
@@ -1196,6 +1552,7 @@ async function executeToolAction(
   }
   runtime.ui.toolStart(action.tool, action.input);
   const result = await runtime.tools.execute(action.tool, action.input, {
+    signal: runtime.requestSignal,
     workspaceRoot: runtime.config.workspaceRoot,
     approval: runtime.config.approval,
     confirm: resolveToolConfirm(runtime),
@@ -1262,26 +1619,32 @@ async function executeToolAction(
   });
   // Feed the circuit breaker with this attempt's outcome (success resets the
   // consecutive-failure counter; failures accumulate toward a cooldown trip).
-  globalToolHealth.observe(action.tool, result.ok === true);
+  const cancelled = runtime.cancelRequested?.() === true || runtime.requestSignal?.aborted === true;
+  if (!cancelled) globalToolHealth.observe(action.tool, result.ok === true);
   runtime.ui.toolResult(action.tool, result);
-  const recoveryHint = result.ok ? undefined : recoveryHintForToolFailure(action.tool, result.output);
-  const successHint = result.ok ? nextStepHint(action.tool, result.output, result.output?.length ?? 0) : undefined;
+  const recoveryHint = result.ok || cancelled ? undefined : recoveryHintForToolFailure(action.tool, result.output);
+  const successHint = result.ok && !cancelled ? nextStepHint(action.tool, result.output, result.output?.length ?? 0) : undefined;
   const hint = recoveryHint || successHint;
   const output = hint
     ? `${result.output}\n${locale === 'zh' ? (result.ok ? '建议' : '恢复提示') : (result.ok ? 'Hint' : 'Recovery hint')}: ${hint}`
     : result.output;
   const screenshotParts = computerScreenshotImageParts(action.tool, result);
+  const screenshotImage = screenshotParts?.find(part => part.type === 'image');
+  const recordData = screenshotImage
+    ? { ...(result.data as Record<string, unknown>), computerImage: { mediaType: screenshotImage.mediaType, path: screenshotImage.path } }
+    : result.data;
   const record = {
     tool: action.tool,
     input: action.input,
     ok: result.ok,
     output,
-    data: result.data,
+    data: recordData,
     providerCallId: action.callId,
     // A fresh screenshot rides to the model as a multimodal image part on the
     // tool message (see appendToolActionResult → SessionStore.appendToolCall).
     ...(screenshotParts ? { parts: screenshotParts } : {}),
   };
+  if (cancelled) return { ok: true, output, record };
   if (!result.ok) {
     const reason = locale === 'zh'
       ? `在 ${action.tool} 失败后停止：${output}`
@@ -1325,9 +1688,8 @@ async function appendToolActionResult(
     },
     execution.record.parts?.length ? { parts: execution.record.parts } : undefined,
   );
-  if (!execution.ok && execution.terminal) {
-    await runtime.sessions.appendFinalAnswer(runtime.session, execution.reason ?? execution.output);
-  }
+  // The stop line is written by the caller when it decides to give up: a refusal
+  // it may still work around must not leave "stopped here" in the transcript.
   return execution;
 }
 
@@ -1375,6 +1737,71 @@ function toolFailureReason(
   return locale === 'zh'
     ? `工具 ${tool} 执行失败，且没有返回任何说明。`
     : `Tool ${tool} failed without reporting a cause.`;
+}
+
+/**
+ * What the model is told after a recoverable tool failure.
+ *
+ * The failure itself is already in the transcript as a tool result; this adds
+ * the part a model reliably misses on its own — that stopping is not an option
+ * yet, and that repeating the identical call is not a retry. The specific
+ * correction comes from `recoveryHintForToolFailure`, so a bad path, a missing
+ * anchor and a platform-specific command each get the fix that fits.
+ */
+function buildToolRecoveryHint(tool: string, reason: string, locale: Locale, attempt: number, limit: number): string {
+  const specific = recoveryHintForToolFailure(tool, reason);
+  const lines = [
+    `<tool-failure attempt="${attempt}/${limit}">`,
+    locale === 'zh' ? `工具 ${tool} 失败：${reason}` : `Tool ${tool} failed: ${reason}`,
+    specific ?? '',
+    locale === 'zh'
+      ? '不要因此结束回合，也不要重复同一个调用。换一条路：换工具（project_index / list_files / search_text / read_file）、修正路径或参数、或者把命令换成等价的另一种写法。'
+      : 'Do not end the turn over this, and do not repeat the same call. Take another route: a different tool (project_index / list_files / search_text / read_file), a corrected path or argument, or an equivalent command.',
+    locale === 'zh'
+      ? '只有在确实做不到时才收尾，并说明试过哪些方法、各自因为什么失败。'
+      : 'Only wrap up if it genuinely cannot be done, and say what you tried and why each attempt failed.',
+    '</tool-failure>',
+  ];
+  return lines.filter((line) => line && line.trim()).join('\n');
+}
+
+/**
+ * What the model is told after the safety layer blocked a tool call.
+ *
+ * A block is the policy saying "not this way", not "not at all": usually the
+ * model reached for the shell where a dedicated tool does the same job safely.
+ * The one thing that must not happen is a rephrased retry — that turns a
+ * correction into a bypass attempt — so the instruction says so outright and
+ * offers the tool that does the job legitimately.
+ */
+function buildBlockedRecoveryHint(tool: string, reason: string, locale: Locale, attempt: number, limit: number): string {
+  const lines = [
+    `<tool-blocked attempt="${attempt}/${limit}">`,
+    locale === 'zh' ? `工具 ${tool} 被安全策略拦下：${reason}` : `Tool ${tool} was blocked by policy: ${reason}`,
+    locale === 'zh'
+      ? '不要绕过拦截，也不要换个写法重试同一条命令。改用专门的工具做同一件事：读文件用 read_file / read_lines，找代码用 search_text / glob_files，看目录用 list_files，改文件用 apply_patch。'
+      : 'Do not evade the block and do not rephrase the same command. Use the dedicated tool for the same job: read_file / read_lines to read, search_text / glob_files to find code, list_files to list, apply_patch to edit.',
+    locale === 'zh'
+      ? '确实做不到时，直接告诉我哪一步被拦、需要什么权限，由我来决定。'
+      : 'If it genuinely cannot be done, tell me which step was blocked and what permission it needs, and I will decide.',
+    '</tool-blocked>',
+  ];
+  return lines.filter((line) => line && line.trim()).join('\n');
+}
+
+/**
+ * A short, human label for what kind of call this step is.
+ *
+ * Only used in the `Dispatch:` info line — the router already decided, this just
+ * explains the decision to whoever is reading the terminal. Kept in sync with
+ * `pickStepTier`'s branches on purpose: if you add a branch there, name it here.
+ */
+function describeStepKind(step: { step: number; planning: boolean; ranTool: boolean; lastStepFailed: boolean }): string {
+  if (step.planning) return '计划';
+  if (step.lastStepFailed) return '失败恢复';
+  if (step.step === 0) return '接手任务';
+  if (step.ranTool) return '跟进工具结果';
+  return '常规一步';
 }
 
 function isParallelSafeAction(
@@ -1667,9 +2094,26 @@ function friendlyModelError(message: string) {
   // API error bodies arrive as `… failed: 400 {"error":{"message":"…"}}` —
   // collapse the JSON blob to `status + error.message` so chat output stays
   // one readable line instead of a raw dump.
-  const statusAndMessage = message.match(/(\d{3})\b[\s\S]*?"message"\s*:\s*"([^"]{1,200})"/);
-  if (statusAndMessage) return `${statusAndMessage[1]} ${statusAndMessage[2]}`;
+  //
+  // The message itself is JSON-escaped, so a provider that quotes the model
+  // name (`Model "b/qwen3.8-flash" is not supported`) arrives as
+  // `Model \"b/qwen3.8-flash\" is…`. Matching `[^"]` stopped at the first
+  // backslash-escaped quote, and the truncated capture rendered in chat as
+  // `404 Model \` — the operator lost the one sentence that said what to fix.
+  // Unescape the raw capture rather than trying to teach the regex about
+  // escapes; every JSON string body uses the same three sequences.
+  const statusAndMessage = message.match(/(\d{3})\b[\s\S]*?"message"\s*:\s*"((?:[^"\\]|\\.){1,200})"/);
+  if (statusAndMessage) return `${statusAndMessage[1]} ${unescapeJsonString(statusAndMessage[2])}`;
   return message;
+}
+
+function unescapeJsonString(value: string) {
+  return value
+    .replace(/\\"/g, '"')
+    .replace(/\\n/g, ' ')
+    .replace(/\\t/g, ' ')
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\\\/g, '\\');
 }
 
 /** Tools that complete a user-facing goal — do not keep calling the model after success. */
@@ -1768,8 +2212,8 @@ function buildContextStats(
   toolStrategy?: string,
 ): Record<string, unknown> {
   const specs = runtime.tools.specs();
-  const specChars = (spec: { name: string; description: string; inputHint: string }) =>
-    spec.name.length + spec.description.length + spec.inputHint.length + 8;
+  const specChars = (spec: { name: string; description: string; inputHint: string; inputSchema?: Record<string, unknown> }) =>
+    spec.name.length + spec.description.length + spec.inputHint.length + (spec.inputSchema ? JSON.stringify(spec.inputSchema).length : 0) + 8;
 
   const builtinChars = specs
     .filter((spec) => !spec.name.startsWith('mcp_'))
@@ -1817,7 +2261,12 @@ function buildContextStats(
   const otherChars = (projectContext?.length ?? 0) + (toolStrategy?.length ?? 0);
 
   const measured = systemPromptChars + builtinChars + mcpChars + messageChars + skillsChars + otherChars;
-  const input = usage.inputTokens;
+  // The whole prompt the model actually read: `inputTokens` is net of the cached
+  // part (see usageFromOpenAI), and a cached token still occupies the context
+  // window. Distributing only the net part would understate the context
+  // percentage by exactly the cache-hit share — on a 98%-cached step the bar
+  // would read 2% while the prompt was 400k tokens.
+  const input = usage.inputTokens + (usage.cacheReadTokens ?? 0);
   // Distribute the REAL input-token total across measured components by their
   // char proportion. "other" absorbs the remainder (rounding + any prompt bytes
   // not attributed to a named component).

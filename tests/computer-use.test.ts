@@ -188,8 +188,9 @@ test('computer tools validate inputs strictly', async () => {
     assert.throws(() => fixture.tools.get('computer_press')!.validate({ window: '12', index: 500 }), /between 0 and 199/);
     assert.deepEqual(fixture.tools.get('computer_press')!.validate({ window: '12', index: 3, expected: 'x'.repeat(300) }), { window: '12', index: 3, expected: 'x'.repeat(200), double: false });
     assert.deepEqual(fixture.tools.get('computer_press')!.validate({ window: '记事本', index: 0 }), { window: '记事本', index: 0, expected: undefined, double: false });
-    // Wake injection registers the full nine-tool set.
-    assert.equal(COMPUTER_TOOL_NAMES.size, 9);
+    // Wake injection registers the full set: the background single-window
+    // capture plus drag, which is the only way to operate a canvas.
+    assert.equal(COMPUTER_TOOL_NAMES.size, 11);
   } finally {
     await fixture.cleanup();
   }

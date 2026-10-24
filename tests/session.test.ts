@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -205,5 +205,63 @@ test('SessionStore fork drops the source turn payload and task board', async () 
   assert.equal(forked.lastTurn, undefined);
   assert.equal(forked.taskRuntime, undefined);
   assert.equal(forked.messages.length, session.messages.length + 1);
+  await rm(workspace, { recursive: true, force: true });
+});
+
+test('SessionStore.sibling writes beside the session directory, not into it', async () => {
+  // Sub-agents create one session per segment. Writing those into the
+  // conversation directory made the desktop sidebar list a swarm of untitled
+  // shells next to the user's real chats.
+  const { workspace, store, session } = await createSessionStore('aicode-session-sibling-');
+  const sibling = store.sibling('sessions-subagents');
+  const subSession = await sibling.create({ provider: 'mock', model: 'mock-code-agent-v1', workspaceRoot: workspace });
+  await sibling.appendMessage(subSession, { role: 'user', content: '子任务' });
+
+  const mainDir = join(workspace, '.aicode', 'sessions');
+  const names = await readdir(mainDir);
+  assert.deepEqual(names.filter((name) => name.endsWith('.json')), [`${session.id}.json`]);
+
+  // The parent store must not see or load it...
+  assert.equal((await store.list()).length, 1);
+  await assert.rejects(store.load(subSession.id));
+
+  // ...while the sibling store round-trips it.
+  const reloaded = await sibling.load(subSession.id);
+  assert.equal(reloaded.messages.at(-1)?.content, '子任务');
+
+  await rm(workspace, { recursive: true, force: true });
+});
+
+// `load` used to hand a parse failure straight through as a JSON SyntaxError, and
+// the broken file stayed at the exact path `save()` writes — so the next turn on
+// that id replaced the only copy of the conversation with a fresh record.
+test('a session that fails to parse is set aside, not left where save would overwrite it', async () => {
+  const { workspace, store, session } = await createSessionStore('aicode-session-corrupt-');
+  const file = join(workspace, '.aicode', 'sessions', `${session.id}.json`);
+  await store.appendMessage(session, { role: 'user', content: '第一轮' });
+  const torn = (await readFile(file, 'utf8')).slice(0, 40);
+  await writeFile(file, torn, 'utf8');
+
+  await assert.rejects(store.load(session.id), /unreadable/);
+
+  const names = await readdir(join(workspace, '.aicode', 'sessions'));
+  const preserved = names.filter((name) => name.includes('.corrupt-'));
+  assert.equal(preserved.length, 1, 'the unparseable conversation is kept');
+  assert.equal(await readFile(join(workspace, '.aicode', 'sessions', preserved[0]), 'utf8'), torn);
+  assert.equal(names.includes(`${session.id}.json`), false, 'the id path is clear, so nothing overwrites it');
+
+  // A later session save cannot touch the preserved copy.
+  await store.appendMessage(session, { role: 'user', content: '新一轮' });
+  assert.equal(await readFile(join(workspace, '.aicode', 'sessions', preserved[0]), 'utf8'), torn);
+
+  await rm(workspace, { recursive: true, force: true });
+});
+
+test('a missing session still rejects without moving anything aside', async () => {
+  const { workspace, store } = await createSessionStore('aicode-session-missing-');
+  await assert.rejects(store.load('sess_20200101000000_aaaaaaaa'));
+  const names = await readdir(join(workspace, '.aicode', 'sessions'));
+  assert.deepEqual(names.filter((name) => name.includes('.corrupt-')), []);
+
   await rm(workspace, { recursive: true, force: true });
 });

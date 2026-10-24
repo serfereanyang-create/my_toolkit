@@ -12,6 +12,9 @@ import { pathScopeFor, resolveReadablePath, resolveWorkspacePath } from '../safe
  * - zip_summary: Get aggregate statistics about a ZIP archive
  */
 
+/** Per-member ceiling when extracting; a declared size over this is refused. */
+const MAX_MEMBER_BYTES = 256 * 1024 * 1024;
+
 function crc32(buffer: Buffer): number {
   let crc = 0xffffffff;
   for (const byte of buffer) {
@@ -22,6 +25,16 @@ function crc32(buffer: Buffer): number {
   }
   return (crc ^ 0xffffffff) >>> 0;
 }
+
+/**
+ * General-purpose bit 11: "the file name is UTF-8".
+ *
+ * Without it a ZIP reader falls back to CP437 for names, which is the format's
+ * historical default. Windows Explorer guesses UTF-8 anyway, so a Chinese
+ * filename looked correct there; Python's zipfile and macOS's unzip showed
+ * `µèÑσæè.md`. The flag costs nothing and is what every modern writer sets.
+ */
+const FLAG_UTF8 = 0x0800;
 
 function zipFiles(files: Map<string, Buffer>): Buffer {
   const chunks: Buffer[] = [];
@@ -36,7 +49,7 @@ function zipFiles(files: Map<string, Buffer>): Buffer {
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(FLAG_UTF8, 6);
     local.writeUInt16LE(8, 8);
     local.writeUInt16LE(0, 10);
     local.writeUInt16LE(0, 12);
@@ -50,7 +63,7 @@ function zipFiles(files: Map<string, Buffer>): Buffer {
     header.writeUInt32LE(0x02014b50, 0);
     header.writeUInt16LE(20, 4);
     header.writeUInt16LE(20, 6);
-    header.writeUInt16LE(0, 8);
+    header.writeUInt16LE(FLAG_UTF8, 8);
     header.writeUInt16LE(8, 10);
     header.writeUInt16LE(0, 12);
     header.writeUInt16LE(0, 14);
@@ -78,7 +91,36 @@ type ZipEntry = {
   uncompressedSize: number;
   compressedSize: number;
   crc32: number;
+  /** Whether the archive marked the name as UTF-8 (bit 11). */
+  utf8Name?: boolean;
 };
+
+/**
+ * Turn one archive member name into a path inside the extraction root, or
+ * refuse it.
+ *
+ * A ZIP member name is attacker-controlled: `../../.aicode/sessions/x.json`
+ * resolves outside the target directory, and the previous code joined it
+ * straight onto that directory, writing wherever the archive said. Verified
+ * before the fix: extracting a two-byte fixture wrote a file two levels above
+ * the workspace. Absolute paths and Windows drive prefixes are refused for the
+ * same reason; backslashes are treated as separators because a Windows-built
+ * archive may use them.
+ *
+ * `''` and `'.'` segments are dropped (a leading `./` is common), and the
+ * result must not be empty — a member that names only a directory has nothing
+ * to extract.
+ */
+export function safeArchivePath(name: string): string | null {
+  const normalized = name.replace(/\\/g, '/');
+  if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) return null;
+  const parts = normalized.split('/').filter((part) => part !== '' && part !== '.');
+  if (parts.length === 0 || parts.some((part) => part === '..')) return null;
+  // A NUL or control character cannot appear in a real path and can truncate
+  // one on some platforms.
+  if (/\u0000/.test(normalized)) return null;
+  return parts.join('/');
+}
 
 export function listZipEntries(buffer: Buffer): ZipEntry[] {
   let eocdOffset = -1;
@@ -119,6 +161,7 @@ export function listZipEntries(buffer: Buffer): ZipEntry[] {
       uncompressedSize,
       compressedSize,
       crc32: crc,
+      utf8Name: (buffer.readUInt16LE(offset + 8) & FLAG_UTF8) !== 0,
     });
 
     offset += 46 + nameLength + extraLength + commentLength;
@@ -208,6 +251,7 @@ export const createZipTool: ToolDefinition<{
 
     const fileMap = new Map<string, Buffer>();
     const baseDir = input.baseDir ? resolveReadablePath(context.workspaceRoot, input.baseDir, pathScopeFor(context.approval)) : context.workspaceRoot;
+    const outside: string[] = [];
 
     for (const fileSpec of input.files) {
       if (typeof fileSpec.path !== 'string' || !fileSpec.path.trim()) {
@@ -249,7 +293,21 @@ export const createZipTool: ToolDefinition<{
         archivePath = relative(baseDir, sourcePath).replace(/\\/g, '/');
       }
 
-      fileMap.set(archivePath, content);
+      // An archive this tool writes must be one it could extract: a member
+      // named `../x` is exactly what extract_zip now refuses.
+      const safePath = safeArchivePath(archivePath);
+      if (!safePath) {
+        outside.push(archivePath);
+        continue;
+      }
+      fileMap.set(safePath, content);
+    }
+
+    if (fileMap.size === 0) {
+      return {
+        ok: false,
+        output: `No files could be added to ${input.path}.${outside.length > 0 ? ` These paths leave the archive root: ${outside.slice(0, 10).join(', ')}` : ''}`,
+      };
     }
 
     const zipBuffer = zipFiles(fileMap);
@@ -262,13 +320,17 @@ export const createZipTool: ToolDefinition<{
 
     return {
       ok: true,
-      output: `Created ZIP: ${finalTarget}\n${fileMap.size} files, ${totalSize} bytes → ${zipBuffer.length} bytes (${status})`,
+      output: `Created ZIP: ${finalTarget}\n${fileMap.size} files, ${totalSize} bytes → ${zipBuffer.length} bytes (${status})`
+        + (outside.length > 0 ? `\nOmitted ${outside.length} path${outside.length === 1 ? '' : 's'} that would sit outside the archive root: ${outside.slice(0, 10).join(', ')}` : ''),
       data: {
         path: finalTarget,
         checkpointId: checkpoint?.id,
         fileCount: fileMap.size,
         uncompressedSize: totalSize,
         compressedSize: zipBuffer.length,
+        // Named so a caller can tell that a source file was left out rather
+        // than silently assuming everything they listed is in the archive.
+        omitted: outside.length > 0 ? outside : undefined,
       },
     };
   },
@@ -362,6 +424,7 @@ export const extractZipTool: ToolDefinition<{
 
     const fileFilter = input.files ? new Set(input.files) : null;
     const extracted: string[] = [];
+    const refused: string[] = [];
     let skipped = 0;
 
     for (const header of headers) {
@@ -375,14 +438,46 @@ export const extractZipTool: ToolDefinition<{
         break;
       }
 
-      const targetPath = join(targetDir, header.name);
+      // The member name decides where the bytes go, so it is validated before
+      // anything is created on disk. Members outside the target are collected
+      // and reported: an archive that tries this is worth telling the user
+      // about rather than silently dropping.
+      const relativeName = safeArchivePath(header.name);
+      if (!relativeName) {
+        refused.push(header.name);
+        continue;
+      }
+
+      const targetPath = join(targetDir, relativeName);
       await mkdir(dirname(targetPath), { recursive: true });
 
       if (header.compressionMethod === 8) {
         const compressedData = buffer.subarray(header.dataOffset, header.dataOffset + header.compressedSize);
-        const decompressed = inflateRawSync(compressedData);
+        let decompressed: Buffer;
+        try {
+          // A "zip bomb" declares a small compressed member that expands to
+          // gigabytes; inflating it without a ceiling would take the process
+          // down. The declared size is checked first and the actual result
+          // second, because the declaration itself is attacker-controlled.
+          if (header.uncompressedSize > MAX_MEMBER_BYTES) {
+            refused.push(`${header.name} (declares ${header.uncompressedSize} bytes, over the ${MAX_MEMBER_BYTES}-byte member limit)`);
+            continue;
+          }
+          decompressed = inflateRawSync(compressedData, { maxOutputLength: MAX_MEMBER_BYTES });
+        } catch (error) {
+          refused.push(`${header.name} (${error instanceof Error ? error.message : 'could not be decompressed'})`);
+          continue;
+        }
+        if (decompressed.length > MAX_MEMBER_BYTES) {
+          refused.push(`${header.name} (expands past the member limit)`);
+          continue;
+        }
         await writeFile(targetPath, decompressed);
       } else if (header.compressionMethod === 0) {
+        if (header.uncompressedSize > MAX_MEMBER_BYTES) {
+          refused.push(`${header.name} (stored member over the ${MAX_MEMBER_BYTES}-byte limit)`);
+          continue;
+        }
         const rawData = buffer.subarray(header.dataOffset, header.dataOffset + header.uncompressedSize);
         await writeFile(targetPath, rawData);
       } else {
@@ -390,18 +485,22 @@ export const extractZipTool: ToolDefinition<{
         continue;
       }
 
-      extracted.push(header.name);
+      extracted.push(relativeName);
     }
 
     await context.checkpoints?.confirm(checkpoint);
     const summary = `Extracted ${extracted.length} file${extracted.length === 1 ? '' : 's'} from ${input.path}${skipped > 0 ? ` (${skipped} skipped)` : ''}`;
+    const refusalNote = refused.length > 0
+      ? `\nRefused ${refused.length} entr${refused.length === 1 ? 'y' : 'ies'} whose path leaves the target directory (this archive may be malicious):\n${refused.slice(0, 20).join('\n')}`
+      : '';
 
     return {
       ok: true,
-      output: `${summary}\nTarget: ${targetDir}\n\n${extracted.join('\n')}`,
+      output: `${summary}\nTarget: ${targetDir}\n\n${extracted.join('\n')}${refusalNote}`,
       data: {
         extracted,
         skipped,
+        refused,
         targetDir,
         checkpointId: checkpoint?.id,
       },

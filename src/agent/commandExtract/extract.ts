@@ -115,6 +115,20 @@ function isCacheProbePrompt(prompt: string, normalized: string) {
   if (/缓存(机制|逻辑|实现|模块|代码|源码|策略|算法|bug|问题)|(实现|写|重构|修复|优化|设计)[^。]{0,6}cache|cache\s*(implementation|module|logic|bug|code)/i.test(compact)) {
     return false;
   }
+  // Explanatory phrasing asks what the concept IS, not what this CLI's cache
+  // is doing: "解释缓存命中率" / "为什么缓存能省钱" are questions for the model.
+  // Matching the bare keyword here hijacked them into a local probe that
+  // answered about lookup counts in four milliseconds — the reply arrived all
+  // at once and never touched the model. The agent still has cache_probe as a
+  // tool, so a real diagnostic request can be served after the model decides.
+  // Matched against the spaced text: `\bexplain\b` cannot match a compaction
+  // that glued every word together.
+  if (/解释|说明|讲讲|说说|科普|是什么|什么意思|什么是|为什么|为何|原理|如何理解/i.test(compact)) {
+    return false;
+  }
+  if (/\bexplain\b|\bwhat\s+(is|are|does)\b|\bwhy\b|\bhow\s+does\b|\bmeans?\b|\bmeaning\b/i.test(prompt)) {
+    return false;
+  }
   // Natural-language aliases for /cache — keep narrow so "缓存机制源码" can still search.
   if (/^\/?(cache|probe)(\s+cache)?$/i.test(prompt.trim())) return true;
   if (/缓存命中|命中率|缓存探针|cache\s*hit|hit\s*rate|average\s*hit/i.test(compact)) return true;

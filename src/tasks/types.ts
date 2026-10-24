@@ -2,6 +2,16 @@ export type BoardStatus = 'draft' | 'active' | 'completed' | 'blocked' | 'cancel
 
 export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled' | 'skipped';
 
+export type TaskVerificationAttempt = {
+  id: string;
+  phase: 'initial' | 'repair';
+  status: 'running' | 'passed' | 'failed' | 'skipped' | 'cancelled' | 'incomplete';
+  startedAt: string;
+  finishedAt?: string;
+  summary: string;
+  results: import('./verify.js').VerifyCommandResult[];
+};
+
 export type TaskItem = {
   id: string;
   title: string;
@@ -10,6 +20,7 @@ export type TaskItem = {
   dependsOn: string[];
   acceptance?: string;
   resultSummary?: string;
+  verification?: TaskVerificationAttempt[];
   error?: string;
   startedAt?: string;
   finishedAt?: string;
@@ -20,6 +31,7 @@ export type TaskItem = {
 };
 
 export type TaskBoard = {
+  error?: string;
   id: string;
   title: string;
   goal: string;

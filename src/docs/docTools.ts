@@ -13,6 +13,7 @@ import {
   extractGitLog,
   generateChangelog,
 } from './docGeneration.js';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
 export const generateReadmeTool: ToolDefinition<{
   includeApi?: boolean;
@@ -154,7 +155,7 @@ async function findSourceFiles(root: string, pattern: string): Promise<string[]>
         
         if (segment === '**') {
           // 递归扫描
-          if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== '.git') {
+          if (entry.isDirectory() && !isIgnoredDirName(entry.name)) {
             await scan(fullPath, depth);
             await scan(fullPath, depth + 1);
           } else if (entry.isFile() && depth === parts.length - 1) {

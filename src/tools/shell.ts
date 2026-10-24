@@ -50,6 +50,7 @@ export const runCommandTool: ToolDefinition<RunCommandInput> = {
         }
         const jobs = context.commandJobs;
         const started = jobs.start({
+          signal: context.signal,
           command: input.command,
           cwd: context.workspaceRoot,
           timeoutMs: input.timeoutMs,
@@ -77,6 +78,7 @@ export const runCommandTool: ToolDefinition<RunCommandInput> = {
     // Keep the foreground path exactly on the existing sandbox implementation.
     try {
       const result = await runSandboxedCommand({
+        signal: context.signal,
         command: input.command,
         cwd: context.workspaceRoot,
         timeoutMs: input.timeoutMs,

@@ -3,6 +3,8 @@ import { runAgentTurn } from '../agent/agent.js';
 import { buildCompactRequestMessages, SUMMARY_PREFIX } from '../agent/autoCompact.js';
 import type { ProviderRequest } from '../providers/types.js';
 import { withModelRetry } from '../providers/retry.js';
+import { withRequestControl } from '../providers/requestControl.js';
+import { throwIfAborted } from '../utils/cancellation.js';
 
 /**
  * A sub-agent that runs out of its step budget continues in a **new session**,
@@ -70,11 +72,13 @@ async function summarizeSegment(
 ): Promise<string | undefined> {
   try {
     const request: ProviderRequest = {
+      signal: runtime.requestSignal,
+      timeoutMs: runtime.config.requestTimeoutMs,
       messages: buildCompactRequestMessages(messages),
       tools: [],
       workspaceRoot: runtime.config.workspaceRoot,
     };
-    const response = await withModelRetry(() => runtime.provider.complete(request));
+    const response = await withRequestControl(request, controlled => withModelRetry(() => runtime.provider.complete(controlled), { signal: controlled.signal }));
     const summary = response.actions
       .filter((action): action is Extract<typeof action, { type: 'message' }> => action.type === 'message')
       .map((action) => action.content.trim())
@@ -82,6 +86,7 @@ async function summarizeSegment(
       .join('\n\n');
     return summary || undefined;
   } catch {
+    throwIfAborted(runtime.requestSignal);
     return undefined;
   }
 }

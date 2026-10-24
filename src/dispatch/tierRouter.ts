@@ -11,6 +11,11 @@ import { homedir } from 'node:os';
  * models, so every tier ran on the same provider. This module makes the tiers
  * real by reading the same provider registry the CLI is configured from
  * (~/.zcode/v2/config.json) and returning a ready-to-use override.
+ *
+ * There is no settings UI any more: the caller either passes an explicit
+ * selection (the CLI command, keep it as an override) or derives one from the
+ * configured models (dispatch/tierCatalog.ts). Nothing in this file reads the
+ * desktop app's settings.json.
  */
 
 /**
@@ -107,7 +112,10 @@ function readV2Providers(configPath = V2_CONFIG_PATH): Record<string, V2Provider
  * Users type "glm-5.3-flash" and the registry may hold "GLM-5.3-Flash".
  */
 function normalizeModelId(value: string): string {
-  return value.toLowerCase().replace(/[_.]/g, '-');
+  // Whitespace and the `_ . -` punctuation family all collapse to '-': the v2
+  // registry holds real ids like "gpt-5.6 sol", and a user typing the dashed
+  // form must still resolve it (and vice versa).
+  return value.toLowerCase().replace(/[\s_.]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
 
 type Candidate = { providerId: string; providerName: string; entry: V2ProviderEntry; model: string };
@@ -147,7 +155,7 @@ export function resolveTierSelector(
   configPath?: string,
 ): ResolvedTier | { error: string } {
   const raw = selector.trim();
-  if (!raw) return { error: `缺少${tier === 'expensive' ? '贵' : '便宜'}档配置。` };
+  if (!raw) return { error: `缺少${DISPATCH_TIER_LABELS[tier]}配置。` };
   const providers = readV2Providers(configPath);
   const all = candidates(providers);
   if (all.length === 0) return { error: '读不到 ~/.zcode/v2/config.json 里的提供商配置。' };
@@ -164,7 +172,8 @@ export function resolveTierSelector(
     // label (three "新供应商" entries is normal), so the id is the only
     // unambiguous handle. Both forms are accepted so a selector copied from
     // the UI keeps working.
-    pool = pool.filter((c) => normalizeModelId(c.providerName) === pKey || normalizeModelId(c.providerId) === pKey);
+    const byId = pool.filter((candidate) => normalizeModelId(candidate.providerId) === pKey);
+    pool = byId.length > 0 ? byId : pool.filter((candidate) => normalizeModelId(candidate.providerName) === pKey);
     // A stale prefix must not sink the whole tier: earlier versions stored the
     // DESKTOP provider label ("新供应商"), which never matches a v2 entry. If
     // the model name alone resolves unambiguously, use it and let the caller
@@ -172,10 +181,21 @@ export function resolveTierSelector(
     if (pool.length === 0) {
       const byModel = all.filter((c) => normalizeModelId(c.model) === modelKey);
       if (byModel.length === 0) return { error: `找不到提供商「${wantedProvider}」。` };
+      if (byModel.length > 1) {
+        return {
+          error: `提供商「${wantedProvider}」已失效，模型「${wantedModel}」在多个提供商中存在，请改用 providerId/model。`,
+        };
+      }
       pool = byModel;
     }
   }
 
+  const matchingProviders = wantedModel === '*'
+    ? pool
+    : pool.filter((candidate) => normalizeModelId(candidate.model) === modelKey);
+  if (wantedProvider && new Set(matchingProviders.map((candidate) => candidate.providerId)).size > 1) {
+    return { error: `提供商名称「${wantedProvider}」匹配多个提供商，请改用 providerId/model。` };
+  }
   let match = pool.find((c) => normalizeModelId(c.model) === modelKey);
   if (!match && wantedModel === '*') match = pool[0];
   if (!match) {
@@ -290,34 +310,4 @@ export function listTierOptions(configPath?: string): TierOption[] {
       hasKey: Boolean(c.entry.options?.apiKey),
     };
   });
-}
-
-/**
- * Global default tier selection, as saved by the desktop settings page.
- *
- * Read from the desktop app's settings.json: it is the same machine and the
- * same user, and keeping one file means the two surfaces cannot disagree
- * about what "the default" is. A malformed or missing file simply means no
- * default — never an error the caller has to handle.
- */
-export function readGlobalDispatchDefault(settingsPath?: string): TierSelection | null {
-  const file = settingsPath ?? join(homedir(), 'AppData', 'Roaming', 'cc-desktop-ide', 'settings.json');
-  if (!existsSync(file)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf-8')) as {
-      preferences?: { dispatchDefault?: TierSelection };
-    };
-    const selection = parsed.preferences?.dispatchDefault;
-    if (!selection) return null;
-    // Keep every tier that has at least one model. A partially filled default
-    // is legitimate: the user may only have configured two of the three.
-    const out: TierSelection = {};
-    for (const tier of TIER_ORDER) {
-      const chain = selection[tier];
-      if (Array.isArray(chain) ? chain.length > 0 : Boolean(chain)) out[tier] = chain;
-    }
-    return Object.keys(out).length > 0 ? out : null;
-  } catch {
-    return null;
-  }
 }

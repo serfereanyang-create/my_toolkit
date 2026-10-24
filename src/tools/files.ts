@@ -4,6 +4,7 @@ import { dirname, extname, join, relative } from 'node:path';
 import { pathScopeFor, resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';
 import { lineDiff } from './lineDiff.js';
 import type { ToolDefinition } from './types.js';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
 /** Read a file for diffing; a missing file counts as empty (pure insertion). */
 async function readFileOrEmpty(target: string): Promise<string> {
@@ -14,7 +15,6 @@ async function readFileOrEmpty(target: string): Promise<string> {
   }
 }
 
-const ignoredDirs = new Set(['node_modules', 'dist', '.git', '.gradle', 'build', '.aicode', '.aicode-smoke']);
 
 export const projectStatusTool: ToolDefinition<Record<string, never>> = {
   name: 'project_status',
@@ -146,7 +146,7 @@ async function walk(current: string, workspaceRoot: string, files: string[], max
   const entries = await readdir(current, { withFileTypes: true });
   for (const entry of entries) {
     if (files.length >= maxFiles) return;
-    if (entry.isDirectory() && ignoredDirs.has(entry.name)) continue;
+    if (entry.isDirectory() && isIgnoredDirName(entry.name)) continue;
     await walk(join(current, entry.name), workspaceRoot, files, maxFiles);
   }
 }

@@ -70,11 +70,15 @@ export function formatContextFooter(
   ctx: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheReported: boolean },
   turnOutputTokens = ctx.outputTokens,
 ): string {
-  if (!ctx.inputTokens) return '';
-  const parts = [contextWindowLine(ctx.inputTokens, null)];
+  if (!ctx.inputTokens && !ctx.cacheReadTokens) return '';
+  // `inputTokens` is net of the cached part, so the prompt the model read is
+  // the sum of both. Using the net figure alone both understated "N used" and
+  // pushed the cache percentage past 100 (clamped) on any well-cached turn.
+  const promptTokens = ctx.inputTokens + ctx.cacheReadTokens;
+  const parts = [contextWindowLine(promptTokens, null)];
   if (turnOutputTokens > 0) parts.push(`out ${formatTokensCompact(turnOutputTokens)}`);
-  if (ctx.cacheReported && ctx.inputTokens > 0) {
-    parts.push(`cache ${Math.min(100, Math.round((ctx.cacheReadTokens / ctx.inputTokens) * 100))}%`);
+  if (ctx.cacheReported && promptTokens > 0) {
+    parts.push(`cache ${Math.min(100, Math.round((ctx.cacheReadTokens / promptTokens) * 100))}%`);
   }
   return parts.join(' · ');
 }
@@ -243,7 +247,7 @@ export class TerminalUI {
    *  <usage segments>` for turns over a minute; usage-only row otherwise. */
   turnEnd() {
     if (this.options.json || this.options.quiet || !process.stdout.isTTY) return;
-    const usage = this.lastContext && this.lastContext.inputTokens > 0
+    const usage = this.lastContext && (this.lastContext.inputTokens > 0 || this.lastContext.cacheReadTokens > 0)
       ? formatContextFooter(this.lastContext, this.turnOutputTokens)
       : '';
     const elapsed = Date.now() - this.turnStartedAt;
@@ -294,7 +298,12 @@ export class TerminalUI {
 
   assistant(content: string) {
     this.stopSpinner();
-    const plain = stripMarkdownDecorations(content);
+    // In `--json` mode the text is not for a terminal: the desktop transcript
+    // renders markdown itself, so stripping decorations here cost it the
+    // **bold**, the ## headings and — worst — every ``` fence, which turned
+    // every streamed code block into plain prose once the turn finished. The
+    // strip stays for the ANSI path, which has nothing else to render with.
+    const plain = this.options.json ? content : stripMarkdownDecorations(content);
     if (this.streamingAssistant) {
       const tail = this.streamCleaner.flush();
       if (tail && !this.options.json && !this.options.quiet) process.stdout.write(tail);

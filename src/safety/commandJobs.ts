@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   buildSandboxEnv,
   isSandboxScrubEnabled,
@@ -26,6 +26,7 @@ export type CommandJobSnapshot = {
 };
 
 export type StartCommandJobOptions = {
+  signal?: AbortSignal;
   command: string;
   cwd: string;
   timeoutMs?: number;
@@ -44,15 +45,18 @@ export type CommandJobStart = Pick<CommandJobSnapshot, 'jobId' | 'status' | 'sta
 export interface CommandJobService {
   start(options: StartCommandJobOptions): CommandJobStart;
   poll(jobId: string): CommandJobSnapshot | undefined;
+  settleCancellation?(signal: AbortSignal): Promise<void>;
 }
 
 type JobRecord = {
+  signal?: AbortSignal;
   snapshot: CommandJobSnapshot;
   child: ChildProcessWithoutNullStreams;
   timer: NodeJS.Timeout;
   closePromise: Promise<void>;
   resolveClose: () => void;
   closeRequested: boolean;
+  killPromise?: Promise<void>;
 };
 
 export const DEFAULT_COMMAND_JOB_TIMEOUT_MS = 30_000;
@@ -72,6 +76,7 @@ export class CommandJobManager implements CommandJobService {
   private closed = false;
 
   start(options: StartCommandJobOptions): CommandJobStart {
+    options.signal?.throwIfAborted();
     if (this.closed) throw new Error('command job manager is closed');
     validateSandboxCommand(options.command);
 
@@ -109,26 +114,37 @@ export class CommandJobManager implements CommandJobService {
       resolveClose = resolvePromise;
     });
     const record: JobRecord = {
+      signal: options.signal,
       snapshot,
       child,
       timer: setTimeout(() => {
         if (record.snapshot.finishedAt) return;
         record.snapshot.timedOut = true;
         record.snapshot.status = 'timed_out';
-        killProcessTree(child.pid, isWin);
+        record.killPromise = killProcessTree(child.pid, isWin);
       }, timeoutMs),
       closePromise,
       resolveClose,
       closeRequested: false,
     };
     this.jobs.set(jobId, record);
+    const abort = () => {
+      if (record.snapshot.finishedAt) return;
+      record.closeRequested = true;
+      clearTimeout(record.timer);
+      record.snapshot.status = 'killed';
+      record.killPromise = killProcessTree(record.child.pid, isWin);
+    };
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
 
     child.stdout?.on('data', (chunk: Buffer) => appendOutput(record.snapshot, 'stdout', chunk));
     child.stderr?.on('data', (chunk: Buffer) => appendOutput(record.snapshot, 'stderr', chunk));
     child.on('error', () => {
       if (!record.snapshot.finishedAt) record.snapshot.status = record.closeRequested ? 'killed' : 'failed';
     });
-    child.on('close', (code, signal) => {
+    child.on('close', async (code, signal) => {
+      options.signal?.removeEventListener('abort', abort);
       if (record.snapshot.finishedAt) return;
       clearTimeout(record.timer);
       record.snapshot.code = code;
@@ -137,6 +153,7 @@ export class CommandJobManager implements CommandJobService {
       if (record.closeRequested) record.snapshot.status = 'killed';
       else if (record.snapshot.timedOut) record.snapshot.status = 'timed_out';
       else record.snapshot.status = code === 0 ? 'completed' : 'failed';
+      await record.killPromise;
       record.resolveClose();
     });
 
@@ -147,6 +164,10 @@ export class CommandJobManager implements CommandJobService {
     const record = this.jobs.get(jobId);
     if (!record) return undefined;
     return { ...record.snapshot };
+  }
+
+  async settleCancellation(signal: AbortSignal): Promise<void> {
+    await Promise.all([...this.jobs.values()].filter(record => record.signal === signal && record.closeRequested).map(record => record.closePromise));
   }
 
   /** Kill active process trees and release all in-memory job state. */
@@ -187,22 +208,26 @@ function appendOutput(snapshot: CommandJobSnapshot, stream: 'stdout' | 'stderr',
   snapshot[stream] += kept.toString('utf8');
 }
 
-function killProcessTree(pid: number | undefined, isWin: boolean) {
+function killProcessTree(pid: number | undefined, isWin: boolean): Promise<void> {
   // The pid comes from our own spawned child, and taskkill gets a strict
   // argument array (no shell, no string building) so nothing user-supplied
   // can reach the command line.
-  if (!pid || !Number.isInteger(pid) || pid <= 0) return;
+  if (!pid || !Number.isInteger(pid) || pid <= 0) return Promise.resolve();
   try {
     if (isWin) {
-      spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      return;
+      return new Promise(resolve => {
+        const killer = spawn(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        killer.once('close', () => resolve()); killer.once('error', () => resolve());
+      });
     }
     try {
       process.kill(-pid, 'SIGKILL');
     } catch {
       process.kill(pid, 'SIGKILL');
     }
+    return Promise.resolve();
   } catch {
     // Ignore kill races; close/error events determine the final state.
+    return Promise.resolve();
   }
 }

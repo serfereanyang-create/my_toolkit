@@ -183,7 +183,8 @@ test('OpenAI captures real cached_tokens from prompt_tokens_details', async () =
       tools,
       workspaceRoot: process.cwd(),
     });
-    assert.equal(result.usage?.inputTokens, 200);
+    // prompt_tokens is inclusive; the shared shape reports the fresh part.
+    assert.equal(result.usage?.inputTokens, 50);
     assert.equal(result.usage?.cacheReadTokens, 150);
   } finally {
     globalThis.fetch = originalFetch;

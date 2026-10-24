@@ -22,8 +22,8 @@ import type {
   SuggestionReport,
 } from './types.js';
 import { EFFORT_WEIGHT, PRIORITY_ORDER } from './types.js';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.git', '.aicode']);
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
 const MAX_FILES = 5000;
 
@@ -54,7 +54,7 @@ async function walkSourceFiles(current: string, root: string, files: string[]): 
     const entries = await readdir(current, { withFileTypes: true });
     for (const entry of entries) {
       if (files.length >= MAX_FILES) break;
-      if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
+      if (isIgnoredDirName(entry.name) || entry.name.startsWith('.')) continue;
       await walkSourceFiles(join(current, entry.name), root, files);
     }
   } catch {

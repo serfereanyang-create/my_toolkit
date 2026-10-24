@@ -30,6 +30,18 @@ async function main() {
     return;
   }
 
+  // Headless GUI action for the desktop 电脑操控 panel. Handled before the
+  // runtime is built: the panel drives one window operation at a time and has
+  // no provider, no session and no MCP need — constructing the full runtime
+  // would cost a second and a provider auth check for a click.
+  if (config.guiTool) {
+    const { runGuiTool } = await import('./cli/guiTool.js');
+    const result = await runGuiTool(config.guiTool, config.guiInput, config.workspaceRoot);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
   const created = await createAgentRuntime(config);
   const { provider, tools, ui, runtime, mcpStatuses } = created;
 

@@ -221,10 +221,11 @@ test('a board task records its step count on the supervisor', async () => {
     } as never);
     const { TaskBoardStore } = await import('../src/tasks/store.js');
     const { planBoardFromGoal } = await import('../src/tasks/planner.js');
-    const { runTaskBoardLoop } = await import('../src/tasks/runtime.js');
+    const { runTaskBoardLoop, confirmBoard } = await import('../src/tasks/runtime.js');
 
     const store = new TaskBoardStore(workspace);
     const board = planBoardFromGoal('分步实现任务板：规划、确认、执行');
+    confirmBoard(board, new Date().toISOString());
     await store.save(board);
     session.taskRuntime = { boardId: board.id, mode: 'executing', lastSyncAt: new Date().toISOString() };
 

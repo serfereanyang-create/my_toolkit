@@ -1,4 +1,5 @@
 import type { AgentAction, AgentMessage, Provider, ProviderRequest, ProviderResponse } from './types.js';
+import { controlledProvider } from './requestControl.js';
 import { anthropicThinking, openaiReasoningEffort } from './reasoning.js';
 import {
   buildToolSystemPromptParts,
@@ -18,7 +19,7 @@ export type AnthropicProviderOptions = {
 };
 
 export function createAnthropicProvider(options: AnthropicProviderOptions): Provider {
-  return {
+  const provider: Provider = {
     name: 'anthropic',
     model: options.model,
     async complete(request: ProviderRequest): Promise<ProviderResponse> {
@@ -76,12 +77,14 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
       // proxies often don't support it), retry once without it rather than failing.
       const thinking = anthropicThinking(request.reasoningEffort);
       let response = await fetchWithRetry(`${baseUrl}/messages`, {
+        signal: request.signal,
         method: 'POST',
         headers: buildAnthropicHeaders(options.apiKey, request.customProvider),
         body: JSON.stringify(buildBody(thinking)),
       });
       if (!response.ok && thinking && isThinkingRejection(response.status)) {
         response = await fetchWithRetry(`${baseUrl}/messages`, {
+          signal: request.signal,
           method: 'POST',
           headers: buildAnthropicHeaders(options.apiKey, request.customProvider),
           body: JSON.stringify(buildBody(undefined)),
@@ -122,8 +125,9 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
         return { actions, thinking: thinkingParts.join('') || undefined, usage, raw: { response: json, text: textParts.join('') } };
       }
 
-      for await (const data of iterateSseDataLines(response)) {
-        if (!data || data === '[DONE]') continue;
+      for await (const data of iterateSseDataLines(response, undefined, request.signal)) {
+        if (data === '[DONE]') break;
+        if (!data) continue;
         let json: AnthropicStreamEvent;
         try {
           json = JSON.parse(data) as AnthropicStreamEvent;
@@ -190,6 +194,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
       return { actions: parseAnthropicContentBlocks([]), thinking: thinkingParts.join('') || undefined, usage, raw: { stream: events, text } };
     },
   };
+  return controlledProvider(provider);
 }
 
 function buildAnthropicHeaders(apiKey: string, customProvider?: boolean): Record<string, string> {
@@ -237,7 +242,7 @@ type AnthropicUsage = {
   };
 };
 
-function normalizeAnthropicUsage(value: unknown): {
+export function normalizeAnthropicUsage(value: unknown): {
   inputTokens?: number;
   outputTokens?: number;
   cacheReadTokens?: number;
@@ -263,7 +268,22 @@ function normalizeAnthropicUsage(value: unknown): {
     details?.cache_creation_tokens,
   );
   if (inputTokens === undefined && outputTokens === undefined && cacheReadTokens === undefined && cacheCreationTokens === undefined) return undefined;
-  return { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens };
+  // Anthropic's own `input_tokens` is NET of the cached part, but an
+  // OpenAI-compatible proxy speaking this protocol only has `prompt_tokens`,
+  // which INCLUDES it. Every consumer adds input + cacheRead, so the inclusive
+  // number must be adjusted or the cached tokens are counted twice. A relay
+  // that also reports cache creation includes that too
+  // (prompt_tokens = read + creation + fresh input), so both are removed —
+  // but only when they actually fit inside prompt_tokens; some relays report
+  // creation outside it, and clamping to 0 would invent a wrong total.
+  let netInput = inputTokens;
+  if (usage.input_tokens === undefined && usage.prompt_tokens !== undefined) {
+    const read = cacheReadTokens ?? 0;
+    const creation = cacheCreationTokens ?? 0;
+    if (read + creation <= usage.prompt_tokens) netInput = usage.prompt_tokens - read - creation;
+    else if (read <= usage.prompt_tokens) netInput = usage.prompt_tokens - read;
+  }
+  return { inputTokens: netInput, outputTokens, cacheReadTokens, cacheCreationTokens };
 }
 
 function firstNumber(...values: unknown[]): number | undefined {

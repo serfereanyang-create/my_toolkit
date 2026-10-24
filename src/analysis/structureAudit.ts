@@ -12,6 +12,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join, relative, sep, basename, extname } from 'node:path';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
 export type StructureIssueKind =
   | 'huge-file'
@@ -48,7 +49,6 @@ export interface StructureAuditReport {
 }
 
 const CODE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py', '.go', '.rs', '.java']);
-const IGNORE_DIRS = new Set(['node_modules', 'dist', 'build', '.git', '.aicode', 'coverage', '.next', 'out', 'vendor', '__pycache__']);
 
 /**
  * 测试文件是否引用了仓库里真实存在的模块。
@@ -111,7 +111,7 @@ function detectSourceRoots(rels: string[]): string[] {
     if (slash <= 0) continue; // 顶层文件没有独立源码根
     const top = rel.slice(0, slash);
     if (top === 'tests' || top === 'test' || top === '__tests__') continue;
-    if (IGNORE_DIRS.has(top)) continue;
+    if (isIgnoredDirName(top)) continue;
     if (isTestFile(rel.slice(slash + 1))) continue; // 测试文件不代表源码根
     roots.add(top);
   }
@@ -134,7 +134,7 @@ async function walk(
   } catch {
     return;
   }
-  const visible = entries.filter((e) => !e.startsWith('.') && !IGNORE_DIRS.has(e));
+  const visible = entries.filter((e) => !e.startsWith('.') && !isIgnoredDirName(e));
   dirs.push({ path: dir, rel: relative(root, dir).split(sep).join('/') || '.', depth, entries: visible.length });
   for (const entry of visible) {
     const child = join(dir, entry);

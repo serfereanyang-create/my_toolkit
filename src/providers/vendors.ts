@@ -216,6 +216,11 @@ export const VENDOR_PROFILES: Record<VendorId, VendorProfile> = {
     isReasoningModel(model) {
       return isDeepseekReasoner(model);
     },
+    // DeepSeek 的命中量在专有字段 prompt_cache_hit_tokens（V3.x 也可能走
+    // OpenAI 的 prompt_tokens_details.cached_tokens）。这里必须挂上：函数早就
+    // 写好了，但 profile 没引用它，于是走 openai 协议时命中数被当成"未上报"，
+    // 台账里全是 0，缓存看起来永远是空的。
+    extractCacheReadTokens: deepseekCacheReadTokens,
   },
 };
 

@@ -13,6 +13,7 @@ import * as ts from 'typescript';
 import { readFile, readdir } from 'node:fs/promises';
 import { resolve, relative, basename, extname, join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { isIgnoredDirName } from '../workspace/ignored.js';
 
 /**
  * API 条目类型
@@ -441,7 +442,7 @@ export async function analyzeArchitecture(
       const fullPath = join(dir, entry.name);
       
       if (entry.isDirectory()) {
-        if (entry.name !== 'node_modules' && entry.name !== 'dist' && entry.name !== '.git') {
+        if (!isIgnoredDirName(entry.name)) {
           await scanDirectory(fullPath);
         }
       } else if (entry.isFile() && /\.(ts|tsx|js|jsx)$/.test(entry.name)) {

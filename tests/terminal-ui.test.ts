@@ -163,3 +163,28 @@ test('TerminalUI non-json mode ignores thinking deltas entirely', () => {
   });
   assert.equal(output, '');
 });
+
+test('TerminalUI json mode forwards the reply markdown as written, fences included', () => {
+  const markdown = '## 结论\n\n**改了** 三处。\n\n```ts\nconst verdict = analyzeCommand(command);\n```\n';
+  const ui = new TerminalUI({ json: true });
+  const output = captureStdout(() => {
+    ui.assistantDelta('## 结论\n\n');
+    ui.assistant(markdown);
+  });
+  const events = output.trim().split('\n').map((line) => JSON.parse(line) as { type: string; content?: string });
+  const final = events.find((event) => event.type === 'assistant');
+  assert.ok(final, JSON.stringify(events));
+  // The desktop transcript renders markdown itself: stripping here used to
+  // flatten every streamed code block into prose once the turn finished.
+  assert.equal(final.content, markdown);
+  assert.match(final.content ?? '', /```ts/);
+  assert.match(final.content ?? '', /^## 结论$/m);
+});
+
+test('TerminalUI still strips decorations from what it prints to an ANSI terminal', () => {
+  const ui = new TerminalUI({ noColor: true });
+  const output = captureStdout(() => ui.assistant('## 结论\n\n**改了** 三处。\n\n```ts\nconst x = 1;\n```\n'));
+  assert.doesNotMatch(output, /\*\*|##|```/);
+  assert.match(output, /结论/);
+  assert.match(output, /const x = 1;/);
+});

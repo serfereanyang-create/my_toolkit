@@ -88,6 +88,9 @@ export async function runPromptMode(runtime: AgentRuntime, prompt: string): Prom
   if (prompt.startsWith('/')) {
     const result = await handleSlashCommand({ line: prompt, ...runtime });
     if (result !== '__EXIT__') runtime.ui.info(result);
+    if ((prompt === '/plan' || prompt.startsWith('/plan ')) && runtime.session.taskRuntime?.boardId) {
+      runtime.taskBoardEmit?.(await new TaskBoardStore(runtime.config.workspaceRoot).load(runtime.session.taskRuntime.boardId));
+    }
     if (runtime.session.taskRuntime?.mode === 'executing' && runtime.session.taskRuntime.boardId) {
       return continueTaskBoard(runtime);
     }
@@ -400,7 +403,8 @@ async function continueTaskBoard(runtime: AgentRuntime): Promise<AgentTurnResult
     session: runtime.session,
     runtime,  // 新增：传入完整 runtime 以便专家路由访问 tools/provider
     runTurn: async (taskPrompt, gitSafetyUnit) => {
-      const result = await runAgentTurn(runtime, taskPrompt, { gitSafetyUnit });
+      const task = board.tasks.find(item => item.id === runtime.session.taskRuntime?.activeTaskId);
+      const result = await runAgentTurn(runtime, taskPrompt, { gitSafetyUnit, displayText: task ? `执行任务：${task.title}` : '执行任务计划' });
       return {
         ok: result.ok,
         reason: result.reason,
@@ -420,10 +424,15 @@ async function continueTaskBoard(runtime: AgentRuntime): Promise<AgentTurnResult
   });
 
   runtime.ui.info(formatBoard(board));
-  if (board.status === 'completed' && runtime.gitProcess) {
+  if (loopResult.status === 'busy') {
+    runtime.session.taskRuntime = { ...runtime.session.taskRuntime, boardId: board.id, mode: 'paused', lastSyncAt: new Date().toISOString() };
+    await runtime.sessions.save(runtime.session);
+    runtime.taskBoardEmit?.(board);
+  }
+  if (loopResult.ok && board.status === 'completed' && !runtime.cancelRequested?.() && runtime.gitProcess) {
     await maybeCommitCompletedBoard(runtime, store, board);
   }
-  return { ok: loopResult.ok, session: runtime.session, reason: loopResult.reason };
+  return { ok: loopResult.ok, session: runtime.session, reason: loopResult.reason, outcome: loopResult.outcome, finalAnswer: loopResult.finalAnswer };
 }
 
 async function maybeCommitCompletedBoard(
@@ -432,6 +441,10 @@ async function maybeCommitCompletedBoard(
   board: Awaited<ReturnType<TaskBoardStore['load']>>,
 ) {
   if (!runtime.gitProcess) return;
+  if (runtime.gitRepository && !await runtime.gitRepository.discover()) {
+    runtime.ui.info('任务板已完成；工作区未启用 Git，跳过提交预览。');
+    return;
+  }
   if (board.gitCommitSha) {
     runtime.ui.info(`Board already committed as ${board.gitCommitSha.slice(0, 12)}.`);
     return;
@@ -519,6 +532,7 @@ export async function runRepl(runtime: AgentRuntime) {
         return;
       }
       cancelRequested = true;
+      interactiveRuntime.cancelCurrentTurn?.();
       runtime.ui.info('Stopping at next safe point…');
       return;
     }

@@ -35,7 +35,8 @@ test('Responses provider posts instructions/input and maps output text and usage
     assert.deepEqual(seenBody?.input, [{ role: 'user', content: 'hello' }]);
     assert.deepEqual(seenBody?.reasoning, { effort: 'high' });
     assert.equal(result.actions[0]?.type, 'message');
-    assert.equal(result.usage?.inputTokens, 10);
+    // `input_tokens` is inclusive of the cached part; the shared shape is net.
+    assert.equal(result.usage?.inputTokens, 4);
     assert.equal(result.usage?.cacheReadTokens, 6);
     assert.equal(result.thinking, 'plan');
   } finally {

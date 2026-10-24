@@ -1,6 +1,7 @@
 import type { ExpertProfile } from './types.js';
 import { isReadOnlyTool } from '../tools/scope.js';
 import { REVIEW_RUBRIC, REVIEW_TASK_PREAMBLE } from '../review/rubric.js';
+import { specialistExperts } from './specialists.js';
 
 /**
  * 代码编辑专家 - 专注代码修改/重构/实现
@@ -17,6 +18,7 @@ export const codeEditExpert: ExpertProfile = {
       'find_symbol', 'find_references', 'project_index', 'search_text',
       'list_files', 'file_info', 'rename_file', 'copy_file', 'make_dir',
       'diff_files', 'read_lines', 'read_many_files', 'list_tree', 'find_files',
+      'apply_unified_diff', 'rename_symbol', 'extract_method', 'move_symbol',
       'project_status', 'recent_activity', 'environment_info',
       'filename_search', 'glob_files', 'count_files', 'directory_summary',
     ];
@@ -26,7 +28,7 @@ export const codeEditExpert: ExpertProfile = {
     if (tool.name.startsWith('create_docx') || tool.name.startsWith('create_pptx') || tool.name.startsWith('create_xlsx')) return false;
     if (tool.name === 'run_command') return false;
     // 保守策略：只允许 read 风险的其他工具
-    return tool.risk === 'read';
+    return isReadOnlyTool(tool);
   },
   systemPrompt: `You are the **Code Edit Expert**. Your role is to implement, refactor, and fix code efficiently.
 
@@ -79,7 +81,7 @@ export const gitOpsExpert: ExpertProfile = {
     // git 工具 + 只读文件工具
     if (tool.name.startsWith('git_')) return true;
     // 允许只读文件工具辅助检查状态
-    return tool.risk === 'read';
+    return isReadOnlyTool(tool);
   },
   systemPrompt: `You are the **Git Operations Expert**. Your role is to manage git workflow: staging, committing, branching, stashing, fetch/pull/merge.
 
@@ -111,8 +113,10 @@ export const testVerifyExpert: ExpertProfile = {
       'run_command', 'list_files', 'file_info', 'project_status',
       'diff_files', 'apply_patch', 'edit_lines', 'append_file',
       'find_references', 'read_lines', 'read_many_files',
+      'run_tests', 'typecheck', 'lint', 'run_script', 'poll_command',
+      'generate_tests', 'test_generate', 'test_fix', 'generate_coverage_badge',
     ];
-    return testRelevant.includes(tool.name) || tool.risk === 'read';
+    return testRelevant.includes(tool.name) || isReadOnlyTool(tool);
   },
   systemPrompt: `You are the **Test & Verify Expert**. Your role is to write tests and run verification commands.
 
@@ -141,7 +145,8 @@ export const docGenerationExpert: ExpertProfile = {
     if (tool.name.startsWith('create_docx') || tool.name.startsWith('create_pptx') || tool.name.startsWith('create_xlsx')) return true;
     if (tool.name.startsWith('convert_to_pdf') || tool.name.startsWith('markdown_') || tool.name.startsWith('insert_docx')) return true;
     if (tool.name === 'write_file' || tool.name === 'append_file') return true;
-    return tool.risk === 'read';
+    if (['generate_api_docs', 'generate_architecture_doc', 'generate_changelog', 'generate_readme', 'generate_release_notes'].includes(tool.name)) return true;
+    return isReadOnlyTool(tool);
   },
   systemPrompt: `You are the **Documentation Generation Expert**. Your role is to create high-quality documents in various formats.
 
@@ -169,8 +174,9 @@ export const shellRuntimeExpert: ExpertProfile = {
       'run_command', 'environment_info', 'disk_info', 'disk_growth',
       'process_memory', 'which_command', 'env_get',
       'list_files', 'file_info', 'project_status', 'cache_probe',
+      'run_script', 'poll_command', 'install_deps', 'workspace_run',
     ];
-    return shellRelevant.includes(tool.name) || tool.risk === 'read';
+    return shellRelevant.includes(tool.name) || isReadOnlyTool(tool);
   },
   systemPrompt: `You are the **Shell & Runtime Expert**. Your role is to execute commands, check environment, and manage runtime operations.
 
@@ -203,7 +209,7 @@ export const dataProcessingExpert: ExpertProfile = {
       'ini_parse', 'properties_parse', 'toml_parse',
       'read_file', 'write_file', 'list_files', 'file_info',
     ];
-    return dataTools.includes(tool.name) || tool.risk === 'read';
+    return dataTools.includes(tool.name) || isReadOnlyTool(tool);
   },
   systemPrompt: `You are the **Data Processing Expert**. Your role is to read, transform, and query structured data files.
 
@@ -305,6 +311,6 @@ export const allExperts: ExpertProfile[] = [
   docGenerationExpert,
   shellRuntimeExpert,
   dataProcessingExpert,
+  ...specialistExperts,
   generalExpert, // 兜底放最后
 ];
-

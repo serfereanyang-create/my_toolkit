@@ -1,19 +1,19 @@
-import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { promisify } from 'node:util';
 import type { TaskItem } from './types.js';
+import { runSandboxedCommand } from '../safety/sandbox.js';
+import { abortable, throwIfAborted } from '../utils/cancellation.js';
 
-const execFileAsync = promisify(execFile);
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_OUTPUT_CHARS = 12_000;
 
 export type VerifyCommandName = 'typecheck' | 'test' | 'build';
+export type VerifyCheckName = VerifyCommandName | 'configuration';
 
 export type VerifyCommandResult = {
-  name: VerifyCommandName;
+  name: VerifyCheckName;
   command: string;
-  status: 'passed' | 'failed' | 'skipped';
+  status: 'running' | 'passed' | 'failed' | 'skipped' | 'cancelled';
   exitCode?: number | null;
   durationMs: number;
   output: string;
@@ -24,7 +24,7 @@ export type VerifySuiteResult = {
   ok: boolean;
   results: VerifyCommandResult[];
   summary: string;
-  failedAt?: VerifyCommandName;
+  failedAt?: VerifyCheckName;
 };
 
 export type VerifyCommandSpec = {
@@ -33,7 +33,7 @@ export type VerifyCommandSpec = {
   args: string[];
 };
 
-export type VerifyRunner = (spec: VerifyCommandSpec, cwd: string, timeoutMs: number) => Promise<{
+export type VerifyRunner = (spec: VerifyCommandSpec, cwd: string, timeoutMs: number, signal?: AbortSignal) => Promise<{
   exitCode: number | null;
   output: string;
   timedOut?: boolean;
@@ -49,10 +49,20 @@ export async function discoverVerifyCommands(workspaceRoot: string): Promise<Ver
   let scripts: Record<string, string> = {};
   try {
     const raw = await readFile(packageJsonPath, 'utf8');
-    const parsed = JSON.parse(raw) as { scripts?: Record<string, string> };
-    scripts = parsed.scripts ?? {};
-  } catch {
-    return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('package.json must contain an object');
+    const value = (parsed as Record<string, unknown>).scripts;
+    if (value !== undefined) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('package.json scripts must contain an object');
+      for (const name of ['typecheck', 'test', 'build']) {
+        const command = (value as Record<string, unknown>)[name];
+        if (command !== undefined && (typeof command !== 'string' || !command.trim())) throw new Error(`package.json scripts.${name} must be a nonempty string`);
+      }
+      scripts = value as Record<string, string>;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
   }
 
   const discovered: VerifyCommandSpec[] = [];
@@ -69,11 +79,14 @@ export async function discoverVerifyCommands(workspaceRoot: string): Promise<Ver
 }
 
 export async function runVerifySuite(options: {
+  signal?: AbortSignal;
   workspaceRoot: string;
   runner?: VerifyRunner;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  onProgress?: (results: VerifyCommandResult[]) => void | Promise<void>;
 }): Promise<VerifySuiteResult> {
+  throwIfAborted(options.signal);
   if (!isVerifyTasksEnabled(options.env)) {
     return {
       ok: true,
@@ -82,7 +95,16 @@ export async function runVerifySuite(options: {
     };
   }
 
-  const commands = await discoverVerifyCommands(options.workspaceRoot);
+  let commands: VerifyCommandSpec[];
+  const discoveryStarted = Date.now();
+  try { commands = await discoverVerifyCommands(options.workspaceRoot); }
+  catch (error) {
+    throwIfAborted(options.signal);
+    const results: VerifyCommandResult[] = [{ name: 'configuration', command: 'Read package.json', status: 'failed', durationMs: Date.now() - discoveryStarted, output: truncateOutput(error instanceof Error ? error.message : String(error)), reason: 'invalid or unreadable verification configuration' }];
+    await options.onProgress?.(results);
+    return suiteFromResults(results, 'configuration');
+  }
+  throwIfAborted(options.signal);
   if (commands.length === 0) {
     return {
       ok: true,
@@ -102,17 +124,25 @@ export async function runVerifySuite(options: {
   const results: VerifyCommandResult[] = [];
 
   for (const name of ordered) {
+    throwIfAborted(options.signal);
     const spec = commands.find((command) => command.name === name);
     if (!spec) {
       if (!present.has(name)) {
         results.push(skipped(name, commandLabel(name), `${name} script not found`));
       }
+      await options.onProgress?.([...results]);
       continue;
     }
 
     const started = Date.now();
+    await options.onProgress?.([...results, { name, command: formatSpec(spec), status: 'running', durationMs: 0, output: '' }]);
+    let received: Awaited<ReturnType<VerifyRunner>> | undefined;
     try {
-      const ran = await runner(spec, options.workspaceRoot, timeoutMs);
+      throwIfAborted(options.signal);
+      const work = runner(spec, options.workspaceRoot, timeoutMs, options.signal);
+      const ran = options.runner ? await abortable(work, options.signal) : await work;
+      received = ran;
+      throwIfAborted(options.signal);
       const durationMs = Date.now() - started;
       if (ran.timedOut) {
         results.push({
@@ -124,6 +154,7 @@ export async function runVerifySuite(options: {
           output: truncateOutput(ran.output),
           reason: `timed out after ${timeoutMs}ms`,
         });
+        await options.onProgress?.([...results]);
         return suiteFromResults(results, name);
       }
       if ((ran.exitCode ?? 1) !== 0) {
@@ -136,6 +167,7 @@ export async function runVerifySuite(options: {
           output: truncateOutput(ran.output),
           reason: `exit code ${ran.exitCode ?? 'unknown'}`,
         });
+        await options.onProgress?.([...results]);
         return suiteFromResults(results, name);
       }
       results.push({
@@ -146,7 +178,13 @@ export async function runVerifySuite(options: {
         durationMs,
         output: truncateOutput(ran.output),
       });
+      await options.onProgress?.([...results]);
     } catch (error) {
+      if (options.signal?.aborted) {
+        if (results.at(-1)?.name !== name || results.at(-1)?.status === 'skipped') results.push({ name, command: formatSpec(spec), status: 'cancelled', durationMs: Date.now() - started, output: truncateOutput(received?.output ?? ''), exitCode: received?.exitCode, reason: 'cancelled by user' });
+        await options.onProgress?.([...results]);
+        throwIfAborted(options.signal);
+      }
       results.push({
         name,
         command: formatSpec(spec),
@@ -156,6 +194,7 @@ export async function runVerifySuite(options: {
         output: truncateOutput(error instanceof Error ? error.message : String(error)),
         reason: 'runner error',
       });
+      await options.onProgress?.([...results]);
       return suiteFromResults(results, name);
     }
   }
@@ -187,7 +226,7 @@ export function formatVerifySummary(verify: VerifySuiteResult): string {
   return verify.summary;
 }
 
-function suiteFromResults(results: VerifyCommandResult[], failedAt?: VerifyCommandName): VerifySuiteResult {
+function suiteFromResults(results: VerifyCommandResult[], failedAt?: VerifyCheckName): VerifySuiteResult {
   const failed = results.find((result) => result.status === 'failed');
   if (failed) {
     return {
@@ -232,39 +271,9 @@ function truncateOutput(output: string): string {
   return `${output.slice(0, MAX_OUTPUT_CHARS)}\n...[truncated ${output.length - MAX_OUTPUT_CHARS} chars]`;
 }
 
-async function defaultRunner(spec: VerifyCommandSpec, cwd: string, timeoutMs: number) {
-  try {
-    const result = await execFileAsync(spec.command, spec.args, {
-      cwd,
-      timeout: timeoutMs,
-      maxBuffer: 8 * 1024 * 1024,
-      windowsHide: true,
-      env: process.env,
-    });
-    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-    return { exitCode: 0, output };
-  } catch (error) {
-    const failure = error as NodeJS.ErrnoException & {
-      code?: string | number;
-      killed?: boolean;
-      stdout?: string | Buffer;
-      stderr?: string | Buffer;
-      status?: number | null;
-    };
-    const output = `${bufferToString(failure.stdout)}${bufferToString(failure.stderr)}${failure.message ?? ''}`;
-    if (failure.killed) {
-      return { exitCode: failure.status ?? null, output, timedOut: true };
-    }
-    const exitCode = typeof failure.status === 'number'
-      ? failure.status
-      : typeof failure.code === 'number'
-        ? failure.code
-        : 1;
-    return { exitCode, output };
-  }
-}
-
-function bufferToString(value: string | Buffer | undefined) {
-  if (!value) return '';
-  return Buffer.isBuffer(value) ? value.toString('utf8') : value;
+async function defaultRunner(spec: VerifyCommandSpec, cwd: string, timeoutMs: number, signal?: AbortSignal) {
+  const expected = spec.name === 'test' ? ['test'] : ['run', spec.name];
+  if (spec.command !== 'npm' || spec.args.length !== expected.length || spec.args.some((arg, index) => arg !== expected[index])) throw new Error('Unsupported verification command');
+  const result = await runSandboxedCommand({ command: ['npm', ...expected].join(' '), cwd, timeoutMs, signal, maxBuffer: 8 * 1024 * 1024 });
+  return { exitCode: result.code, output: `${result.stdout}${result.stderr}`, timedOut: result.timedOut };
 }
