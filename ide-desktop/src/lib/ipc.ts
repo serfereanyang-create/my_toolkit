@@ -282,6 +282,13 @@ type ZCodeDesktopApi = {
     write(relativePath: string, content: string): Promise<{ ok: boolean; path: string }>;
     saveTempImage(filename: string, base64Data: string): Promise<string>;
   };
+  /** 「选一个文件」的唯一入口。起始目录由主进程锁在工作区根，不接受调用方指定。 */
+  files: {
+    pick(options: {
+      title?: string;
+      filters?: Array<{ name: string; extensions: string[] }>;
+    }): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+  };
   editor: {
     readFile(absolutePath: string): Promise<{ ok: boolean; content?: string; error?: string }>;
     saveFile(absolutePath: string, content: string): Promise<{ ok: boolean; error?: string }>;

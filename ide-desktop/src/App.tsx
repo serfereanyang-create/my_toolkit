@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { matchAction, resolveBindings, serializeChord } from './lib/keybindings';
 import { applyBackground, normalizeBlur, normalizeDim, normalizeScope, readBackground } from './lib/background';
-import { FolderOpen, MessageSquare, Files as FilesIcon, Settings as SettingsIcon, CalendarClock, GitBranch, FileCode, Gauge, Search, Braces, BookmarkCheck, History, BarChart3, StickyNote, Monitor, BrainCircuit } from 'lucide-react';
+import { FolderOpen, MessageSquare, Files as FilesIcon, Settings as SettingsIcon, CalendarClock, GitBranch, FileCode, Gauge, Search, Braces, BookmarkCheck, History, BarChart3, StickyNote, Monitor, BrainCircuit, LayoutGrid } from 'lucide-react';
 import { AutomationPanel } from './components/AutomationPanel';
 import { GuiControlPanel } from './components/GuiControlPanel';
 import { MemoryPanel } from './components/MemoryPanel';
@@ -27,6 +27,8 @@ import { BrowserPanel } from './components/BrowserPanel';
 import { WorkDetailsPanel } from './components/WorkDetailsPanel';
 import { WorkspaceToolsPanel } from './components/WorkspaceToolsPanel';
 import { Rail } from './components/Rail';
+import { NewTabPage } from './components/NewTabPage';
+import { ARTIFACT_FILTERS, artifactTiles, toWorkspaceRelative, type ArtifactPluginId, type ArtifactTile, type NewTabAction } from './lib/newTab';
 import { CommandPalette, buildCommands, type CommandEntry } from './components/CommandPalette';
 import { QuickOpen } from './components/QuickOpen';
 import { SearchPanel } from './components/SearchPanel';
@@ -59,7 +61,7 @@ import { loadRecent, rankRecent, touchRecent, type RecentFile } from './lib/rece
 import type { MentionItem } from './components/MentionPicker';
 import type { ApprovalMode, ChatItem, PreviewFileDescriptor, ProjectDescriptor, ReasoningEffort, SessionMeta, ThemeMode, ToolScope } from './types';
 
-type MainView = 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality' | 'computer' | 'memory';
+type MainView = 'newtab' | 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality' | 'computer' | 'memory';
 type QualityOverlay = 'review' | 'coverage' | 'performance' | 'refactor' | null;
 
 function applyTheme(theme: ThemeMode | undefined) {
@@ -81,6 +83,17 @@ export default function App() {
   const [state, dispatch] = useReducer(appReducer, initialState);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [mainView, setMainView] = useState<MainView>('chat');
+  // 新标签页的工件格来自插件注册表（不是写死的四张图）：插件被禁用或宿主缺
+  // 依赖时，这一页必须跟着变灰，所以每次进入这一页都重新读一次。
+  const [newTabArtifacts, setNewTabArtifacts] = useState<ArtifactTile[]>([]);
+  useEffect(() => {
+    if (mainView !== 'newtab') return;
+    let cancelled = false;
+    Promise.all([desktop.plugins.catalog(), desktop.plugins.status()])
+      .then(([defs, status]) => { if (!cancelled) setNewTabArtifacts(artifactTiles(defs, status)); })
+      .catch(() => { if (!cancelled) setNewTabArtifacts([]); });
+    return () => { cancelled = true; };
+  }, [mainView]);
   // Quality workspace: sub-panels open as overlays above the dashboard view.
   const [qualityOverlay, setQualityOverlay] = useState<QualityOverlay>(null);
   // Line-reveal request from quality panels into the Monaco editor.
@@ -479,6 +492,59 @@ export default function App() {
     dispatch({ type: 'sidechat/toggle' });
     ensureChatVisible();
   }, [closeOtherPanels, dispatch, ensureChatVisible]);
+
+  /**
+   * 新标签页上方五个入口。每一项都落到 App 已经有的那份能力上，不新造一套
+   * 状态机：文件走文件视图、浏览器和辅助对话走那两个面板的唯一开合入口、
+   * 终端走底部面板、审查走源代码管理（差异就在那里看）。
+   */
+  const handleNewTabShortcut = useCallback((action: NewTabAction) => {
+    switch (action) {
+      case 'files': setMainView('files'); return;
+      case 'browser': toggleBrowserPanel(); return;
+      case 'terminal': dispatch({ type: 'bottom/toggle' }); return;
+      case 'review': setMainView('git'); return;
+      case 'sidechat': toggleSideChatPanel(); return;
+    }
+  }, [dispatch, toggleBrowserPanel, toggleSideChatPanel]);
+
+  /**
+   * 工件格「打开」：系统选择框按类型过滤，选中后交给同一条 openFile 流水线。
+   *
+   * 预览/读文件那几个 IPC 都只收工作区相对路径，所以这里必须把绝对路径换成
+   * 相对的，越界的就地拒绝并说清原因——让主进程的围栏去拦，用户只会看到一句
+   * 莫名其妙的失败。
+   */
+  const openArtifactFile = useCallback(async (id: ArtifactPluginId) => {
+    const spec = ARTIFACT_FILTERS[id];
+    if (!spec) return;
+    const root = stateRef.current.workspaceRoot;
+    if (!root) {
+      appNotice('还没有工作区', '先打开一个项目文件夹，文档才能在预览面板里打开');
+      return;
+    }
+    try {
+      const picked = await desktop.files.pick({
+        title: `打开${spec.label}`,
+        filters: [{ name: spec.label, extensions: spec.extensions }],
+      });
+      if (!picked.ok) {
+        if (!picked.canceled) appNotice('无法打开文件', picked.error ?? '未知错误');
+        return;
+      }
+      if (!picked.path) return;
+      const relative = toWorkspaceRelative(root, picked.path);
+      if (relative === null) {
+        appNotice('只能打开工作区内的文件', `${picked.path} 不在 ${root} 下`);
+        return;
+      }
+      if (!relative) return;
+      const opened = await handleOpenFile(relative);
+      if (!opened) appNotice('无法预览该文件', `${relative} 打不开（格式不受支持或读取失败）`);
+    } catch (error) {
+      appNotice('无法打开文件', cleanIpcError(error));
+    }
+  }, [handleOpenFile]);
 
   const toggleNotesPanel = useCallback(() => {
     if (workspaceToolsRef.current.notesOpen) {
@@ -1481,6 +1547,7 @@ export default function App() {
     : `${backgroundRunning.length} 个会话运行中`;
 
   const titleMap: Record<MainView, { icon: JSX.Element; label: string }> = {
+    newtab: { icon: <LayoutGrid size={16} />, label: '新标签页' },
     chat: { icon: <MessageSquare size={16} />, label: '对话' },
     files: { icon: <FilesIcon size={16} />, label: '文件' },
     search: { icon: <Search size={16} />, label: '搜索' },
@@ -1631,6 +1698,18 @@ export default function App() {
 
         {state.pendingDiffs.length > 0 && mainView !== 'settings' && (
           <DiffReview diffs={state.pendingDiffs} dispatch={dispatch} onApprove={approve} />
+        )}
+
+        {mainView === 'newtab' && (
+          <div className="secondary newtab-host">
+            <NewTabPage
+              artifacts={newTabArtifacts}
+              workspaceReady={Boolean(state.workspaceRoot)}
+              onShortcut={handleNewTabShortcut}
+              onOpenArtifact={(id) => { void openArtifactFile(id); }}
+              onOpenAllPlugins={() => { setSettingsPage('plugins'); setMainView('settings'); }}
+            />
+          </div>
         )}
 
         {mainView === 'files' && (

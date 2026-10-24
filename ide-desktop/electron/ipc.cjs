@@ -340,6 +340,53 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     const preparation = await prepareMediaPreview({ filePath: absolutePath, expectedKind });
     return { ok: true, preparation };
   });
+  /**
+   * 新标签页的「打开 PDF / 演示文稿 / …」共用这一个选择框。
+   *
+   * 只有 `openFile`（一次一个文件、只读），过滤器和标题都按白名单清洗——
+   * 渲染进程传来的东西不能直接塞进 Electron 的 dialog 选项。起始目录永远是
+   * 当前工作区根，返回值是操作系统给的绝对路径；换成工作区相对路径、越界拒绝
+   * 由渲染进程那一侧做，这里只保证「选的是个存在且可读的文件」。
+   */
+  ipcMain.handle('files.pick', async (_event, options) => {
+    const input = options && typeof options === 'object' ? options : {};
+    const title = typeof input.title === 'string' && input.title.trim()
+      ? input.title.trim().slice(0, 120)
+      : '选择文件';
+
+    const filters = [];
+    if (Array.isArray(input.filters)) {
+      for (const entry of input.filters.slice(0, 8)) {
+        if (!entry || typeof entry !== 'object') continue;
+        const name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim().slice(0, 60) : '文件';
+        const extensions = Array.isArray(entry.extensions)
+          ? entry.extensions
+              .filter((ext) => typeof ext === 'string')
+              .map((ext) => ext.replace(/^\./, '').trim().toLowerCase())
+              .filter((ext) => /^[a-z0-9]{1,10}$/.test(ext))
+              .slice(0, 24)
+          : [];
+        if (extensions.length > 0) filters.push({ name, extensions });
+      }
+    }
+
+    // 起始目录锁在工作区根：不读渲染进程给的 defaultPath，否则那个参数就成了
+    // 「让用户在任意目录里挑文件」的后门。
+    const root = workspace.getRoot();
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title,
+      properties: ['openFile'],
+      filters: filters.length > 0 ? filters : undefined,
+      defaultPath: root || undefined,
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return { ok: false, canceled: true };
+
+    const source = picked.filePaths[0];
+    const stat = await fs.stat(source).catch(() => null);
+    if (!stat || !stat.isFile()) return { ok: false, error: '无法读取所选文件' };
+    return { ok: true, path: source };
+  });
+
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));
   

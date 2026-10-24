@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FilePlus, LoaderCircle, MessageSquare, Clock, Files, Settings, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, BarChart3, FileClock, MoreHorizontal, ChevronDown, GitBranch, Monitor, BrainCircuit } from 'lucide-react';
+import { FilePlus, LoaderCircle, MessageSquare, Clock, Files, Settings, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, BarChart3, FileClock, MoreHorizontal, ChevronDown, GitBranch, Monitor, BrainCircuit, LayoutGrid } from 'lucide-react';
 import type { AppState, SessionMeta } from '../types';
 import { HelpMenu, type HelpAction } from './HelpMenu';
 import { ConversationContextMenu, type ConvoAction } from './ConversationContextMenu';
@@ -7,7 +7,7 @@ import { TagEditorDialog } from './TagEditorDialog';
 import { formatAgo, recentLabel, type RecentFile } from '../lib/recentFiles';
 import { sessionMatchesTag, tagCloud, tagColorIndex } from '../lib/sessionTags';
 
-type MainView = 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality' | 'computer' | 'memory';
+type MainView = 'newtab' | 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality' | 'computer' | 'memory';
 
 // ── Rename dialog ─────────────────────────────────────────────────────────────
 function RenameDialog({ initialTitle, onConfirm, onCancel }: {
@@ -279,6 +279,17 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
       {/* ZCode side-pane style: views are 28px icon toggles, not a list of
           label buttons — the session list is the sidebar's main content. */}
       <nav className="rail-viewbar" aria-label="视图切换">
+        {/* 新标签页是入口页：文件/浏览器/终端/审查/辅助对话 和四个文档插件都在
+            这里一次点到，省得靠记快捷键或翻插件菜单。 */}
+        <button
+          className={`rail-view ${mainView === 'newtab' ? 'active' : ''}`}
+          title="新标签页"
+          aria-label="新标签页"
+          aria-pressed={mainView === 'newtab'}
+          onClick={() => onSelectView('newtab')}
+        >
+          <LayoutGrid size={15} /><span>新建</span>
+        </button>
         <button
           className={`rail-view ${mainView === 'chat' ? 'active' : ''}`}
           title="对话"

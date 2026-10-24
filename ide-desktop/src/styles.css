@@ -3163,6 +3163,161 @@ html[data-reduce-motion='on'] .think-live-caret { animation: none; }
   flex-direction: column;
 }
 
+/* 新标签页：一个纯粹的启动器，本身不画任何业务内容 */
+.newtab-host {
+  padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+
+.newtab-page {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.newtab-title {
+  margin: 0 0 var(--sp-1);
+  font-size: var(--fs-4);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.newtab-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.newtab-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+
+.newtab-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-elevated);
+  min-width: 0;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.newtab-cell:hover {
+  border-color: var(--border);
+  background: var(--bg-hover);
+}
+
+.newtab-cell-icon,
+.newtab-plugin-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  background: var(--bg-hover);
+  color: var(--fg-dim);
+}
+
+.newtab-plugin-icon {
+  color: #fff;
+}
+
+.newtab-cell-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.newtab-cell-title {
+  font-size: var(--fs-3);
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.newtab-cell-desc {
+  font-size: var(--fs-1);
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.newtab-open {
+  flex: none;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--fs-1);
+  cursor: pointer;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.newtab-open:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.newtab-open:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.newtab-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: var(--sp-2) 0;
+}
+
+.newtab-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.newtab-heading {
+  margin: 0;
+  font-size: var(--fs-3);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.newtab-more {
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--fs-1);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.newtab-more:hover {
+  color: var(--fg);
+}
+
+.newtab-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  color: var(--fg-muted);
+}
+
 /* File tree */
 .file-tree {
   display: flex;
