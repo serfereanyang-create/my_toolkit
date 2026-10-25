@@ -197,6 +197,14 @@ export type LocalCacheBucket = {
 export type ContextStats = {
   provider: string;
   model: string;
+  /**
+   * 模型窗口与自动压缩阈值，由 CLI 的 context_stats 一起报上来。
+   * 界面不自己乘 0.9：阈值属于压缩策略，只有一处定义才不会出现「界面说还剩
+   * 84k、实际早就压缩过」这种两套算法打架。旧版 CLI 不带这两个字段，界面会
+   * 如实显示「窗口未知」。
+   */
+  contextWindow?: number;
+  autoCompactLimit?: number;
   inputTokens: number;
   outputTokens: number;
   providerCacheReported: boolean;

@@ -1415,6 +1415,273 @@ h1 {
 }
 .rail-rename-btn:hover { background: var(--bg-hover); color: var(--fg); }
 
+/* =========================================================================
+   常驻上下文面板（环境 / 上下文 / 输出）
+   它不做折叠、不参与右栏面板的开合互斥：一直在侧栏底部，尺寸稳定。
+   ========================================================================= */
+
+.context-sidebar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: auto;
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  border-top: 1px solid var(--border);
+  max-height: 48vh;
+  overflow-y: auto;
+  font-size: var(--fs-1);
+  color: var(--fg-dim);
+}
+
+.context-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.context-sec + .context-sec {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--sp-2);
+}
+
+.context-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--fs-1);
+  color: var(--fg-muted);
+}
+
+.context-used,
+.context-count {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-env {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-env-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--fs-1);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.context-env-row:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.context-env-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-env-recent {
+  color: var(--fg-muted);
+}
+
+.context-meter {
+  display: flex;
+  height: 6px;
+  width: 100%;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--bg-hover);
+}
+
+.context-meter-seg {
+  display: block;
+  height: 100%;
+}
+
+.context-figures {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-figures-sep {
+  color: var(--fg-muted);
+}
+
+.context-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-legend li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--fg-muted);
+}
+
+.context-swatch-muted {
+  background: var(--border);
+}
+
+.context-swatch-empty {
+  border: 1px solid var(--border);
+  background: transparent;
+}
+
+.context-legend-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-legend-tokens,
+.context-legend-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+.context-legend-pct {
+  min-width: 40px;
+  text-align: right;
+}
+
+.context-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-top: 2px;
+}
+
+.context-until {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--fs-1);
+  cursor: pointer;
+}
+
+.context-compact:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.context-compact:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.context-outputs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.context-output-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--fs-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-output-row:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.context-output-name {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-output-dir {
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-1);
+}
+
+.context-output-diff {
+  display: inline-flex;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-add { color: var(--ok); }
+.context-del { color: var(--danger); }
+
+.context-empty,
+.context-more {
+  margin: 0;
+  color: var(--fg-muted);
+  line-height: 1.45;
+}
+
+.context-warn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  color: var(--danger);
+}
+
 .rail-foot {
   border-top: 1px solid var(--border);
   padding: var(--sp-2);

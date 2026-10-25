@@ -200,8 +200,9 @@ app.whenReady().then(async () => {
   const runTaskBoard = () => require('./app-task-board-checks.cjs')(reviewContext);
   const runCopy = () => require('./app-copy-checks.cjs')(reviewContext);
   const runNewTab = () => require('./app-newtab-checks.cjs')(reviewContext);
-  if (process.argv.includes('--writes-only') || process.argv.includes('--sync-only') || process.argv.includes('--background-only') || process.argv.includes('--cancel-only') || process.argv.includes('--tasks-only') || process.argv.includes('--copy-only') || process.argv.includes('--newtab-only')) {
-    if (process.argv.includes('--newtab-only')) await runNewTab(); else if (process.argv.includes('--copy-only')) await runCopy(); else if (process.argv.includes('--tasks-only')) await runTaskBoard(); else if (process.argv.includes('--cancel-only')) await runCancellation(); else if (process.argv.includes('--background-only')) await runBackground(); else if (process.argv.includes('--sync-only')) await runSync(); else await runWrites();
+  const runContextPanel = () => require('./app-context-checks.cjs')(reviewContext);
+  if (process.argv.includes('--writes-only') || process.argv.includes('--sync-only') || process.argv.includes('--background-only') || process.argv.includes('--cancel-only') || process.argv.includes('--tasks-only') || process.argv.includes('--copy-only') || process.argv.includes('--newtab-only') || process.argv.includes('--context-only')) {
+    if (process.argv.includes('--context-only')) await runContextPanel(); else if (process.argv.includes('--newtab-only')) await runNewTab(); else if (process.argv.includes('--copy-only')) await runCopy(); else if (process.argv.includes('--tasks-only')) await runTaskBoard(); else if (process.argv.includes('--cancel-only')) await runCancellation(); else if (process.argv.includes('--background-only')) await runBackground(); else if (process.argv.includes('--sync-only')) await runSync(); else await runWrites();
     assert.deepEqual(reports.filter(report => !report.ok), [], 'real App write failures');
     assert.deepEqual(errors, [], 'renderer errors');
     return;
@@ -318,11 +319,12 @@ app.whenReady().then(async () => {
   if (process.argv.includes('--tasks')) await runTaskBoard();
   if (process.argv.includes('--copy')) await runCopy();
   if (process.argv.includes('--newtab')) await runNewTab();
+  if (process.argv.includes('--context')) await runContextPanel();
   fs.writeFileSync(path.join(output, 'dom-summary.json'), JSON.stringify(await evaluate('({ title: document.title, sidebar: [...document.querySelectorAll(".rail button[aria-label]")].map(button => button.getAttribute("aria-label")), content: document.querySelector(".main")?.textContent?.slice(0, 3000) })'), null, 2));
   assert.deepEqual(reports.filter(report => !report.ok), [], 'real App workflow failures');
   assert.deepEqual(errors, [], 'renderer errors');
 }).catch((error) => { console.error(error.stack || error); process.exitCode = 1; }).finally(() => {
-  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ mode: process.argv.includes('--newtab-only') ? 'newtab-only' : process.argv.includes('--copy-only') ? 'copy-only' : process.argv.includes('--tasks-only') ? 'tasks-only' : process.argv.includes('--cancel-only') ? 'cancel-only' : process.argv.includes('--background-only') ? 'background-only' : process.argv.includes('--background') ? 'full-workflows' : process.argv.includes('--sync-only') ? 'sync-only' : process.argv.includes('--writes-only') ? 'writes-only' : process.argv.includes('--sync') ? process.argv.includes('--writes') ? 'all-git' : 'read-and-sync' : process.argv.includes('--writes') ? 'read-and-writes' : 'read-only', reports, errors, fixture, profile }, null, 2));
+  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ mode: process.argv.includes('--context-only') ? 'context-only' : process.argv.includes('--newtab-only') ? 'newtab-only' : process.argv.includes('--copy-only') ? 'copy-only' : process.argv.includes('--tasks-only') ? 'tasks-only' : process.argv.includes('--cancel-only') ? 'cancel-only' : process.argv.includes('--background-only') ? 'background-only' : process.argv.includes('--background') ? 'full-workflows' : process.argv.includes('--sync-only') ? 'sync-only' : process.argv.includes('--writes-only') ? 'writes-only' : process.argv.includes('--sync') ? process.argv.includes('--writes') ? 'all-git' : 'read-and-sync' : process.argv.includes('--writes') ? 'read-and-writes' : 'read-only', reports, errors, fixture, profile }, null, 2));
   if (errors.length) console.error(errors.map(message => message.slice(0, 360)).join('\n'));
   if (previewWindow && !previewWindow.isDestroyed()) previewWindow.destroy();
   app.exit(process.exitCode || 0);

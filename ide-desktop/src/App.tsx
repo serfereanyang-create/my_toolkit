@@ -29,6 +29,7 @@ import { WorkspaceToolsPanel } from './components/WorkspaceToolsPanel';
 import { Rail } from './components/Rail';
 import { NewTabPage } from './components/NewTabPage';
 import { ARTIFACT_FILTERS, artifactTiles, toWorkspaceRelative, type ArtifactPluginId, type ArtifactTile, type NewTabAction } from './lib/newTab';
+import { buildContextPanel, sessionOutputs } from './lib/contextSidebar';
 import { CommandPalette, buildCommands, type CommandEntry } from './components/CommandPalette';
 import { QuickOpen } from './components/QuickOpen';
 import { SearchPanel } from './components/SearchPanel';
@@ -665,21 +666,57 @@ export default function App() {
     await performOpenWorkspace();
   }
 
+  /** 换工作区之后要清掉的一切：编辑器标签、待发消息、会话列表、语言服务根。 */
+  async function applyWorkspaceSwitch(root: string, sequence: number) {
+    resetEditorTabs();
+    pendingRestartRef.current.clear();
+    sendInFlightRef.current.clear();
+    setSessions([]);
+    setRunningSubagentCount(0);
+    setLanguageWorkspaceRoot(root);
+    dispatch({ type: 'workspace/opened', root });
+    const tree = await desktop.workspace.getTree('.');
+    if (sequence === switchSequenceRef.current) dispatch({ type: 'tree/loaded', tree });
+  }
+
   async function performOpenWorkspace() {
     const sequence = ++switchSequenceRef.current;
     switchingSessionRef.current = true;
     try {
       const result = await desktop.workspace.open();
       if (sequence !== switchSequenceRef.current || result.canceled || !result.root) return;
-      resetEditorTabs();
-      pendingRestartRef.current.clear();
-      sendInFlightRef.current.clear();
-      setSessions([]);
-      setRunningSubagentCount(0);
-      setLanguageWorkspaceRoot(result.root);
-      dispatch({ type: 'workspace/opened', root: result.root });
-      const tree = await desktop.workspace.getTree('.');
-      if (sequence === switchSequenceRef.current) dispatch({ type: 'tree/loaded', tree });
+      await applyWorkspaceSwitch(result.root, sequence);
+    } catch (error) {
+      dispatch({ type: 'agent/event', event: { type: 'error', message: `切换工作区失败：${cleanIpcError(error)}` } });
+    } finally {
+      if (sequence === switchSequenceRef.current) switchingSessionRef.current = false;
+    }
+  }
+
+  /**
+   * 切到「最近工作区」里的某一个（常驻侧栏的环境区）。
+   *
+   * 和打开文件夹走同一套收尾（清标签、停待发消息、重建树），只是路径由用户从
+   * 列表里点选，不再弹系统对话框。脏文件/运行中这两道门禁一样适用——那正是
+   * `workspaceConfirm` 存在的理由。
+   */
+  async function switchToWorkspace(root: string) {
+    if (root === stateRef.current.workspaceRoot) return;
+    const dirtyCount = openFilesRef.current.filter((file) => file.dirty).length;
+    if (dirtyCount > 0) {
+      setWorkspaceConfirm('dirty');
+      return;
+    }
+    if (stateRef.current.runningSessions.length > 0 || stateRef.current.agentStatus === 'starting') {
+      setWorkspaceConfirm('running');
+      return;
+    }
+    const sequence = ++switchSequenceRef.current;
+    switchingSessionRef.current = true;
+    try {
+      const result = await desktop.workspace.setRoot(root);
+      if (sequence !== switchSequenceRef.current || !result.root) return;
+      await applyWorkspaceSwitch(result.root, sequence);
     } catch (error) {
       dispatch({ type: 'agent/event', event: { type: 'error', message: `切换工作区失败：${cleanIpcError(error)}` } });
     } finally {
@@ -1504,6 +1541,14 @@ export default function App() {
   </>;
 
   if (booting) return <main className="app-shell" />;
+  // 常驻侧栏的两组数据：上下文占用快照（CLI 每回合报的真实数字）与该会话改过
+  // 的文件。这里用普通常量而不是 useMemo——这段代码位于若干 early return 之后，
+  // 在那里加 hook 会让「这次渲染」和「上次渲染」的 hook 数量不同（React #310）。
+  // 两个函数都是对 state 的一次线性遍历，代价可以忽略。
+  const contextPanel = buildContextPanel(state.contextStats);
+  const contextOutputs = sessionOutputs(state.chat);
+  const compacting = state.chat.some((item) => item.kind === 'compaction' && item.phase === 'running');
+
   if (!state.workspaceRoot) return <main className="app-shell"><Welcome onOpenWorkspace={openWorkspace} />{confirmationDialogs}</main>;
 
   if (mainView === 'settings' && state.settings) {
@@ -1608,6 +1653,12 @@ export default function App() {
         onOpenWorkspace={openWorkspace}
         onSelectView={setMainView}
         onOpenRecent={(p) => { void handleOpenFile(p); }}
+        contextPanel={contextPanel}
+        outputs={contextOutputs}
+        compacting={compacting}
+        onCompact={() => { void submitPrompt('/compact'); }}
+        onOpenOutput={(path) => { void handleOpenFile(path); }}
+        onSwitchWorkspace={(root) => { void switchToWorkspace(root); }}
         onSetTags={(id, tags) => { void handleSetTags(id, tags); }}
         onHelpAction={(action) => {
           // 'extensions' jumps to settings; the rest open the versioned

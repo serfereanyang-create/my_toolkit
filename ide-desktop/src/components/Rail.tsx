@@ -6,6 +6,8 @@ import { ConversationContextMenu, type ConvoAction } from './ConversationContext
 import { TagEditorDialog } from './TagEditorDialog';
 import { formatAgo, recentLabel, type RecentFile } from '../lib/recentFiles';
 import { sessionMatchesTag, tagCloud, tagColorIndex } from '../lib/sessionTags';
+import { ContextSidebar } from './ContextSidebar';
+import type { ContextPanelModel, OutputFile } from '../lib/contextSidebar';
 
 type MainView = 'newtab' | 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality' | 'computer' | 'memory';
 
@@ -168,7 +170,7 @@ function SessionItem({ session, active, tags, running, approvals, onOpen, onOpen
   );
 }
 
-export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shortcuts, runningIds, approvals, onNewChat, onOpenWorkspace, onSelectView, onHelpAction, onConvoAction, onOpenSession, onOpenRecent, onSetTags }: {
+export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shortcuts, runningIds, approvals, contextPanel, outputs, compacting, onCompact, onOpenOutput, onSwitchWorkspace, onNewChat, onOpenWorkspace, onSelectView, onHelpAction, onConvoAction, onOpenSession, onOpenRecent, onSetTags }: {
   state: AppState;
   sessions: SessionMeta[];
   /** sessionId -> tags, from the workspace sidecar store (iteration 18). */
@@ -189,6 +191,16 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
   onOpenSession: (sessionId: string) => void;
   onOpenRecent: (path: string) => void;
   onSetTags: (sessionId: string, tags: string[]) => void;
+  /**
+   * 底部常驻的「环境 / 上下文 / 输出」。传 null 就不渲染——只有在拿不到任何
+   * 上下文数据（比如纯静态渲染的场景）时才该这样，正常运行时一直有。
+   */
+  contextPanel?: ContextPanelModel | null;
+  outputs?: OutputFile[];
+  compacting?: boolean;
+  onCompact?: () => void;
+  onOpenOutput?: (path: string) => void;
+  onSwitchWorkspace?: (root: string) => void;
 }) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [ctx, setCtx] = useState<{ x: number; y: number; session: string } | null>(null);
@@ -465,6 +477,20 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
             </div>
           </div>
         </div>
+      )}
+
+      {contextPanel && (
+        <ContextSidebar
+          panel={contextPanel}
+          outputs={outputs ?? []}
+          workspaceRoot={state.workspaceRoot}
+          recentWorkspaces={state.settings?.recentWorkspaces ?? []}
+          compacting={Boolean(compacting)}
+          onCompact={onCompact ?? (() => {})}
+          onOpenFile={onOpenOutput ?? (() => {})}
+          onOpenWorkspace={onOpenWorkspace}
+          onSwitchWorkspace={onSwitchWorkspace ?? (() => {})}
+        />
       )}
 
       <div className="rail-foot">

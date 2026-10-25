@@ -901,6 +901,10 @@ function contextStatsFromEvent(event: AgentEvent): ContextStats | null {
   return {
     provider: String(event.provider ?? ''),
     model: String(event.model ?? ''),
+    // 缺了就保持 undefined：旧版 CLI 不报这两个字段，界面显示「窗口未知」，
+    // 而不是拿一个猜出来的窗口算出看着很精确的百分比。
+    contextWindow: typeof event.contextWindow === 'number' && event.contextWindow > 0 ? event.contextWindow : undefined,
+    autoCompactLimit: typeof event.autoCompactLimit === 'number' && event.autoCompactLimit > 0 ? event.autoCompactLimit : undefined,
     inputTokens: number(event.inputTokens),
     outputTokens: number(event.outputTokens),
     providerCacheReported: event.providerCacheReported === true,
