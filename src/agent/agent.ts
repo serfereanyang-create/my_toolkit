@@ -23,6 +23,7 @@ import { formatMemories } from '../memory/format.js';
 import { loadGlobalMemorySummary } from '../memory/global.js';
 import { selectRelevantMemories } from '../memory/select.js';
 import { compactMessagesForModel } from './contextBudget.js';
+import { autoCompactTokenLimit, resolveModelContextWindow } from './modelWindows.js';
 import { globalToolHealth } from './toolHealth.js';
 import { buildToolSystemPrompt, buildToolSystemPromptParts } from '../providers/protocol.js';
 import { planLocalFallback } from './fallback.js';
@@ -2282,10 +2283,15 @@ function buildContextStats(
   const attributed = messages + systemTools + mcpTools + skills + systemPrompt + measuredOther;
   const other = measuredOther + Math.max(0, input - attributed);
   const localCache = collectCacheProbe();
+  // 窗口和自动压缩阈值一起报出去，而不是让界面自己乘 0.9：这两个数是压缩策略
+  // 的一部分，改动时就该只有一处；界面照抄数字，永远和真实行为一致。
+  const contextWindow = resolveModelContextWindow(runtime.provider.model);
 
   return {
     provider: runtime.provider.name,
     model: runtime.provider.model,
+    contextWindow,
+    autoCompactLimit: autoCompactTokenLimit(contextWindow),
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     // Distinguish "provider explicitly reported 0" from "provider did not report
