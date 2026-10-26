@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { renameWithRetry, serializeWrites as serialize, writeFileAtomic } from '../utils/atomic.js';
+import { withFileLock, type LockOptions } from '../utils/lockfile.js';
 import type { NewMemoryInput, ProjectMemoryEntry, ProjectMemoryFile } from './types.js';
 import { memoryTokens } from './tokens.js';
 
@@ -14,10 +15,14 @@ const MAX_SUMMARY = 240;
 export type ProjectMemoryStoreDeps = {
   readFile?: (path: string, encoding: BufferEncoding) => Promise<string>;
   rename?: (from: string, to: string) => Promise<void>;
+  /** 锁的等待/抢占参数，测试里会调小。 */
+  lock?: LockOptions;
 };
 
 export class ProjectMemoryStore {
   private readonly filePath: string;
+  private readonly lockPath: string;
+  private readonly lockOptions: LockOptions;
   private readonly readFileImpl: (path: string, encoding: BufferEncoding) => Promise<string>;
   private readonly renameFile: (from: string, to: string) => Promise<void>;
   /** The unreadable file is moved aside at most once per store. */
@@ -30,6 +35,10 @@ export class ProjectMemoryStore {
 
   constructor(workspaceRoot: string, deps: ProjectMemoryStoreDeps = {}) {
     this.filePath = resolve(workspaceRoot, '.aicode', 'memory', 'entries.json');
+    // 锁文件放在同一目录：`open(…, 'wx')` 的原子性只对被锁的那个文件系统成立，
+    // 换个盘就只是「大多数时候能用」。
+    this.lockPath = `${this.filePath}.lock`;
+    this.lockOptions = deps.lock ?? {};
     this.readFileImpl = deps.readFile ?? ((path, encoding) => readFile(path, encoding));
     this.renameFile = deps.rename ?? renameWithRetry;
   }
@@ -94,9 +103,19 @@ export class ProjectMemoryStore {
   }
 
   async save(file: ProjectMemoryFile) {
-    await serialize(this.filePath, async () => {
-      await this.write(file);
-    });
+    await serialize(this.filePath, () => this.withLock(() => this.write(file)));
+  }
+
+  /**
+   * 进程内排队 + 跨进程文件锁，两把都要。
+   *
+   * 队列挡的是同一进程里的并发工具调用（快、不落盘）；文件锁挡的是「另一个
+   * 会话/定时任务也开着同一个工作区」——那种丢更新光加队列看不见，对方的写
+   * 发生在我们的 `load()` 和 `write()` 之间，最后落盘的那份就是它以为的最新
+   * 版本，中间我们加的条目直接没了。
+   */
+  private withLock<Result>(task: () => Promise<Result>): Promise<Result> {
+    return withFileLock(this.lockPath, task, this.lockOptions);
   }
 
   async list(options?: { includeInactive?: boolean }) {
@@ -154,14 +173,14 @@ export class ProjectMemoryStore {
     edit: (file: ProjectMemoryFile) => Promise<{ changed: boolean; value: T }> | { changed: boolean; value: T },
     nowIso: string = new Date().toISOString(),
   ): Promise<T> {
-    return serialize(this.filePath, async () => {
+    return serialize(this.filePath, () => this.withLock(async () => {
       const file = await this.load();
       const { changed, value } = await edit(file);
       if (!changed) return value;
       file.updatedAt = nowIso;
       await this.write(file);
       return value;
-    });
+    }));
   }
 
   /**

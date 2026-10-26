@@ -16,13 +16,13 @@ import { dirname } from 'node:path';
  *
  * Both are silent: nothing throws, the entries simply stop existing.
  *
- * NOT covered: two OS processes (one desktop session each spawns its own CLI,
- * and scheduled automation runs spawn more) writing the same file. `queues` is
- * an in-process Map, so it cannot see the other process; `writeFileAtomic`
- * prevents a torn file, not a lost update. Real protection needs an OS-level
- * lock (`proper-lockfile`, or an `open(…, 'wx')` spin lock), which is its own
- * piece of work — until then, treat concurrent multi-process writes to the same
- * store as unsynchronised.
+ * Cross-process writes (one CLI per desktop session, plus scheduled automation)
+ * still need an OS-level lock on top: `queues` is an in-process Map, so it
+ * cannot see the other process, and `writeFileAtomic` prevents a torn file, not
+ * a lost update. `utils/lockfile.ts` provides that lock (`open(…, 'wx')` spin
+ * lock with a stale-owner takeover) — the memory store takes it around every
+ * read-modify-write via `ProjectMemoryStore#withLock`. A store that only calls
+ * these helpers is still unsynchronised against other processes.
  */
 
 /** One queue per file, so read-modify-write cycles on it never interleave. */
