@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import type { ContextStats, ProviderConfig } from '../types';
-import { desktop, type CachePrediction } from '../lib/ipc';
 
 const CATEGORY_ROWS: { key: keyof ContextStats['categories']; label: string; color: string }[] = [
   { key: 'messages', label: '消息', color: '#1681f8' },
@@ -34,7 +33,6 @@ export function ContextStatsMenu({ stats, provider, onClose }: {
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
-  const [prediction, setPrediction] = useState<CachePrediction | null>(null);
 
   useEffect(() => {
     function onDown(event: MouseEvent) {
@@ -50,20 +48,6 @@ export function ContextStatsMenu({ stats, provider, onClose }: {
       document.removeEventListener('keydown', onKey);
     };
   }, [onClose]);
-
-  // Fetch the REAL historical cache-hit-rate prediction for this model from the
-  // usage ledger. Distinct from the current turn's actual rate above.
-  useEffect(() => {
-    let live = true;
-    const model = stats?.model;
-    if (!model) return;
-    desktop.usage.cachePrediction(model).then((result) => {
-      if (live) setPrediction(result);
-    }).catch(() => {
-      if (live) setPrediction(null);
-    });
-    return () => { live = false; };
-  }, [stats?.model]);
 
   if (!stats) {
     return (
@@ -83,14 +67,11 @@ export function ContextStatsMenu({ stats, provider, onClose }: {
   const totalWithCache = total + stats.cacheReadTokens;
   const contextWindow = contextWindowFor(provider, stats.model);
   const contextRate = contextWindow ? Math.min(100, (totalWithCache / contextWindow) * 100) : null;
-  const predictedRate = stats.predictedPromptCacheRate === null ? null : stats.predictedPromptCacheRate * 100;
-  const historicalRate = prediction?.predicted === null || prediction?.predicted === undefined ? null : prediction.predicted * 100;
   // 供应商实报命中率：cacheRead / (input + cacheRead) 是正确分母
   // total（stats.inputTokens）是净输入，不含缓存，分母要加上缓存部分
   const providerCacheRate = stats.providerCacheReported && totalWithCache > 0
     ? Math.min(100, (stats.cacheReadTokens / totalWithCache) * 100)
     : null;
-  const localRate = stats.localCache.hitRate === null ? null : stats.localCache.hitRate * 100;
 
   return (
     <div className="context-menu" ref={ref} role="dialog" aria-label="上下文与缓存">
@@ -119,40 +100,15 @@ export function ContextStatsMenu({ stats, provider, onClose }: {
 
       <section className="context-section context-cache-section">
         <div className="cache-row">
-          <span>Agent 自主预测命中率</span>
-          <strong>{predictedRate === null ? '首轮暂无预测' : `${predictedRate.toFixed(1)}%`}</strong>
+          <span>缓存命中率</span>
+          <strong data-cache-hit-rate={providerCacheRate === null ? '' : providerCacheRate.toFixed(1)}>
+            {providerCacheRate === null ? '未提供' : `${providerCacheRate.toFixed(1)}%`}
+          </strong>
         </div>
         <div className="cache-subline">
-          {predictedRate === null
-            ? '基于与上一轮提示前缀的重合度估算；从第二轮开始稳定'
-            : '按当前轮提示结构与上一轮稳定前缀重合度估算，不依赖模型商回报'}
-        </div>
-        <div className="cache-row">
-          <span>历史自主预测</span>
-          <strong>{historicalRate === null ? '暂无样本' : `${historicalRate.toFixed(1)}%`}</strong>
-        </div>
-        <div className="cache-subline">
-          {historicalRate === null
-            ? '同模型历史轮次不足，暂不能给出稳定预测'
-            : `过去 ${prediction?.windowDays ?? 30} 天同模型 ${prediction?.samples ?? 0} 轮加权预测${prediction?.source === 'provider-reported' ? '（暂回退到供应商实报）' : ''}`}
-        </div>
-        <div className="cache-row">
-          <span>供应商实报命中率</span>
-          <strong>{providerCacheRate === null ? '未提供' : `${providerCacheRate.toFixed(1)}%`}</strong>
-        </div>
-        <div className="cache-subline">
-          {stats.providerCacheReported
-            ? `${formatTokens(stats.cacheReadTokens)} / ${formatTokens(totalWithCache)} 输入 tokens 来自缓存`
-            : '仅作旁证；该轮 usage 未返回 cache_read / cached_tokens'}
-        </div>
-        <div className="cache-row cache-local-row">
-          <span>CLI 本地缓存探针</span>
-          <strong>{localRate === null ? '暂无样本' : `${localRate.toFixed(1)}%`}</strong>
-        </div>
-        <div className="cache-subline">
-          {stats.localCache.totalLookups > 0
-            ? `${stats.localCache.totalHits}/${stats.localCache.totalLookups} 次命中（项目上下文 + 导航索引）`
-            : '重复读取项目上下文或符号索引后开始累积'}
+          {providerCacheRate === null
+            ? '本轮 usage 没有返回 cache_read / cached_tokens，不估一个数出来'
+            : `${formatTokens(stats.cacheReadTokens)} / ${formatTokens(totalWithCache)} 输入 tokens 来自缓存`}
         </div>
       </section>
     </div>

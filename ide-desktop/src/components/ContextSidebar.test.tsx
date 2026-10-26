@@ -26,17 +26,20 @@ function render(overrides: {
   outputs?: Array<{ path: string; added: number; removed: number; turns: number }>;
   workspaceRoot?: string;
   recentWorkspaces?: string[];
+  recentFiles?: Array<{ path: string; lastOpenedAt: number; opens: number }>;
 } = {}) {
   return renderToStaticMarkup(createElement(ContextSidebar, {
     panel: overrides.panel ?? buildContextPanel(stats()),
     outputs: overrides.outputs ?? [],
     workspaceRoot: overrides.workspaceRoot ?? 'D:\\c_proj',
     recentWorkspaces: overrides.recentWorkspaces ?? ['D:\\c_proj', 'C:\\other'],
+    recentFiles: overrides.recentFiles ?? [],
     compacting: false,
     onCompact: () => {},
     onOpenFile: () => {},
     onOpenWorkspace: () => {},
     onSwitchWorkspace: () => {},
+    onOpenRecent: () => {},
   }));
 }
 
@@ -48,6 +51,21 @@ describe('ContextSidebar', () => {
     expect(html).toContain('输出');
     expect(html).not.toContain('aria-expanded');
     expect(html).not.toContain('aria-collapsed');
+  });
+
+  it('最近文件跟着这块面板走：有就列出来，没有就不占位', () => {
+    const withFiles = render({
+      recentFiles: [
+        { path: 'D:\\c_proj\\src\\a.ts', lastOpenedAt: Date.now() - 60_000, opens: 3 },
+        { path: 'D:\\c_proj\\src\\b.ts', lastOpenedAt: Date.now() - 3_600_000, opens: 1 },
+      ],
+    });
+    expect(withFiles).toContain('最近文件');
+    expect([...withFiles.matchAll(/data-recent-path="([^"]+)"/g)].map((m) => m[1])).toEqual([
+      'D:\\c_proj\\src\\a.ts',
+      'D:\\c_proj\\src\\b.ts',
+    ]);
+    expect(render()).not.toContain('最近文件');
   });
 
   it('上下文数字来自快照：占用比例、已用/窗口、分类图例', () => {

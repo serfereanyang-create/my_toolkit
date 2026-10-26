@@ -15,6 +15,7 @@ import { FileTree } from './components/FileTree';
 import { GitPanel } from './components/GitPanel';
 import { GitCapsule } from './components/GitCapsule';
 import { InspectorSidebar } from './components/InspectorSidebar';
+import { ContextSidebar } from './components/ContextSidebar';
 import type { InspectorLevel } from './lib/inspectorNav';
 import { HelpOverlay, type HelpOverlayTab } from './components/HelpOverlay';
 import { InfoPanel } from './components/InfoPanel';
@@ -1607,13 +1608,15 @@ export default function App() {
         // against whatever the panel left over; the component's inline width
         // alone would let the two tracks together exceed the window.
         '--preview-w': state.preview.open ? `${state.preview.width}px` : '0px',
+        // 右栏常驻面板（环境 / 上下文 / 输出）：宽度固定、没有拖拽手柄，
+        // 拿不到上下文数据时收成 0，别留一条空列。
+        '--context-w': contextPanel ? '244px' : '0px',
       } as React.CSSProperties}
     >
       <Rail
         state={state}
         sessions={sessions}
         sessionTags={sessionTags}
-        recentFiles={recentFiles}
         mainView={mainView}
         shortcuts={{
           newChat: keyBindings['new-chat'] ? serializeChord(keyBindings['new-chat']) : undefined,
@@ -1624,13 +1627,6 @@ export default function App() {
         onNewChat={newChat}
         onOpenWorkspace={openWorkspace}
         onSelectView={setMainView}
-        onOpenRecent={(p) => { void handleOpenFile(p); }}
-        contextPanel={contextPanel}
-        outputs={contextOutputs}
-        compacting={compacting}
-        onCompact={() => { void submitPrompt('/compact'); }}
-        onOpenOutput={(path) => { void handleOpenFile(path); }}
-        onSwitchWorkspace={(root) => { void switchToWorkspace(root); }}
         onSetTags={(id, tags) => { void handleSetTags(id, tags); }}
         onHelpAction={(action) => {
           // 'extensions' jumps to settings; the rest open the versioned
@@ -2044,6 +2040,24 @@ export default function App() {
         onWidthChange={setInspectorWidth}
         onOpenFile={(path, line) => { void handleOpenFileAtLine(path, line); }}
       />
+
+      {/* 环境 / 上下文 / 输出：常驻右栏。固定宽度、不可拖拽，高度铺满窗口——
+          它不是「用的时候打开」的面板，而是和会话列表一样一直看得见的定位信息。 */}
+      {contextPanel && (
+        <ContextSidebar
+          panel={contextPanel}
+          outputs={contextOutputs}
+          workspaceRoot={state.workspaceRoot}
+          recentWorkspaces={state.settings?.recentWorkspaces ?? []}
+          compacting={compacting}
+          onCompact={() => { void submitPrompt('/compact'); }}
+          onOpenFile={(path) => { void handleOpenFile(path); }}
+          onOpenWorkspace={openWorkspace}
+          onSwitchWorkspace={(root) => { void switchToWorkspace(root); }}
+          recentFiles={recentFiles}
+          onOpenRecent={(path) => { void handleOpenFile(path); }}
+        />
+      )}
 
       <BrowserPanel
         open={state.browserOpen}

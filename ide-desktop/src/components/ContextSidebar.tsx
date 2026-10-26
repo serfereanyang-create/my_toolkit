@@ -1,4 +1,5 @@
-import { AlertTriangle, FolderOpen, LoaderCircle, Minimize2 } from 'lucide-react';
+import { AlertTriangle, FileClock, FolderOpen, LoaderCircle, Minimize2 } from 'lucide-react';
+import { formatAgo, recentLabel, type RecentFile } from '../lib/recentFiles';
 import {
   formatTokens,
   workspaceLabel,
@@ -18,11 +19,14 @@ export type ContextSidebarProps = {
   outputs: OutputFile[];
   workspaceRoot: string;
   recentWorkspaces: string[];
+  /** 最近打开过的文件（左栏原本那一小段，挪到这块常驻面板里）。 */
+  recentFiles: RecentFile[];
   compacting: boolean;
   onCompact: () => void;
   onOpenFile: (path: string) => void;
   onOpenWorkspace: () => void;
   onSwitchWorkspace: (root: string) => void;
+  onOpenRecent: (path: string) => void;
 };
 
 function percentLabel(percent: number | null): string {
@@ -34,11 +38,13 @@ export function ContextSidebar({
   outputs,
   workspaceRoot,
   recentWorkspaces,
+  recentFiles,
   compacting,
   onCompact,
   onOpenFile,
   onOpenWorkspace,
   onSwitchWorkspace,
+  onOpenRecent,
 }: ContextSidebarProps) {
   const others = recentWorkspaces.filter((root) => root !== workspaceRoot).slice(0, 3);
   const hasContext = panel.used > 0;
@@ -76,6 +82,32 @@ export function ContextSidebar({
           ))}
         </ul>
       </section>
+
+      {recentFiles.length > 0 && (
+        <section className="context-sec" aria-label="最近文件">
+          <div className="context-sec-head">
+            <span>最近文件</span>
+            <span className="context-count" data-context-recent-count={recentFiles.length}>{recentFiles.length}</span>
+          </div>
+          <ul className="context-recents">
+            {recentFiles.slice(0, 6).map((file) => (
+              <li key={file.path}>
+                <button
+                  type="button"
+                  className="context-recent-row"
+                  data-recent-path={file.path}
+                  title={file.path}
+                  onClick={() => onOpenRecent(file.path)}
+                >
+                  <FileClock size={13} />
+                  <span className="context-recent-name">{recentLabel(file.path)}</span>
+                  <span className="context-recent-ago">{formatAgo(file.lastOpenedAt)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="context-sec" aria-label="上下文">
         <div className="context-sec-head">

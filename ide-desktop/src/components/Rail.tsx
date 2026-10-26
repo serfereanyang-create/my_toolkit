@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { FilePlus, LoaderCircle, MessageSquare, Clock, Files, Settings, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, BarChart3, FileClock, MoreHorizontal, ChevronDown, GitBranch, Monitor, LayoutGrid } from 'lucide-react';
+import { FilePlus, LoaderCircle, MessageSquare, Clock, Files, Settings, Search, HelpCircle, Pin, CalendarClock, FolderOpen, Check, X, BarChart3, MoreHorizontal, ChevronDown, GitBranch, Monitor, LayoutGrid } from 'lucide-react';
 import type { AppState, SessionMeta } from '../types';
 import { HelpMenu, type HelpAction } from './HelpMenu';
 import { ConversationContextMenu, type ConvoAction } from './ConversationContextMenu';
 import { TagEditorDialog } from './TagEditorDialog';
-import { formatAgo, recentLabel, type RecentFile } from '../lib/recentFiles';
+import { formatAgo } from '../lib/recentFiles';
 import { sessionMatchesTag, tagCloud, tagColorIndex } from '../lib/sessionTags';
-import { ContextSidebar } from './ContextSidebar';
-import type { ContextPanelModel, OutputFile } from '../lib/contextSidebar';
 
 type MainView = 'newtab' | 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality' | 'computer' | 'memory';
 
@@ -170,12 +168,11 @@ function SessionItem({ session, active, tags, running, approvals, onOpen, onOpen
   );
 }
 
-export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shortcuts, runningIds, approvals, contextPanel, outputs, compacting, onCompact, onOpenOutput, onSwitchWorkspace, onNewChat, onOpenWorkspace, onSelectView, onHelpAction, onConvoAction, onOpenSession, onOpenRecent, onSetTags }: {
+export function Rail({ state, sessions, sessionTags, mainView, shortcuts, runningIds, approvals, onNewChat, onOpenWorkspace, onSelectView, onHelpAction, onConvoAction, onOpenSession, onSetTags }: {
   state: AppState;
   sessions: SessionMeta[];
   /** sessionId -> tags, from the workspace sidecar store (iteration 18). */
   sessionTags: Record<string, string[]>;
-  recentFiles: RecentFile[];
   mainView: MainView;
   /** Real resolved chords for the primary rows' kbd hints. */
   shortcuts?: { newChat?: string; search?: string };
@@ -189,18 +186,7 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
   onHelpAction: (action: HelpAction) => void;
   onConvoAction: (action: ConvoAction, sessionId: string) => void;
   onOpenSession: (sessionId: string) => void;
-  onOpenRecent: (path: string) => void;
   onSetTags: (sessionId: string, tags: string[]) => void;
-  /**
-   * 底部常驻的「环境 / 上下文 / 输出」。传 null 就不渲染——只有在拿不到任何
-   * 上下文数据（比如纯静态渲染的场景）时才该这样，正常运行时一直有。
-   */
-  contextPanel?: ContextPanelModel | null;
-  outputs?: OutputFile[];
-  compacting?: boolean;
-  onCompact?: () => void;
-  onOpenOutput?: (path: string) => void;
-  onSwitchWorkspace?: (root: string) => void;
 }) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [ctx, setCtx] = useState<{ x: number; y: number; session: string } | null>(null);
@@ -389,23 +375,6 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
             </div>
           ))}
 
-        {recentFiles.length > 0 && (
-          <>
-            <div className="rail-section">最近文件</div>
-            {recentFiles.slice(0, 6).map((file) => (
-              <button
-                key={file.path}
-                className="rail-convo rail-recent"
-                title={file.path}
-                onClick={() => onOpenRecent(file.path)}
-              >
-                <FileClock size={14} />
-                <span>{recentLabel(file.path)}</span>
-                <span className="rail-recent-ago">{formatAgo(file.lastOpenedAt)}</span>
-              </button>
-            ))}
-          </>
-        )}
       </div>
 
       {ctx && (
@@ -477,20 +446,6 @@ export function Rail({ state, sessions, sessionTags, recentFiles, mainView, shor
             </div>
           </div>
         </div>
-      )}
-
-      {contextPanel && (
-        <ContextSidebar
-          panel={contextPanel}
-          outputs={outputs ?? []}
-          workspaceRoot={state.workspaceRoot}
-          recentWorkspaces={state.settings?.recentWorkspaces ?? []}
-          compacting={Boolean(compacting)}
-          onCompact={onCompact ?? (() => {})}
-          onOpenFile={onOpenOutput ?? (() => {})}
-          onOpenWorkspace={onOpenWorkspace}
-          onSwitchWorkspace={onSwitchWorkspace ?? (() => {})}
-        />
       )}
 
       <div className="rail-foot">

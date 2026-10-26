@@ -61,20 +61,32 @@ module.exports = async function runContextChecks(context) {
       const state = await evaluate(`(() => {
         const panel = document.querySelector('.context-sidebar');
         if (!panel) return { present: false };
+        const box = panel.getBoundingClientRect();
         return {
           present: true,
-          visible: panel.getBoundingClientRect().height > 0,
+          visible: box.height > 0,
           sections: [...panel.querySelectorAll('.context-sec')].map(node => node.getAttribute('aria-label')),
           collapse: panel.querySelectorAll('[aria-expanded], [data-collapse], .context-fold').length,
           envCurrent: panel.querySelector('[data-env-current]')?.getAttribute('data-env-current') || '',
           compactDisabled: panel.querySelector('[data-context-compact]')?.disabled === true,
           until: panel.querySelector('[data-context-until]')?.getAttribute('data-context-until') || '',
+          // 它现在占的是窗口最右边那一列：贴右边缘、铺满整高、不在左侧栏里。
+          inRail: Boolean(document.querySelector('.rail .context-sidebar')),
+          rightGap: Math.round(window.innerWidth - box.right),
+          height: Math.round(box.height),
+          viewportHeight: window.innerHeight,
         };
       })()`);
       fs.writeFileSync(path.join(output, 'context-panel-state.json'), JSON.stringify(state, null, 2));
       assert.equal(state.present, true, '常驻面板没有渲染');
       assert.equal(state.visible, true, '面板被渲染成 0 高度，等于看不见');
-      assert.deepEqual(state.sections, ['环境', '上下文', '输出']);
+      for (const label of ['环境', '上下文', '输出']) {
+        assert.ok(state.sections.includes(label), `常驻面板缺区块「${label}」：${state.sections.join('/')}`);
+      }
+      assert.equal(state.inRail, false, '环境/上下文/输出 不该再挂在左侧会话栏里');
+      assert.ok(state.rightGap <= 1, `常驻面板应当贴着窗口右边缘，实际差了 ${state.rightGap}px`);
+      assert.ok(Math.abs(state.height - state.viewportHeight) <= 2,
+        `常驻面板高度应当铺满窗口：${state.height} vs ${state.viewportHeight}`);
       assert.equal(state.collapse, 0, '常驻面板不该有折叠/收起入口');
       assert.equal(state.envCurrent, fixture);
       assert.equal(state.compactDisabled, true, '还没有任何上下文数据时，压缩按钮应当禁用');

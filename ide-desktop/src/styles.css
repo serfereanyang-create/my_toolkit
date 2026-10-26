@@ -1065,7 +1065,7 @@ h1 {
      under it. When even those two minimums do not fit, the panel drops to
      zero rather than leaving both surfaces as slivers: one usable preview
      beats two unusable halves, and the panel is a click away again. */
-  --shell-avail: calc(100% - var(--rail-w) - 520px);
+  --shell-avail: calc(100% - var(--rail-w) - var(--context-w, 0px) - 520px);
   --shell-preview: max(0px, min(var(--preview-w, 0px),
     max(320px, var(--shell-avail) - min(var(--panel-w, 0px), 280px))));
   --shell-panel: max(0px, min(var(--panel-w, 0px), var(--shell-avail) - var(--shell-preview)));
@@ -1073,7 +1073,8 @@ h1 {
     var(--rail-w)
     minmax(0, 1fr)
     var(--shell-panel)
-    var(--shell-preview);
+    var(--shell-preview)
+    var(--context-w, 0px);
   grid-template-rows: minmax(0, 1fr) auto;
   background: var(--bg-app);
   color: var(--fg);
@@ -1417,18 +1418,21 @@ h1 {
 
 /* =========================================================================
    常驻上下文面板（环境 / 上下文 / 输出）
-   它不做折叠、不参与右栏面板的开合互斥：一直在侧栏底部，尺寸稳定。
+   它不做折叠、不参与右栏面板的开合互斥，也没有拖拽手柄：占住窗口最右边的
+   第五列（宽度由 App 写进 --context-w），高度吃满整列而不是一个 48vh 的盒子。
    ========================================================================= */
 
 .context-sidebar {
-  flex: none;
+  grid-column: 5;
+  grid-row: 1 / 3;
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  margin-top: auto;
-  padding: var(--sp-2) var(--sp-3) var(--sp-3);
-  border-top: 1px solid var(--border);
-  max-height: 48vh;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--sp-3);
+  border-left: 1px solid var(--border);
+  background: var(--bg-side);
   overflow-y: auto;
   font-size: var(--fs-1);
   color: var(--fg-dim);
@@ -1500,6 +1504,45 @@ h1 {
 .context-env-recent {
   color: var(--fg-muted);
 }
+
+/* 最近文件：从左侧栏搬过来的那一段，样式跟环境/输出保持同一套行 */
+.context-recents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.context-recent-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--fs-1);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.context-recent-row:hover { background: var(--bg-hover); color: var(--fg); }
+.context-recent-row svg { flex: 0 0 auto; color: var(--fg-muted); }
+
+.context-recent-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-recent-ago { flex: 0 0 auto; color: var(--fg-muted); }
 
 .context-meter {
   display: flex;
