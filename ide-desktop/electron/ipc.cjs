@@ -388,6 +388,31 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
   });
 
   ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
+
+  // Attachment thumbnails: read one image and hand back a data URL. Only
+  // images, only a regular file, and only under the size cap — the renderer
+  // never gets a general "read any path" primitive out of this.
+  const THUMBNAIL_TYPES = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+  };
+  const MAX_THUMBNAIL_BYTES = 8 * 1024 * 1024;
+  ipcMain.handle('fs.readImageDataUrl', async (_event, absolutePath) => {
+    if (typeof absolutePath !== 'string' || !path.isAbsolute(absolutePath)) {
+      throw new Error('Thumbnail source must be an absolute path');
+    }
+    const type = THUMBNAIL_TYPES[path.extname(absolutePath).toLowerCase()];
+    if (!type) throw new Error('Thumbnail source must be an image');
+    const info = await fs.stat(absolutePath);
+    if (!info.isFile()) throw new Error('Thumbnail source must be a regular file');
+    if (info.size > MAX_THUMBNAIL_BYTES) throw new Error('Image is too large for a thumbnail');
+    const buffer = await fs.readFile(absolutePath);
+    return `data:${type};base64,${buffer.toString('base64')}`;
+  });
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));
   
   // Save pasted image — store inside the current workspace so the agent can

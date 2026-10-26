@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     read: (relativePath) => ipcRenderer.invoke('fs.read', relativePath),
     write: (relativePath, content) => ipcRenderer.invoke('fs.write', relativePath, content),
     saveTempImage: (filename, base64Data) => ipcRenderer.invoke('fs.saveTempImage', filename, base64Data),
+    readImageDataUrl: (absolutePath) => ipcRenderer.invoke('fs.readImageDataUrl', absolutePath),
   },
   // 通用的「选一个文件」入口（新标签页的工件格用）。只给 openFile 语义，
   // 不暴露 showOpenDialog 的任何其他形态。

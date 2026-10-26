@@ -3334,6 +3334,10 @@ html[data-reduce-motion='on'] .think-live-caret { animation: none; }
   background: linear-gradient(to bottom, var(--bg-input), rgba(59, 110, 246, 0.02));
 }
 
+/* 附件卡：图片给缩略图，其它文件给类型图标。
+   卡片竖排（图在上、文件名在下），一行放几张；文件名截断，长名字不撑破输入框。
+   缩略图是「我贴的是这张图」的唯一证据——只写文件名的话，两张截图长得一样，
+   用户没有办法确认自己贴错了哪一张。 */
 .file-attachment-list {
   display: flex;
   flex-wrap: wrap;
@@ -3343,14 +3347,14 @@ html[data-reduce-motion='on'] .think-live-caret { animation: none; }
 }
 
 .file-attachment-card {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
+  flex-direction: column;
+  width: 118px;
   border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+  border-radius: 10px;
   background: var(--bg-side);
-  max-width: 320px;
+  overflow: hidden;
   transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 
@@ -3359,33 +3363,45 @@ html[data-reduce-motion='on'] .think-live-caret { animation: none; }
   background: var(--bg-hover);
 }
 
-.file-icon {
-  font-size: var(--fs-9);
-  flex: 0 0 auto;
-  line-height: 1;
+.file-attachment-thumb {
+  display: block;
+  width: 100%;
+  height: 76px;
+  object-fit: cover;
+  background: var(--bg-elevated);
 }
 
-.file-info {
-  flex: 1 1 auto;
-  min-width: 0;
+.file-attachment-glyph {
+  display: grid;
+  place-items: center;
+  height: 76px;
+  font-size: var(--fs-9);
+  line-height: 1;
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+}
+
+.file-attachment-foot {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px var(--sp-2) 7px;
 }
 
-.file-name {
-  font-size: var(--fs-3);
-  font-weight: 500;
+.file-attachment-name {
+  font-size: var(--fs-2);
+  font-weight: 600;
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.file-meta {
+.file-attachment-meta {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 5px;
   font-size: var(--fs-1);
   color: var(--fg-muted);
 }
@@ -3395,28 +3411,44 @@ html[data-reduce-motion='on'] .think-live-caret { animation: none; }
 }
 
 .file-size {
-  opacity: 0.7;
+  opacity: 0.75;
 }
 
+/* 删除按钮压在图右上角：平时淡出，悬停或键盘聚焦才实体化，不挡缩略图。 */
 .file-remove {
-  flex: 0 0 auto;
+  position: absolute;
+  top: 4px;
+  right: 4px;
   width: 20px;
   height: 20px;
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--fg-muted);
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--bg) 76%, transparent);
+  color: var(--fg);
   font-size: var(--fs-8);
   line-height: 1;
   cursor: pointer;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.file-attachment-card:hover .file-remove,
+.file-remove:focus-visible {
+  opacity: 1;
 }
 
 .file-remove:hover {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+/* 覆盖树/覆盖率面板自己也有 file-icon，这里的规则保留给它们 */
+.file-icon {
+  font-size: var(--fs-9);
+  flex: 0 0 auto;
+  line-height: 1;
 }
 
 /* =========================================================================

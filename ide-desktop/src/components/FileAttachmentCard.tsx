@@ -27,26 +27,35 @@ type FileAttachmentCardProps = {
   onRemove: () => void;
 };
 
+/**
+ * 一张附件卡：图片画缩略图，其它文件画类型图标。
+ *
+ * 有缩略图时才叫「我贴的是这张图」；只写文件名的话，两张截图长得一模一样，
+ * 用户没有任何办法确认自己贴错了哪一张。
+ */
 function FileAttachmentCard({ file, onRemove }: FileAttachmentCardProps) {
-  const { name, size, category, icon } = file;
+  const { name, size, category, icon, preview } = file;
 
   return (
-    <div className="file-attachment-card">
-      <div className="file-icon">{icon}</div>
-      <div className="file-info">
-        <div className="file-name" title={name}>
-          {name}
-        </div>
-        <div className="file-meta">
+    <div className={`file-attachment-card${preview ? ' has-thumb' : ''}`} data-attachment={category}>
+      {preview ? (
+        <img className="file-attachment-thumb" src={preview} alt={name} data-attachment-thumb="" />
+      ) : (
+        <div className="file-attachment-glyph" aria-hidden="true">{icon}</div>
+      )}
+      <div className="file-attachment-foot">
+        <span className="file-attachment-name" title={name}>{name}</span>
+        <span className="file-attachment-meta">
           <span className="file-category">{getCategoryLabel(category)}</span>
           <span className="file-size">{formatFileSize(size)}</span>
-        </div>
+        </span>
       </div>
       <button
+        type="button"
         className="file-remove"
         onClick={onRemove}
-        aria-label="移除文件"
-        title="移除文件"
+        aria-label={`移除附件 ${name}`}
+        title="移除附件"
       >
         ×
       </button>

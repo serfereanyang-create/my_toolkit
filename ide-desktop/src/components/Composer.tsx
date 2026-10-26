@@ -1,4 +1,4 @@
-import { Plus, ShieldCheck, ArrowUp, Square, Gauge, Terminal, AtSign, FileEdit, ChevronDown } from 'lucide-react';
+import { Plus, ShieldCheck, ArrowUp, Square, Gauge, Terminal, AtSign, FileEdit, ChevronDown, Paperclip } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { AppState, QueuedMessage, ReasoningEffort, ToolScope } from '../types';
@@ -12,12 +12,33 @@ import { FileAttachmentList } from './FileAttachmentCard';
 import { SlashCommandMenu } from './SlashCommandMenu';
 import { MessageQueue } from './MessageQueue';
 import { MentionPicker, type MentionItem } from './MentionPicker';
-import { categorizeFile, getMediaType, getCategoryIcon, generateSmartPrompt, validateFile, MAX_FILE_COUNT, type DetectedFile } from '../lib/fileDetection';
+import { categorizeFile, detectedFileFromPath, getMediaType, getCategoryIcon, generateSmartPrompt, validateFile, MAX_FILE_COUNT, type DetectedFile } from '../lib/fileDetection';
+import { withThumbnails } from '../lib/attachmentPreview';
 import { sessionChangeTotals } from '../lib/state';
 import { loadInputHistory, pushInputHistory } from '../lib/inputHistory';
 import { modelReasoningCapability } from '../lib/modelCapabilities';
 import { contextBudget, estimateTokens, tokenBreakdown } from '../lib/tokenEstimate';
 import { appNotice } from './ToastLayer';
+
+/**
+ * 原生能力按需取，不在模块顶层读 window：node 环境下的组件测试没有
+ * `window.zcodeDesktop`，顶层访问会让整个组件连 import 都过不去。
+ */
+type NativeAttachmentApi = {
+  files?: {
+    pick?: (options: { title?: string; filters?: Array<{ name: string; extensions: string[] }> })
+      => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+  };
+  editor?: { stat?: (absolutePath: string) => Promise<{ ok: boolean; size?: number }> };
+};
+
+const nativeAttachmentApi = () => (globalThis as unknown as { zcodeDesktop?: NativeAttachmentApi }).zcodeDesktop;
+
+/** 选择器里能挑的东西：和拖拽/粘贴允许的类型保持一致。 */
+const ATTACHMENT_FILTERS = [{
+  name: '图片与文档',
+  extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'pdf', 'txt', 'md', 'json', 'csv', 'docx', 'xlsx', 'ts', 'tsx', 'js', 'py'],
+}];
 
 // approvalLabel is imported from ApprovalMenu and used via approvalMenuLabel below.
 // No local duplicate needed.
@@ -260,7 +281,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
     setTimeout(() => textareaRef.current?.focus(), 0);
   }
 
-  function handleDrop(event: React.DragEvent) {
+  async function handleDrop(event: React.DragEvent) {
     event.preventDefault();
     setIsDragging(false);
     const droppedFiles = Array.from(event.dataTransfer.files);
@@ -277,12 +298,45 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
       newFiles.push({ path: file.path || '', name: file.name, size: file.size, category,
         mediaType: getMediaType(file.name), icon: getCategoryIcon(category) });
     }
-    setAttachedFiles([...attachedFiles, ...newFiles]);
+    // 缩略图是异步读的：先等它，卡片一出现就是「对的那张图」，不会先闪一个图标再换。
+    const withPreview = await withThumbnails(newFiles);
+    setAttachedFiles([...attachedFiles, ...withPreview]);
   }
 
   function handleDragOver(event: React.DragEvent) { event.preventDefault(); setIsDragging(true); }
   function handleDragLeave() { setIsDragging(false); }
   function removeFile(index: number) { setAttachedFiles(files => files.filter((_, i) => i !== index)); }
+
+  /**
+   * 回形针：走系统选择器挑一个文件当附件。
+   *
+   * 和拖拽、粘贴落到同一种记录上（DetectedFile + 缩略图），区别只在来源。
+   * 取消不算错误——用户按了取消就是想反悔，弹提示反而是噪音。
+   */
+  async function attachFile() {
+    if (attachedFiles.length >= MAX_FILE_COUNT) {
+      appNotice('附件数量已达上限', `最多只能选择 ${MAX_FILE_COUNT} 个文件，当前已有 ${attachedFiles.length} 个。`, 'info');
+      return;
+    }
+    const api = nativeAttachmentApi();
+    if (!api?.files?.pick) {
+      appNotice('这里没有文件选择器', '可以把文件拖进输入框，或者直接粘贴图片。', 'info');
+      return;
+    }
+    try {
+      const picked = await api.files.pick({ title: '添加附件', filters: ATTACHMENT_FILTERS });
+      if (!picked.ok || !picked.path) {
+        if (!picked.canceled && picked.error) appNotice('添加附件失败', picked.error, 'error');
+        return;
+      }
+      const info = await api.editor?.stat?.(picked.path).catch(() => undefined);
+      const file = detectedFileFromPath(picked.path, info?.ok ? info.size ?? 0 : 0);
+      const [withPreview] = await withThumbnails([file]);
+      setAttachedFiles((files) => [...files, withPreview ?? file]);
+    } catch (error) {
+      appNotice('添加附件失败', error instanceof Error ? error.message : String(error), 'error');
+    }
+  }
   function removeMention(id: string) {
     const item = mentions.find((m) => m.id === id);
     setMentions((prev) => prev.filter((m) => m.id !== id));
@@ -315,18 +369,15 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
 
       // Save to temporary directory via IPC
       try {
-        const buffer = await blob.arrayBuffer();
         // Use FileReader to convert to base64 safely (avoids stack overflow on large images)
-        const base64 = await new Promise<string>((resolve, reject) => {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
-          reader.onload = () => {
-            const dataUrl = reader.result as string;
-            // dataUrl is "data:image/png;base64,XXXX..." — strip the prefix
-            resolve(dataUrl.split(',')[1] ?? '');
-          };
+          reader.onload = () => resolve(reader.result as string);
           reader.onerror = () => reject(reader.error);
           reader.readAsDataURL(blob);
         });
+        // "data:image/png;base64,XXXX..." — 前缀给主进程存盘，整串留给缩略图。
+        const base64 = dataUrl.split(',')[1] ?? '';
 
         // Use desktop API to save to temp
         const tempPath = await (window as any).zcodeDesktop.fs.saveTempImage(filename, base64);
@@ -338,7 +389,8 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
           size: blob.size,
           category,
           mediaType: getMediaType(filename),
-          icon: getCategoryIcon(category)
+          icon: getCategoryIcon(category),
+          preview: dataUrl,
         });
       } catch (error) {
         console.error('Failed to save pasted image:', error);
@@ -410,7 +462,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
             <textarea ref={textareaRef} value={text} onChange={handleTextChange}
               onPaste={handlePaste}
               aria-label="输入任务或问题"
-              placeholder="描述你想完成的事，@ 引用文件，/ 使用指令" rows={1}
+              placeholder="输入 / 查看命令" rows={1}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (mentionOpen) return;
@@ -451,6 +503,8 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
           </div>
           <div className="composer-bar">
             <div className="composer-tools">
+            <button type="button" className="icon-button" title="添加附件" aria-label="添加附件"
+              onClick={() => { void attachFile(); }}><Paperclip size={15} /></button>
             {pluginsEnabled && (
               <button type="button" className={`icon-button ${menuOpen ? 'active' : ''}`} title="插件与文件" aria-label="插件与文件" aria-expanded={menuOpen}
                 onClick={() => setMenuOpen((o) => !o)}><Plus size={18} /></button>

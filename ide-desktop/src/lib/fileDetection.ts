@@ -7,7 +7,19 @@ export type DetectedFile = {
   category: FileCategory;
   mediaType?: string;
   icon: string;
+  /**
+   * 图片附件的缩略图（data URL）。有就画出来，没有就退回图标——缩略图是
+   * 让人一眼确认「贴对图了」，不是能不能发出去的前提，所以永远可以缺。
+   */
+  preview?: string;
 };
+
+/** 原生「选一个文件」只回一条绝对路径，其余信息在这里补齐。 */
+export function detectedFileFromPath(absolutePath: string, size = 0): DetectedFile {
+  const name = absolutePath.split(/[\\/]/).pop() || absolutePath;
+  const category = categorizeFile(name);
+  return { path: absolutePath, name, size, category, mediaType: getMediaType(name), icon: getCategoryIcon(category) };
+}
 
 export const MAX_FILE_COUNT = 10;
 export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB

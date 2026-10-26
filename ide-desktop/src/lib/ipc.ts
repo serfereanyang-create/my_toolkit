@@ -281,6 +281,8 @@ type ZCodeDesktopApi = {
     read(relativePath: string): Promise<string>;
     write(relativePath: string, content: string): Promise<{ ok: boolean; path: string }>;
     saveTempImage(filename: string, base64Data: string): Promise<string>;
+    /** 附件缩略图：只对图片、只回 data URL，上限 8MB。 */
+    readImageDataUrl(absolutePath: string): Promise<string>;
   };
   /** 「选一个文件」的唯一入口。起始目录由主进程锁在工作区根，不接受调用方指定。 */
   files: {
