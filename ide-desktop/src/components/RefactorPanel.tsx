@@ -29,13 +29,6 @@ interface ExtractMethodOptions {
   useArrowFunction?: boolean;
   addTypeAnnotations?: boolean;
 }
-interface ExtractMethodResult {
-  extractedMethod: string;
-  callSite: string;
-  signature: { name: string; parameters: Array<{ name: string; type?: string }>; returnType?: string };
-  variableAnalysis: Record<string, unknown>;
-}
-
 /** 对齐 cli/src/refactor/rename.ts 的请求/结果形状。 */
 interface RenameOptions {
   file: string;
@@ -44,14 +37,6 @@ interface RenameOptions {
   newName: string;
   updateStringLiterals?: boolean;
 }
-interface RenameResult {
-  oldName: string;
-  newName: string;
-  files: Array<{ path: string; replacements: number }>;
-  totalReplacements: number;
-  isSafe: boolean;
-}
-
 interface RefactorPanelProps {
   visible: boolean;
   onClose: () => void;

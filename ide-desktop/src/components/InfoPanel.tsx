@@ -1,9 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  GitBranch, GitCommit, Upload, ChevronDown, ChevronRight,
-  CheckCircle2, Circle, Loader2, Minus, X, Maximize2,
-  TerminalSquare, Bot, ListTodo, FileDiff,
-} from 'lucide-react';
+import { GitBranch, GitCommit, Upload, ChevronDown, ChevronRight, CheckCircle2, Circle, Loader2, Minus, Maximize2, TerminalSquare, Bot, ListTodo, FileDiff } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import type { AppState, ChatItem, ToolChatItem } from '../types';
 import type { GitStatus, GitBranchList } from '../lib/ipc';
@@ -21,10 +17,6 @@ function fmt(ms: number) {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}秒`;
   return `${Math.floor(s / 60)}分 ${s % 60}秒`;
-}
-
-function fmtElapsed(startedAt: number) {
-  return fmt(Date.now() - startedAt);
 }
 
 // ── Git section ───────────────────────────────────────────────────────────────
@@ -222,16 +214,15 @@ function PlanSection({ state }: { state: AppState }) {
 
 // ── Terminal section ──────────────────────────────────────────────────────────
 function TerminalSection({ state, onOpenTerminal }: { state: AppState; onOpenTerminal: () => void }) {
-  const [elapsed, setElapsed] = useState(0);
+  // 每秒跳一次，让下面的「已用」按新的 Date.now() 重算；值本身不用。
+  const [, setClockTick] = useState(0);
   const progress = activeTurnProgress(state);
 
   useEffect(() => {
     if (!progress) return;
-    const id = setInterval(() => setElapsed(Date.now()), 1000);
+    const id = setInterval(() => setClockTick(Date.now()), 1000);
     return () => clearInterval(id);
   }, [progress]);
-
-  const changes = sessionChangeTotals(state.chat);
 
   return (
     <div className="ip-section">

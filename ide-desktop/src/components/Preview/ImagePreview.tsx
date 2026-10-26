@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import type { PreviewFileDescriptor, PreviewTab } from '../../types';
 
 type Props = { tab: PreviewTab };

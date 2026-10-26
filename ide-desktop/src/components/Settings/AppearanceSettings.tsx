@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Toggle, Segmented, SelectPill, SettingsCard, SettingRow, ColorSwatch, Slider, NumberField, TextField } from './controls';
+import { Toggle, Segmented, SelectPill, SettingsCard, SettingRow, Slider, NumberField } from './controls';
 import { prefBool, prefStr, type Prefs, type SavePref } from './prefs';
-import { BACKGROUND_DEFAULTS, clearBackground, describeBackgroundControls, normalizeBlur, normalizeDim, normalizeScope, pickBackground, readBackground } from '../../lib/background';
+import { clearBackground, describeBackgroundControls, normalizeBlur, normalizeDim, normalizeScope, pickBackground, readBackground } from '../../lib/background';
 
 const CHINESE_FONT_OPTIONS = [
   { value: 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif', label: '微软雅黑 / 苹方 / Noto Sans CJK' },

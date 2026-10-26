@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { TerminalSquare, X, Minus, Maximize2, Minimize2 } from 'lucide-react';
+import { TerminalSquare, X, Minus, Maximize2 } from 'lucide-react';
 import { Terminal } from './Terminal';
 
 /*

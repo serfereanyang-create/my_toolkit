@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import type { GitStatus, GitBranchList, GitFileStatus, GitPullStrategy } from '../lib/ipc';
-import type { AppState, TaskBoard } from '../types';
+import type { AppState } from '../types';
 import { formatGoalElapsed, taskProgress, computeStages, gitChangedFileCount } from '../lib/gitPanelFormat';
 import { GitGraph } from './GitGraph';
 import { ConfirmDialog } from './ConfirmDialog';

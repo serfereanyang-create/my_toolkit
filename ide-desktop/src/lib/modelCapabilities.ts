@@ -1,4 +1,4 @@
-import type { ApiFormat, ProviderConfig, ReasoningEffort } from '../types';
+import type { ProviderConfig, ReasoningEffort } from '../types';
 
 export type ReasoningUiMode = 'tiers' | 'toggle' | 'budget' | 'always' | 'unknown';
 export type ReasoningNativeField = 'thinking' | 'reasoning_effort' | 'thinkingConfig' | 'none' | 'unknown';

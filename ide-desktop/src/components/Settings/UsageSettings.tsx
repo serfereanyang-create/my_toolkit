@@ -452,13 +452,6 @@ function ModelDonut({ summary, colorByModel }: { summary: UsageSummary; colorByM
   );
 }
 
-// Local day-of-week (0 = Sun .. 6 = Sat) for a YYYY-MM-DD date string, parsed
-// as a local date (not UTC) so the calendar alignment matches usage-store.
-function dayOfWeek(date: string): number {
-  const [y, m, d] = date.split('-').map(Number);
-  return new Date(y, m - 1, d).getDay();
-}
-
 function Heatmap({ summary }: { summary: UsageSummary }) {
   const [hover, setHover] = useState<{ date: string; total: number; rounds: number; input: number; output: number; cacheRead: number; cacheCreation: number } | null>(null);
   const max = Math.max(1, ...summary.daily.map((d) => d.total));

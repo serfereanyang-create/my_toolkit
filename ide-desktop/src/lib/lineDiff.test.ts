@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diffLines, groupHunks, inlineWordDiff, splitLines, toUnifiedDiff } from './lineDiff';
+import { diffLines, inlineWordDiff, splitLines, toUnifiedDiff } from './lineDiff';
 
 describe('splitLines', () => {
   it('drops the trailing empty segment from a final newline', () => {

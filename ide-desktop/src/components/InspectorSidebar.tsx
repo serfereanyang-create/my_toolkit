@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  AlertTriangle, ArrowLeft, Activity, Bot, ChevronRight, FileCode2, FileDiff, GitBranch,
-  GitCommitHorizontal, ListTodo, Loader2, PanelRightClose, RefreshCw, X,
-} from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Activity, Bot, ChevronRight, FileCode2, FileDiff, GitBranch, GitCommitHorizontal, ListTodo, Loader2, PanelRightClose, X } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import type { GitCommitDetail, GitFileStat, GitGraphCommit, GitStatus } from '../lib/ipc';
 import type { AppState } from '../types';

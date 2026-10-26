@@ -36,46 +36,6 @@ export interface EditorViewProps {
   onRevealDone?: () => void;
 }
 
-// Detect language from file extension
-function detectLanguage(path: string): string {
-  const ext = path.split('.').pop()?.toLowerCase();
-  const languageMap: Record<string, string> = {
-    'js': 'javascript',
-    'jsx': 'javascript',
-    'ts': 'typescript',
-    'tsx': 'typescript',
-    'py': 'python',
-    'go': 'go',
-    'rs': 'rust',
-    'java': 'java',
-    'c': 'c',
-    'cpp': 'cpp',
-    'cc': 'cpp',
-    'cxx': 'cpp',
-    'h': 'cpp',
-    'hpp': 'cpp',
-    'cs': 'csharp',
-    'rb': 'ruby',
-    'php': 'php',
-    'sh': 'shell',
-    'bash': 'shell',
-    'zsh': 'shell',
-    'json': 'json',
-    'xml': 'xml',
-    'html': 'html',
-    'htm': 'html',
-    'css': 'css',
-    'scss': 'scss',
-    'less': 'less',
-    'md': 'markdown',
-    'yaml': 'yaml',
-    'yml': 'yaml',
-    'toml': 'toml',
-    'sql': 'sql',
-  };
-  return languageMap[ext || ''] || 'plaintext';
-}
-
 export function EditorView({
   openFiles,
   activeFile,

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
   ArrowLeft, Search, Settings as SettingsIcon, Sun,
   Sparkles, Keyboard, Puzzle, Globe, MousePointer2,

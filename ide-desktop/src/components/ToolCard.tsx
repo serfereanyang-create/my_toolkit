@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Wrench, ShieldAlert, CheckCircle2, XCircle, Loader, FileEdit, Terminal, Globe, Lock, Check, Copy, Square } from 'lucide-react';
+import { Wrench, ShieldAlert, CheckCircle2, XCircle, Loader, FileEdit, Terminal, Globe, Check, Copy, Square } from 'lucide-react';
 import type { ChatItem, PendingDiff } from '../types';
 import { JsonViewer } from './JsonViewer';
 import { tryParseJson } from '../lib/jsonTree';

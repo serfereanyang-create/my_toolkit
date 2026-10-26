@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { X, Send, MessageSquare, Plus, Trash2, Loader2 } from 'lucide-react';
-import type { AgentEvent, ChatItem, DesktopSettings } from '../types';
-import { ConversationStream } from './ConversationStream';
+import { useState, useRef, useEffect } from 'react';
+import { X, Send, MessageSquare, Plus, Loader2 } from 'lucide-react';
+import type { AgentEvent, DesktopSettings } from '../types';
+import './ConversationStream';
 import { desktop } from '../lib/ipc';
 
 /*

@@ -1,4 +1,3 @@
-import React from 'react';
 import { Table2 } from 'lucide-react';
 import type { ParsedSheet, ParsedWorkbook } from '../../lib/ipc';
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
 import { editorContext } from '../../lib/editorContext';
@@ -49,6 +49,21 @@ export function MonacoEditor({ value, language, path, onChange, onSave, theme = 
   // Iteration 6 — line bookmarks: gutter toggling, decorations, persistence.
   const bookmarkDecosRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
   const bookmarksRef = useRef<Bookmark[]>([]);
+  // Monaco 是懒加载的（见 lib/monacoRuntime.ts）：它进首屏 chunk 会让每次启动
+  // 都先解析一整个编辑器。这里是它真正被需要的地方——第一次画编辑器时拉一次。
+  const [runtimeReady, setRuntimeReady] = useState(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void import('../../lib/monacoRuntime')
+      .then((module) => module.ensureMonaco())
+      .then(() => { if (!cancelled) setRuntimeReady(true); })
+      .catch((error: unknown) => {
+        if (!cancelled) setRuntimeError(error instanceof Error ? error.message : String(error));
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   /** Re-paint bookmark decorations from bookmarksRef against the live model. */
   function repaintBookmarks() {
@@ -275,9 +290,17 @@ export function MonacoEditor({ value, language, path, onChange, onSave, theme = 
     };
   }, []);
 
+  if (runtimeError) {
+    return (
+      <div className="monaco-container monaco-status" role="alert">
+        编辑器加载失败：{runtimeError}
+      </div>
+    );
+  }
+
   return (
     <div className="monaco-container">
-      <Editor
+      {runtimeReady ? <Editor
         height="100%"
         language={language}
         value={value}
@@ -288,7 +311,9 @@ export function MonacoEditor({ value, language, path, onChange, onSave, theme = 
         options={{
           readOnly: false,
         }}
-      />
+      /> : (
+        <div className="monaco-status" aria-live="polite">正在加载编辑器…</div>
+      )}
     </div>
   );
 }

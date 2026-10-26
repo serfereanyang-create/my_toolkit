@@ -88,7 +88,6 @@ export function SearchPanel({ onOpenHit, onOpenSession, workspaceRoot }: Props) 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [activeHit, setActiveHit] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
   const seqRef = useRef(0);
 
   const run = useCallback(async (query: string) => {

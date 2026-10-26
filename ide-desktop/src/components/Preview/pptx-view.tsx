@@ -1,4 +1,3 @@
-import React from 'react';
 import { StickyNote } from 'lucide-react';
 import type { ParsedDeck, ParsedSlide } from '../../lib/ipc';
 

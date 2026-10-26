@@ -5,7 +5,7 @@ import type { AppState, QueuedMessage, ReasoningEffort, ToolScope } from '../typ
 import { PluginMenu, type PluginItem } from './PluginMenu';
 import { ModelMenu } from './ModelMenu';
 import { ThinkingMenu, effortLabel } from './ThinkingMenu';
-import { ToolScopeMenu, toolScopeLabel } from './ToolScopeMenu';
+import { ToolScopeMenu } from './ToolScopeMenu';
 import { ApprovalMenu, approvalMenuLabel } from './ApprovalMenu';
 import { ContextStatsMenu } from './ContextStatsMenu';
 import { FileAttachmentList } from './FileAttachmentCard';
@@ -199,7 +199,6 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
     ?? reasoningCapability.options[0]
     ?? 'auto';
   const toolScope = (state.settings?.preferences?.toolScope as ToolScope | undefined) ?? 'auto';
-  const taskExecutionMode = (state.settings?.preferences?.taskExecutionMode as 'auto' | 'plan' | undefined) ?? 'plan';
   const contextWindow = provider?.models?.find((entry) => entry.id === model)?.contextWindow;
   const contextRate = state.contextStats && contextWindow
     ? Math.min(100, (state.contextStats.inputTokens / contextWindow) * 100) : null;

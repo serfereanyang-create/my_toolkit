@@ -52,7 +52,7 @@ import { cueForEvent, playCue, soundVolume } from './lib/notifySounds';
 import { Welcome } from './components/Welcome';
 import { desktop } from './lib/ipc';
 import { settingsPatch, type SettingsPatch } from './lib/settingsPatch';
-import { appReducer, initialState, languageForPath, sessionChangeTotals, activeTurnProgress, sessionToChat } from './lib/state';
+import { appReducer, initialState, sessionToChat } from './lib/state';
 import { queueForSession } from './lib/messageQueueSelect';
 import { returnedQueueMessages } from './lib/cancelledQueue';
 import { decideQueuePump, pumpSessionId } from './lib/queuePump';
@@ -60,7 +60,7 @@ import { setLanguageWorkspaceRoot } from './lib/languageProviders';
 import { transcriptFileName, transcriptToMarkdown } from './lib/transcriptExport';
 import { loadRecent, rankRecent, touchRecent, type RecentFile } from './lib/recentFiles';
 import type { MentionItem } from './components/MentionPicker';
-import type { ApprovalMode, ChatItem, PreviewFileDescriptor, ProjectDescriptor, ReasoningEffort, SessionMeta, ThemeMode, ToolScope } from './types';
+import type { ChatItem, ReasoningEffort, SessionMeta, ThemeMode, ToolScope } from './types';
 
 type MainView = 'newtab' | 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality' | 'computer' | 'memory';
 type QualityOverlay = 'review' | 'coverage' | 'performance' | 'refactor' | null;
@@ -109,7 +109,7 @@ export default function App() {
   // Floating terminal window (command palette → "Toggle Floating Terminal").
   const [terminalFloatOpen, setTerminalFloatOpen] = useState(false);
   // Info panel visibility
-  const [infoPanelOpen, setInfoPanelOpen] = useState(false);
+  const [infoPanelOpen] = useState(false);
   const [workspaceToolsOpen, setWorkspaceToolsOpen] = useState(false);
   const [workspaceToolsWidth, setWorkspaceToolsWidth] = useState(420);
   // Per-session inspector: the right column opened from the conversation's Git
@@ -261,12 +261,14 @@ export default function App() {
       }
       setLanguageWorkspaceRoot(root);
       dispatch({ type: 'workspace/opened', root });
-      try {
-        const tree = await desktop.workspace.getTree('.');
-        dispatch({ type: 'tree/loaded', tree });
-      } catch {
+      // 首屏不等工作区树。读树是一次串行 IPC，几千个文件的仓库要几百毫秒，
+      // 而输入框并不需要它——先把界面放出来，树随后填进来。
+      setBooting(false);
+      void desktop.workspace.getTree('.').then((tree) => {
+        if (stateRef.current.workspaceRoot === root) dispatch({ type: 'tree/loaded', tree });
+      }).catch(() => {
         // A stale or unreadable directory shouldn't block startup.
-      }
+      });
     }).catch(() => {
       // If restore fails entirely, the user can still open a folder manually.
     }).finally(() => {
@@ -742,29 +744,6 @@ export default function App() {
     return true;
   }
 
-  async function openDirectory(path: string) {
-    const info = await desktop.preview.inspectProject(path);
-    if (!info) return;
-    const tabId = `preview-project-${info.token}`;
-    dispatch({
-      type: 'preview/open',
-      tab: {
-        id: tabId,
-        title: info.name,
-        kind: 'web',
-        descriptor: info,
-        status: 'ready',
-        zoom: 1,
-        fitWidth: true,
-      },
-    });
-  }
-
-  async function saveActiveFile() {
-    const file = activeFile ? openFilesRef.current.find((candidate) => candidate.path === activeFile) : undefined;
-    if (file) await handleSaveFile(file.path, file.content);
-  }
-
   // Editor handlers
   function detectLanguage(path: string): string {
     const ext = path.split('.').pop()?.toLowerCase();
@@ -998,13 +977,6 @@ export default function App() {
       return { ...provider, keyHint: keyState.hint };
     }));
     dispatch({ type: 'settings/loaded', settings: { ...settings, providers } });
-  }
-
-  async function cycleApproval() {
-    if (!state.settings) return;
-    const order: ApprovalMode[] = ['ask', 'auto', 'deny'];
-    const next = order[(order.indexOf(state.settings.approval) + 1) % order.length];
-    await saveSettings({ approval: next });
   }
 
   async function setReasoningEffort(reasoningEffort: ReasoningEffort) {

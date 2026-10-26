@@ -1,4 +1,4 @@
-import { AlertTriangle, Bot, CheckCircle2, CircleDashed, ListChecks, Loader2, RotateCw, XCircle } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, CircleDashed, Loader2, RotateCw, XCircle } from 'lucide-react';
 import type { SupervisedUnit, SupervisorSnapshot } from '../types';
 
 /*

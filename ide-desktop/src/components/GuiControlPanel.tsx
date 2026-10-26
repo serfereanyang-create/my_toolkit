@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AppWindow,
   ArrowRightLeft,
   Camera,
   CheckCircle2,
@@ -490,7 +489,6 @@ export function GuiControlPanel({ onAskAgent, desktopMode }: {
     );
   }
 
-  const disabled = !status?.ok || Boolean(busy);
 
   if (!status) {
     return <div className="gui-panel gui-panel-empty"><LoaderCircle size={16} className="gui-spin" />正在连接电脑操控…</div>;

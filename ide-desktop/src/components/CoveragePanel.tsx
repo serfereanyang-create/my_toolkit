@@ -72,7 +72,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
   const [pattern, setPattern] = useState('src/**/*.{ts,tsx}');
   const [lcovFile, setLcovFile] = useState('');
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
-  const [gateThresholds, setGateThresholds] = useState({ line: 80, branch: 70, func: 80 });
+  const [gateThresholds] = useState({ line: 80, branch: 70, func: 80 });
   // Workspace revision guard: flag results as stale once the workspace moves on.
   const { capture, current, stale } = useQualityRevision(visible && !loading);
 

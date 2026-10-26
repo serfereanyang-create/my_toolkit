@@ -9737,6 +9737,16 @@ button.census-row:hover { background: var(--bg-hover); cursor: pointer; }
   color: var(--fg);
 }
 
+/* 编辑器懒加载期间的占位：和编辑器同一个盒子，出现时不该跳一下。 */
+.monaco-status {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--sp-4);
+  color: var(--fg-muted);
+  font-size: var(--fs-3);
+}
+
 .monaco-container {
   flex: 1;
   min-height: 0;

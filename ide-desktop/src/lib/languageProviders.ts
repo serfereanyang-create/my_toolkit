@@ -24,10 +24,6 @@ function toMonacoRange(monaco: typeof Monaco, range: LanguageRange): Monaco.IRan
   return new monaco.Range(range.line, range.column, range.endLine, range.endColumn);
 }
 
-function toMonacoPosition(monaco: typeof Monaco, line: number, column: number): Monaco.Position {
-  return new monaco.Position(line, column);
-}
-
 export function registerLanguageProviders(monaco: typeof Monaco, model: Monaco.editor.ITextModel) {
   const lang = model.getLanguageId();
   if (lang !== 'typescript' && lang !== 'javascript') return;

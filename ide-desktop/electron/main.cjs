@@ -1,4 +1,17 @@
 const { app, BrowserWindow, Menu, Notification, safeStorage, protocol, nativeImage, shell } = require('electron');
+
+/**
+ * 启动计时（只在 YOYCODE_STARTUP_FILE 指了文件时才写，生产路径一行日志都不多）。
+ * 主进程的时间去哪了，光看渲染进程的 navigation timing 是看不见的：
+ * require 全部模块、建窗口、同步构造服务各花了多少，只能在这里打点。
+ */
+const startupT0 = Date.now();
+function startupMark(name) {
+  const file = process.env.YOYCODE_STARTUP_FILE;
+  if (!file) return;
+  try { require('node:fs').appendFileSync(file, `${name} ${Date.now() - startupT0}
+`); } catch { /* 计时不该影响启动 */ }
+}
 const path = require('node:path');
 const fs = require('node:fs');
 const { automationBus, automationSessionDir, unattendedApprovalDecision } = require('./automation.cjs');
@@ -41,6 +54,7 @@ const { serveHostToolRequests } = require('./host-tool-service.cjs');
 const { createFimServer } = require('./fim-server.cjs');
 const { createLanguageServer } = require('./language-server.cjs');
 const { CompletionService } = require('./completion-service.cjs');
+startupMark('modules-required');
 
 // Register custom scheme BEFORE app.ready (required by Electron)
 registerSchemePrivileges(protocol);
@@ -689,6 +703,7 @@ function loadWindowIcon() {
 }
 
 function createWindow() {
+  startupMark('create-window:start');
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -858,6 +873,8 @@ function createWindow() {
   });
   registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, messageQueues, automation, agentManager, terminalManager, previewService, previewRuntime, backgroundBrowser, backgroundApp, guiControl, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings, subagentRuns });
 
+  startupMark('services-ready');
+  mainWindow.webContents.once('did-finish-load', () => startupMark('renderer-loaded'));
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   const loadPromise = devUrl
     ? mainWindow.loadURL(devUrl)
