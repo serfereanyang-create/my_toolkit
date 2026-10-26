@@ -59,6 +59,18 @@ startupMark('modules-required');
 // Register custom scheme BEFORE app.ready (required by Electron)
 registerSchemePrivileges(protocol);
 
+/*
+ * 出网代理 —— 必须赶在 ready 之前。
+ *
+ * Chromium 只在网络服务启动时读一次 --proxy-server，而 agent bridge 用
+ * {...process.env} 拉起 CLI 子进程，所以这一处把代理写进 process.env 就同时
+ * 覆盖了窗口、预览、后台浏览器和 CLI 的 web_load / fetch_url。
+ * 顺序与 CLI 一致：AICODE_PROXY → HTTPS_PROXY → HTTP_PROXY → ALL_PROXY →
+ * settings.json 的 network.proxy；本机回环永远直连。
+ */
+const proxyState = require('./proxy.cjs').applyEarly(app);
+if (proxyState.url) console.log(`[proxy] ${proxyState.url} (from ${proxyState.source})`);
+
 let mainWindow;
 
 // Clamp any stored/incoming value to a known reasoning tier; unknown → 'auto'.

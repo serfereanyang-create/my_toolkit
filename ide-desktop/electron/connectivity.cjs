@@ -14,8 +14,26 @@ const { cliProviderName, resolveBaseUrl } = require('./provider-map.cjs');
 
 const DEFAULT_TIMEOUT_MS = 20000;
 
+/*
+ * 用哪个 fetch 发这一枪。
+ *
+ * 主进程里的 globalThis.fetch 是 Node 的 undici，和 CLI 一样不认 HTTPS_PROXY，
+ * 需要代理才能出网的机器上联通测试永远超时。Electron 的 net.fetch 走 Chromium
+ * 网络栈，会老老实实吃 --proxy-server（见 electron/proxy.cjs），所以优先用它。
+ * 不在 Electron 里（单元测试）时退回全局 fetch。
+ */
+function defaultFetch() {
+  try {
+    const { net } = require('electron');
+    if (net && typeof net.fetch === 'function') return net.fetch.bind(net);
+  } catch {
+    // Not running inside Electron.
+  }
+  return globalThis.fetch;
+}
+
 async function testProviderConnection({ providerConfig, apiKey }, deps = {}) {
-  const fetchImpl = deps.fetch || globalThis.fetch;
+  const fetchImpl = deps.fetch || defaultFetch();
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const start = deps.now ? deps.now() : Date.now();
   const elapsed = () => (deps.now ? deps.now() : Date.now()) - start;
@@ -200,12 +218,29 @@ function extractErrorSnippet(bodyText) {
 }
 
 function networkHint(error, timeoutMs) {
-  if (error && error.name === 'AbortError') return `请求超时（超过 ${Math.round(timeoutMs / 1000)}s），检查网络或 Base URL 是否可达`;
+  const proxy = proxyState();
+  const proxyNote = proxy.url
+    ? `当前走代理 ${proxy.url}（来自 ${proxy.source}）`
+    : '当前没有配置代理';
+  if (error && error.name === 'AbortError') {
+    return `请求超时（超过 ${Math.round(timeoutMs / 1000)}s）：${proxyNote}，检查网络、代理是否在运行，或 Base URL 是否可达`;
+  }
   const code = error && error.cause && error.cause.code ? error.cause.code : error && error.code;
   if (code === 'ENOTFOUND') return '域名解析失败，检查 Base URL 是否正确';
-  if (code === 'ECONNREFUSED') return '连接被拒绝，目标端口未开放或地址错误';
+  if (code === 'ECONNREFUSED') return `连接被拒绝，目标端口未开放或地址错误（${proxyNote}）`;
   if (code === 'CERT_HAS_EXPIRED' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') return '证书验证失败';
+  if (code === 'UND_ERR_CONNECT_TIMEOUT' || code === 'ETIMEDOUT') {
+    return `连接超时：${proxyNote}。需要代理的机器请设置 AICODE_PROXY 或 HTTPS_PROXY，或在 settings.json 里写 network.proxy`;
+  }
   return error instanceof Error ? error.message : String(error);
+}
+
+function proxyState() {
+  try {
+    return require('./proxy.cjs').getProxyState();
+  } catch {
+    return { url: null, source: null };
+  }
 }
 
 function safeJson(text) {

@@ -119,6 +119,9 @@ class BackgroundBrowserService {
     const ses = session.fromPartition(`memory:${partition}`, { cache: false });
     ses.setPermissionRequestHandler((_wc, _perm, callback) => callback(false));
     ses.setPermissionCheckHandler(() => false);
+    // 独立分区是独立网络上下文：全局 --proxy-server 一般会带过来，但显式设一次，
+    // 免得隐藏浏览器在需要代理的机器上悄悄走直连（ERR_CONNECTION_TIMED_OUT）。
+    void require('./proxy.cjs').applyToSession(ses);
 
     const win = new BrowserWindow({
       ...VIEWPORT,
