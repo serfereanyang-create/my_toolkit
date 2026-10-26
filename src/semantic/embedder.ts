@@ -138,14 +138,6 @@ export class CodeEmbedder {
   }
 
   /**
-   * 旧 API 名保留以尽可能兼容调用方，但不再伪装为 Anthropic API。
-   */
-  private async embedWithAnthropic(texts: string[]): Promise<EmbedResponse> {
-    if (this.fallback) return this.embedLocally(texts);
-    throw new Error('Anthropic does not provide an embedding API in this integration');
-  }
-
-  /**
    * 降级方案：简单的特征哈希（仅用于开发测试）
    */
   private fallbackEmbed(text: string): Float32Array {
@@ -257,7 +249,6 @@ ${truncatedBody}`;
  */
 export function createDefaultEmbedder(): CodeEmbedder {
   const providerName = process.env.AICODE_EMBED_PROVIDER as EmbeddingProvider['name'] | undefined;
-  const fallback = process.env.AICODE_EMBED_FALLBACK === 'local' ? 'local' : 'none';
   const name = providerName || (process.env.OPENAI_API_KEY ? 'openai' : 'local');
   const apiKey = name === 'openai' ? process.env.OPENAI_API_KEY : name === 'anthropic' ? process.env.ANTHROPIC_API_KEY : undefined;
   const model = process.env.AICODE_EMBED_MODEL;

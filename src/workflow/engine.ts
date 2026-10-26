@@ -602,10 +602,6 @@ export class WorkflowEngine {
     }
   }
 
-  private hasRunnableNodes(): boolean {
-    return this.getRunnableNodes().length > 0;
-  }
-
   private getRunnableNodes(): WorkflowNode[] {
     if (this.execution.status !== 'running') return [];
     return this.workflow.nodes.filter(node => this.isNodeRunnable(node) && !this.isReservedParallelChild(node.id));

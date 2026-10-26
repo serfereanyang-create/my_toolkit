@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -27,7 +27,6 @@ test('foldTextByLines does not column-reflow long lines', () => {
 });
 
 test('harvestFilePaths finds quoted windows paths', () => {
-  const text = 'see "C:\\\\Users\\\\me\\\\Desktop\\\\shot.png" and other';
   // single backslashes as user would paste
   const text2 = 'see "C:\\Users\\me\\Desktop\\shot.png" please';
   const paths = harvestFilePaths(text2);

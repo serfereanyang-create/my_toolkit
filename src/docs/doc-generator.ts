@@ -11,8 +11,7 @@
 
 import * as ts from 'typescript';
 import { readFile, readdir } from 'node:fs/promises';
-import { resolve, relative, basename, extname, join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 import { isIgnoredDirName } from '../workspace/ignored.js';
 
 /**

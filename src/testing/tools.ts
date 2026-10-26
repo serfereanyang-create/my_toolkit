@@ -12,7 +12,6 @@ import { resolve } from 'node:path';
 import {
   generateTests,
   generateTestForFunction,
-  generatePropertyTest,
   type TestFramework,
 } from './test-generator.js';
 import {

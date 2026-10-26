@@ -164,7 +164,6 @@ export const scanSecurityTool = defineTool({
       }));
       
       // 汇总统计
-      const totalIssues = filteredResults.reduce((sum, r) => sum + r.issues.length, 0);
       const summary = {
         critical: filteredResults.reduce((sum, r) => sum + r.summary.critical, 0),
         high: filteredResults.reduce((sum, r) => sum + r.summary.high, 0),

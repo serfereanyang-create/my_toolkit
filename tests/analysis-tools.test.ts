@@ -12,12 +12,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   analyzeFileComplexity,
-  analyzeFunctionComplexity,
   DEFAULT_THRESHOLDS,
 } from '../src/analysis/complexity.js';
 import {
   analyzeFileSmells,
-  DEFAULT_SMELL_THRESHOLDS,
 } from '../src/analysis/smells.js';
 import {
   buildDependencyGraph,

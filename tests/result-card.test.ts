@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { formatResultCard, isMetaTranslatedDone, summarizeToolLine } from '../src/ui/resultCard.js';
+import { formatResultCard, isMetaTranslatedDone } from '../src/ui/resultCard.js';
 
 test('formatResultCard builds disk conclusion card in Chinese', () => {
   const card = formatResultCard({

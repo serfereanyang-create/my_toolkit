@@ -18,7 +18,6 @@ import {
   markTaskBlocked,
   markTaskDone,
   nextRunnableTask,
-  pauseRuntime,
   reopenTask,
   skipTask,
   startTask,

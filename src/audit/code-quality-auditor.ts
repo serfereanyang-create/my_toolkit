@@ -7,9 +7,8 @@
 
 import * as ts from 'typescript';
 import { readFile } from 'node:fs/promises';
-import { resolve, relative, extname } from 'node:path';
+import { resolve } from 'node:path';
 import { analyzeFileComplexity } from '../analysis/complexity.js';
-import { analyzeProject as analyzeSmells } from '../analysis/smells.js';
 import { buildDependencyGraph, detectCircularDependencies } from '../analysis/dependency-graph.js';
 import { analyzePerformance } from '../performance/performance-analyzer.js';
 
@@ -108,7 +107,6 @@ export async function auditCodeQuality(
   // 并行分析
   const [
     complexityResults,
-    smellAnalysis,
     depGraph,
     perfResults,
   ] = await Promise.all([
@@ -118,14 +116,14 @@ export async function auditCodeQuality(
       const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
       return analyzeFileComplexity(sourceFile);
     })),
-    analyzeSmells(targetFiles, workspaceRoot),
     buildDependencyGraph(targetFiles, workspaceRoot),
     Promise.all(targetFiles.map(f => analyzePerformance(f, workspaceRoot))),
   ]);
   
   const cycles = detectCircularDependencies(depGraph);
   
-  // analyzeSmells 返回的是项目级别的结果，需要转换为文件级别
+  // 尚未接入：analyzeProject 返回的是项目级结果，这里还没有转成文件级，
+  // 所以恒为空数组，报告里的 smell 统计（totalSmells）永远是 0。
   const smellResults = targetFiles.map(() => ({ smells: [] as any[] }));
   
   // 收集所有问题

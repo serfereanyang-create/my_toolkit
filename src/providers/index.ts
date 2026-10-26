@@ -6,7 +6,6 @@ import { createOpenAIProvider } from './openai.js';
 import { createGeminiProvider } from './gemini.js';
 import { createOpenAIResponsesProvider } from './openai-responses.js';
 import { VENDOR_PROFILES } from './vendors.js';
-import type { VendorId } from './vendors.js';
 
 export function createProvider(config: AppConfig): Provider {
   if (config.provider === 'mock') return createMockProvider(config.model);

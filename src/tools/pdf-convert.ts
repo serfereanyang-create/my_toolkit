@@ -1,4 +1,4 @@
-import { access, unlink } from 'node:fs/promises';
+import { access } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';

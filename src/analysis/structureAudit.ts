@@ -9,7 +9,7 @@
  *  - 疑似死目录（空目录链）
  */
 
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join, relative, sep, basename, extname } from 'node:path';
 import { isIgnoredDirName } from '../workspace/ignored.js';

@@ -2,7 +2,6 @@
  * testTools.ts — 测试生成与修复工具注册
  */
 
-import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ToolDefinition } from '../tools/types.js';
 import {

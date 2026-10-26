@@ -366,7 +366,7 @@ export const semanticSearchTool: ToolDefinition<{
 
       // 格式化输出
       const output = result.matches.map((match, index) => {
-        const { embedding, similarity, distance } = match;
+        const { embedding, similarity } = match;
         return `${index + 1}. [similarity=${similarity.toFixed(3)}] ${embedding.path}:${embedding.line}
    ${embedding.kind} ${embedding.name}
    ${embedding.signature}

@@ -7,7 +7,7 @@
 import type { ToolDefinition } from '../tools/types.js';
 import { discoverWorkspace } from './discover.js';
 import { applyFilter } from './applyFilter.js';
-import { collectScriptsByDir, topSharedScripts } from './collectScripts.js';
+import { collectScriptsByDir } from './collectScripts.js';
 import { planRun, runAcross, detectPackageManager } from './runner.js';
 
 export const workspaceRunTool: ToolDefinition<{

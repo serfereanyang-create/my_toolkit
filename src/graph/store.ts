@@ -240,23 +240,6 @@ export class GraphStore {
     };
   }
 
-  private static normalizeGraph(graph: CodeGraph, root: string): CodeGraph {
-    const nodes = graph.nodes || {};
-    const edges = graph.edges.filter((edge) => nodes[edge.from] && nodes[edge.to]);
-    return {
-      ...graph,
-      version: GRAPH_VERSION,
-      root,
-      nodes,
-      edges,
-      stats: {
-        nodeCount: Object.keys(nodes).length,
-        edgeCount: edges.length,
-        fileCount: new Set(Object.values(nodes).map((node) => normalizePath(node.loc.path))).size,
-      },
-    };
-  }
-
   /**
    * 获取缓存文件路径（用于调试）
    */

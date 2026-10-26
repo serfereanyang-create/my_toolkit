@@ -18,7 +18,6 @@ import {
  * fixed 80_000-char (~20k token) budget. 97 of 103 requests were over it, and
  * the median request had ~53% of its context that the budget could not carry.
  */
-const DEFAULT_BUDGET_CHARS = 80_000;
 /** Start aggressive clip when packed size exceeds this ratio of budget (soft threshold). */
 const DEFAULT_SOFT_RATIO = 0.72;
 /** Always keep this many newest messages intact when possible. */
@@ -339,16 +338,6 @@ export function messageChars(message: AgentMessage): number {
     }
   }
   return total;
-}
-
-function oneLine(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
-}
-
-function countBy(values: string[]) {
-  const counts: Record<string, number> = {};
-  for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
-  return counts;
 }
 
 function emptyResult(originalChars: number): CompactResult {

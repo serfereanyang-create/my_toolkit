@@ -76,7 +76,6 @@ export class AutomationManager {
   async startTask(taskId: string): Promise<void> {
     this.assertOpen();
     const task = await this.requireTask(taskId);
-    const previousEnabled = task.enabled;
     // Listener callbacks consult this in-memory flag. Set it before
     // registration so a newly started watcher can handle its first event;
     // persistence still happens only after registration succeeds.

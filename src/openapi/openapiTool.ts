@@ -7,7 +7,7 @@
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, dirname, resolve, sep } from 'node:path';
+import { dirname, resolve, sep } from 'node:path';
 import type { ToolDefinition } from '../tools/types.js';
 import { generateTypes } from './openapiTypes.js';
 

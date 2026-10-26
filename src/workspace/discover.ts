@@ -6,7 +6,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { join, relative, dirname, resolve, sep } from 'node:path';
+import { join, relative, dirname, sep } from 'node:path';
 import { existsSync } from 'node:fs';
 import { glob } from 'glob';
 

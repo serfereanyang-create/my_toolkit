@@ -1,7 +1,7 @@
 import { defineTool } from '../tools/define.js';
 import type { ToolResult } from '../tools/types.js';
 import { analyzeCacheHealth, formatCacheHealth } from '../usage/cacheHealth.js';
-import { resolveCacheTtl, diffCacheSegments } from '../providers/cacheStrategy.js';
+import { resolveCacheTtl } from '../providers/cacheStrategy.js';
 
 /**
  * cache_health — 提示缓存健康诊断

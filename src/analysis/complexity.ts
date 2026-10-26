@@ -150,7 +150,6 @@ class CognitiveComplexityVisitor {
   }
 
   visit(node: ts.Node) {
-    const wasNested = this.nestingLevel > 0;
 
     // 增加基础复杂度和嵌套惩罚
     switch (node.kind) {

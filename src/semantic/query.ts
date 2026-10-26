@@ -5,7 +5,6 @@
  */
 
 import { readFile, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { CodeEmbedder, createDefaultEmbedder } from './embedder.js';
 import { SemanticStore } from './store.js';
 import type { SemanticSearchResult, CodeEmbedding } from './types.js';
@@ -16,10 +15,8 @@ import type { SemanticSearchResult, CodeEmbedding } from './types.js';
 export class SemanticQueryEngine {
   private store: SemanticStore;
   private embedder: CodeEmbedder;
-  private workspaceRoot: string;
 
   constructor(workspaceRoot: string, embedder?: CodeEmbedder) {
-    this.workspaceRoot = workspaceRoot;
     this.store = new SemanticStore(workspaceRoot);
     this.embedder = embedder || createDefaultEmbedder();
     // 这里**不能**回写元数据。索引的 provider/model/维度是「建库那一刻」的事实，

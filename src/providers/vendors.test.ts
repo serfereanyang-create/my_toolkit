@@ -9,7 +9,6 @@ import {
   detectVendor,
   firstEnv,
   grokReasoningEffort,
-  glmThinkingParam,
   isGlm53,
   isKimiThinkingModel,
   isDeepseekReasoner,

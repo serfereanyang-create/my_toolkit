@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { collectImports, buildGraph, findStronglyConnected } from '../src/prreview/importCycles.js';
+import { collectImports, findStronglyConnected } from '../src/prreview/importCycles.js';
 
 test('collectImports picks up import/export-from/require', () => {
   const src = `

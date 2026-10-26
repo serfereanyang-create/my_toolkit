@@ -13,8 +13,6 @@ import {
 } from './complexity.js';
 import {
   analyzeProject as analyzeSmells,
-  DEFAULT_SMELL_THRESHOLDS,
-  type SmellThresholds,
 } from './smells.js';
 import {
   analyzeDependencies,
@@ -23,7 +21,6 @@ import {
   type LayerDefinition,
 } from './dependency-graph.js';
 import { globSync } from 'glob';
-import { relative } from 'node:path';
 
 /** 单次分析工具调用的文件数上限；超过部分截断并如实报告。 */
 const MAX_ANALYZE_FILES = 800;

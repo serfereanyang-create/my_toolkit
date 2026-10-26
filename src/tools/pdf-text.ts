@@ -246,7 +246,7 @@ function readPages(objects: Map<number, PdfObject>): Page[] {
   // a linearised file can contain detached page objects that are not part of
   // the visible document.
   let root: number | undefined;
-  for (const [number, object] of objects) {
+  for (const [, object] of objects) {
     if (!/\/Type\s*\/Catalog\b/.test(object.dict)) continue;
     const reference = /\/Pages\s+(\d+)\s+\d+\s+R/.exec(object.dict);
     if (reference) { root = Number.parseInt(reference[1], 10); break; }

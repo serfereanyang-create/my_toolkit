@@ -18,7 +18,6 @@ import {
 } from './explainer.js';
 import {
   reviewCode,
-  reviewFile,
   reviewDiff,
   generateReviewReport,
   quickSecurityCheck,

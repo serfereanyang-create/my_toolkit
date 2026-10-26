@@ -8,7 +8,6 @@ import {
   isAutoAllowedCommand,
   isAutoAllowedWrite,
   isBlockedCommand,
-  pathScopeFor,
   resolveReadablePath,
   resolveWorkspacePath,
 } from '../src/safety/policy.js';

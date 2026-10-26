@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { pathScopeFor, resolveWorkspacePath } from '../safety/policy.js';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import type { ToolDefinition } from './types.js';
 import { escapeXml } from './docx.js';

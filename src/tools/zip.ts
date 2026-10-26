@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises';
-import { dirname, join, relative, basename } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import type { ToolDefinition } from './types.js';
 import { pathScopeFor, resolveReadablePath, resolveWorkspacePath } from '../safety/policy.js';

@@ -10,7 +10,7 @@
  * test_fix: 分析失败的测试输出，建议修复方案（断言调整、mock 更新、数据修正）。
  */
 
-import { readFile, writeFile, access } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, relative, dirname, basename, extname } from 'node:path';
 import * as ts from 'typescript';
 import { parseSourceFile } from '../analysis/parseCache.js';

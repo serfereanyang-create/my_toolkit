@@ -1,4 +1,3 @@
-import type { ExpertIntent } from '../experts/types.js';
 import type { ReasoningEffort } from '../providers/types.js';
 
 /**

@@ -185,18 +185,6 @@ function summarizeTitle(goal: string) {
   return compact.length <= 60 ? compact : `${compact.slice(0, 57)}...`;
 }
 
-function countSteps(value: string) {
-  return value.split(/[，。；;\n]|然后|接着|并|and then|then/).map((part) => part.trim()).filter(Boolean).length;
-}
-
-function normalizePlannerPrompt(prompt: string) {
-  const trimmed = prompt.trim();
-  if (!trimmed) return '';
-  const attachmentIndex = trimmed.search(/\n\s*\[attachments\]\s*(?:\n|$)/i);
-  const withoutAttachments = attachmentIndex >= 0 ? trimmed.slice(0, attachmentIndex) : trimmed;
-  return withoutAttachments.trim().toLowerCase();
-}
-
 function hasAny(value: string, needles: string[]) {
   return needles.some((needle) => value.includes(needle));
 }

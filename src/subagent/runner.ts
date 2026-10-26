@@ -1,7 +1,7 @@
 import type { AgentRuntime } from '../agent/agent.js';
 import { supervisorFor } from '../agent/agent.js';
 import { createProvider } from '../providers/index.js';
-import { resolveTiers, type ResolvedTier } from '../dispatch/tierRouter.js';
+import { type ResolvedTier } from '../dispatch/tierRouter.js';
 import { resolveDispatchSelection } from '../dispatch/plan.js';
 import { completeWithFallback, configForTier, isFallbackWorthy, tierProvider } from '../dispatch/tierProvider.js';
 

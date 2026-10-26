@@ -407,18 +407,6 @@ export class GraphBuilder {
     return nodes[localId] ? localId : null;
   }
 
-  /** 创建一个用于语义和图查询的节点名称索引。 */
-  private buildNameIndex(nodes: Record<string, GraphNode>): Map<string, GraphNode[]> {
-    const index = new Map<string, GraphNode[]>();
-    for (const node of Object.values(nodes)) {
-      const key = node.name.toLowerCase();
-      const bucket = index.get(key) || [];
-      bucket.push(node);
-      index.set(key, bucket);
-    }
-    return index;
-  }
-
   /** Remove duplicate and dangling edges after all source nodes are collected. */
   private finalizeEdges(nodes: Record<string, GraphNode>, edges: GraphEdge[]): GraphEdge[] {
     const seen = new Set<string>();

@@ -236,12 +236,6 @@ function formatActionRowColored(item: OverlayItem, color: boolean, maxWidth: num
   return `${keyword} ${detail}`;
 }
 
-function padRow(text: string, width: number) {
-  const plain = text.replace(/\u001b\[[0-9;]*m/g, '');
-  if (plain.length >= width) return plain.slice(0, width);
-  return `${plain}${' '.repeat(width - plain.length)}`;
-}
-
 function filterItems(items: OverlayItem[], query: string) {
   const q = query.trim().toLowerCase();
   if (!q) return items;

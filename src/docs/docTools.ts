@@ -3,7 +3,7 @@
  */
 
 import { readdir } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join } from 'node:path';
 import type { ToolDefinition } from '../tools/types.js';
 import {
   extractProjectMetadata,

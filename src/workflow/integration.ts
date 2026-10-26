@@ -27,14 +27,12 @@ export type WorkflowIntegrationOptions = {
 
 export class WorkflowIntegration {
   private runtime: AgentRuntime;
-  private context: ToolContext;
   private workspaceDir: string;
   private store: WorkflowStore;
   private onProgress?: (execution: WorkflowExecution) => void;
   
   constructor(options: WorkflowIntegrationOptions) {
     this.runtime = options.runtime;
-    this.context = options.context;
     this.workspaceDir = options.workspaceDir;
     this.onProgress = options.onProgress;
     

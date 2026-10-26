@@ -42,7 +42,6 @@ function delegatingProvider(): { provider: Provider; promptsSeen: string[] } {
       promptsSeen.push(stable);
 
       const wantsDelegation = stable.includes('默认委派');
-      const forbidsDelegation = stable.includes('不要派子智能体');
 
       if (wantsDelegation && !delegated) {
         delegated = true;

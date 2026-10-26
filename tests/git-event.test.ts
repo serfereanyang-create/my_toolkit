@@ -79,7 +79,6 @@ test('GitEventManager: detects new commits', async () => {
     const manager = new GitEventManager();
     
     let triggerCount = 0;
-    let lastEvent = '';
     
     const mockTask = {
       id: 'test_git_2',
@@ -107,9 +106,8 @@ test('GitEventManager: detects new commits', async () => {
         recordExecution: async () => {},
         save: async () => {},
       } as any,
-      onTrigger: (_taskId, event) => {
+      onTrigger: () => {
         triggerCount++;
-        lastEvent = event;
       },
     });
     

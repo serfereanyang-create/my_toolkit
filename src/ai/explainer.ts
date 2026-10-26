@@ -335,14 +335,6 @@ export async function generateDocComment(
     throw new Error('未找到函数定义');
   }
   
-  const functionNode: ts.FunctionDeclaration = found;
-  const name = functionNode.name?.text || 'anonymous';
-  const params = functionNode.parameters.map(p => ({
-    name: ts.isIdentifier(p.name) ? p.name.text : '?',
-    type: p.type?.getText(sourceFile),
-  }));
-  const returnType = functionNode.type?.getText(sourceFile);
-  
   // 构建提示词
   const prompt = `生成 JSDoc 注释，要求：
 1. 一句话描述函数功能

@@ -7,8 +7,8 @@
  *  - CHANGELOG 生成（从 git commits 推导）
  */
 
-import { readFile, readdir } from 'node:fs/promises';
-import { join, relative, extname, basename } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join, relative, basename } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as ts from 'typescript';

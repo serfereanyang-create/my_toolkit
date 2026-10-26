@@ -102,10 +102,6 @@ export function formatBoardProgressLine(board: TaskBoard): string {
   return `▦ ${parts.join(' · ')}`;
 }
 
-function formatTokenCount(value: number): string {
-  return formatTokensCompact(value);
-}
-
 export class TerminalUI {
   private toolIndex = 0;
   private activeSpinner?: NodeJS.Timeout;
@@ -122,7 +118,6 @@ export class TerminalUI {
   // can surface genuine context occupancy without a separate command.
   private lastContext: ContextSnapshot | null = null;
   private turnOutputTokens = 0;
-  private busyHint = '';
   private turnStartedAt = Date.now();
   private spinnerStartedAt = Date.now();
   // Live reasoning stream (JSON/bridge mode): the first thinking delta of a
@@ -152,11 +147,6 @@ export class TerminalUI {
   toggleVerbose(): boolean {
     this.setVerbose(!this.options.verbose);
     return this.options.verbose ?? false;
-  }
-
-  /** Keyboard hint shown on the busy spinner row, e.g. "esc stop · ctrl+o detail". */
-  setBusyHint(hint: string) {
-    this.busyHint = hint;
   }
 
   banner(config: AppConfig, provider: Provider) {

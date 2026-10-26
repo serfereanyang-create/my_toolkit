@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, extname } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import type { ToolDefinition } from './types.js';
-import { escapeXml, resolveDesktopPath, zip } from './docx.js';
+import { escapeXml, resolveDesktopPath } from './docx.js';
 
 /*
  * insert_docx_image — create a Word document with embedded images.

@@ -1,5 +1,5 @@
 import { readdir, stat } from 'node:fs/promises';
-import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, normalize, relative } from 'node:path';
 import { pathScopeFor, resolveReadablePath } from '../safety/policy.js';
 import type { ToolDefinition } from './types.js';
 import { isIgnoredDirName } from '../workspace/ignored.js';
@@ -8,11 +8,6 @@ import { isIgnoredDirName } from '../workspace/ignored.js';
 function asRecord(input: unknown): Record<string, unknown> {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new Error('expected an object');
   return input as Record<string, unknown>;
-}
-
-function resolveAny(workspaceRoot: string, value: string) {
-  if (isAbsolute(value)) return normalize(resolve(value));
-  return normalize(resolve(workspaceRoot, value));
 }
 
 function commonPrefix(items: string[]) {

@@ -15,7 +15,6 @@ import { LockTimeoutError, acquireFileLock, withFileLock } from '../src/utils/lo
  */
 
 const workspaceOf = () => mkdtemp(join(tmpdir(), 'aicode-lock-'));
-const lockIn = (dir: string) => join(dir, '.aicode', 'memory', 'entries.json.lock');
 
 async function deadPid(): Promise<number> {
   const child = spawn(process.execPath, ['-e', '0'], { stdio: 'ignore' });
