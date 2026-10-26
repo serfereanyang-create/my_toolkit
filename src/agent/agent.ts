@@ -27,10 +27,10 @@ import { autoCompactTokenLimit, resolveModelContextWindow } from './modelWindows
 import { globalToolHealth } from './toolHealth.js';
 import { buildToolSystemPrompt, buildToolSystemPromptParts } from '../providers/protocol.js';
 import { planLocalFallback } from './fallback.js';
-import { PLANNING_TURN_FINAL_CALL, PLANNING_TURN_INSTRUCTION, PLANNING_TURN_MAX_STEPS, shouldUseTaskBoard } from '../tasks/planner.js';
+import { PLANNING_TURN_FINAL_CALL, PLANNING_TURN_INSTRUCTION, PLANNING_TURN_MAX_STEPS } from '../tasks/planner.js';
 import { SURVEY_READ_TOOLS, shouldSurveyFirst, surveyBlocksTool, surveyRefusal } from '../tasks/survey.js';
 import { formatToolStrategy, planToolStrategy, recentToolResultsFromSession, recoveryHintForToolFailure, nextStepHint } from './toolStrategy.js';
-import { detectLocale, resolveSessionLocale, type Locale } from '../i18n/locale.js';
+import { resolveSessionLocale, type Locale } from '../i18n/locale.js';
 import { isBlockedOutput } from '../i18n/messages.js';
 import { formatResultCard, isMetaTranslatedDone } from '../ui/resultCard.js';
 import { appendUsage, resolveUsageLogPath } from '../usage/ledger.js';
@@ -40,7 +40,6 @@ import { pickStepTier } from '../dispatch/stepRouter.js';
 import type { DispatchTier } from '../dispatch/tierRouter.js';
 import { recordTrajectory, TRAJECTORY_TAIL } from '../session/modelTrajectory.js';
 import { buildLowCacheHint, collectCacheProbe } from '../probe/cacheProbe.js';
-import { MAX_SUBAGENT_DEPTH } from '../tools/subagent.js';
 import type { SubAgentOptions, ToolDefinition } from '../tools/types.js';
 import { getReasoningCapability, clampReasoningEffort } from '../providers/capabilities.js';
 import { analyzeTaskComplexity } from '../tasks/complexity.js';
@@ -906,7 +905,6 @@ async function runAgentTurnCore(
   let stuckSteps = 0;
   /** Set on a recoverable failure; injected into the next step's newest message. */
   let pendingRecoveryHint: string | undefined;
-  let lastFailureReason: string | undefined;
 
   let finalAnswer: string | undefined;
   let warnedAboutCompaction = false;
@@ -1368,7 +1366,6 @@ async function runAgentTurnCore(
         if (batchAction.callId) responseToolOutputs.push({ callId: batchAction.callId, output: toolResult.output ?? toolResult.reason ?? '' });
         if (!toolResult.ok) {
           const reason = toolFailureReason(toolResult, batchAction.tool, locale);
-          lastFailureReason = reason;
           consecutiveToolFailures += 1;
           totalToolFailures += 1;
           const outcome = toolResult.outcome ?? 'failed';

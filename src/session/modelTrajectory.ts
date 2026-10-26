@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 
 /** One message as it was actually sent to (or returned by) the model. */
 export type TrajectoryMessage = {

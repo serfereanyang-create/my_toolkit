@@ -36,7 +36,7 @@ import {
   registerAttachment,
   type Attachment,
 } from './attachments.js';
-import { formatByteSize, MAX_USER_TEXT_BYTES_HARD } from './limits.js';
+import { formatByteSize } from './limits.js';
 import { formatHelpText } from './commandPalette.js';
 import { formatCacheProbe } from '../probe/cacheProbe.js';
 import { detectLocale } from '../i18n/locale.js';
