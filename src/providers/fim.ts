@@ -2,6 +2,7 @@
  * fim.ts — Fill-in-Middle (FIM) completion request path.
  * Called by the FIM bridge to generate inline code completions.
  */
+import { netFetch } from '../utils/net.js';
 import type { ProviderName } from './types.js';
 
 export type FimOptions = {
@@ -167,5 +168,5 @@ function cleanCompletion(raw: string): string {
 function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
-  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+  return netFetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
 }

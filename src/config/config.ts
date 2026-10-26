@@ -108,10 +108,17 @@ export async function loadConfig(args: CliArgs, env: NodeJS.ProcessEnv = process
 export const DEFAULT_NETWORK_ALLOWLIST = [
   'wikipedia.org',
   'developer.mozilla.org',
+  // github.com covers api.github.com and raw.githubusercontent.com through the
+  // suffix rule, but they are spelled out so the intent survives a future
+  // switch to exact matching.
+  'github.com',
   'api.github.com',
   'raw.githubusercontent.com',
   'pypi.org',
   'registry.npmjs.org',
+  'nodejs.org',
+  // Provider docs and API references the model cites constantly.
+  'openai.com',
   // Search endpoint used by the web_search tool (DuckDuckGo HTML, no API key).
   'duckduckgo.com',
 ];
@@ -119,7 +126,7 @@ export const DEFAULT_NETWORK_ALLOWLIST = [
 function resolveNetworkConfig(
   env: NodeJS.ProcessEnv,
   fileConfig: FileProfileConfig,
-): { enabled: boolean; allowlist: string[] } {
+): { enabled: boolean; allowlist: string[]; proxy?: string } {
   const envFlag = env.AICODE_NETWORK;
   const disabledByEnv = envFlag === '0' || envFlag === 'false' || envFlag === 'off';
   const enabled = disabledByEnv ? false : fileConfig.network?.enabled ?? true;
@@ -128,7 +135,10 @@ function resolveNetworkConfig(
     : undefined;
   const fileList = fileConfig.network?.allowlist;
   const allowlist = envList ?? (fileList && fileList.length ? fileList : DEFAULT_NETWORK_ALLOWLIST);
-  return { enabled, allowlist };
+  // Proxy: the environment wins at request time (utils/proxy.ts), this is only
+  // the settings-level fallback for machines that cannot set env variables.
+  const proxy = fileConfig.network?.proxy?.trim() || undefined;
+  return proxy ? { enabled, allowlist, proxy } : { enabled, allowlist };
 }
 
 export function safeConfig(config: AppConfig) {
@@ -315,14 +325,15 @@ function toolScopeValue(value: unknown): ToolScope | undefined {
   return value === 'auto' || value === 'compact' || value === 'standard' || value === 'full' ? value : undefined;
 }
 
-function normalizeNetwork(value: unknown): { enabled?: boolean; allowlist?: string[] } | undefined {
+function normalizeNetwork(value: unknown): { enabled?: boolean; allowlist?: string[]; proxy?: string } | undefined {
   if (!isRecord(value)) return undefined;
   const enabled = typeof value.enabled === 'boolean' ? value.enabled : undefined;
   const allowlist = Array.isArray(value.allowlist)
     ? value.allowlist.filter((entry): entry is string => typeof entry === 'string')
     : undefined;
-  if (enabled === undefined && allowlist === undefined) return undefined;
-  return { enabled, allowlist };
+  const proxy = typeof value.proxy === 'string' && value.proxy.trim() ? value.proxy.trim() : undefined;
+  if (enabled === undefined && allowlist === undefined && proxy === undefined) return undefined;
+  return { enabled, allowlist, proxy };
 }
 
 function withoutProfiles(config: FileConfig): FileProfileConfig {

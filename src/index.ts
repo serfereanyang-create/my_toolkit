@@ -10,6 +10,7 @@ import { loadConfig, requireProviderAuth } from './config/config.js';
 import { formatMcpStatus } from './mcp/manager.js';
 import { createAgentRuntime } from './runtime/createRuntime.js';
 import { readPackageVersion } from './runtime/packageVersion.js';
+import { configureNetworkProxy } from './utils/net.js';
 
 async function main() {
   // Own the process/window title so hosts don't show system32\cmd.
@@ -19,6 +20,12 @@ async function main() {
 
   const args = parseArgs(process.argv.slice(2));
   const config = await loadConfig(args);
+
+  // Settings-level proxy (`network.proxy` in .aicode/config.json). It is only a
+  // fallback — AICODE_PROXY / HTTPS_PROXY still win inside utils/proxy.ts — but
+  // registering it here covers every web tool, sub-agent and shell the run
+  // spawns, without each of them re-reading the config file.
+  configureNetworkProxy(config.network?.proxy);
 
   if (config.version) {
     process.stdout.write(`${await readPackageVersion(import.meta.url)}\n`);

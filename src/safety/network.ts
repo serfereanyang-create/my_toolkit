@@ -35,7 +35,13 @@ export function evaluateNetworkTarget(rawUrl: string, allowlist: string[]): Netw
     return { ok: false, host, reason: 'target resolves to a private or loopback address (SSRF blocked)' };
   }
   if (!hostMatchesAllowlist(host, allowlist)) {
-    return { ok: false, host, reason: 'host is not in the network allowlist' };
+    // Say how to fix it, not just what failed: the bare "host is not in the
+    // network allowlist" left the user with no idea where that list lives.
+    return {
+      ok: false,
+      host,
+      reason: `${host} is not in the network allowlist (the request was blocked before it left the machine). Add it to "network.allowlist" in .aicode/config.json, or to AICODE_NETWORK_ALLOWLIST (comma-separated) to permit it.`,
+    };
   }
   return { ok: true, host, reason: 'host is in the network allowlist' };
 }

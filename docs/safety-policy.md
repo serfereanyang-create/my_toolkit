@@ -55,6 +55,22 @@ shell 侧同样挡：`cat ~/.ssh/id_rsa`、`Get-Content <home>/.kube/config` 这
 - 判定逻辑从 `policy.ts` 挪到 `src/safety/network.ts`（`evaluateNetworkTarget` / `isBlockedNetworkHost` / `hostMatchesAllowlist`），`policy.ts` 再导出，避免 `commandAnalysis` ↔ `policy` 循环依赖。
 - 不碰的：`npm install`/`pip`/`git push` 这类有自己流程的命令不套白名单（否则默认 7 个域一条都跑不通），这是已知剩余口子。
 
+### 3c. 出网代理
+
+需要代理才能联外网的机器上，之前所有联网工具都是死的：`web_search`/`fetch_url` 报 `fetch failed`，后台浏览器报 `ERR_CONNECTION_TIMED_OUT`，而同一个 URL 用 `curl` 是通的。
+
+根因是 Node 的 `fetch` 不读 `HTTPS_PROXY` —— undici 只在 `node --use-env-proxy` 下才看环境变量，而桌面端是用普通 `node dist/src/index.js` 拉起 CLI 的。Chromium 侧同理：不给 `--proxy-server` 就一直直连。
+
+现在统一由 `src/utils/proxy.ts` 解析、`src/utils/net.ts` 的 `netFetch` 落地：
+
+- **优先级**：`AICODE_PROXY` → `HTTPS_PROXY` → `HTTP_PROXY` → `ALL_PROXY` → `.aicode/config.json` 的 `network.proxy`。环境变量永远压过设置。
+- **直连开关**：任何一个变量写 `off`/`none`/`direct` 就整个直连，设置里的值不会再顶回来。
+- **永远直连**：`NO_PROXY` 命中的主机，以及 localhost / 127.0.0.0/8 / `[::1]`（本地预览服务不该被塞进代理）。
+- **只支持 http/https 代理**；`socks5://` 会被当成"设了但用不了"，错误信息照实说，不会悄悄换成别的。
+- **覆盖面**：`web_search`、`fetch_url`、`download_file`、`http_post`，以及供应商请求（`providers/protocol.ts` 的 `fetchWithRetry`、`gemini`、`fim`）。没有代理时 `netFetch` 直接走全局 `fetch`，undici 不会被拉进启动路径。
+- **桌面端**：`electron/proxy.cjs` 在 `app.whenReady()` 之前注入 `--proxy-server` / `--proxy-bypass-list`，并把解析结果写进 `process.env.AICODE_PROXY`（agent bridge 用 `{...process.env}` 拉起 CLI，所以一条赋值就够）；后台浏览器的 `memory:` 分区再显式 `setProxy` 一次，免得隐藏窗口在独立网络上下文里走直连。联通测试改用 Electron 的 `net.fetch`（Chromium 网络栈），同样吃这个代理。
+- 失败信息现在会指名道姓：主机、错误码、当前到底走没走代理、以及该设哪个变量。
+
 ### 4. 只读模式（原本就有，这次验证）
 
 `--approval deny`，桌面端在「设置 → 权限 → 审批模式 = 只读」里。实测（mock provider，真实 CLI）：

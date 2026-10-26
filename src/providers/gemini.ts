@@ -1,6 +1,7 @@
 import type { AgentAction, Provider, ProviderRequest, ProviderResponse } from './types.js';
 import { controlledProvider } from './requestControl.js';
 import { buildToolSystemPrompt, iterateSseDataLines, parseToolActions, toolInputSchema } from './protocol.js';
+import { netFetch } from '../utils/net.js';
 
 export type GeminiProviderOptions = { apiKey?: string; baseUrl?: string; model: string };
 
@@ -56,7 +57,7 @@ export function createGeminiProvider(options: GeminiProviderOptions): Provider {
         const budgets: Record<string, number> = { low: 2048, medium: 8192, high: 16384, max: 24576 };
         body.generationConfig = { ...(body.generationConfig as object), thinkingConfig: { thinkingBudget: budgets[request.reasoningEffort] ?? 8192 } };
       }
-      const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': options.apiKey }, body: JSON.stringify(body), signal: request.signal });
+      const response = await netFetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': options.apiKey }, body: JSON.stringify(body), signal: request.signal });
       if (!response.ok) throw new Error(`Gemini request failed: ${response.status} ${await response.text()}`);
       const events: GeminiResponse[] = [];
       for await (const data of iterateSseDataLines(response, undefined, request.signal)) {

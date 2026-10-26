@@ -1,5 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { pathScopeFor, resolveWorkspacePath } from '../safety/policy.js';
+import { explainNetworkFailure, netFetch } from '../utils/net.js';
 import type { ToolDefinition } from './types.js';
 
 /**
@@ -40,7 +41,7 @@ export const fetchUrlTool: ToolDefinition<{ url: string }> = {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
-      const response = await fetch(input.url, {
+      const response = await netFetch(input.url, {
         method: 'GET',
         redirect: 'manual',
         signal: controller.signal,
@@ -98,7 +99,7 @@ export const fetchUrlTool: ToolDefinition<{ url: string }> = {
         ok: false,
         output: aborted
           ? `Request timed out after ${TIMEOUT_MS / 1000}s: ${input.url}`
-          : `Fetch failed for ${input.url}: ${error instanceof Error ? error.message : String(error)}`,
+          : `Fetch failed for ${input.url}: ${explainNetworkFailure(error, input.url)}`,
         data: { url: input.url },
       };
     } finally {
@@ -229,7 +230,7 @@ export const downloadFileTool: ToolDefinition<{
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     
     try {
-      const response = await fetch(input.url, {
+      const response = await netFetch(input.url, {
         method: 'GET',
         redirect: 'manual',
         signal: controller.signal,
@@ -276,7 +277,7 @@ export const downloadFileTool: ToolDefinition<{
         ok: false,
         output: aborted
           ? `Request timed out after ${TIMEOUT_MS / 1000}s: ${input.url}`
-          : `Download failed for ${input.url}: ${error instanceof Error ? error.message : String(error)}`,
+          : `Download failed for ${input.url}: ${explainNetworkFailure(error, input.url)}`,
       };
     } finally {
       clearTimeout(timer);
@@ -316,7 +317,7 @@ export const httpPostTool: ToolDefinition<{
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     
     try {
-      const response = await fetch(input.url, {
+      const response = await netFetch(input.url, {
         method: 'POST',
         redirect: 'manual',
         signal: controller.signal,
@@ -366,7 +367,7 @@ export const httpPostTool: ToolDefinition<{
         ok: false,
         output: aborted
           ? `Request timed out after ${TIMEOUT_MS / 1000}s: ${input.url}`
-          : `POST failed for ${input.url}: ${error instanceof Error ? error.message : String(error)}`,
+          : `POST failed for ${input.url}: ${explainNetworkFailure(error, input.url)}`,
       };
     } finally {
       clearTimeout(timer);

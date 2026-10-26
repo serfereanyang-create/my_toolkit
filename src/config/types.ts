@@ -97,7 +97,7 @@ export type FileProfileConfig = {
   reasoningEffort?: ReasoningEffort;
   toolScope?: ToolScope;
   /** Network egress policy for the fetch_url tool. */
-  network?: { enabled?: boolean; allowlist?: string[] };
+  network?: { enabled?: boolean; allowlist?: string[]; proxy?: string };
 };
 
 export type FileConfig = FileProfileConfig & {
@@ -121,7 +121,7 @@ export type AppConfig = {
   approval: ApprovalMode;
   workspaceRoot: string;
   sessionDir: string;
-  network?: { enabled?: boolean; allowlist?: string[] };
+  network?: { enabled?: boolean; allowlist?: string[]; proxy?: string };
   resumeSessionId?: string;
   prompt?: string;
   /**

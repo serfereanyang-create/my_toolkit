@@ -3,6 +3,7 @@ import type { DelegationLevel } from '../config/types.js';
 import { cacheControl } from './cacheStrategy.js';
 import { createRequestControl } from './requestControl.js';
 import { abortable, abortableDelay, throwIfAborted } from '../utils/cancellation.js';
+import { netFetch } from '../utils/net.js';
 
 /**
  * Runtime facts the model would otherwise have to guess or discover via a tool
@@ -460,7 +461,9 @@ export async function fetchWithRetry(url: string, init: Parameters<typeof fetch>
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     throwIfAborted(control.signal);
     try {
-      const response = await abortable(fetch(url, { ...init, signal: control.signal }), control.signal);
+      // netFetch, not bare fetch: provider traffic has to reach the proxy too,
+      // or a machine that only gets out through one cannot even start a turn.
+      const response = await abortable(netFetch(url, { ...init, signal: control.signal }), control.signal);
       if (response.ok || response.status < 500 || attempt === attempts) return response;
       lastError = new Error(`HTTP ${response.status}`);
       if (response.body) void response.body.cancel().catch(() => undefined);

@@ -1,3 +1,4 @@
+import { explainNetworkFailure, netFetch } from '../utils/net.js';
 import type { ToolDefinition } from './types.js';
 
 /*
@@ -38,7 +39,7 @@ export const webSearchTool: ToolDefinition<{ query: string; url: string; limit: 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
-      const response = await fetch(input.url, {
+      const response = await netFetch(input.url, {
         method: 'GET',
         redirect: 'manual',
         signal: controller.signal,
@@ -71,7 +72,9 @@ export const webSearchTool: ToolDefinition<{ query: string; url: string; limit: 
       const aborted = error instanceof Error && error.name === 'AbortError';
       return {
         ok: false,
-        output: aborted ? `Search timed out after ${TIMEOUT_MS / 1000}s: ${input.query}` : `Search failed: ${error instanceof Error ? error.message : String(error)}`,
+        output: aborted
+          ? `Search timed out after ${TIMEOUT_MS / 1000}s: ${input.query}`
+          : `Search failed: ${explainNetworkFailure(error, input.url)}`,
         data: { query: input.query },
       };
     } finally {
