@@ -70,7 +70,7 @@ const root = createRoot(document.getElementById('root')!);
 
 async function boot() {
   const { GitPanel } = await import('../src/components/GitPanel');
-  root.render(<GitPanel state={state} forcePush={false} branchPrefix="codex/" onOpenFile={() => {}} />);
+  root.render(<GitPanel state={state} forcePush={false} branchPrefix="yoycode/" onOpenFile={() => {}} />);
 }
 
 void boot();

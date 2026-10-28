@@ -18,7 +18,14 @@ export function ConnectionsSettings() {
           <Server size={26} />
         </div>
         <p className="settings-cta-text">通过 SSH 连接到远程设备</p>
-        <button type="button" className="settings-cta-btn">添加</button>
+        <button
+          type="button"
+          className="settings-cta-btn"
+          title="暂未接入：SSH 连接还没有数据源"
+          disabled
+        >
+          添加
+        </button>
       </div>
     </div>
   );

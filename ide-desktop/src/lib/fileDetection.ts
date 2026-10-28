@@ -12,6 +12,8 @@ export type DetectedFile = {
    * 让人一眼确认「贴对图了」，不是能不能发出去的前提，所以永远可以缺。
    */
   preview?: string;
+  attachmentError?: string;
+  mtimeMs?: number;
 };
 
 /** 原生「选一个文件」只回一条绝对路径，其余信息在这里补齐。 */
@@ -75,7 +77,10 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-export function validateFile(file: File): { valid: boolean; error?: string } {
+export function validateFile(file: Pick<File, 'name' | 'size'>): { valid: boolean; error?: string } {
+  if (!Number.isSafeInteger(file.size) || file.size < 0) {
+    return { valid: false, error: `无法读取文件 ${file.name} 的大小` };
+  }
   if (file.size > MAX_FILE_SIZE) {
     return { valid: false, error: `文件 ${file.name} 超过 50MB 大小限制` };
   }

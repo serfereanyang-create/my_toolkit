@@ -199,13 +199,18 @@ export function AutomationPanel() {
         </div>
       </header>
 
-      {error && <div className="automation-error">{error}</div>}
+      {error && (
+        <div className="automation-error" role="alert">
+          <span>{error}</span>
+          <button type="button" className="automation-retry" onClick={() => void refresh()} disabled={loading}>重试</button>
+        </div>
+      )}
 
       <div className="automation-workspace">
         <aside className="automation-list-pane">
           <div className="automation-pane-label">任务 {tasks.length}</div>
           {loading ? (
-            <div className="automation-empty">正在读取任务…</div>
+            <div className="automation-empty" role="status" aria-busy="true">正在读取任务…</div>
           ) : tasks.length === 0 ? (
             <button className="automation-empty automation-empty-action" onClick={beginCreate}>
               <Plus size={18} />

@@ -12,6 +12,8 @@
  * Exits non-zero if any check fails.
  */
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const { app } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');

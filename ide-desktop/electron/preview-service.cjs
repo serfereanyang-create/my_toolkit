@@ -77,6 +77,14 @@ class PreviewService {
 
   _onState(state) { for (const fn of this._stateListeners) fn(state); }
 
+  _navigationState() {
+    const history = this._view?.webContents.navigationHistory;
+    return {
+      canGoBack: history?.canGoBack() ?? false,
+      canGoForward: history?.canGoForward() ?? false,
+    };
+  }
+
   onState(fn) {
     this._stateListeners.push(fn);
     return () => { this._stateListeners = this._stateListeners.filter((f) => f !== fn); };
@@ -171,14 +179,11 @@ class PreviewService {
     });
 
     wc.on('did-start-loading', () => this._onState({ loading: true }));
-    wc.on('did-stop-loading',  () => this._onState({ loading: false, url: wc.getURL(), title: wc.getTitle(),
-      canGoBack: wc.canGoBack(), canGoForward: wc.canGoForward() }));
+    wc.on('did-stop-loading',  () => this._onState({ loading: false, url: wc.getURL(), title: wc.getTitle(), ...this._navigationState() }));
     wc.on('did-fail-load', (_e, code, desc) => this._onState({ loading: false, error: desc || String(code) }));
     wc.on('page-title-updated', (_e, title) => this._onState({ title }));
-    wc.on('did-navigate', (_e, url) => this._onState({ url,
-      canGoBack: wc.canGoBack(), canGoForward: wc.canGoForward() }));
-    wc.on('did-navigate-in-page', (_e, url) => this._onState({ url,
-      canGoBack: wc.canGoBack(), canGoForward: wc.canGoForward() }));
+    wc.on('did-navigate', (_e, url) => this._onState({ url, ...this._navigationState() }));
+    wc.on('did-navigate-in-page', (_e, url) => this._onState({ url, ...this._navigationState() }));
 
     this._win.contentView.addChildView(this._view);
   }
@@ -249,8 +254,8 @@ class PreviewService {
   forward() { this._view?.webContents.goForward(); }
   reload()  { this._view?.webContents.reload(); }
 
-  canGoBack()    { return this._view?.webContents.canGoBack()    ?? false; }
-  canGoForward() { return this._view?.webContents.canGoForward() ?? false; }
+  canGoBack()    { return this._navigationState().canGoBack; }
+  canGoForward() { return this._navigationState().canGoForward; }
 
   openExternal(url) {
     try {

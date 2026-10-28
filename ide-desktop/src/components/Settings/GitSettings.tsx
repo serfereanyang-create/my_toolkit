@@ -9,7 +9,7 @@ import { prefStr, prefBool, type Prefs, type SavePref } from './prefs';
    every keystroke). Desktop GitPanel + /git slash commands use the same prefs
    where relevant (e.g. force-with-lease on push). */
 export function GitSettings({ prefs, savePref }: { prefs: Prefs; savePref: SavePref }) {
-  const branchPrefix = prefStr(prefs, 'gitBranchPrefix', 'codex/');
+  const branchPrefix = prefStr(prefs, 'gitBranchPrefix', 'yoycode/');
   const mergeMethod = prefStr(prefs, 'gitMergeMethod', 'merge') as 'merge' | 'squash' | 'rebase';
   const forcePush = prefBool(prefs, 'gitForcePush', false);
   const draftPr = prefBool(prefs, 'gitDraftPr', true);
@@ -32,7 +32,7 @@ export function GitSettings({ prefs, savePref }: { prefs: Prefs; savePref: SaveP
         <SettingRow
           title="分支前缀"
           description="YOYcode 创建新分支时使用的前缀"
-          control={<TextField value={branchPrefix} onChange={setBranchPrefix} placeholder="codex/" />}
+          control={<TextField label="分支前缀" value={branchPrefix} onChange={setBranchPrefix} placeholder="yoycode/" />}
         />
         <SettingRow
           title="拉取请求合并方法"
@@ -74,7 +74,7 @@ export function GitSettings({ prefs, savePref }: { prefs: Prefs; savePref: SaveP
           description="已添加到提交消息生成提示词中"
           action={<button type="button" className="settings-inline-save" disabled={commitGuide.trim() === prefStr(prefs, 'gitCommitGuide', '').trim()} onClick={() => savePref({ gitCommitGuide: commitGuide })}>保存</button>}
         />
-        <TextArea value={commitGuide} onChange={setCommitGuide} placeholder="添加提交消息指引..." />
+        <TextArea label="提交说明" value={commitGuide} onChange={setCommitGuide} placeholder="添加提交消息指引..." />
       </section>
 
       <section className="settings-group">
@@ -83,7 +83,7 @@ export function GitSettings({ prefs, savePref }: { prefs: Prefs; savePref: SaveP
           description="已添加到 PR 标题/描述生成提示中"
           action={<button type="button" className="settings-inline-save" disabled={prGuide.trim() === prefStr(prefs, 'gitPrGuide', '').trim()} onClick={() => savePref({ gitPrGuide: prGuide })}>保存</button>}
         />
-        <TextArea value={prGuide} onChange={setPrGuide} placeholder="添加拉取请求指引..." />
+        <TextArea label="拉取请求指令" value={prGuide} onChange={setPrGuide} placeholder="添加拉取请求指引..." />
       </section>
     </div>
   );

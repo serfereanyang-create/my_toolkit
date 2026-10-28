@@ -176,7 +176,7 @@ export function TaskBoardCard({ board, onAction }: { board: TaskBoard; onAction:
             {board.runtimeMode === 'executing' && <button aria-label="暂停任务计划" onClick={() => onAction('pause')}><Pause size={14} /> 暂停</button>}
             {board.runtimeMode === 'paused' && !invalidGraph && board.status !== 'completed' && board.status !== 'cancelled' && <button className="task-board-primary" aria-label="继续任务计划" onClick={() => onAction('continue')}><Play size={14} /> 继续执行</button>}
             {activeTask && board.runtimeMode === 'paused' && !invalidGraph && board.status !== 'cancelled' && activeTask.status !== 'done' && activeTask.status !== 'skipped' && <button onClick={() => onAction('skip', activeTask.id)}><SkipForward size={14} /> 跳过当前</button>}
-            {board.status === 'blocked' && activeTask && !invalidGraph && <button onClick={() => onAction('reopen', activeTask.id)}><RotateCcw size={14} /> 重新打开</button>}
+            {(board.status === 'blocked' || board.status === 'cancelled') && activeTask && !invalidGraph && <button onClick={() => onAction('reopen', activeTask.id)}><RotateCcw size={14} /> {board.status === 'cancelled' ? '重新开始' : '重新打开'}</button>}
           </div>
         </div>
       )}

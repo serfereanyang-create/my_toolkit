@@ -1,12 +1,14 @@
 import type { DetectedFile } from '../lib/fileDetection';
 import { formatFileSize } from '../lib/fileDetection';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 type FileAttachmentListProps = {
   files: DetectedFile[];
   onRemove: (index: number) => void;
+  onRetry?: () => void;
 };
 
-export function FileAttachmentList({ files, onRemove }: FileAttachmentListProps) {
+export function FileAttachmentList({ files, onRemove, onRetry }: FileAttachmentListProps) {
   if (files.length === 0) return null;
 
   return (
@@ -16,6 +18,7 @@ export function FileAttachmentList({ files, onRemove }: FileAttachmentListProps)
           key={`${file.path}-${index}`}
           file={file}
           onRemove={() => onRemove(index)}
+          onRetry={onRetry}
         />
       ))}
     </div>
@@ -25,6 +28,7 @@ export function FileAttachmentList({ files, onRemove }: FileAttachmentListProps)
 type FileAttachmentCardProps = {
   file: DetectedFile;
   onRemove: () => void;
+  onRetry?: () => void;
 };
 
 /**
@@ -33,11 +37,12 @@ type FileAttachmentCardProps = {
  * 有缩略图时才叫「我贴的是这张图」；只写文件名的话，两张截图长得一模一样，
  * 用户没有任何办法确认自己贴错了哪一张。
  */
-function FileAttachmentCard({ file, onRemove }: FileAttachmentCardProps) {
-  const { name, size, category, icon, preview } = file;
+function FileAttachmentCard({ file, onRemove, onRetry }: FileAttachmentCardProps) {
+  const { name, size, category, icon, attachmentError } = file;
+  const preview = attachmentError ? undefined : file.preview;
 
   return (
-    <div className={`file-attachment-card${preview ? ' has-thumb' : ''}`} data-attachment={category}>
+    <div className={`file-attachment-card${preview ? ' has-thumb' : ''}${attachmentError ? ' is-unavailable' : ''}`} data-attachment={category} data-attachment-error={attachmentError ? 'true' : undefined}>
       {preview ? (
         <img className="file-attachment-thumb" src={preview} alt={name} data-attachment-thumb="" />
       ) : (
@@ -49,6 +54,8 @@ function FileAttachmentCard({ file, onRemove }: FileAttachmentCardProps) {
           <span className="file-category">{getCategoryLabel(category)}</span>
           <span className="file-size">{formatFileSize(size)}</span>
         </span>
+        {attachmentError && <span className="file-attachment-error" role="status" title={attachmentError}><AlertTriangle size={12} aria-hidden="true" />{attachmentError}</span>}
+        {attachmentError && onRetry && <button type="button" className="file-attachment-retry" onClick={onRetry} aria-label={`重新检查附件 ${name}`}><RefreshCw size={12} aria-hidden="true" />重新检查</button>}
       </div>
       <button
         type="button"

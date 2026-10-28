@@ -97,7 +97,7 @@ function buildPersonaMarkdown(preferences) {
 /** Git preferences always inject when non-default or guides are set, even if
  *  the personalize toggle is off — they govern agent git/PR behavior. */
 function buildGitSection(prefs) {
-  const branchPrefix = prefString(prefs, 'gitBranchPrefix', 'gitBranchPrefix', 'codex/').trim() || 'codex/';
+  const branchPrefix = prefString(prefs, 'gitBranchPrefix', 'gitBranchPrefix', 'yoycode/').trim() || 'yoycode/';
   const mergeMethodRaw = prefString(prefs, 'gitMergeMethod', 'gitMergeMethod', 'merge').trim() || 'merge';
   const mergeMethod = MERGE_LABELS[mergeMethodRaw] ? mergeMethodRaw : 'merge';
   const forcePush = prefBoolean(prefs, 'gitForcePush', 'gitForcePush', false);

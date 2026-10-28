@@ -74,13 +74,13 @@ export function BrowserSettings({ prefs, savePref }: { prefs: Prefs; savePref: S
             icon={<span className="app-icon app-icon-chrome"><Chrome size={20} /></span>}
             name="Google Chrome"
             status={<><span className="status-dot status-dot-off" />未安装浏览器扩展程序</>}
-            control={<button type="button" className="settings-action-btn">安装</button>}
+            control={<button type="button" className="settings-action-btn" title="暂未接入：浏览器扩展安装还没有数据源" disabled>安装</button>}
           />
           <BrowserRow
             icon={<span className="app-icon app-icon-edge"><AppWindow size={20} /></span>}
             name="Microsoft Edge"
             status={<><span className="status-dot status-dot-off" />未安装浏览器扩展程序</>}
-            control={<button type="button" className="settings-action-btn">安装</button>}
+            control={<button type="button" className="settings-action-btn" title="暂未接入：浏览器扩展安装还没有数据源" disabled>安装</button>}
           />
         </div>
       </section>
@@ -94,7 +94,7 @@ export function BrowserSettings({ prefs, savePref }: { prefs: Prefs; savePref: S
               <span className="setting-row-desc">新标签页打开时显示的地址</span>
             </div>
             <div className="setting-row-control">
-              <button type="button" className="settings-inline-edit"><span>about:blank</span></button>
+              <button type="button" className="settings-inline-edit" title="暂未接入：主页设置还没有数据源" disabled><span>about:blank</span></button>
             </div>
           </div>
         </div>

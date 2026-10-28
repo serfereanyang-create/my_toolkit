@@ -113,6 +113,12 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
   const [settings, setSettings] = useState<DesktopSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // A failed ledger read used to land on `summary = null`, which renders
+  // exactly like "you have used nothing yet". Both summary reads keep their
+  // error so the page can say which of the two failed and offer a retry.
+  const [summaryError, setSummaryError] = useState('');
+  const [hourlyError, setHourlyError] = useState('');
+  const [summaryReloadTick, setSummaryReloadTick] = useState(0);
   
   // 详细记录视图状态
   const [view, setView] = useState<'summary' | 'details'>('summary');
@@ -120,6 +126,8 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<20 | 50 | 100>(20);
   const [loadingRecords, setLoadingRecords] = useState(false);
+  const [recordsError, setRecordsError] = useState('');
+  const [recordsReloadTick, setRecordsReloadTick] = useState(0);
   // Iteration 21: CSV export of the whole window.
   const [exporting, setExporting] = useState(false);
 
@@ -151,23 +159,32 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setSummaryError('');
     desktop.usage.summary(days)
-      .then((result) => { if (!cancelled) setSummary(result); })
-      .catch(() => { if (!cancelled) setSummary(null); })
+      .then((result) => { if (!cancelled) { setSummary(result); setSummaryError(''); } })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setSummary(null);
+        setSummaryError(error instanceof Error ? error.message : String(error ?? '未知错误'));
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [days]);
+  }, [days, summaryReloadTick]);
 
   // Load hourly summary + auto-refresh every 60s
   useEffect(() => {
     let cancelled = false;
     const load = () => desktop.usage.hourly(hours)
-      .then((result) => { if (!cancelled) setHourly(result); })
-      .catch(() => { if (!cancelled) setHourly(null); });
+      .then((result) => { if (!cancelled) { setHourly(result); setHourlyError(''); } })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setHourly(null);
+        setHourlyError(error instanceof Error ? error.message : String(error ?? '未知错误'));
+      });
     void load();
     const id = setInterval(load, 60000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [hours]);
+  }, [hours, summaryReloadTick]);
 
   // Manual refresh
   const handleRefresh = async () => {
@@ -192,13 +209,20 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
     if (view !== 'details') return;
     let cancelled = false;
     setLoadingRecords(true);
+    setRecordsError('');
     const offset = (page - 1) * pageSize;
     desktop.usage.records(hours, offset, pageSize)
       .then((result) => { if (!cancelled) setRecords(result); })
-      .catch(() => { if (!cancelled) setRecords(null); })
+      // A failed read used to render as 暂无详细记录 — the same empty state as a
+      // genuinely empty window, with no way to tell them apart or retry.
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setRecords(null);
+        setRecordsError(error instanceof Error ? error.message : String(error ?? '未知错误'));
+      })
       .finally(() => { if (!cancelled) setLoadingRecords(false); });
     return () => { cancelled = true; };
-  }, [view, hours, page, pageSize]);
+  }, [view, hours, page, pageSize, recordsReloadTick]);
 
   const colorByModel = useMemo(() => {
     const map = new Map<string, string>();
@@ -227,10 +251,10 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
         <div>
           <h1 className="settings-page-title">用量统计</h1>
           <p className="settings-page-subtitle">
-            真实 Token 用量，来自本地用量账本。仅统计供应商实际返回的 token，不含估算。
+            真实词元用量，来自本地用量账本。仅统计供应商实际返回的词元，不含估算。
           </p>
           <p className="usage-settings-source-note">
-            缓存字段来源：{summary?.source === 'provider-reported' ? '供应商实报' : summary?.source === 'local-estimate' ? '本地估算（不计入 Token 总量）' : '未提供'}
+            缓存字段来源：{summary?.source === 'provider-reported' ? '供应商实报' : summary?.source === 'local-estimate' ? '本地估算（不计入词元总量）' : '未提供'}
           </p>
         </div>
         <Segmented<'7' | '30' | '90'>
@@ -239,6 +263,13 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
           options={[{ value: '7', label: '7 天' }, { value: '30', label: '30 天' }, { value: '90', label: '90 天' }]}
         />
       </div>
+
+      {(summaryError || hourlyError) && (
+        <div className="settings-error-row" role="alert">
+          <span>用量数据加载失败：{summaryError || hourlyError}</span>
+          <button type="button" onClick={() => setSummaryReloadTick((tick) => tick + 1)}>重试</button>
+        </div>
+      )}
 
       {loading ? (
         <EmptyState title="正在加载用量数据…" loading />
@@ -263,7 +294,7 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
         <>
           <div className="usage-header" style={{ marginTop: 16 }}>
             <div>
-              <h1 className="settings-page-title" style={{ fontSize: 'var(--fs-7)' }}>Token 使用趋势</h1>
+              <h1 className="settings-page-title" style={{ fontSize: 'var(--fs-7)' }}>词元使用趋势</h1>
               <p className="settings-page-subtitle">按小时粒度，展示输入/输出和缓存命中情况。每 60 秒自动刷新。</p>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -288,7 +319,12 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
               </button>
               <Segmented<'24' | '36' | '48'>
                 value={String(hours) as '24' | '36' | '48'}
-                onChange={(next) => setHours(next === '48' ? 48 : next === '36' ? 36 : 24)}
+                onChange={(next) => {
+                  // The record window shrinks with the range, so a page that was
+                  // valid at 48h can land past the end after switching to 24h.
+                  setPage(1);
+                  setHours(next === '48' ? 48 : next === '36' ? 36 : 24);
+                }}
                 options={[{ value: '24', label: '24h' }, { value: '36', label: '36h' }, { value: '48', label: '48h' }]}
               />
             </div>
@@ -303,6 +339,11 @@ export function UsageSettings({ activeProviderId }: { activeProviderId?: string 
               ) : loadingRecords ? (
                 <div className="usage-loading" style={{ padding: '40px', textAlign: 'center', color: 'var(--fg-muted)' }}>
                   加载详细记录中...
+                </div>
+              ) : recordsError ? (
+                <div className="settings-error-row" role="alert">
+                  <span>详细记录加载失败：{recordsError}</span>
+                  <button type="button" onClick={() => setRecordsReloadTick((tick) => tick + 1)}>重试</button>
                 </div>
               ) : records && records.total > 0 ? (
                 <DetailedRecordsTable
@@ -357,7 +398,7 @@ function UsageTotals({ summary }: { summary: UsageSummary }) {
     <div className="usage-totals">
       <div className="usage-total-card">
         <span className="usage-total-value">{formatTokens(totalWithCache)}</span>
-        <span className="usage-total-label">总 Tokens</span>
+        <span className="usage-total-label">词元总量</span>
       </div>
       <div className="usage-total-card">
         <span className="usage-total-value">{summary.totals.rounds}</span>
@@ -432,7 +473,7 @@ function ModelDonut({ summary, colorByModel }: { summary: UsageSummary; colorByM
               ))}
             </g>
             <text x="90" y="84" className="usage-donut-total">{formatTokensCN(total)}</text>
-            <text x="90" y="104" className="usage-donut-unit">tokens</text>
+            <text x="90" y="104" className="usage-donut-unit">词元</text>
           </svg>
         </div>
         <div className="usage-donut-list">
@@ -443,7 +484,7 @@ function ModelDonut({ summary, colorByModel }: { summary: UsageSummary; colorByM
                 {row.model}
               </span>
               <span className="usage-donut-pct">{formatPct(row.total, total)}</span>
-              <span className="usage-donut-tokens">{formatTokensCN(row.total)} tokens</span>
+              <span className="usage-donut-tokens">{formatTokensCN(row.total)} 词元</span>
             </div>
           ))}
         </div>
@@ -466,7 +507,7 @@ function Heatmap({ summary }: { summary: UsageSummary }) {
   }
 
   const label = hover
-    ? `${shortDate(hover.date)}：${formatTokens(hover.total)} tokens（输入 ${formatTokens(hover.input)} · 输出 ${formatTokens(hover.output)} · 缓存读 ${formatTokens(hover.cacheRead)} · 缓存写 ${formatTokens(hover.cacheCreation)}）· ${hover.rounds} 轮`
+    ? `${shortDate(hover.date)}：${formatTokens(hover.total)} 词元（输入 ${formatTokens(hover.input)} · 输出 ${formatTokens(hover.output)} · 缓存读 ${formatTokens(hover.cacheRead)} · 缓存写 ${formatTokens(hover.cacheCreation)}）· ${hover.rounds} 轮`
     : '悬停查看某天用量';
 
   return (
@@ -485,7 +526,7 @@ function Heatmap({ summary }: { summary: UsageSummary }) {
           <span
             key={cell.date}
             className={`usage-cell b${bucket(cell.total)}`}
-            title={`${shortDate(cell.date)}：${cell.total > 0 ? `${formatTokens(cell.total)} tokens（输入 ${formatTokens(cell.input)} · 输出 ${formatTokens(cell.output)} · 缓存读 ${formatTokens(cell.cacheRead)} · 缓存写 ${formatTokens(cell.cacheCreation)}）· ${cell.rounds} 轮` : '无记录'}`}
+            title={`${shortDate(cell.date)}：${cell.total > 0 ? `${formatTokens(cell.total)} 词元（输入 ${formatTokens(cell.input)} · 输出 ${formatTokens(cell.output)} · 缓存读 ${formatTokens(cell.cacheRead)} · 缓存写 ${formatTokens(cell.cacheCreation)}）· ${cell.rounds} 轮` : '无记录'}`}
             onMouseEnter={() => setHover(cell.total > 0 ? { date: cell.date, total: cell.total, rounds: cell.rounds, input: cell.input, output: cell.output, cacheRead: cell.cacheRead, cacheCreation: cell.cacheCreation } : null)}
             onMouseLeave={() => setHover(null)}
           />
@@ -499,10 +540,10 @@ function Heatmap({ summary }: { summary: UsageSummary }) {
 // Renders Input / Output / Cache Creation / Cache Read as filled area lines,
 // plus a Cache Hit Rate dashed line on a right-axis percentage scale.
 const LINE_SERIES = [
-  { key: 'input',        label: 'Input',          color: '#60a5fa' },
-  { key: 'output',       label: 'Output',          color: '#4ade80' },
-  { key: 'cacheCreation',label: 'Cache Creation',  color: '#fbbf24' },
-  { key: 'cacheRead',    label: 'Cache Read',       color: '#22d3ee' },
+  { key: 'input',        label: '输入',          color: '#60a5fa' },
+  { key: 'output',       label: '输出',          color: '#4ade80' },
+  { key: 'cacheCreation',label: '缓存写入',  color: '#fbbf24' },
+  { key: 'cacheRead',    label: '缓存读取',       color: '#22d3ee' },
 ] as const;
 const HIT_RATE_COLOR = '#a78bfa';
 
@@ -557,10 +598,10 @@ function TrendChart({ summary }: { summary: UsageSummary }) {
   return (
     <div className="usage-block">
       <div className="usage-block-head">
-        <span className="usage-block-title">Token 使用趋势</span>
+        <span className="usage-block-title">词元使用趋势</span>
         {hoverDay && (
           <span className="usage-heatmap-readout">
-            {shortDate(hoverDay.date)}：{formatTokens(hoverDay.input + hoverDay.output + hoverDay.cacheRead + hoverDay.cacheCreation)} Tokens · {hoverDay.rounds} 轮
+            {shortDate(hoverDay.date)}：{formatTokens(hoverDay.input + hoverDay.output + hoverDay.cacheRead + hoverDay.cacheCreation)} 词元 · {hoverDay.rounds} 轮
           </span>
         )}
       </div>
@@ -575,7 +616,7 @@ function TrendChart({ summary }: { summary: UsageSummary }) {
         ))}
         <span className="trend-legend-item">
           <span className="trend-legend-dash" style={{ borderColor: HIT_RATE_COLOR }} />
-          Cache Hit Rate
+          缓存命中率
         </span>
       </div>
 
@@ -693,11 +734,11 @@ function HourlyStatsCards({ summary }: { summary: UsageHourlySummary }) {
     <div className="usage-totals">
       <div className="usage-total-card">
         <span className="usage-total-value">{formatTokens(summary.totals.input)}</span>
-        <span className="usage-total-label">输入 Tokens</span>
+        <span className="usage-total-label">输入词元</span>
       </div>
       <div className="usage-total-card">
         <span className="usage-total-value">{formatTokens(summary.totals.output)}</span>
-        <span className="usage-total-label">输出 Tokens</span>
+        <span className="usage-total-label">输出词元</span>
       </div>
       <div className="usage-total-card">
         <span className="usage-total-value">{formatTokens(summary.totals.cacheRead)}</span>
@@ -1032,7 +1073,7 @@ function CostTable({ summary, settings, colorByModel, activeProviderId }: {
           <thead>
             <tr>
               <th>模型</th>
-              <th className="num">总 Tokens</th>
+              <th className="num">词元总量</th>
               <th className="num">输入</th>
               <th className="num">输出</th>
               <th className="num">缓存读</th>

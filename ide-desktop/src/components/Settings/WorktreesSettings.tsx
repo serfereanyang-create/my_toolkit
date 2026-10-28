@@ -21,7 +21,7 @@ export function WorktreesSettings({ prefs, savePref }: { prefs: Prefs; savePref:
         <SettingRow
           title="工作树根目录"
           description="工作树的存放目录，留空使用默认位置"
-          control={<TextField value={root} onChange={setRoot} placeholder="默认" />}
+          control={<TextField label="工作树根目录" value={root} onChange={setRoot} placeholder="默认" />}
         />
         <SettingRow
           title="自动删除旧工作树"
@@ -31,14 +31,14 @@ export function WorktreesSettings({ prefs, savePref }: { prefs: Prefs; savePref:
         <SettingRow
           title="自动删除限制"
           description={<>要保留的托管工作树数量；超过后，较旧的工作树会自动被清理。<br />YOYcode 会在删除工作树前创建快照，因此被清理的工作树应始终可以恢复。</>}
-          control={<NumberField value={keepLimit} onChange={setKeepLimit} min={1} max={100} />}
+          control={<NumberField label="保留的工作树数量" value={keepLimit} onChange={setKeepLimit} min={1} max={100} />}
         />
       </SettingsCard>
 
       <section className="settings-group">
         <SectionHeader
           title="尚无工作树"
-          action={<button type="button" className="settings-icon-btn" aria-label="刷新"><RefreshCw size={16} /></button>}
+          action={<button type="button" className="settings-icon-btn" aria-label="刷新" title="暂未接入：工作树列表还没有数据源" disabled><RefreshCw size={16} /></button>}
         />
         <EmptyState title="YOYcode 创建的工作树将显示在此处" />
       </section>

@@ -95,7 +95,7 @@ export function CodeStatsPanel({ onOpenFile }: { onOpenFile: (path: string, line
           <button className="icon-button" title="重新扫描" onClick={() => { void run(); }} disabled={loading}><RefreshCw size={13} className={loading ? 'spin' : undefined} /></button>
         </span>
       </div>
-      {error && <div className="hist-error">{error}</div>}
+      {error && <div className="hist-error" role="alert"><span>{error}</span><button type="button" className="panel-retry" onClick={() => { void run(); }} disabled={loading}>重试</button></div>}
       {census && !census.error && (
         <>
           <div className="census-totals">

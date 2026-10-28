@@ -1,4 +1,6 @@
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');

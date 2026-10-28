@@ -1,5 +1,7 @@
 /** Real-network check: open a site, follow a link, download a PDF, read it. */
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const { app } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');

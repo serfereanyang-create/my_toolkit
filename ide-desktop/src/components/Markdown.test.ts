@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { parseBlocks } from './Markdown';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { Markdown, parseBlocks } from './Markdown';
 
 describe('parseBlocks', () => {
   it('parses fenced code blocks with a language tag', () => {
@@ -113,5 +115,137 @@ describe('column-aligned and tabular output', () => {
   it('does not treat a lone pipe in prose as a table', () => {
     const blocks = parseBlocks('用 a | b 表示或。\n下一行普通文字。');
     expect(blocks[0].kind).toBe('p');
+  });
+});
+
+describe('blockquotes', () => {
+  it('parses a single-level quote as a nested block list', () => {
+    expect(parseBlocks('> 注意：这一步会清空缓存。')).toEqual([
+      { kind: 'quote', blocks: [{ kind: 'p', text: '注意：这一步会清空缓存。' }] },
+    ]);
+  });
+
+  it('nests quotes and keeps paragraphs, lists and fences inside them', () => {
+    const src = [
+      '> 外层说明',
+      '> > 内层提醒',
+      '>',
+      '> - 一',
+      '> - 二',
+      '>',
+      '> ```ts',
+      '> const x = 1;',
+      '> ```',
+    ].join('\n');
+    expect(parseBlocks(src)).toEqual([{
+      kind: 'quote',
+      blocks: [
+        { kind: 'p', text: '外层说明' },
+        { kind: 'quote', blocks: [{ kind: 'p', text: '内层提醒' }] },
+        { kind: 'ul', items: ['一', '二'] },
+        { kind: 'code', lang: 'ts', text: 'const x = 1;' },
+      ],
+    }]);
+  });
+
+  it('ends the quote at the first unmarked line', () => {
+    expect(parseBlocks('> 引用\n普通段落')).toEqual([
+      { kind: 'quote', blocks: [{ kind: 'p', text: '引用' }] },
+      { kind: 'p', text: '普通段落' },
+    ]);
+  });
+
+  it('stops nesting at four levels instead of recursing without bound', () => {
+    const src = `${'> '.repeat(9)}deep`;
+    let depth = 0;
+    let blocks = parseBlocks(src);
+    while (blocks.length === 1 && blocks[0].kind === 'quote') {
+      depth += 1;
+      blocks = blocks[0].blocks;
+    }
+    expect(depth).toBe(4);
+    expect(blocks).toEqual([{ kind: 'p', text: `${'> '.repeat(4)}deep` }]);
+  });
+});
+
+describe('nested lists', () => {
+  it('restores two-space nesting', () => {
+    expect(parseBlocks('- a\n  - b')).toEqual([{
+      kind: 'ul',
+      items: [{ text: 'a', children: [{ kind: 'ul', items: ['b'] }] }],
+    }]);
+  });
+
+  it('restores four-space nesting and tab indentation', () => {
+    const four = parseBlocks('- a\n    - b');
+    const tab = parseBlocks('- a\n\t- b');
+    expect(tab).toEqual(four);
+    expect(four).toEqual([{
+      kind: 'ul',
+      items: [{ text: 'a', children: [{ kind: 'ul', items: ['b'] }] }],
+    }]);
+  });
+
+  it('keeps three levels and clamps anything deeper onto the third', () => {
+    expect(parseBlocks('- a\n  - b\n    - c\n      - d')).toEqual([{
+      kind: 'ul',
+      items: [{
+        text: 'a',
+        children: [{
+          kind: 'ul',
+          items: [{ text: 'b', children: [{ kind: 'ul', items: ['c', 'd'] }] }],
+        }],
+      }],
+    }]);
+  });
+
+  it('nests an ordered list under an unordered one and resumes the parent', () => {
+    expect(parseBlocks('- a\n  1. b\n  2. c\n- d')).toEqual([{
+      kind: 'ul',
+      items: [
+        { text: 'a', children: [{ kind: 'ol', items: ['b', 'c'] }] },
+        'd',
+      ],
+    }]);
+  });
+
+  it('starts a new block when the marker kind changes at the top level', () => {
+    expect(parseBlocks('- a\n1. b')).toEqual([
+      { kind: 'ul', items: ['a'] },
+      { kind: 'ol', items: ['b'] },
+    ]);
+  });
+});
+
+describe('heading levels and markup', () => {
+  const sixLevels = '# 一级\n\n## 二级\n\n### 三级\n\n#### 四级\n\n##### 五级\n\n###### 六级';
+
+  it('parses all six source levels', () => {
+    expect(parseBlocks(sixLevels).map((block) => (block.kind === 'heading' ? block.level : 0))).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('renders six different level classes, keeping the h1/h2 tag shift', () => {
+    const html = renderToStaticMarkup(createElement(Markdown, { text: sixLevels }));
+    for (let level = 1; level <= 6; level += 1) {
+      expect(html.match(new RegExp(`class="md-heading md-h${level}"`, 'g'))).toHaveLength(1);
+    }
+    // h1 lands on <h3> and h2 on <h4> (level + 2, capped at h6); nothing
+    // outranks the app's own titles and nothing goes below <h6>.
+    expect(html).toMatch(/<h3 id="[^"]*" class="md-heading md-h1"/);
+    expect(html).toMatch(/<h4 id="[^"]*" class="md-heading md-h2"/);
+    expect(html).not.toMatch(/<h1[ >]/);
+    expect(html).not.toMatch(/<h7/);
+  });
+
+  it('renders a quote as a md-quote blockquote with its children inside', () => {
+    const html = renderToStaticMarkup(createElement(Markdown, { text: '> 引用里的 **粗体**' }));
+    expect(html).toContain('<blockquote class="md-quote">');
+    expect(html).toContain('<strong>粗体</strong>');
+  });
+
+  it('renders each nested list level as its own md-list', () => {
+    const html = renderToStaticMarkup(createElement(Markdown, { text: '- a\n  - b\n    - c' }));
+    expect(html.match(/<ul class="md-list">/g)).toHaveLength(3);
+    expect(html).toContain('<li>a<ul class="md-list">');
   });
 });

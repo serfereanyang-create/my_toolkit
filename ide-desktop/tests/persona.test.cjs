@@ -15,7 +15,7 @@ test('buildPersonaMarkdown omits personalize block when persona disabled', () =>
 test('buildPersonaMarkdown still emits git defaults with empty prefs', () => {
   const md = buildPersonaMarkdown({});
   assert.match(md, /Git 工作流偏好/);
-  assert.match(md, /codex\//);
+  assert.match(md, /yoycode\//);
   assert.match(md, /草稿/);
 });
 

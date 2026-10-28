@@ -14,6 +14,7 @@ import { XlsxPreview } from './XlsxPreview';
 import { PptxPreview } from './PptxPreview';
 import { RuntimeStatus } from './RuntimeStatus';
 import { ConfirmDialog } from '../ConfirmDialog';
+import { nextPreviewTabId } from '../../lib/previewNavigation';
 
 type Props = {
   open: boolean;
@@ -67,7 +68,7 @@ export function PreviewSidebar({ open, width, tabs, activeTabId, layout, dispatc
   useEffect(() => {
     return desktop.preview.onState((s) => {
       setGuestState((prev) => ({ ...prev, ...s }));
-      const target = activeTabId;
+      const target = grid ? nativeTabId : activeTabId;
       if (!target) return;
       if (s.canGoBack !== undefined || s.canGoForward !== undefined) {
         dispatch({ type: 'preview/update', id: target, patch: {
@@ -83,7 +84,7 @@ export function PreviewSidebar({ open, width, tabs, activeTabId, layout, dispatc
       }
       if (s.externalLinkRequest) setExternalLink(s.externalLinkRequest);
     });
-  }, [activeTabId, dispatch]);
+  }, [activeTabId, dispatch, grid, nativeTabId]);
 
   // ── Bounds reporting for native WebContentsView ──────────────────────────────
   useEffect(() => {
@@ -187,7 +188,15 @@ export function PreviewSidebar({ open, width, tabs, activeTabId, layout, dispatc
               onClick={() => dispatch({ type: 'preview/activate', id: t.id })}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); dispatch({ type: 'preview/activate', id: t.id }); }
+                if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') {
+                  event.preventDefault();
+                  const next = nextPreviewTabId(tabs.map((tab) => tab.id), t.id, event.key);
+                  if (!next) return;
+                  dispatch({ type: 'preview/activate', id: next });
+                  window.requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-preview-tab-id="${CSS.escape(next)}"]`)?.focus());
+                }
               }}
+              data-preview-tab-id={t.id}
             >
               {KIND_ICONS[t.kind] ?? <File size={13} />}
               <span className="preview-tab-label">{t.title}</span>
@@ -389,10 +398,17 @@ function Toolbar({ tab, dispatch, guestState, compact }: { tab: PreviewTab; disp
 
 function PreviewContent({ tab, dispatch, workspaceRoot }: { tab: PreviewTab; dispatch: React.Dispatch<AppAction>; workspaceRoot: string }) {
   if (tab.status === 'error') {
+    const retry = () => {
+      if (isNativeKind(tab.kind)) void desktop.preview.reload();
+      dispatch({ type: 'preview/update', id: tab.id, patch: { status: 'loading', error: undefined, revision: (tab.revision ?? 0) + 1 } });
+    };
     return (
       <div className="preview-error" role="alert">
         <p>无法加载预览</p>
         <p className="preview-error-detail">{tab.error}</p>
+        <button type="button" className="btn-secondary preview-retry" onClick={retry}>
+          <RefreshCw size={13} />重试预览
+        </button>
       </div>
     );
   }

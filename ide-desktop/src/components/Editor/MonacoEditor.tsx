@@ -30,13 +30,24 @@ export interface MonacoEditorProps {
   pendingReveal?: { path: string; line: number } | null;
   /** Called after the pending reveal was applied so the requester can clear it. */
   onRevealDone?: () => void;
+  onSelectionChange?: (selection: MonacoSelection) => void;
 }
 
-export function MonacoEditor({ value, language, path, onChange, onSave, theme = 'vs-dark', editorOptions, pendingReveal, onRevealDone }: MonacoEditorProps) {
+export interface MonacoSelection {
+  file: string;
+  startLine: number;
+  endLine: number;
+  startColumn: number;
+  content: string;
+}
+
+export function MonacoEditor({ value, language, path, onChange, onSave, theme = 'vs-dark', editorOptions, pendingReveal, onRevealDone, onSelectionChange }: MonacoEditorProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
   // The monaco editor instance is reused when the user switches tabs, so
   // onMount handlers must not capture `path` from the mount-time closure.
   const pathRef = useRef(path);
@@ -53,6 +64,25 @@ export function MonacoEditor({ value, language, path, onChange, onSave, theme = 
   // 都先解析一整个编辑器。这里是它真正被需要的地方——第一次画编辑器时拉一次。
   const [runtimeReady, setRuntimeReady] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+
+  function reportSelection() {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    const selection = editor?.getSelection();
+    if (!editor || !model || !selection) return;
+    const startLine = selection.startLineNumber;
+    const endLine = selection.endLineNumber;
+    const content = selection.isEmpty()
+      ? model.getLineContent(startLine)
+      : model.getValueInRange(selection);
+    onSelectionChangeRef.current?.({
+      file: pathRef.current,
+      startLine,
+      endLine,
+      startColumn: selection.startColumn,
+      content,
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -225,7 +255,10 @@ export function MonacoEditor({ value, language, path, onChange, onSave, theme = 
       void toggleBookmarkAt(pathRef.current, e.target.position.lineNumber);
     });
 
+    editor.onDidChangeCursorSelection(() => reportSelection());
+
     reloadBookmarks(path);
+    reportSelection();
   };
 
   // Refresh bookmark decorations when the active tab changes (the editor

@@ -8,7 +8,8 @@
  * - 优化建议
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useId, useState, useEffect } from 'react';
+import { AlertCircle, BarChart3, CheckCircle2, Lightbulb, LoaderCircle, MemoryStick, Timer, X } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import { useQualityRevision } from '../lib/qualityRevision';
 
@@ -70,6 +71,9 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [selectedPattern, setSelectedPattern] = useState('');
   const [minSeverity, setMinSeverity] = useState<string>('minor');
+  // 两个控件旁边都有 <label> 但没 htmlFor：文本框完全没有名字，<select> 更糟——
+  // 可访问名不是选项文字。各绑一条。
+  const uid = useId();
   // Workspace revision guard: flag results as stale once the workspace moves on.
   const { capture, current, stale } = useQualityRevision(visible && !loading);
 
@@ -109,11 +113,11 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
   
   const getSeverityIcon = (severity: string) => {
     switch (severity) {
-      case 'critical': return '🔴';
-      case 'major': return '🟠';
-      case 'minor': return '🟡';
-      case 'info': return 'ℹ️';
-      default: return '•';
+      case 'critical': return <AlertCircle size={13} aria-hidden="true" />;
+      case 'major': return <AlertCircle size={13} aria-hidden="true" />;
+      case 'minor': return <AlertCircle size={13} aria-hidden="true" />;
+      case 'info': return <CheckCircle2 size={13} aria-hidden="true" />;
+      default: return <AlertCircle size={13} aria-hidden="true" />;
     }
   };
   
@@ -126,6 +130,10 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
       default: return 'var(--fg-muted)';
     }
   };
+
+  /* 同 CodeReviewPanel：--warn 橙底上的白字只有 3.00:1，这一档用深色主题原本
+     就在用的黑（--accent-fg 深色下就是 #000），深色观感不变、浅色 7.0:1。 */
+  const getSeverityInk = (severity: string) => (severity === 'minor' ? '#000' : undefined);
   
   const getCategoryName = (category: string) => {
     const names: Record<string, string> = {
@@ -139,10 +147,21 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
     return names[category] || category;
   };
   
+  // Two ramps off the same thresholds: the gauge is a 12px stroke that only has
+  // to clear 3:1 non-text contrast, so it keeps the accent; the score that sits
+  // inside it is 36px/700 text that a screen reader reads out, and --warn is
+  // 3.00:1 on the card — under the floor by a hair — so text takes --warn-ink
+  // (6.27:1). The ink twins are the accents wherever they already pass.
   const getScoreColor = (score: number) => {
     if (score >= 80) return 'var(--ok)';
     if (score >= 60) return 'var(--warn)';
     return 'var(--danger)';
+  };
+
+  const getScoreInk = (score: number) => {
+    if (score >= 80) return 'var(--ok-ink)';
+    if (score >= 60) return 'var(--warn-ink)';
+    return 'var(--danger-ink)';
   };
   
   if (!visible) return null;
@@ -152,7 +171,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
       <div className="performance-panel">
         <div className="performance-panel-header">
           <h2>性能分析</h2>
-          <button onClick={onClose} className="close-btn">×</button>
+          <button onClick={onClose} className="close-btn" aria-label="关闭性能分析面板"><X size={16} /></button>
         </div>
         {stale && (
           <div className="quality-stale-banner">
@@ -166,8 +185,9 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           <div className="analyze-options">
             {!file && (
               <div className="option-group">
-                <label>文件模式 (Glob):</label>
+                <label htmlFor={`${uid}-pattern`}>文件模式 (Glob):</label>
                 <input
+                  id={`${uid}-pattern`}
                   type="text"
                   value={selectedPattern}
                   onChange={(e) => setSelectedPattern(e.target.value)}
@@ -175,14 +195,14 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
                 />
               </div>
             )}
-            
+
             <div className="option-group">
-              <label>最低严重级别:</label>
-              <select value={minSeverity} onChange={(e) => setMinSeverity(e.target.value)}>
-                <option value="info">Info</option>
-                <option value="minor">Minor</option>
-                <option value="major">Major</option>
-                <option value="critical">Critical</option>
+              <label htmlFor={`${uid}-min-severity`}>最低严重级别:</label>
+              <select id={`${uid}-min-severity`} value={minSeverity} onChange={(e) => setMinSeverity(e.target.value)}>
+                <option value="info">提示</option>
+                <option value="minor">次要</option>
+                <option value="major">重要</option>
+                <option value="critical">严重</option>
               </select>
             </div>
             
@@ -191,10 +211,24 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
             </button>
           </div>
           
+          {loading && (
+            <div className="performance-loading" role="status" aria-busy="true">
+              <LoaderCircle size={18} className="performance-spin" />正在分析性能…
+            </div>
+          )}
+          {!file && !selectedPattern && !loading && !error && !result && (
+            <div className="performance-empty" role="status">
+              <BarChart3 size={22} />
+              <strong>还没有分析范围</strong>
+              <span>请指定文件或输入 Glob 模式后开始性能分析。</span>
+            </div>
+          )}
           {/* 错误信息 */}
           {error && (
-            <div className="error-message">
-              <strong>错误:</strong> {error}
+            <div className="error-message" role="alert">
+              <AlertCircle size={16} />
+              <span><strong>分析失败：</strong>{error}</span>
+              <button type="button" onClick={handleAnalyze}>重试</button>
             </div>
           )}
           
@@ -219,16 +253,16 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
                       strokeDasharray={`${(result.estimatedScore / 100) * 220} 220`}
                     />
                   </svg>
-                  <div className="score-value" style={{ color: getScoreColor(result.estimatedScore) }}>
+                  <div className="score-value" style={{ color: getScoreInk(result.estimatedScore) }}>
                     {result.estimatedScore}
                   </div>
                 </div>
                 <div className="score-info">
                   <h3>性能评分</h3>
                   <p>
-                    {result.estimatedScore >= 80 ? '✅ 性能良好' :
-                     result.estimatedScore >= 60 ? '⚠️ 有改进空间' :
-                     '❌ 存在严重性能问题'}
+                    {result.estimatedScore >= 80 ? <><CheckCircle2 size={15} />性能良好</> :
+                     result.estimatedScore >= 60 ? <><AlertCircle size={15} />有改进空间</> :
+                     <><AlertCircle size={15} />存在严重性能问题</>}
                   </p>
                 </div>
               </div>
@@ -236,7 +270,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
               {/* 算法复杂度 */}
               {Object.keys(result.algorithmComplexities).length > 0 && (
                 <div className="complexity-section">
-                  <h3>⏱ 算法复杂度</h3>
+                  <h3><Timer size={15} />算法复杂度</h3>
                   
                   {Object.entries(result.algorithmComplexities).map(([funcName, complexity]) => (
                     <div key={funcName} className="complexity-item">
@@ -264,7 +298,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
               {/* 性能问题 */}
               {result.issues.length > 0 && (
                 <div className="issues-section">
-                  <h3>⚠️ 性能问题 ({result.issues.length})</h3>
+                  <h3><AlertCircle size={15} />性能问题 ({result.issues.length})</h3>
                   
                   {/* 按类别分组 */}
                   {Array.from(new Set(result.issues.map(i => i.category))).map(category => {
@@ -279,6 +313,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
                             <div className="issue-header">
                               <span className="severity-badge" style={{
                                 backgroundColor: getSeverityColor(issue.severity),
+                                color: getSeverityInk(issue.severity),
                               }}>
                                 {getSeverityIcon(issue.severity)} {issue.severity}
                               </span>
@@ -296,7 +331,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
                             </div>
                             
                             <div className="issue-suggestion">
-                              <strong>💡 建议:</strong> {issue.suggestion}
+                              <strong><Lightbulb size={14} /> 建议：</strong> {issue.suggestion}
                             </div>
                             
                             {issue.estimatedImpact && (
@@ -322,7 +357,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
               {/* 内存泄漏风险 */}
               {result.memoryLeakRisks.length > 0 && (
                 <div className="memory-risks-section">
-                  <h3>🚨 内存泄漏风险 ({result.memoryLeakRisks.length})</h3>
+                  <h3><MemoryStick size={15} />内存泄漏风险 ({result.memoryLeakRisks.length})</h3>
                   
                   {result.memoryLeakRisks.map((risk, i) => (
                     <div key={i} className="risk-item">
@@ -341,7 +376,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
               {/* 优化建议 */}
               {result.optimizationSuggestions.length > 0 && (
                 <div className="suggestions-section">
-                  <h3>💡 优化建议</h3>
+                  <h3><Lightbulb size={15} />优化建议</h3>
                   <ul>
                     {result.optimizationSuggestions.map((suggestion, i) => (
                       <li key={i}>{suggestion}</li>
@@ -355,46 +390,6 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
       </div>
       
       <style>{`
-        .performance-panel-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.5);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 1000;
-        }
-        
-        .performance-panel {
-          background: var(--bg-app);
-          border-radius: 8px;
-          width: 90%;
-          max-width: 1000px;
-          max-height: 90vh;
-          overflow: hidden;
-          display: flex;
-          flex-direction: column;
-          box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
-        }
-        
-        .performance-panel-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 20px 24px;
-          border-bottom: 1px solid var(--border);
-        }
-        
-        .performance-panel-header h2 {
-          margin: 0;
-          font-family: var(--font-ui);
-          font-size: 24px;
-          color: var(--fg);
-        }
-        
         .close-btn {
           background: none;
           border: none;
@@ -402,8 +397,6 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           color: var(--fg-muted);
           cursor: pointer;
           padding: 0;
-          width: 32px;
-          height: 32px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -413,78 +406,70 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           color: var(--blue);
         }
         
-        .performance-panel-content {
-          padding: 24px;
-          overflow-y: auto;
-          flex: 1;
-        }
-        
-        .analyze-options {
-          background: var(--bg-elevated);
-          padding: 20px;
-          border-radius: 8px;
-          border: 1px solid var(--border);
-          margin-bottom: 24px;
-        }
-        
-        .option-group {
-          margin-bottom: 16px;
-        }
-        
-        .option-group:last-child {
-          margin-bottom: 0;
-        }
-        
-        .option-group label {
-          display: block;
-          margin-bottom: 8px;
-          font-size: 14px;
-          font-weight: 500;
-          color: var(--fg);
-        }
-        
         .option-group input,
         .option-group select {
           width: 100%;
           padding: 10px 12px;
-          border: 1px solid var(--border);
+          /* 白底控件的边框就是识别边界（1.4.11 要 3:1）：--border 实测 1.24:1、
+             --border-strong 1.37:1，都不够，取 --fg 60%。 */
+          border: 1px solid color-mix(in srgb, var(--fg) 60%, transparent);
           border-radius: 6px;
-          font-size: 14px;
+          font-size: var(--fs-5);
         }
         
         .analyze-btn {
           width: 100%;
           padding: 12px 24px;
           border: none;
-          border-radius: 999px;
-          background: var(--blue);
           color: var(--accent-fg);
-          font-size: 14px;
+          font-size: var(--fs-5);
           font-weight: 500;
           cursor: pointer;
           transition: all 0.2s;
           margin-top: 16px;
         }
-        
+
         .analyze-btn:hover:not(:disabled) {
-          background: var(--blue);
           transform: translateY(-1px);
         }
-        
+
         .analyze-btn:disabled {
-          opacity: 0.5;
           cursor: not-allowed;
         }
         
+        .performance-loading,
+        .performance-empty {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          min-height: 80px;
+          margin-bottom: 16px;
+          padding: 20px;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          color: var(--fg-muted);
+          background: var(--bg-elevated);
+          text-align: center;
+        }
+        .performance-empty { flex-direction: column; border-style: dashed; }
+        .performance-empty strong { color: var(--fg); }
+        .performance-empty span { max-width: 360px; font-size: var(--fs-5); line-height: 1.6; }
+        .performance-spin { animation: performance-spin 900ms linear infinite; }
+        @keyframes performance-spin { to { transform: rotate(360deg); } }
         .error-message {
+          display: flex;
+          align-items: center;
+          gap: 8px;
           background: var(--danger-soft);
           border: 1px solid var(--danger);
           border-radius: 6px;
           padding: 12px;
           margin-bottom: 16px;
-          color: var(--danger);
-          font-size: 14px;
+          color: var(--danger-ink);
+          font-size: var(--fs-5);
         }
+        .error-message > span { flex: 1; min-width: 0; }
         
         .performance-result {
           background: var(--bg-elevated);
@@ -493,14 +478,6 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           padding: 24px;
         }
         
-        .score-section {
-          display: flex;
-          align-items: center;
-          gap: 24px;
-          padding-bottom: 24px;
-          border-bottom: 1px solid var(--border);
-          margin-bottom: 24px;
-        }
         
         .score-gauge {
           position: relative;
@@ -543,6 +520,9 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         .issues-section h3,
         .memory-risks-section h3,
         .suggestions-section h3 {
+          display: flex;
+          align-items: center;
+          gap: 7px;
           margin: 0 0 16px 0;
           font-family: var(--font-ui);
           color: var(--fg);
@@ -565,7 +545,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           display: flex;
           justify-content: space-between;
           margin-bottom: 4px;
-          font-size: 14px;
+          font-size: var(--fs-5);
         }
         
         .complexity-row .label {
@@ -582,20 +562,9 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           margin-top: 8px;
           padding-top: 8px;
           border-top: 1px solid var(--border);
-          font-size: 13px;
+          font-size: var(--fs-4);
           color: var(--fg-muted);
           font-style: italic;
-        }
-        
-        .category-group {
-          margin-bottom: 24px;
-        }
-        
-        .category-group h4 {
-          margin: 0 0 12px 0;
-          font-size: 16px;
-          color: var(--blue);
-          font-weight: 600;
         }
         
         .issue-item,
@@ -614,21 +583,10 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           margin-bottom: 12px;
         }
         
-        .severity-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          padding: 4px 12px;
-          border-radius: 999px;
-          color: var(--accent-fg);
-          font-size: 12px;
-          font-weight: 500;
-          text-transform: uppercase;
-        }
         
         .issue-location,
         .risk-location {
-          font-size: 12px;
+          font-size: var(--fs-3);
           color: var(--fg-muted);
           font-family: var(--font-mono);
         }
@@ -637,9 +595,12 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
           display: inline-block;
           padding: 4px 12px;
           border-radius: 999px;
-          background: var(--danger-soft);
-          color: var(--danger);
-          font-size: 12px;
+          /* --danger-soft 是半透明覆盖色，落在 .risk-item（--bg-hover 又叠在
+             --bg-elevated 上）之上就是 tint 叠 tint：深色主题实测 4.34:1，差 AA
+             一点。这里把 chip 的底钉在它所在的卡片面上，不再随父层浮动。 */
+          background: color-mix(in srgb, var(--danger) 12%, var(--bg-elevated));
+          color: var(--danger-ink);
+          font-size: var(--fs-3);
           font-weight: 500;
         }
         
@@ -654,7 +615,7 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         .issue-impact,
         .risk-description {
           margin-bottom: 8px;
-          font-size: 14px;
+          font-size: var(--fs-5);
           line-height: 1.6;
           color: var(--fg);
         }
@@ -664,13 +625,15 @@ export const PerformancePanel: React.FC<PerformancePanelProps> = ({
         }
         
         .issue-example pre {
+          /* 反色代码块，字与 CodeReviewPanel 同一处错误：--bg-hover 是 5% 覆盖色，
+             深底深字 1.02:1，改成背景实色。 */
           background: var(--fg);
-          color: var(--bg-hover);
+          color: var(--bg-app);
           padding: 12px;
           border-radius: 4px;
           overflow-x: auto;
           margin-top: 8px;
-          font-size: 13px;
+          font-size: var(--fs-4);
         }
         
         .suggestions-section ul {

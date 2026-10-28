@@ -17,6 +17,13 @@ const file = (overrides: Partial<DetectedFile> = {}): DetectedFile => ({
    非图片必须有图标和「类型 · 大小」，删除按钮必须能被键盘聚焦到。 */
 
 describe('FileAttachmentList', () => {
+  it('shows an unavailable file with a reason and an explicit retry without showing a stale thumbnail', () => {
+    const html = renderToStaticMarkup(<FileAttachmentList files={[file({ attachmentError: '原文件已移动或删除', preview: 'data:image/png;base64,old' })]} onRemove={() => {}} onRetry={() => {}} />);
+    expect(html).toContain('data-attachment-error="true"');
+    expect(html).toContain('原文件已移动或删除');
+    expect(html).toContain('aria-label="重新检查附件 shot.png"');
+    expect(html).not.toContain('file-attachment-thumb');
+  });
   it('没有附件时不渲染任何东西', () => {
     expect(renderToStaticMarkup(<FileAttachmentList files={[]} onRemove={() => {}} />)).toBe('');
   });

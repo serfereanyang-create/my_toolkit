@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { ContextStats, ProviderConfig } from '../types';
+import { usePopoverFocus } from '../lib/usePopoverFocus';
 
 const CATEGORY_ROWS: { key: keyof ContextStats['categories']; label: string; color: string }[] = [
   { key: 'messages', label: '消息', color: '#1681f8' },
@@ -33,6 +34,7 @@ export function ContextStatsMenu({ stats, provider, onClose }: {
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  usePopoverFocus(ref);
 
   useEffect(() => {
     function onDown(event: MouseEvent) {
@@ -54,7 +56,7 @@ export function ContextStatsMenu({ stats, provider, onClose }: {
       <div className="context-menu" ref={ref} role="dialog" aria-label="上下文与缓存">
         <div className="context-menu-empty">
           <strong>暂无上下文统计</strong>
-          <span>完成一次真实模型请求后显示 API 返回的 token 与缓存数据。</span>
+          <span>完成一次真实模型请求后显示 API 返回的词元与缓存数据。</span>
         </div>
       </div>
     );
@@ -95,7 +97,7 @@ export function ContextStatsMenu({ stats, provider, onClose }: {
             </div>
           ))}
         </div>
-        <div className="context-footnote">总 token 来自模型 API；分类按实际提示内容字符占比折算。</div>
+        <div className="context-footnote">词元总量来自模型 API；分类按实际提示内容字符占比折算。</div>
       </section>
 
       <section className="context-section context-cache-section">
@@ -108,7 +110,7 @@ export function ContextStatsMenu({ stats, provider, onClose }: {
         <div className="cache-subline">
           {providerCacheRate === null
             ? '本轮 usage 没有返回 cache_read / cached_tokens，不估一个数出来'
-            : `${formatTokens(stats.cacheReadTokens)} / ${formatTokens(totalWithCache)} 输入 tokens 来自缓存`}
+            : `${formatTokens(stats.cacheReadTokens)} / ${formatTokens(totalWithCache)} 输入词元来自缓存`}
         </div>
       </section>
     </div>

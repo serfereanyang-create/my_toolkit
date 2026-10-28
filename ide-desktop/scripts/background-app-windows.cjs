@@ -1,4 +1,6 @@
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');

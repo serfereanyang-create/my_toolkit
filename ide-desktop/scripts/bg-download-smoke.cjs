@@ -14,6 +14,8 @@
  * Run: npx electron scripts/bg-download-smoke.cjs
  */
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const { app } = require('electron');
 const http = require('node:http');
 const path = require('node:path');

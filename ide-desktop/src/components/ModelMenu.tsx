@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronRight, ChevronDown, SlidersHorizontal } from 'lucide-react';
 import type { ProviderConfig } from '../types';
+import { usePopoverFocus } from '../lib/usePopoverFocus';
 
 /**
  * The model picker: one column of providers, each expanding to its models.
@@ -21,6 +22,7 @@ export function ModelMenu({ providers, activeProviderId, activeModel, onPick, on
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  usePopoverFocus(ref);
   const [expanded, setExpanded] = useState<string | null>(activeProviderId);
 
   useEffect(() => {

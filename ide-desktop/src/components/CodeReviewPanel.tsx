@@ -8,7 +8,8 @@
  * - 一键修复建议
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { AlertCircle, BarChart3, CheckCircle2, Lightbulb, ListChecks, LoaderCircle, X } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 
 /**
@@ -26,6 +27,7 @@ interface CodeReviewPanelProps {
   onClose: () => void;
   file?: string;
   code?: string;
+  onOpenFile?: (path: string, line?: number) => void;
 }
 
 interface ReviewComment {
@@ -51,6 +53,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
   onClose,
   file,
   code,
+  onOpenFile,
 }) => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ReviewResult | null>(null);
@@ -64,9 +67,11 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
     'best-practice',
   ]);
   const [includeStaticAnalysis, setIncludeStaticAnalysis] = useState(true);
+  const requestIdRef = useRef(0);
   
   const handleReview = async () => {
     if (!file && !code) return;
+    const requestId = ++requestIdRef.current;
     
     setLoading(true);
     setError(null);
@@ -79,31 +84,39 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         includeStaticAnalysis,
       });
       
+      if (requestId !== requestIdRef.current) return;
       if (response.ok) {
         setResult(response.data);
       } else {
         setError(response.output);
       }
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   };
   
   useEffect(() => {
-    if (visible && (file || code)) {
-      handleReview();
+    if (!visible) {
+      requestIdRef.current += 1;
+      setLoading(false);
+      return;
     }
+    setResult(null);
+    setError(null);
+    if (file || code) void handleReview();
+    return () => { requestIdRef.current += 1; };
   }, [visible, file, code]);
   
   const getSeverityIcon = (severity: string) => {
     switch (severity) {
-      case 'critical': return '🔴';
-      case 'error': return '🟠';
-      case 'warning': return '🟡';
-      case 'info': return 'ℹ️';
-      default: return '•';
+      case 'critical': return <AlertCircle size={13} aria-hidden="true" />;
+      case 'error': return <AlertCircle size={13} aria-hidden="true" />;
+      case 'warning': return <AlertCircle size={13} aria-hidden="true" />;
+      case 'info': return <ListChecks size={13} aria-hidden="true" />;
+      default: return <AlertCircle size={13} aria-hidden="true" />;
     }
   };
   
@@ -116,6 +129,13 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
       default: return 'var(--fg-muted)';
     }
   };
+
+  /* 徽章文字是 --accent-fg（浅色白、深色近黑）。--danger 和 --blue 都够深，
+     白字有 4.8 / 5.9:1；--warn（#e07b00）上的白字只有 3.00:1，AA 要 4.5 —
+     橙色压不到 4.5 又不发褐（见 styles.css 里 --warn-edge 的注释），所以这一档
+     直接用深色主题原本就在用的黑（--accent-fg 在深色下就是 #000）：橙底在两个
+     主题里都够亮，实测 7.0 / 8.9:1，深色主题的观感完全不变。 */
+  const getSeverityInk = (severity: string) => (severity === 'warning' ? '#000' : undefined);
   
   const getCategoryName = (category: string) => {
     const names: Record<string, string> = {
@@ -136,7 +156,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
       <div className="code-review-panel">
         <div className="code-review-panel-header">
           <h2>AI 代码审查</h2>
-          <button onClick={onClose} className="close-btn">×</button>
+          <button onClick={onClose} className="close-btn" aria-label="关闭代码审查"><X size={16} /></button>
         </div>
         
         <div className="code-review-panel-content">
@@ -180,10 +200,24 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
             </button>
           </div>
           
+          {!file && !code && !loading && !error && (
+            <div className="review-empty" role="status">
+              <ListChecks size={22} />
+              <strong>还没有审查对象</strong>
+              <span>请先从编辑器选择文件，或打开一个代码文件后再开始审查。</span>
+            </div>
+          )}
+          {loading && (
+            <div className="review-loading" role="status" aria-busy="true">
+              <LoaderCircle size={18} className="review-spin" />正在分析代码…
+            </div>
+          )}
           {/* 错误信息 */}
           {error && (
-            <div className="error-message">
-              <strong>错误:</strong> {error}
+            <div className="error-message" role="alert">
+              <AlertCircle size={16} />
+              <span><strong>审查失败：</strong>{error}</span>
+              <button type="button" onClick={handleReview}>重试</button>
             </div>
           )}
           
@@ -209,7 +243,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
               {/* 优点 */}
               {result.strengths.length > 0 && (
                 <div className="strengths-section">
-                  <h3>✅ 优点</h3>
+                  <h3><CheckCircle2 size={15} /> 优点</h3>
                   <ul>
                     {result.strengths.map((strength, i) => (
                       <li key={i}>{strength}</li>
@@ -221,7 +255,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
               {/* 需要改进 */}
               {result.improvements.length > 0 && (
                 <div className="improvements-section">
-                  <h3>🔧 需要改进</h3>
+                  <h3><AlertCircle size={15} /> 需要改进</h3>
                   <ul>
                     {result.improvements.map((improvement, i) => (
                       <li key={i}>{improvement}</li>
@@ -233,7 +267,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
               {/* 具体问题 */}
               {result.comments.length > 0 && (
                 <div className="comments-section">
-                  <h3>📝 具体问题 ({result.comments.length})</h3>
+                  <h3><ListChecks size={15} /> 具体问题 ({result.comments.length})</h3>
                   
                   {/* 按类别分组 */}
                   {Array.from(new Set(result.comments.map(c => c.category))).map(category => {
@@ -248,10 +282,19 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
                             <div className="comment-header">
                               <span className="severity-badge" style={{
                                 backgroundColor: getSeverityColor(comment.severity),
+                                color: getSeverityInk(comment.severity),
                               }}>
                                 {getSeverityIcon(comment.severity)} {comment.severity}
                               </span>
-                              <span className="comment-line">行 {comment.line}</span>
+                              <button
+                                type="button"
+                                className="comment-line comment-line-button"
+                                onClick={() => file && onOpenFile?.(file, comment.line)}
+                                disabled={!file || !onOpenFile}
+                                title={file && onOpenFile ? '打开对应代码行' : '当前没有可定位的文件'}
+                              >
+                                行 {comment.line}
+                              </button>
                             </div>
                             
                             <div className="comment-message">
@@ -260,7 +303,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
                             
                             {comment.suggestion && (
                               <div className="comment-suggestion">
-                                <strong>💡 建议:</strong> {comment.suggestion}
+                                <strong><Lightbulb size={14} /> 建议：</strong> {comment.suggestion}
                               </div>
                             )}
                             
@@ -281,7 +324,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
               {/* 静态分析摘要 */}
               {result.staticAnalysis && (
                 <div className="static-analysis-section">
-                  <h3>📊 静态分析</h3>
+                  <h3><BarChart3 size={15} /> 静态分析</h3>
                   
                   {result.staticAnalysis.complexity && (
                     <div className="analysis-group">
@@ -305,15 +348,15 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
                     <div className="analysis-group">
                       <h4>代码异味</h4>
                       <div className="stat-row">
-                        <span>Critical:</span>
+                        <span>严重：</span>
                         <span>{result.staticAnalysis.smells.severityCounts?.critical || 0}</span>
                       </div>
                       <div className="stat-row">
-                        <span>Major:</span>
+                        <span>重要：</span>
                         <span>{result.staticAnalysis.smells.severityCounts?.major || 0}</span>
                       </div>
                       <div className="stat-row">
-                        <span>Minor:</span>
+                        <span>次要：</span>
                         <span>{result.staticAnalysis.smells.severityCounts?.minor || 0}</span>
                       </div>
                     </div>
@@ -326,76 +369,6 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
       </div>
       
       <style>{`
-        .code-review-panel-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.5);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 1000;
-        }
-        
-        .code-review-panel {
-          background: var(--bg-app);
-          border-radius: 8px;
-          width: 90%;
-          max-width: 1000px;
-          max-height: 90vh;
-          overflow: hidden;
-          display: flex;
-          flex-direction: column;
-          box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
-        }
-        
-        .code-review-panel-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 20px 24px;
-          border-bottom: 1px solid var(--border);
-        }
-        
-        .code-review-panel-header h2 {
-          margin: 0;
-          font-family: var(--font-ui);
-          font-size: 24px;
-          color: var(--fg);
-        }
-        
-        .code-review-panel-content {
-          padding: 24px;
-          overflow-y: auto;
-          flex: 1;
-        }
-        
-        .review-options {
-          background: var(--bg-elevated);
-          padding: 20px;
-          border-radius: 8px;
-          border: 1px solid var(--border);
-          margin-bottom: 24px;
-        }
-        
-        .option-group {
-          margin-bottom: 16px;
-        }
-        
-        .option-group:last-child {
-          margin-bottom: 0;
-        }
-        
-        .option-group > label {
-          display: block;
-          margin-bottom: 8px;
-          font-size: 14px;
-          font-weight: 500;
-          color: var(--fg);
-        }
-        
         .category-checkboxes {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
@@ -405,7 +378,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         .checkbox-label {
           display: flex;
           align-items: center;
-          font-size: 14px;
+          font-size: var(--fs-5);
           color: var(--fg);
           cursor: pointer;
         }
@@ -413,41 +386,73 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         .checkbox-label input[type="checkbox"] {
           margin-right: 8px;
         }
-        
+
+        .close-btn {
+          background: none;
+          border: none;
+          font-size: 32px;
+          color: var(--fg-muted);
+          cursor: pointer;
+          padding: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .close-btn:hover {
+          color: var(--blue);
+        }
+
         .review-btn {
           width: 100%;
           padding: 12px 24px;
           border: none;
-          border-radius: 999px;
-          background: var(--blue);
           color: var(--accent-fg);
-          font-size: 14px;
+          font-size: var(--fs-5);
           font-weight: 500;
           cursor: pointer;
           transition: all 0.2s;
           margin-top: 16px;
         }
-        
+
         .review-btn:hover:not(:disabled) {
-          background: var(--blue);
           transform: translateY(-1px);
         }
-        
+
         .review-btn:disabled {
-          opacity: 0.5;
           cursor: not-allowed;
         }
         
         .error-message {
+          display: flex;
+          align-items: center;
+          gap: 8px;
           background: var(--danger-soft);
           border: 1px solid var(--danger);
           border-radius: 6px;
           padding: 12px;
           margin-bottom: 16px;
-          color: var(--danger);
-          font-size: 14px;
+          color: var(--danger-ink);
+          font-size: var(--fs-5);
         }
         
+        .error-message > span { flex: 1; min-width: 0; }
+        .review-loading {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          min-height: 180px;
+          padding: 24px;
+          border: 1px dashed var(--border);
+          border-radius: 8px;
+          color: var(--fg-muted);
+          text-align: center;
+        }
+        .review-loading { flex-direction: row; min-height: 80px; border-style: solid; background: var(--bg-elevated); }
+        .review-spin { animation: code-review-spin 900ms linear infinite; }
+        @keyframes code-review-spin { to { transform: rotate(360deg); } }
         .review-result {
           background: var(--bg-elevated);
           border: 1px solid var(--border);
@@ -455,14 +460,6 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           padding: 24px;
         }
         
-        .score-section {
-          display: flex;
-          align-items: center;
-          gap: 24px;
-          padding-bottom: 24px;
-          border-bottom: 1px solid var(--border);
-          margin-bottom: 24px;
-        }
         
         .score-circle {
           width: 120px;
@@ -493,7 +490,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         }
         
         .score-label {
-          font-size: 14px;
+          font-size: var(--fs-5);
           color: var(--fg-muted);
         }
         
@@ -524,6 +521,9 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         .improvements-section h3,
         .comments-section h3,
         .static-analysis-section h3 {
+          display: flex;
+          align-items: center;
+          gap: 7px;
           margin: 0 0 12px 0;
           font-family: var(--font-ui);
           color: var(--fg);
@@ -542,17 +542,6 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           line-height: 1.6;
         }
         
-        .category-group {
-          margin-bottom: 24px;
-        }
-        
-        .category-group h4 {
-          margin: 0 0 12px 0;
-          font-size: 16px;
-          color: var(--blue);
-          font-weight: 600;
-        }
-        
         .comment-item {
           background: var(--bg-hover);
           padding: 16px;
@@ -567,23 +556,24 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           margin-bottom: 8px;
         }
         
-        .severity-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          padding: 4px 12px;
-          border-radius: 999px;
-          color: var(--accent-fg);
-          font-size: 12px;
-          font-weight: 500;
-          text-transform: uppercase;
-        }
         
         .comment-line {
-          font-size: 12px;
+          font-size: var(--fs-3);
           color: var(--fg-muted);
           font-family: var(--font-mono);
         }
+
+        .comment-line-button {
+          border: 0;
+          padding: 0;
+          background: transparent;
+          cursor: pointer;
+          text-decoration: underline;
+          text-underline-offset: 2px;
+        }
+
+        .comment-line-button:hover:not(:disabled) { color: var(--accent); }
+        .comment-line-button:disabled { cursor: default; text-decoration: none; }
         
         .comment-message {
           color: var(--fg);
@@ -597,7 +587,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           border-radius: 4px;
           border-left: 3px solid var(--blue);
           margin-bottom: 8px;
-          font-size: 14px;
+          font-size: var(--fs-5);
         }
         
         .comment-example {
@@ -605,13 +595,15 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         }
         
         .comment-example pre {
+          /* 反色代码块：底用 --fg，字必须是背景那一档的实色。原先写的是
+             --bg-hover（5% 覆盖色），浅色主题等于深底上 5% 黑字，实测 1.02:1。 */
           background: var(--fg);
-          color: var(--bg-hover);
+          color: var(--bg-app);
           padding: 12px;
           border-radius: 4px;
           overflow-x: auto;
           margin-top: 8px;
-          font-size: 13px;
+          font-size: var(--fs-4);
         }
         
         .analysis-group {
@@ -623,7 +615,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
         
         .analysis-group h4 {
           margin: 0 0 12px 0;
-          font-size: 14px;
+          font-size: var(--fs-5);
           font-weight: 600;
           color: var(--fg);
         }
@@ -632,7 +624,7 @@ export const CodeReviewPanel: React.FC<CodeReviewPanelProps> = ({
           display: flex;
           justify-content: space-between;
           margin-bottom: 8px;
-          font-size: 14px;
+          font-size: var(--fs-5);
         }
         
         .stat-row:last-child {

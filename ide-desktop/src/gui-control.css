@@ -290,7 +290,7 @@
 }
 .gui-status svg { flex: 0 0 auto; margin-top: 2px; }
 .gui-status span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.gui-status.error { color: var(--danger); }
+.gui-status.error { color: var(--danger-ink); }
 
 /* Focus confirmation. Sits above the status line and reads as a question, not
    a toast: the action has NOT happened yet. */
@@ -353,7 +353,10 @@
   margin-left: auto;
   margin-right: 8px;
   font-size: 11px;
-  color: var(--text-tertiary);
+  /* --text-tertiary was never defined by any stylesheet, so this label
+     inherited whatever colour its parent had. --fg-dim is the ramp's
+     smallest-label step (4.70:1 light, 4.56:1 dark). */
+  color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -402,3 +405,7 @@
   .gui-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 32%) minmax(0, 1fr); }
   .gui-windows { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
 }
+.gui-launch-app { display: flex; align-items: center; gap: 5px; min-width: min(360px, 100%); }
+.gui-launch-app input { width: min(220px, 28vw); min-width: 120px; height: 30px; padding: 0 8px; border: 1px solid var(--border-subtle); border-radius: var(--r-md); color: var(--fg); background: var(--bg-elevated); font-size: var(--fs-2); }
+.gui-launch-app input:focus { border-color: var(--blue); outline: 2px solid color-mix(in srgb, var(--blue) 24%, transparent); outline-offset: 1px; }
+@media (max-width: 900px) { .gui-launch-app { order: 3; width: 100%; } .gui-launch-app input { flex: 1; width: auto; } }

@@ -44,11 +44,12 @@ function shortPath(path: string): { dir: string; name: string } {
 
 // ── Shared bits ──────────────────────────────────────────────────────────────
 
-function ErrorNote({ message }: { message: string }) {
+function ErrorNote({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <div className="insp-error" role="alert">
       <AlertTriangle size={13} />
       <span>{message}</span>
+      {onRetry && <button type="button" className="panel-retry" onClick={onRetry}>重试</button>}
     </div>
   );
 }
@@ -183,7 +184,7 @@ function ChangesLevel({ state, push }: { state: AppState; push: (level: Inspecto
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  if (error && sessionFiles.length === 0) return <ErrorNote message={error} />;
+  if (error && sessionFiles.length === 0) return <ErrorNote message={error} onRetry={() => { void refresh(); }} />;
   if (loading && files.length === 0 && sessionFiles.length === 0) {
     return <div className="insp-loading"><Loader2 size={14} className="insp-spin" />读取变更…</div>;
   }

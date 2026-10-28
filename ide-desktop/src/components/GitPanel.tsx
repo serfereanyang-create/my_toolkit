@@ -13,6 +13,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { useGitWorkspace } from '../lib/useGitWorkspace';
 import { GitFileDiffView } from './GitFileDiffView';
 import { gitSyncTargetLabel, resolveGitSyncTargets } from '../lib/gitSyncTargets';
+import { canCreatePullRequest } from '../lib/gitPrReadiness';
 
 /*
  * GitPanel — Codex 风格的「Git 工具」卡片。
@@ -228,7 +229,7 @@ function GitFileGroup({ title, files, staged = false, untracked = false, selecte
 
 // ── 主面板 ────────────────────────────────────────────────────────────────────
 export function GitPanel({
-  state, forcePush = false, branchPrefix = 'codex/', onOpenFile,
+  state, forcePush = false, branchPrefix = 'yoycode/', onOpenFile,
 }: {
   state: AppState;
   forcePush?: boolean;
@@ -271,6 +272,8 @@ export function GitPanel({
   const chosenRemote = syncOptions.context === syncContext ? syncOptions.remote : '';
   const pullStrategy = syncOptions.context === syncContext ? syncOptions.strategy : 'configured';
   const syncPlan = resolveGitSyncTargets(status, branches, chosenRemote);
+  const hasPrRemote = canCreatePullRequest(syncPlan.remotes);
+  const prUnavailableReason = !hasPrRemote ? '请先为仓库配置远程仓库，再创建 Pull Request' : undefined;
   const tracking = branches?.sync?.tracking;
   const pushAhead = syncPlan.push?.remote === tracking?.remote && syncPlan.push?.branch === tracking?.branch ? status?.ahead : 0;
   const pullBehind = syncPlan.pull?.remote === tracking?.remote && syncPlan.pull?.branch === tracking?.branch ? status?.behind : 0;
@@ -283,6 +286,8 @@ export function GitPanel({
   const [prBody, setPrBody] = useState('');
   const [prDraft, setPrDraft] = useState(false);
   const [prResult, setPrResult] = useState<{ ok: boolean; url?: string; error?: string } | null>(null);
+  const [prReadiness, setPrReadiness] = useState<{ ok: boolean; message?: string } | null>(null);
+  const [prChecking, setPrChecking] = useState(false);
 
   const board = state.taskBoard;
   const [, setTick] = useState(0);
@@ -294,7 +299,7 @@ export function GitPanel({
   useEffect(() => {
     setSel(new Set()); setDiscardPaths(null); setBranchMenuOpen(false);
     setSelectedDiff(null);
-    setCommitMsg(''); setPrTitle(''); setPrBody(''); setPrResult(null); setPrOpen(false);
+    setCommitMsg(''); setPrTitle(''); setPrBody(''); setPrResult(null); setPrReadiness(null); setPrOpen(false);
   }, [state.workspaceRoot]);
 
   // 目标计时每秒刷新
@@ -364,10 +369,25 @@ export function GitPanel({
 
   async function doCreatePr() {
     const title = prTitle.trim();
-    if (!title) return;
+    if (!title || !hasPrRemote || !prReadiness?.ok) return;
     setPrResult(null);
     const result = await runAction('创建 PR', () => desktop.git.createPr({ title, body: prBody, draft: prDraft }), () => 'Pull Request 已创建');
     if (result) { setPrResult({ ok: true, url: result.url }); setPrTitle(''); setPrBody(''); }
+  }
+
+  async function openPrForm() {
+    if (disabled || !hasPrRemote) return;
+    setPrOpen(true);
+    setPrResult(null);
+    setPrChecking(true);
+    try {
+      const result = await desktop.git.prReadiness();
+      setPrReadiness(result);
+    } catch (error) {
+      setPrReadiness({ ok: false, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPrChecking(false);
+    }
   }
 
   function boardAction(action: Action, taskId?: string) {
@@ -411,7 +431,7 @@ export function GitPanel({
       <button type="button" className="gtx-btn primary" disabled={pending !== null} onClick={initializeRepository}>
         {pending === '初始化仓库' ? <><Loader2 size={14} className="spin" />正在初始化…</> : <><Plus size={14} />初始化仓库</>}
       </button>
-      {error && <div className="gtx-error" role="alert"><AlertCircle size={15} /><span>{error}</span><button type="button" className="icon-button" aria-label="关闭 Git 错误提示" onClick={clearError}><X size={14} /></button></div>}
+      {error && <div className="gtx-error" role="alert"><AlertCircle size={15} /><span>{error}</span><button type="button" className="gtx-btn ghost gtx-error-retry" onClick={() => void refresh()} disabled={loading || pending !== null}><RefreshCw size={13} className={loading ? 'spin' : undefined} />重试</button><button type="button" className="icon-button" aria-label="关闭 Git 错误提示" onClick={clearError}><X size={14} /></button></div>}
     </div>
   </div>;
 
@@ -427,7 +447,7 @@ export function GitPanel({
         <div><span className="gtx-eyebrow"><GitBranch size={14} />工作区</span><h1>源代码管理</h1><p title={state.workspaceRoot}>{workspaceName}<span>·</span>{loading && !status ? '正在读取仓库' : status ? `${changedFiles} 个文件有更改` : '仓库状态不可用'}</p></div>
         <button type="button" className="gtx-btn" title="刷新" disabled={loading || pending !== null} onClick={() => void refresh()}><RefreshCw size={14} className={loading ? 'spin' : undefined} />刷新</button>
       </header>
-      {error && <div className="gtx-error" role="alert"><AlertCircle size={15} /><span>{error}</span><button type="button" className="icon-button" aria-label="关闭 Git 错误提示" onClick={clearError}><X size={14} /></button></div>}
+      {error && <div className="gtx-error" role="alert"><AlertCircle size={15} /><span>{error}</span><button type="button" className="gtx-btn ghost gtx-error-retry" onClick={() => void refresh()} disabled={loading || pending !== null}><RefreshCw size={13} className={loading ? 'spin' : undefined} />重试</button><button type="button" className="icon-button" aria-label="关闭 Git 错误提示" onClick={clearError}><X size={14} /></button></div>}
       {(pending || notice) && <div className={`gtx-operation${pending ? ' pending' : ''}`} role="status">{pending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}<span>{pending ? `正在${pending}…` : notice}</span></div>}
       {status?.hasConflicts && <div className="gtx-conflict-notice"><AlertCircle size={15} /><span>存在合并冲突，请先解决并暂存冲突文件，再提交。</span></div>}
       <div className="gtx-workbench">
@@ -439,10 +459,11 @@ export function GitPanel({
             <span className="gtx-card-subtitle">{status?.upstream || (status ? '本地仓库' : loading ? '正在连接仓库…' : '请检查仓库状态')}</span>
           </span>
           <span className="gtx-card-spacer" />
-          <button type="button" disabled={disabled} className={`gtx-btn ${prOpen ? 'active' : ''}`} title="创建 Pull Request" aria-expanded={prOpen} aria-controls={`${panelId}-pr`} onClick={() => { setPrOpen((previous) => !previous); setPrResult(null); }}>
+          <button type="button" disabled={disabled || !hasPrRemote} className={`gtx-btn ${prOpen ? 'active' : ''}`} title={prUnavailableReason ?? '创建 Pull Request'} aria-expanded={prOpen} aria-controls={`${panelId}-pr`} onClick={() => { if (prOpen) setPrOpen(false); else void openPrForm(); }}>
             <GitPullRequest size={14} />发起 PR
           </button>
         </div>
+        {prUnavailableReason && <p className="gtx-form-hint gtx-pr-readiness" role="status">{prUnavailableReason}</p>}
 
         {/* 更改行 */}
         <button type="button" className="gtx-row" aria-expanded={changesOpen} aria-controls={`${panelId}-changes`} onClick={() => setChangesOpen((v) => !v)}>
@@ -579,17 +600,19 @@ export function GitPanel({
             {forcePush && <p className="gtx-form-hint">推送将使用 force-with-lease。</p>}
           </div>
         )}
-            {prOpen && (
+            {prOpen && hasPrRemote && (
               <form className="gtx-pr" id={`${panelId}-pr`} onSubmit={(event) => { event.preventDefault(); void doCreatePr(); }}>
                 <h3>创建 Pull Request</h3>
+                {prChecking && <p className="gtx-form-hint" role="status">正在检查 GitHub CLI 登录状态…</p>}
+                {!prChecking && prReadiness && !prReadiness.ok && <p className="gtx-error" role="alert">{prReadiness.message}</p>}
                 <label className="gtx-form-label" htmlFor={`${panelId}-pr-title`}>标题</label>
-                <input id={`${panelId}-pr-title`} className="gtx-pr-input" autoFocus disabled={disabled} placeholder="概括这次更改" required value={prTitle} onChange={(event) => setPrTitle(event.target.value)} />
+                <input id={`${panelId}-pr-title`} className="gtx-pr-input" autoFocus disabled={disabled || prChecking || !prReadiness?.ok} placeholder="概括这次更改" required value={prTitle} onChange={(event) => setPrTitle(event.target.value)} />
                 <label className="gtx-form-label" htmlFor={`${panelId}-pr-description`}>描述<span>可选</span></label>
-                <textarea id={`${panelId}-pr-description`} className="gtx-pr-input" disabled={disabled} placeholder="更改原因与验证方式" rows={3} value={prBody} onChange={(event) => setPrBody(event.target.value)} />
+                <textarea id={`${panelId}-pr-description`} className="gtx-pr-input" disabled={disabled || prChecking || !prReadiness?.ok} placeholder="更改原因与验证方式" rows={3} value={prBody} onChange={(event) => setPrBody(event.target.value)} />
                 <label className="gtx-pr-draft">
-                  <input type="checkbox" disabled={disabled} checked={prDraft} onChange={(event) => setPrDraft(event.target.checked)} />先创建为草稿
+                  <input type="checkbox" disabled={disabled || prChecking || !prReadiness?.ok} checked={prDraft} onChange={(event) => setPrDraft(event.target.checked)} />先创建为草稿
                 </label>
-                <button type="submit" className="gtx-btn primary" disabled={disabled || !prTitle.trim()}>
+                <button type="submit" className="gtx-btn primary" disabled={disabled || prChecking || !prReadiness?.ok || !prTitle.trim()}>
                   {pending === '创建 PR' ? <Loader2 size={13} className="spin" /> : <GitPullRequest size={13} />}创建 PR
                 </button>
                 {prResult && (

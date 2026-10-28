@@ -1,11 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { Check, Tag, X } from 'lucide-react';
 import { parseTagInput, tagColorIndex, MAX_PER_SESSION } from '../lib/sessionTags';
+import { useModalFocus } from '../lib/useModalFocus';
 
 /**
  * Modal editor for one session's tags (iteration 18). Existing tags show as
  * removable chips; the input accepts Enter or comma to commit, and paste-style
  * bulk input ("a, b, c") is parsed with the same rules as the store.
+ *
+ * Focus: this is an aria-modal overlay, so it uses the shared useModalFocus
+ * trap like the other dialogs. Before that it had none of it — Tab and
+ * Shift+Tab walked straight out into the rail behind the dialog, Escape only
+ * worked while the caret sat in the text input (so once focus was on a chip or
+ * on 保存 there was no keyboard exit at all), and closing dropped focus on
+ * <body>. Escape keeps its old two-step meaning, now from anywhere inside:
+ * clear a pending draft first, otherwise cancel.
  */
 export function TagEditorDialog({ sessionTitle, initialTags, allTags, onConfirm, onCancel }: {
   sessionTitle: string;
@@ -19,8 +28,13 @@ export function TagEditorDialog({ sessionTitle, initialTags, allTags, onConfirm,
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogId = useId();
 
-  useEffect(() => { inputRef.current?.focus(); }, []);
+  // useModalFocus types its ref as HTMLElement (its other consumers are
+  // <section> dialogs); this one is a <div>, so narrow it here.
+  const dialogRef = useModalFocus(true, inputRef, {
+    onEscape: () => { if (draft) setDraft(''); else onCancel(); },
+  }) as React.RefObject<HTMLDivElement>;
 
   /** Merge `incoming` tags into the current set; returns the new list. */
   function merge(incoming: string[], current: string[]): string[] {
@@ -60,9 +74,9 @@ export function TagEditorDialog({ sessionTitle, initialTags, allTags, onConfirm,
 
   return (
     <div className="tag-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div className="tag-dialog" role="dialog" aria-modal="true">
+      <div className="tag-dialog" role="dialog" aria-modal="true" ref={dialogRef} tabIndex={-1} aria-labelledby={`${dialogId}-title`}>
         <div className="tag-dialog-head">
-          <span><Tag size={13} /> 编辑标签</span>
+          <span id={`${dialogId}-title`}><Tag size={13} /> 编辑标签</span>
           <button className="rename-close" onClick={onCancel} aria-label="关闭"><X size={15} /></button>
         </div>
         <div className="tag-dialog-sub">{sessionTitle}</div>
@@ -77,12 +91,14 @@ export function TagEditorDialog({ sessionTitle, initialTags, allTags, onConfirm,
           <input
             ref={inputRef}
             className="tag-input"
+            aria-label="添加标签"
             placeholder={tags.length ? '添加标签，回车确认…' : '添加第一个标签…'}
             value={draft}
             onChange={(e) => { setDraft(e.target.value); setError(null); }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commitDraft(); }
-              if (e.key === 'Escape') { e.preventDefault(); if (draft) setDraft(''); else onCancel(); }
+              // Escape is owned by useModalFocus now: it fires on document in the
+              // capture phase and stops propagation, so a handler here never runs.
             }}
           />
         </div>

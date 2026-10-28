@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Toggle, Segmented, SelectPill, SettingsCard, SettingRow, Slider, NumberField } from './controls';
 import { prefBool, prefStr, type Prefs, type SavePref } from './prefs';
 import { clearBackground, describeBackgroundControls, normalizeBlur, normalizeDim, normalizeScope, pickBackground, readBackground } from '../../lib/background';
+import { CODE_FONT_SIZE_MAX, CODE_FONT_SIZE_MIN, UI_FONT_SIZE_MAX, UI_FONT_SIZE_MIN, clampCodeFontSize, clampUiFontSize } from '../../lib/uiFontSize';
 
 const CHINESE_FONT_OPTIONS = [
   { value: 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif', label: '微软雅黑 / 苹方 / Noto Sans CJK' },
@@ -16,7 +17,7 @@ const ENGLISH_FONT_OPTIONS = [
   { value: 'Segoe UI, Inter, system-ui, sans-serif', label: 'Segoe UI' },
   { value: 'SF Pro Display, SF Pro Text, -apple-system, BlinkMacSystemFont, sans-serif', label: 'SF Pro / Apple 系统字体' },
   { value: 'Roboto, Arial, sans-serif', label: 'Roboto' },
-  { value: 'system-ui, sans-serif', label: 'System UI' },
+  { value: 'system-ui, sans-serif', label: '系统界面字体' },
 ];
 
 type ThemeMode = 'system' | 'light' | 'dark';
@@ -121,6 +122,8 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
   // replace, and the enabled-but-empty case rendered a UI with no image and no
   // hint why.
   const [backgroundStored, setBackgroundStored] = useState<boolean | null>(null);
+  const [backgroundReadError, setBackgroundReadError] = useState('');
+  const [backgroundProbeTick, setBackgroundProbeTick] = useState(0);
   const setBackgroundEnabled = (v: boolean) => savePref({ backgroundImage: v });
   const setBackgroundDim = (v: number) => savePref({ backgroundDim: v });
   const setBackgroundBlur = (v: number) => savePref({ backgroundBlur: v });
@@ -130,11 +133,19 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
   // version stamp changes, so a pick or a removal is reflected immediately.
   useEffect(() => {
     let cancelled = false;
+    setBackgroundReadError('');
     void readBackground().then((dataUrl) => {
       if (!cancelled) setBackgroundStored(dataUrl !== null);
+    }).catch((error: unknown) => {
+      // Without this catch a host failure was an unhandled rejection and
+      // backgroundStored stayed null, which silently rendered neither the
+      // 更换 label nor the "enabled but empty" hint.
+      if (cancelled) return;
+      setBackgroundStored(null);
+      setBackgroundReadError(error instanceof Error ? error.message : String(error ?? '未知错误'));
     });
     return () => { cancelled = true; };
-  }, [backgroundVersion]);
+  }, [backgroundVersion, backgroundProbeTick]);
 
   const controls = describeBackgroundControls(backgroundStored, backgroundEnabled);
 
@@ -150,6 +161,11 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
       // 选好图片即视为启用，避免「选了但没开」的困惑。
       savePref({ backgroundImage: true, backgroundVersion: result.version });
       setBackgroundStored(true);
+    } catch (error) {
+      // pickBackground goes through IPC; a rejected call (main process down,
+      // dialog refused) used to leave the button spinning off nothing and no
+      // message — the catch only ever saw `ok: false` replies.
+      setBackgroundError(error instanceof Error ? error.message : String(error ?? '选择图片失败'));
     } finally {
       setBackgroundBusy(false);
     }
@@ -162,6 +178,10 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
       await clearBackground();
       savePref({ backgroundImage: false, backgroundVersion: backgroundVersion + 1 });
       setBackgroundStored(false);
+    } catch (error) {
+      // Same gap as above: the switch stayed on and the image stayed put with
+      // nothing said about the failed removal.
+      setBackgroundError(error instanceof Error ? error.message : String(error ?? '移除图片失败'));
     } finally {
       setBackgroundBusy(false);
     }
@@ -204,6 +224,12 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
           }
         />
         {backgroundError && <p className="settings-error" role="alert">{backgroundError}</p>}
+        {backgroundReadError && (
+          <div className="settings-error-row" role="alert">
+            <span>无法读取背景图片状态：{backgroundReadError}</span>
+            <button type="button" onClick={() => setBackgroundProbeTick((tick) => tick + 1)}>重试</button>
+          </div>
+        )}
         {controls.showEmptyHint && (
           <p className="settings-error" role="status">已开启背景但还没有选择图片，点击「选择图片…」挑一张。</p>
         )}
@@ -218,12 +244,12 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
         <SettingRow
           title="压暗"
           description="压暗图片，保证文字可读"
-          control={<Slider value={Math.round(backgroundDim * 100)} min={0} max={90} onChange={(next) => setBackgroundDim(next / 100)} />}
+          control={<Slider value={Math.round(backgroundDim * 100)} min={0} max={90} label="背景压暗" onChange={(next) => setBackgroundDim(next / 100)} />}
         />
         <SettingRow
           title="模糊"
           description="柔化背景细节"
-          control={<Slider value={backgroundBlur} min={0} max={40} onChange={setBackgroundBlur} />}
+          control={<Slider value={backgroundBlur} min={0} max={40} label="背景模糊" onChange={setBackgroundBlur} />}
         />
       </SettingsCard>
 
@@ -244,8 +270,19 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
         />
         <SettingRow
           title="UI 字号"
-          description="调整 YOYcode 界面使用的基准字号"
-          control={<NumberField value={uiFontSize} onChange={(next) => onFontSizeChange({ uiFontSize: next })} suffix="px" min={10} max={24} />}
+          description="调整 YOYcode 界面使用的基准字号，12–20px"
+          control={<NumberField
+            label="UI 字号"
+            value={uiFontSize}
+            // Store only values already inside the range. Clamping every
+            // keystroke made two-digit entry impossible: "1" became 12 and the
+            // next key landed after "12".
+            onChange={(next) => {
+              if (next >= UI_FONT_SIZE_MIN && next <= UI_FONT_SIZE_MAX) onFontSizeChange({ uiFontSize: next });
+            }}
+            onCommit={(next) => onFontSizeChange({ uiFontSize: clampUiFontSize(next) ?? UI_FONT_SIZE_MIN })}
+            suffix="px" min={UI_FONT_SIZE_MIN} max={UI_FONT_SIZE_MAX}
+          />}
         />
         <SettingRow
           title="中文字体"
@@ -253,19 +290,31 @@ export function AppearanceSettings({ theme, onThemeChange, uiFontSize, codeFontS
           control={<SelectPill value={chineseFont} onChange={(next) => onFontChange({ uiChineseFont: next })} options={CHINESE_FONT_OPTIONS} />}
         />
         <SettingRow
-          title="English font"
-          description="Font used for the English interface"
+          title="英文字体"
+          description="英文界面使用的字体"
           control={<SelectPill value={englishFont} onChange={(next) => onFontChange({ uiEnglishFont: next })} options={ENGLISH_FONT_OPTIONS} />}
         />
         <SettingRow
           title="代码字体大小"
           description="代码的基础字号"
-          control={<NumberField value={codeFontSize} onChange={(next) => onFontSizeChange({ codeFontSize: next })} suffix="px" min={8} max={24} />}
+          control={<NumberField
+            label="代码字体大小"
+            value={codeFontSize}
+            // Same two-stage rule as UI 字号: store only in-range values while
+            // typing so two-digit entry works, and clamp once on commit. The
+            // floor is 10, matching --fs-floor — below that the editor and the
+            // transcript's code blocks stop being readable.
+            onChange={(next) => {
+              if (next >= CODE_FONT_SIZE_MIN && next <= CODE_FONT_SIZE_MAX) onFontSizeChange({ codeFontSize: next });
+            }}
+            onCommit={(next) => onFontSizeChange({ codeFontSize: clampCodeFontSize(next) ?? CODE_FONT_SIZE_MIN })}
+            suffix="px" min={CODE_FONT_SIZE_MIN} max={CODE_FONT_SIZE_MAX}
+          />}
         />
         <SettingRow
           title="缩进宽度"
           description="Tab 缩进的空格数"
-          control={<NumberField value={editorTabSize} onChange={(next) => onEditorPrefChange({ editorTabSize: next })} suffix="格" min={2} max={8} />}
+          control={<NumberField label="缩进宽度" value={editorTabSize} onChange={(next) => onEditorPrefChange({ editorTabSize: next })} suffix="格" min={2} max={8} />}
         />
         <SettingRow
           title="显示小地图"

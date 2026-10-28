@@ -57,3 +57,41 @@ test('malformed snapshots fail without replacing a valid queue', async () => {
   assert.throws(() => store.save(root, { messages: [message('duplicate'), message('duplicate')], pausedSessions: [] }));
   assert.deepEqual((await store.load(root)).messages.map(entry => entry.id), ['valid']);
 });
+
+test('failed delivery recovery merges behind serialized writes, pauses the owner, and keeps existing messages', async () => {
+  const owner = path.join(base, 'failed-delivery'); await fs.mkdir(owner, { recursive: true });
+  const root = path.join(base, 'failed-delivery-project');
+  const store = new MessageQueueStore(path.join(owner, 'queues'));
+  const firstWrite = store.save(root, { messages: [message('already-queued', 'other-session')], pausedSessions: [] });
+  const recoveries = [store.restore(root, [message('failed-a')]), store.restore(root, [message('failed-b')])];
+  await Promise.all([firstWrite, ...recoveries]);
+  const loaded = await store.load(root);
+  assert.deepEqual(loaded.messages.map(entry => entry.id), ['failed-b', 'failed-a', 'already-queued']);
+  assert.ok(loaded.pausedSessions.includes('session-a'));
+  assert.equal(loaded.messages.find(entry => entry.id === 'failed-a').files[0].path, 'C:/fixture/context.txt');
+});
+
+test('recovery is idempotent and does not erase an edited queued message or foreign workspace', async () => {
+  const owner = path.join(base, 'recovery-dedupe'); await fs.mkdir(owner, { recursive: true });
+  const root = path.join(base, 'recovery-dedupe-project');
+  const other = path.join(base, 'unrelated-project');
+  const store = new MessageQueueStore(path.join(owner, 'queues'));
+  await store.save(root, { messages: [{ ...message('same-id'), text: 'user edited the queue item' }], pausedSessions: [] });
+  await store.save(other, { messages: [message('unrelated')], pausedSessions: [] });
+  await store.restore(root, [message('same-id')]);
+  await store.restore(root, [message('same-id')]);
+  assert.equal((await store.load(root)).messages.length, 1);
+  assert.equal((await store.load(root)).messages[0].text, 'user edited the queue item');
+  assert.equal((await store.load(other)).messages[0].id, 'unrelated');
+});
+
+test('failed delivery recovery never overwrites a corrupt stored queue', async () => {
+  const owner = path.join(base, 'recovery-corrupt'); await fs.mkdir(owner, { recursive: true });
+  const root = path.join(base, 'recovery-corrupt-project');
+  const store = new MessageQueueStore(path.join(owner, 'queues'));
+  const file = await store.file(root);
+  const original = '{broken unsent messages';
+  await fs.writeFile(file, original);
+  await assert.rejects(store.restore(root, [message('failed')]));
+  assert.equal(await fs.readFile(file, 'utf8'), original);
+});

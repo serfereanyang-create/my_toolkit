@@ -141,10 +141,10 @@ export function FileHistoryPanel({ onOpenFile }: { onOpenFile: (path: string) =>
         <span><FileClock size={13} /> 保存历史</span>
         <span className="hist-meta">
           {files.length} 个文件 · {formatBytes(totalBytes)}
-          <button className="icon-button" title="刷新" onClick={() => { void refresh(); }}><RefreshCw size={13} /></button>
+          <button className="icon-button" title="刷新" onClick={() => { void refresh(); }} disabled={loading}><RefreshCw size={13} className={loading ? 'spin' : undefined} /></button>
         </span>
       </div>
-      {error && <div className="hist-error">{error}</div>}
+      {error && <div className="hist-error" role="alert"><span>{error}</span><button type="button" className="panel-retry" onClick={() => { void refresh(); }} disabled={loading}>重试</button></div>}
       <div className="hist-list">
         {loading && <div className="hist-empty">载入中…</div>}
         {!loading && files.length === 0 && (

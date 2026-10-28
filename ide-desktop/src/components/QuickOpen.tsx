@@ -22,7 +22,34 @@ export function QuickOpen({ open, onClose, onPick, workspaceRoot }: {
   const [active, setActive] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // The overlay owns Escape and Tab for as long as it is open. Escape used to
+  // live on the query field only, so once focus left it the overlay had no
+  // keyboard exit; Tab used to walk straight out to the composer behind the
+  // overlay, leaving an open palette with focus somewhere else.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); onCloseRef.current(); return; }
+      if (event.key !== 'Tab') return;
+      const stops: HTMLElement[] = [];
+      if (inputRef.current) stops.push(inputRef.current);
+      if (closeRef.current) stops.push(closeRef.current);
+      if (stops.length === 0) return;
+      event.preventDefault();
+      const index = stops.indexOf(document.activeElement as HTMLElement);
+      const next = index < 0
+        ? (event.shiftKey ? stops.length - 1 : 0)
+        : (index + (event.shiftKey ? -1 : 1) + stops.length) % stops.length;
+      stops[next].focus();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [open]);
 
   // (Re)load the index each time the palette opens; cheap thanks to TTL cache.
   useEffect(() => {
@@ -43,8 +70,18 @@ export function QuickOpen({ open, onClose, onPick, workspaceRoot }: {
       setError(err instanceof Error ? err.message : String(err));
       setBusy(false);
     });
+    const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null;
     inputRef.current?.focus();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      // Hand focus back to whoever opened quick-open (usually the composer);
+      // closing used to leave it on <body>. Skip it if another surface has
+      // already claimed focus in the meantime.
+      const current = document.activeElement;
+      if (opener && opener.isConnected && (!current || current === document.body)) opener.focus();
+    };
   }, [open, workspaceRoot]);
 
   const ranked = useMemo(() => rankQuickFiles(files, query, Date.now(), 50), [files, query]);
@@ -67,7 +104,8 @@ export function QuickOpen({ open, onClose, onPick, workspaceRoot }: {
   }
 
   return (
-    <div className="qopen-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="qopen-overlay"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="qopen-box">
         <div className="qopen-bar">
           <Search size={14} className="qopen-bar-icon" />
@@ -82,10 +120,9 @@ export function QuickOpen({ open, onClose, onPick, workspaceRoot }: {
               if (e.key === 'ArrowDown') { e.preventDefault(); setActive((v) => Math.min(ranked.length - 1, v + 1)); }
               else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((v) => Math.max(0, v - 1)); }
               else if (e.key === 'Enter') { e.preventDefault(); commit(ranked[active]?.file.path); }
-              else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
             }}
           />
-          <button type="button" className="qopen-close" onClick={onClose} title="关闭 (Esc)"><X size={13} /></button>
+          <button type="button" ref={closeRef} className="qopen-close" onClick={onClose} title="关闭 (Esc)"><X size={13} /></button>
         </div>
         <div className="qopen-list" ref={listRef} role="listbox" aria-label="文件结果">
           {busy && <div className="qopen-status"><Loader2 size={12} className="spin" /> 建立索引中…</div>}
@@ -98,6 +135,10 @@ export function QuickOpen({ open, onClose, onPick, workspaceRoot }: {
               <button
                 key={row.file.path}
                 type="button"
+                // One tab stop for the whole list (the query field, which owns
+                // arrow/Enter navigation). As plain buttons every result row
+                // became a stop, so Tab walked up to 50 rows of file names.
+                tabIndex={-1}
                 className={`qopen-row${i === active ? ' active' : ''}`}
                 role="option"
                 aria-selected={i === active}

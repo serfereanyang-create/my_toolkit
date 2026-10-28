@@ -4,10 +4,11 @@
  * 渲染 helpContent.ts 的版本化内容；"新功能"页高亮与当前 app 版本一致的
  * 条目，"帮助"页列出真实可用的功能说明。Esc / 点击遮罩关闭。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import { HELP_TOPICS, WHATS_NEW } from '../lib/helpContent';
+import { useModalFocus } from '../lib/useModalFocus';
 
 export type HelpOverlayTab = 'whats-new' | 'help';
 
@@ -16,9 +17,21 @@ function normalizeVersion(raw: string): string {
   return match ? match[0] : raw.trim();
 }
 
+/**
+ * Focus: aria-modal overlay, so it goes through the shared useModalFocus trap
+ * like every other dialog. Before that it had only a bare document Escape
+ * listener — focus stayed on the button that opened help (i.e. behind the
+ * overlay), Tab walked the rail and composer underneath it, and closing left
+ * focus on <body>. Escape still closes; it just comes from the trap now, which
+ * also means it is released when a nested dialog is on top.
+ */
 export function HelpOverlay({ initialTab, onClose }: { initialTab: HelpOverlayTab; onClose: () => void }) {
   const [tab, setTab] = useState<HelpOverlayTab>(initialTab);
   const [appVersion, setAppVersion] = useState<string>('');
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  // useModalFocus types its ref as HTMLElement (its other consumers are
+  // <section> dialogs); this overlay is a <div>, so narrow it here.
+  const dialogRef = useModalFocus(true, closeRef, { onEscape: onClose }) as React.RefObject<HTMLDivElement>;
 
   useEffect(() => setTab(initialTab), [initialTab]);
 
@@ -30,29 +43,21 @@ export function HelpOverlay({ initialTab, onClose }: { initialTab: HelpOverlayTa
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const currentEntry = useMemo(
     () => WHATS_NEW.find((entry) => entry.version === appVersion) ?? WHATS_NEW[0],
     [appVersion],
   );
 
   return (
-    <div className="help-overlay" role="dialog" aria-modal="true" onClick={onClose}>
+    <div className="help-overlay" role="dialog" aria-modal="true" ref={dialogRef} tabIndex={-1} aria-label="帮助与新功能" onClick={onClose}>
       <div className="help-overlay-card" onClick={(event) => event.stopPropagation()}>
         <div className="help-overlay-head">
-          <div className="help-overlay-tabs">
-            <button className={tab === 'whats-new' ? 'active' : ''} onClick={() => setTab('whats-new')}>新功能</button>
-            <button className={tab === 'help' ? 'active' : ''} onClick={() => setTab('help')}>帮助</button>
+          <div className="help-overlay-tabs" role="tablist" aria-label="新功能与帮助">
+            <button role="tab" aria-selected={tab === 'whats-new'} className={tab === 'whats-new' ? 'active' : ''} onClick={() => setTab('whats-new')}>新功能</button>
+            <button role="tab" aria-selected={tab === 'help'} className={tab === 'help' ? 'active' : ''} onClick={() => setTab('help')}>帮助</button>
           </div>
           <span className="help-overlay-version">{appVersion ? `v${appVersion}` : ''}</span>
-          <button className="help-overlay-close" onClick={onClose} title="关闭"><X size={16} /></button>
+          <button ref={closeRef} className="help-overlay-close" onClick={onClose} title="关闭" aria-label="关闭"><X size={16} /></button>
         </div>
 
         <div className="help-overlay-body">

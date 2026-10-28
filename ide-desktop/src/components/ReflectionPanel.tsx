@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Brain, Clock, Lightbulb, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Brain, Clock, Lightbulb, Loader2, RefreshCw } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import { useQualityRevision } from '../lib/qualityRevision';
 
@@ -77,6 +77,14 @@ export function ReflectionPanel() {
         <div className="reflection-panel-error" role="alert">
           <AlertTriangle size={14} />
           <span>{error}</span>
+          <button type="button" className="reflection-panel-retry" onClick={() => void refresh()} disabled={loading}>重试</button>
+        </div>
+      )}
+
+      {loading && !error && entries.length === 0 && (
+        <div className="reflection-panel-loading" role="status" aria-busy="true">
+          <Loader2 size={15} className="reflection-panel-spin" />
+          正在读取失败教训…
         </div>
       )}
 

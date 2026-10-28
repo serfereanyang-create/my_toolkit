@@ -65,6 +65,7 @@ export function ShortcutsSettings() {
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [capturing, setCapturing] = useState<string | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<{ id: string; message: string } | null>(null);
   const captureIdRef = useRef<string | null>(null);
   captureIdRef.current = capturing;
 
@@ -110,9 +111,17 @@ export function ShortcutsSettings() {
   }, [capturing, reload]);
 
   async function resetOne(id: string) {
-    await desktop.keybindings.set(id, null);
-    reload();
-    window.dispatchEvent(new Event('zcode:keybindings-changed'));
+    setResetError(null);
+    try {
+      const result = await desktop.keybindings.set(id, null);
+      if (!result?.ok) { setResetError({ id, message: result?.error ?? '恢复默认失败' }); return; }
+      reload();
+      window.dispatchEvent(new Event('zcode:keybindings-changed'));
+    } catch (error) {
+      // The rebind path reported captureError; the reset path returned a bare
+      // rejected promise, so a failed reset looked like a click that did nothing.
+      setResetError({ id, message: error instanceof Error ? error.message : String(error ?? '未知错误') });
+    }
   }
 
   const filteredGroups = query.trim()
@@ -132,6 +141,7 @@ export function ShortcutsSettings() {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="搜索快捷键..."
+          aria-label="搜索快捷键"
         />
       </div>
 
@@ -139,6 +149,13 @@ export function ShortcutsSettings() {
           a symbol font that renders U+26A0 as a bare triangle, which no longer
           matches the "带 ⚠" wording below. A plain bullet is font-independent. */}
       <div className="sc-hint">点击键位标签，按下新的组合键即可改绑；按 Esc 取消。标有「键位冲突」的条目与其他命令冲突。</div>
+
+      {resetError && (
+        <div className="settings-error-row" role="alert">
+          <span>恢复默认失败：{resetError.message}</span>
+          <button type="button" onClick={() => void resetOne(resetError.id)}>重试</button>
+        </div>
+      )}
 
       {filteredGroups.map((group) => (
         <section key={group.heading} className="settings-group">

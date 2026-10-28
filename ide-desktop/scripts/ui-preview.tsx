@@ -51,7 +51,10 @@ function Preview() {
     return item;
   });
   if (scenario === 'running') chat.push({ id: 'live', kind: 'turn', startedAt: timestamp, steps: [{ id: 'running', kind: 'tool', status: 'running', tool: 'run_command', input: { command: 'npm test' }, output: '' }], files: [], added: 0, removed: 0 });
-  if (scenario === 'approval') chat.push({ id: 'approval', kind: 'approval', requestId: 'preview-approval', tool: 'apply_patch', risk: 'write', message: '允许修改 src/auth/session.ts 吗？', input: { path: 'src/auth/session.ts' }, ...(decided ? { decided: decided as 'deny' } : {}) });
+  // The card's tint is keyed off the risk, so each risk needs its own scenario
+  // to be contrast-checked against the surface it actually paints.
+  const approvalRisk = scenario === 'approval-shell' ? 'shell' : scenario === 'approval-network' ? 'network' : 'write';
+  if (scenario === 'approval' || scenario === 'approval-shell' || scenario === 'approval-network') chat.push({ id: 'approval', kind: 'approval', requestId: 'preview-approval', tool: approvalRisk === 'write' ? 'apply_patch' : 'run_command', risk: approvalRisk, message: '允许修改 src/auth/session.ts 吗？', input: approvalRisk === 'write' ? { path: 'src/auth/session.ts' } : { command: 'npm test' }, ...(decided ? { decided: decided as 'deny' } : {}) });
   if (scenario === 'failure') chat.push({ id: 'error', kind: 'error', text: '模型连接暂时中断。已完成的工作已保留，可以稍后继续。' });
   const state: AppState = { ...initialState, settings: { ...settings, approval, preferences: { ...settings.preferences, 'gen.sendShortcut': sendShortcut } }, workspaceRoot: 'C:/workspace/YOYcode', activeSessionId, chat, agentStatus: scenario === 'running' ? 'running' : 'ready' };
 

@@ -1,4 +1,6 @@
 'use strict';
+require('./lib/probe-guard.cjs');
+
 // 对话流式渲染的测量台：跑真实 ConversationStream + 真实 reducer，按真实 CLI
 // bridge 实测到的节奏（约 31ms 一个 delta）推流式事件，量出每帧渲染/布局开销、
 // 长任务和 DOM 规模。改前改后跑同一个脚本，数字可比。

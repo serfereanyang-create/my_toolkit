@@ -197,16 +197,30 @@ function ProviderDetail({ provider, isActiveForChat, onChange, onSaveKey, onRemo
   const [keyInput, setKeyInput] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [keySaved, setKeySaved] = useState(false);
+  const [keySaving, setKeySaving] = useState(false);
+  const [keyError, setKeyError] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectivityResult | null>(null);
   const models = provider.models ?? [];
 
   async function saveKey() {
-    if (!keyInput.trim()) return;
-    await onSaveKey(provider.id, keyInput.trim());
-    setKeyInput('');
-    setKeySaved(true);
-    setTimeout(() => setKeySaved(false), 2000);
+    if (!keyInput.trim() || keySaving) return;
+    // The write goes through the secret store, which can fail (keyring locked,
+    // IPC refused). Without the try/catch the promise rejected with nothing on
+    // screen: the field kept the typed key, the button looked unpressed and the
+    // only trace was an unhandled rejection in the console.
+    setKeySaving(true);
+    setKeyError('');
+    try {
+      await onSaveKey(provider.id, keyInput.trim());
+      setKeyInput('');
+      setKeySaved(true);
+      setTimeout(() => setKeySaved(false), 2000);
+    } catch (error) {
+      setKeyError(error instanceof Error ? error.message : String(error ?? '未知错误'));
+    } finally {
+      setKeySaving(false);
+    }
   }
 
   async function testConnection() {
@@ -230,16 +244,22 @@ function ProviderDetail({ provider, isActiveForChat, onChange, onSaveKey, onRemo
     onChange({ models: next, model: stillThere ? provider.model : (next[0]?.id ?? '') });
   }
 
-  function addModel(model: CustomModel) {
-    if (!model.id.trim()) return;
-    if (models.some((m) => m.id === model.id.trim())) return;
+  /** True when the catalog accepted the entry. False keeps the form open: the
+   *  old version closed it and dropped the typed values, so a duplicate id
+   *  looked exactly like a successful add that silently vanished. */
+  function addModel(model: CustomModel): boolean {
+    const id = model.id.trim();
+    if (!id) return false;
+    if (models.some((m) => m.id === id)) return false;
     setModels([...models, model]);
+    return true;
   }
 
   return (
     <div className="provider-detail">
       <div className="provider-detail-head">
         <TextField
+          label="供应商名称"
           value={provider.label}
           onChange={(label) => onChange({ label })}
           placeholder="供应商名称"
@@ -292,10 +312,13 @@ function ProviderDetail({ provider, isActiveForChat, onChange, onSaveKey, onRemo
           <button className="settings-icon-btn" aria-label="显示/隐藏" onClick={() => setShowKey((v) => !v)}>
             {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
-          <button className="settings-action-btn" onClick={() => void saveKey()} disabled={!keyInput.trim()}>
-            {keySaved ? '已保存' : '保存'}
+          <button className="settings-action-btn" onClick={() => void saveKey()} disabled={!keyInput.trim() || keySaving}>
+            {keySaving ? '保存中…' : keySaved ? '已保存' : '保存'}
           </button>
         </div>
+        {keyError && (
+          <p className="settings-error" role="alert">API Key 保存失败：{keyError}</p>
+        )}
       </label>
 
       <div className="model-field">
@@ -330,6 +353,7 @@ function ProviderDetail({ provider, isActiveForChat, onChange, onSaveKey, onRemo
                 key={m.id}
                 model={m}
                 isDefault={provider.model === m.id}
+                takenIds={models.map((x) => x.id)}
                 onSetDefault={() => onChange({ model: m.id })}
                 onEdit={(next) => setModels(models.map((x) => (x.id === m.id ? next : x)))}
                 onDelete={() => setModels(models.filter((x) => x.id !== m.id))}
@@ -343,31 +367,48 @@ function ProviderDetail({ provider, isActiveForChat, onChange, onSaveKey, onRemo
   );
 }
 
-function ModelRow({ model, isDefault, onSetDefault, onEdit, onDelete }: {
+function ModelRow({ model, isDefault, takenIds, onSetDefault, onEdit, onDelete }: {
   model: CustomModel;
   isDefault: boolean;
+  /** Ids already in use, so a rename cannot collide with a sibling row (two
+   *  rows with the same id means a duplicate React key and one unreachable). */
+  takenIds: string[];
   onSetDefault: () => void;
   onEdit: (next: CustomModel) => void;
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [id, setId] = useState(model.id);
+  const [error, setError] = useState('');
   const [ctx, setCtx] = useState(model.contextWindow ? String(model.contextWindow) : '');
   const [inputPrice, setInputPrice] = useState(model.inputPricePerM ? String(model.inputPricePerM) : '');
   const [outputPrice, setOutputPrice] = useState(model.outputPricePerM ? String(model.outputPricePerM) : '');
   const [cacheReadPrice, setCacheReadPrice] = useState(model.cacheReadPricePerM ? String(model.cacheReadPricePerM) : '');
   const [cacheWritePrice, setCacheWritePrice] = useState(model.cacheWritePricePerM ? String(model.cacheWritePricePerM) : '');
 
+  function resetDraft() {
+    setId(model.id);
+    setCtx(model.contextWindow ? String(model.contextWindow) : '');
+    setInputPrice(model.inputPricePerM ? String(model.inputPricePerM) : '');
+    setOutputPrice(model.outputPricePerM ? String(model.outputPricePerM) : '');
+    setCacheReadPrice(model.cacheReadPricePerM ? String(model.cacheReadPricePerM) : '');
+    setCacheWritePrice(model.cacheWritePricePerM ? String(model.cacheWritePricePerM) : '');
+    setError('');
+  }
+
   function commit() {
-    if (!id.trim()) return;
+    const nextId = id.trim();
+    if (!nextId) { setError('模型 ID 不能为空'); return; }
+    if (nextId !== model.id && takenIds.includes(nextId)) { setError('该模型 ID 已存在'); return; }
     onEdit({
-      id: id.trim(),
+      id: nextId,
       contextWindow: ctx.trim() ? Number(ctx) : undefined,
       inputPricePerM: inputPrice.trim() ? Number(inputPrice) : undefined,
       outputPricePerM: outputPrice.trim() ? Number(outputPrice) : undefined,
       cacheReadPricePerM: cacheReadPrice.trim() ? Number(cacheReadPrice) : undefined,
       cacheWritePricePerM: cacheWritePrice.trim() ? Number(cacheWritePrice) : undefined,
     });
+    setError('');
     setEditing(false);
   }
 
@@ -376,22 +417,25 @@ function ModelRow({ model, isDefault, onSetDefault, onEdit, onDelete }: {
 
   if (editing) {
     return (
-      <div className="model-row editing model-row-priced">
-        <div className="model-edit-wrapper">
-          <div className="model-edit-grid-simple">
-            <input className="settings-text-field" value={id} onChange={(e) => setId(e.target.value)} placeholder="模型 ID" />
-            <input className="settings-text-field" value={ctx} onChange={(e) => setCtx(e.target.value)} placeholder="上下文 (如 128000)" />
-            <input className="settings-text-field" value={inputPrice} onChange={(e) => setInputPrice(e.target.value)} placeholder="输入 $/1M" type="number" min="0" step="0.01" />
-            <input className="settings-text-field" value={outputPrice} onChange={(e) => setOutputPrice(e.target.value)} placeholder="输出 $/1M" type="number" min="0" step="0.01" />
-            <input className="settings-text-field" value={cacheReadPrice} onChange={(e) => setCacheReadPrice(e.target.value)} placeholder="缓存读 $/1M" type="number" min="0" step="0.01" />
-            <input className="settings-text-field" value={cacheWritePrice} onChange={(e) => setCacheWritePrice(e.target.value)} placeholder="缓存写 $/1M" type="number" min="0" step="0.01" />
-          </div>
-          <div className="model-edit-actions">
-            <button className="settings-icon-btn" aria-label="确认" onClick={commit}><Check size={16} /></button>
-            <button className="settings-icon-btn" aria-label="取消" onClick={() => { setEditing(false); setId(model.id); setCtx(model.contextWindow ? String(model.contextWindow) : ''); setInputPrice(model.inputPricePerM ? String(model.inputPricePerM) : ''); setOutputPrice(model.outputPricePerM ? String(model.outputPricePerM) : ''); setCacheReadPrice(model.cacheReadPricePerM ? String(model.cacheReadPricePerM) : ''); setCacheWritePrice(model.cacheWritePricePerM ? String(model.cacheWritePricePerM) : ''); }}><X size={16} /></button>
+      <>
+        <div className="model-row editing model-row-priced">
+          <div className="model-edit-wrapper">
+            <div className="model-edit-grid-simple">
+              <input className="settings-text-field" value={id} onChange={(e) => setId(e.target.value)} placeholder="模型 ID" />
+              <input className="settings-text-field" value={ctx} onChange={(e) => setCtx(e.target.value)} placeholder="上下文 (如 128000)" />
+              <input className="settings-text-field" value={inputPrice} onChange={(e) => setInputPrice(e.target.value)} placeholder="输入 $/1M" type="number" min="0" step="0.01" />
+              <input className="settings-text-field" value={outputPrice} onChange={(e) => setOutputPrice(e.target.value)} placeholder="输出 $/1M" type="number" min="0" step="0.01" />
+              <input className="settings-text-field" value={cacheReadPrice} onChange={(e) => setCacheReadPrice(e.target.value)} placeholder="缓存读 $/1M" type="number" min="0" step="0.01" />
+              <input className="settings-text-field" value={cacheWritePrice} onChange={(e) => setCacheWritePrice(e.target.value)} placeholder="缓存写 $/1M" type="number" min="0" step="0.01" />
+            </div>
+            <div className="model-edit-actions">
+              <button className="settings-icon-btn" aria-label="确认" onClick={commit} disabled={!id.trim()}><Check size={16} /></button>
+              <button className="settings-icon-btn" aria-label="取消" onClick={() => { setEditing(false); resetDraft(); }}><X size={16} /></button>
+            </div>
           </div>
         </div>
-      </div>
+        {error && <p className="settings-error" role="alert">{error}</p>}
+      </>
     );
   }
 
@@ -421,18 +465,30 @@ function ModelRow({ model, isDefault, onSetDefault, onEdit, onDelete }: {
   );
 }
 
-function AddModelButton({ onAdd }: { onAdd: (model: CustomModel) => void }) {
+function AddModelButton({ onAdd }: { onAdd: (model: CustomModel) => boolean }) {
   const [adding, setAdding] = useState(false);
   const [id, setId] = useState('');
+  const [error, setError] = useState('');
   const [ctx, setCtx] = useState('');
   const [inputPrice, setInputPrice] = useState('');
   const [outputPrice, setOutputPrice] = useState('');
   const [cacheReadPrice, setCacheReadPrice] = useState('');
   const [cacheWritePrice, setCacheWritePrice] = useState('');
 
+  function clear() {
+    setId('');
+    setCtx('');
+    setInputPrice('');
+    setOutputPrice('');
+    setCacheReadPrice('');
+    setCacheWritePrice('');
+    setError('');
+  }
+
   function commit() {
-    if (!id.trim()) return;
-    onAdd({
+    // A rejected add keeps the form and its values: closing it on a duplicate
+    // id made the entry disappear with no explanation at all.
+    const accepted = onAdd({
       id: id.trim(),
       contextWindow: ctx.trim() ? Number(ctx) : undefined,
       inputPricePerM: inputPrice.trim() ? Number(inputPrice) : undefined,
@@ -440,12 +496,11 @@ function AddModelButton({ onAdd }: { onAdd: (model: CustomModel) => void }) {
       cacheReadPricePerM: cacheReadPrice.trim() ? Number(cacheReadPrice) : undefined,
       cacheWritePricePerM: cacheWritePrice.trim() ? Number(cacheWritePrice) : undefined,
     });
-    setId('');
-    setCtx('');
-    setInputPrice('');
-    setOutputPrice('');
-    setCacheReadPrice('');
-    setCacheWritePrice('');
+    if (!accepted) {
+      setError(id.trim() ? '该模型 ID 已存在' : '模型 ID 不能为空');
+      return;
+    }
+    clear();
     setAdding(false);
   }
 
@@ -458,22 +513,25 @@ function AddModelButton({ onAdd }: { onAdd: (model: CustomModel) => void }) {
   }
 
   return (
-    <div className="model-row editing model-row-priced">
-      <div className="model-edit-wrapper">
-        <div className="model-edit-grid-simple">
-          <input className="settings-text-field" autoFocus value={id} onChange={(e) => setId(e.target.value)} placeholder="模型 ID (如 gpt-4o)" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
-          <input className="settings-text-field" value={ctx} onChange={(e) => setCtx(e.target.value)} placeholder="上下文 (如 128000)" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
-          <input className="settings-text-field" value={inputPrice} onChange={(e) => setInputPrice(e.target.value)} placeholder="输入 $/1M" type="number" min="0" step="0.01" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
-          <input className="settings-text-field" value={outputPrice} onChange={(e) => setOutputPrice(e.target.value)} placeholder="输出 $/1M" type="number" min="0" step="0.01" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
-          <input className="settings-text-field" value={cacheReadPrice} onChange={(e) => setCacheReadPrice(e.target.value)} placeholder="缓存读 $/1M" type="number" min="0" step="0.01" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
-          <input className="settings-text-field" value={cacheWritePrice} onChange={(e) => setCacheWritePrice(e.target.value)} placeholder="缓存写 $/1M" type="number" min="0" step="0.01" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
-        </div>
-        <div className="model-edit-actions">
-          <button className="settings-icon-btn" aria-label="确认" onClick={commit}><Check size={16} /></button>
-          <button className="settings-icon-btn" aria-label="取消" onClick={() => { setAdding(false); setId(''); setCtx(''); setInputPrice(''); setOutputPrice(''); setCacheReadPrice(''); setCacheWritePrice(''); }}><X size={16} /></button>
+    <>
+      <div className="model-row editing model-row-priced">
+        <div className="model-edit-wrapper">
+          <div className="model-edit-grid-simple">
+            <input className="settings-text-field" autoFocus value={id} onChange={(e) => setId(e.target.value)} placeholder="模型 ID (如 gpt-4o)" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
+            <input className="settings-text-field" value={ctx} onChange={(e) => setCtx(e.target.value)} placeholder="上下文 (如 128000)" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
+            <input className="settings-text-field" value={inputPrice} onChange={(e) => setInputPrice(e.target.value)} placeholder="输入 $/1M" type="number" min="0" step="0.01" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
+            <input className="settings-text-field" value={outputPrice} onChange={(e) => setOutputPrice(e.target.value)} placeholder="输出 $/1M" type="number" min="0" step="0.01" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
+            <input className="settings-text-field" value={cacheReadPrice} onChange={(e) => setCacheReadPrice(e.target.value)} placeholder="缓存读 $/1M" type="number" min="0" step="0.01" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
+            <input className="settings-text-field" value={cacheWritePrice} onChange={(e) => setCacheWritePrice(e.target.value)} placeholder="缓存写 $/1M" type="number" min="0" step="0.01" onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
+          </div>
+          <div className="model-edit-actions">
+            <button className="settings-icon-btn" aria-label="确认" onClick={commit} disabled={!id.trim()}><Check size={16} /></button>
+            <button className="settings-icon-btn" aria-label="取消" onClick={() => { setAdding(false); clear(); }}><X size={16} /></button>
+          </div>
         </div>
       </div>
-    </div>
+      {error && <p className="settings-error" role="alert">{error}</p>}
+    </>
   );
 }
 

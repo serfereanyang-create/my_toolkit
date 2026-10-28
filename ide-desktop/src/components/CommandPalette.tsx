@@ -166,7 +166,17 @@ export function CommandPalette({ commands, onClose }: {
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // Remember who opened the palette so closing it can hand focus back:
+    // without this, Escape dropped keyboard users on <body>, i.e. at the top
+    // of the whole document. Only reclaim focus if nothing else has taken it.
+    const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null;
     inputRef.current?.focus();
+    return () => {
+      const current = document.activeElement;
+      if (opener && opener.isConnected && (!current || current === document.body)) opener.focus();
+    };
   }, []);
 
   const rows = useMemo(() => composeRows(commands, term), [commands, term]);

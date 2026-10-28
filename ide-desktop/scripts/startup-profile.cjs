@@ -1,4 +1,6 @@
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const electron = require('electron');
 const { app } = electron;
 const Module = require('node:module');

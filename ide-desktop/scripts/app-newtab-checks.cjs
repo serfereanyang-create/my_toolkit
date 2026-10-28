@@ -1,4 +1,6 @@
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -29,7 +31,7 @@ const outsideFile = (context) => {
 };
 
 module.exports = async function runNewTabChecks(context) {
-  const { evaluate, click, waitFor, capture, check, fixture } = context;
+  const { evaluate, click, waitFor, capture, check, fixture, insertText, sendKey } = context;
   const { dialog } = require('electron');
 
   const openNewTab = async () => {
@@ -65,6 +67,27 @@ module.exports = async function runNewTabChecks(context) {
       await clickAction('terminal');
       await waitFor('!!document.querySelector(".terminal-panel")', '底部终端');
       assert.equal(await evaluate('document.querySelectorAll(".terminal-tabs .terminal-tab").length > 0'), true);
+      await waitFor('!!document.querySelector(".xterm-helper-textarea")', '终端输入焦点');
+      await insertText('echo YOY_TERMINAL_REAL_APP');
+      await sendKey({ type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+      await sendKey({ type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      await waitFor('document.querySelector(".terminal-panel")?.textContent.includes("YOY_TERMINAL_REAL_APP")', '终端命令输出');
+      await click('.terminal-new');
+      await waitFor('document.querySelectorAll(".terminal-tabs .terminal-tab").length === 2', '第二个终端标签');
+      await insertText('echo YOY_TERMINAL_SECOND');
+      await sendKey({ type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+      await sendKey({ type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      await waitFor('document.querySelector(".terminal-panel")?.textContent.includes("YOY_TERMINAL_SECOND")', '第二个终端命令输出');
+      await click('.terminal-tabs .terminal-tab:first-child .terminal-tab-label');
+      await click('.terminal-capture-btn');
+      await click('.rail button[aria-label="对话"]');
+      await click('.composer button[aria-label="引用文件或符号"]');
+      await waitFor('!!document.querySelector(".mention-picker")', '终端提及面板');
+      await evaluate('([...document.querySelectorAll(".mention-tab")].find(button => button.textContent.includes("终端"))?.click())');
+      await waitFor('!!document.querySelector(".mention-item[data-mention-content]")', '终端提及条目');
+      const capturedTerminal = await evaluate('document.querySelector(".mention-item[data-mention-content]")?.getAttribute("data-mention-content") || ""');
+      assert.match(capturedTerminal, /YOY_TERMINAL_REAL_APP/);
+      assert.doesNotMatch(capturedTerminal, /YOY_TERMINAL_SECOND/);
     });
 
     await check('「浏览器」拉起的是真的浏览器面板', async () => {

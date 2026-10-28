@@ -60,7 +60,7 @@
   overflow-wrap: anywhere;
   font-size: var(--fs-3);
 }
-.background-browser-reveal-error { flex-basis: 100%; color: var(--danger); font-size: var(--fs-3); }
+.background-browser-reveal-error { flex-basis: 100%; color: var(--danger-ink); font-size: var(--fs-3); }
 
 .background-browser-actions {
   display: flex;

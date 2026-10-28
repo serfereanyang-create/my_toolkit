@@ -16,14 +16,32 @@ import {
 export function PluginsSettings({ prefs, savePref }: { prefs: Prefs; savePref: SavePref }) {
   const [defs, setDefs] = useState<PluginDef[]>([]);
   const [status, setStatus] = useState<PluginStatus | null>(null);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [loadError, setLoadError] = useState('');
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setLoadState('loading');
+    setLoadError('');
     Promise.all([desktop.plugins.catalog(), desktop.plugins.status()])
-      .then(([c, s]) => { if (!cancelled) { setDefs(c); setStatus(s); } })
-      .catch(() => { /* registry unreachable: render empty rather than crash */ });
+      .then(([c, s]) => {
+        if (cancelled) return;
+        setDefs(c);
+        setStatus(s);
+        setLoadState('ready');
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        // Keep load failure distinct from "catalog loaded but has no entries":
+        // the old catch left defs at [] and the page said 加载中 forever.
+        setDefs([]);
+        setStatus(null);
+        setLoadState('error');
+        setLoadError(error instanceof Error ? error.message : String(error ?? '未知错误'));
+      });
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadTick]);
 
   const enabled = prefStrArray(prefs, 'pluginsEnabled', DEFAULT_ENABLED_IDS);
   const availability = statusMap(status);
@@ -78,8 +96,19 @@ export function PluginsSettings({ prefs, savePref }: { prefs: Prefs; savePref: S
         </section>
       ))}
 
-      {defs.length === 0 && (
+      {loadState === 'loading' && (
         <div className="settings-placeholder">插件目录加载中…</div>
+      )}
+
+      {loadState === 'error' && (
+        <div className="settings-error-row" role="alert">
+          <span>插件目录加载失败：{loadError}</span>
+          <button type="button" onClick={() => setReloadTick((tick) => tick + 1)}>重试</button>
+        </div>
+      )}
+
+      {loadState === 'ready' && defs.length === 0 && (
+        <div className="settings-placeholder">插件目录为空</div>
       )}
     </div>
   );

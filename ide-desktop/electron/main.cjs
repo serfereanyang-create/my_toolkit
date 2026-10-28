@@ -43,6 +43,7 @@ const { isExternalWebUrl } = require('./external-links.cjs');
 const { testProviderConnection } = require('./connectivity.cjs');
 const { createUsageStore } = require('./usage-store.cjs');
 const { MessageQueueStore } = require('./message-queue-store.cjs');
+const { ComposerDraftStore } = require('./composer-draft-store.cjs');
 const { createAutomationService } = require('./automation.cjs');
 const { registerSchemePrivileges } = require('./preview-protocol.cjs');
 const { createPreviewService } = require('./preview-service.cjs');
@@ -144,7 +145,15 @@ async function notifyKeyState(event, window, settingsStore) {
   }
   if (!Notification.isSupported()) return;
   try {
-    const notification = new Notification({ title: rule.title, body: rule.body, silent: false });
+    // 通知的应用名/图标由 Windows 按 AppUserModelId 去开始菜单找快捷方式决定
+    // （见 scripts/register-toast-shortcut.ps1 与 launch-latest.cjs 的自愈）；
+    // icon 这一项在 Windows 上被忽略，但 Linux/macOS 用它，别省。
+    const notification = new Notification({
+      title: rule.title,
+      body: rule.body,
+      silent: false,
+      icon: path.join(__dirname, '..', 'resources', 'icon.ico'),
+    });
     notification.on('click', () => {
       if (window && !window.isDestroyed()) {
         if (window.isMinimized()) window.restore();
@@ -796,13 +805,14 @@ function createWindow() {
   const connectivity = { test: (args) => testProviderConnection(args) };
   const usage = createUsageStore();
   const messageQueues = new MessageQueueStore(path.join(app.getPath('userData'), 'message-queues'));
+  const composerDrafts = new ComposerDraftStore(path.join(app.getPath('userData'), 'composer-drafts'));
   let queueShutdown = 'idle';
   app.on('before-quit', event => {
     if (queueShutdown === 'done') return;
     event.preventDefault();
     if (queueShutdown === 'flushing') return;
     queueShutdown = 'flushing';
-    void messageQueues.flush().finally(() => { queueShutdown = 'done'; app.quit(); });
+    void Promise.allSettled([messageQueues.flush(), composerDrafts.flush()]).finally(() => { queueShutdown = 'done'; app.quit(); });
   });
   const backgroundBrowser = createBackgroundBrowserService();
   const backgroundApp = new BackgroundAppService();
@@ -883,7 +893,7 @@ function createWindow() {
     backgroundBrowser.dispose();
     void backgroundApp.dispose();
   });
-  registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, messageQueues, automation, agentManager, terminalManager, previewService, previewRuntime, backgroundBrowser, backgroundApp, guiControl, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings, subagentRuns });
+  registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, messageQueues, composerDrafts, automation, agentManager, terminalManager, previewService, previewRuntime, backgroundBrowser, backgroundApp, guiControl, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings, subagentRuns });
 
   startupMark('services-ready');
   mainWindow.webContents.once('did-finish-load', () => startupMark('renderer-loaded'));

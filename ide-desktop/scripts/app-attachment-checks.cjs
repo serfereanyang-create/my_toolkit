@@ -1,4 +1,6 @@
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -25,6 +27,24 @@ module.exports = async function runAttachmentChecks(context) {
     await click('.rail button[aria-label="对话"]');
     await waitFor('!!document.querySelector(".composer-input-row textarea")', '输入框');
   };
+
+  await openChat();
+  await evaluate(`window.zcodeDesktop.composerDraft.load(${JSON.stringify(fixture)})`);
+  await settle();
+  while (await evaluate('!!document.querySelector(".file-attachment-card .file-remove")')) {
+    await evaluate('document.querySelector(".file-attachment-card .file-remove").click()');
+    await settle();
+  }
+  while (await evaluate('!!document.querySelector(".mention-chip-remove")')) {
+    await evaluate('document.querySelector(".mention-chip-remove").click()');
+    await settle();
+  }
+  await evaluate(`(() => {
+    const field = document.querySelector('.composer-input-row textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, '');
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await settle();
 
   await check('输入框是「输入 / 查看命令」，左下角有回形针添加附件', async () => {
     await openChat();
@@ -69,6 +89,34 @@ module.exports = async function runAttachmentChecks(context) {
     assert.equal(await evaluate('document.querySelectorAll(".file-attachment-card").length'), 0);
   });
 
+  await check('移除附件会清掉自动提示，但保留用户手写提示', async () => {
+    const source = ownedDirectory('auto-prompt-source');
+    const filePath = path.join(source, 'auto-prompt.png');
+    fs.writeFileSync(filePath, Buffer.from(ONE_PIXEL_PNG, 'base64'));
+    const originalShowOpenDialog = dialog.showOpenDialog;
+    try {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filePath] });
+      await click('.composer-tools button[aria-label="添加附件"]');
+      await waitFor('document.querySelector(".file-attachment-name")?.textContent === "auto-prompt.png"', 'auto prompt attachment');
+      assert.match(await evaluate('document.querySelector(".composer-input-row textarea").value'), /auto-prompt\.png/);
+      await click('.file-attachment-card .file-remove');
+      await waitFor('document.querySelectorAll(".file-attachment-card").length === 0', 'auto prompt attachment removed');
+      assert.equal(await evaluate('document.querySelector(".composer-input-row textarea").value'), '');
+      await evaluate(`(() => {
+        const field = document.querySelector('.composer-input-row textarea');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, '用户自己的说明');
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`);
+      await click('.composer-tools button[aria-label="添加附件"]');
+      await waitFor('document.querySelector(".file-attachment-name")?.textContent === "auto-prompt.png"', 'second auto prompt attachment');
+      await click('.file-attachment-card .file-remove');
+      await waitFor('document.querySelectorAll(".file-attachment-card").length === 0', 'second attachment removed');
+      assert.equal(await evaluate('document.querySelector(".composer-input-row textarea").value'), '用户自己的说明');
+    } finally {
+      dialog.showOpenDialog = originalShowOpenDialog;
+    }
+  });
+
   await check('回形针走真实选择器与真实读盘：缩略图就是那个文件的字节', async () => {
     const outside = ownedDirectory('attachment-source');
     const imagePath = path.join(outside, 'shot-from-disk.png');
@@ -84,7 +132,52 @@ module.exports = async function runAttachmentChecks(context) {
       const label = await evaluate('document.querySelector(".file-attachment-card").textContent');
       assert.match(label, /shot-from-disk\.png/);
       assert.match(label, /图片/);
+      assert.equal(await evaluate('document.querySelector(".file-attachment-card .file-size").textContent'), `${fs.statSync(imagePath).size} B`, 'picked attachment size must match disk metadata');
       await capture('attachments-picked');
+    } finally {
+      dialog.showOpenDialog = originalShowOpenDialog;
+      await evaluate('document.querySelector(".file-attachment-card .file-remove")?.click()');
+    }
+  });
+
+  await check('真实空文件可以添加，超限附件被拒绝且保留现有附件和草稿', async () => {
+    const source = ownedDirectory('attachment-source');
+    const emptyPath = path.join(source, 'empty-document.txt');
+    const oversizedPath = path.join(source, 'oversized-document.txt');
+    fs.writeFileSync(emptyPath, '');
+    const descriptor = fs.openSync(oversizedPath, 'w');
+    try { fs.ftruncateSync(descriptor, 50 * 1024 * 1024 + 1); }
+    finally { fs.closeSync(descriptor); }
+    const expectedLargeSize = fs.statSync(oversizedPath).size;
+    const originalShowOpenDialog = dialog.showOpenDialog;
+    try {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [emptyPath] });
+      await click('.composer-tools button[aria-label="添加附件"]');
+      await waitFor('document.querySelector(".file-attachment-name")?.textContent === "empty-document.txt"', '真实空文件卡片');
+      assert.equal(await evaluate('document.querySelector(".file-attachment-card .file-size").textContent'), '0 B');
+      await evaluate(`(() => {
+        const field = document.querySelector('.composer-input-row textarea');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, '保留现有附件和草稿');
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`);
+      await settle();
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [oversizedPath] });
+      await click('.composer-tools button[aria-label="添加附件"]');
+      await waitFor('[...document.querySelectorAll(".toast-body")].some(body => body.textContent.includes("50MB"))', '超限附件的明确提示');
+      assert.equal(await evaluate('document.querySelectorAll(".file-attachment-card").length'), 1);
+      assert.equal(await evaluate('document.querySelector(".file-attachment-name").textContent'), 'empty-document.txt');
+      assert.equal(await evaluate('document.querySelector(".composer-input-row textarea").value'), '保留现有附件和草稿');
+      const reviewOutput = path.join(__dirname, '..', 'out', 'attachment-review');
+      fs.mkdirSync(reviewOutput, { recursive: true });
+      fs.writeFileSync(path.join(reviewOutput, 'size-policy.json'), JSON.stringify({
+        imageSize: Buffer.from(ONE_PIXEL_PNG, 'base64').length,
+        emptySize: fs.statSync(emptyPath).size,
+        oversizedSize: expectedLargeSize,
+        oversizedRejected: true,
+        preservedAttachmentCount: 1,
+        preservedDraft: await evaluate('document.querySelector(".composer-input-row textarea").value'),
+      }, null, 2));
+      await capture('attachments-oversize-rejected');
     } finally {
       dialog.showOpenDialog = originalShowOpenDialog;
       await evaluate('document.querySelector(".file-attachment-card .file-remove")?.click()');

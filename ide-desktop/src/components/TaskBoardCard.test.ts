@@ -102,4 +102,13 @@ describe('TaskBoardCard', () => {
     const markup = render(board({ tasks: [] }));
     expect(markup).toContain('0/0');
   });
+  it('offers a restart action for a cancelled board', () => {
+    const markup = render(board({
+      status: 'cancelled',
+      runtimeMode: 'paused',
+      activeTaskId: 'task_1',
+      tasks: [{ id: 'task_1', title: '被取消的任务', status: 'cancelled', dependsOn: [] }],
+    }));
+    expect(markup).toContain('重新开始');
+  });
 });

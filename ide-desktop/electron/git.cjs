@@ -771,14 +771,10 @@ async function createPr(root, { title, body = '', draft = false, base = '' }) {
   try {
     const { stdout } = await execAsync('gh', args, { cwd: root, windowsHide: true, maxBuffer: 256 * 1024 });
     const out = (stdout || '').trim();
-    // `gh pr create` outputs the PR URL on the last line
-    const urlMatch = out.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/);
-    const numMatch = urlMatch ? urlMatch[0].match(/\/pull\/(\d+)$/) : null;
+    const parsed = parsePullRequestOutput(out, t);
     return {
       ok: true,
-      url: urlMatch ? urlMatch[0] : out,
-      number: numMatch ? parseInt(numMatch[1], 10) : null,
-      title: t,
+      ...parsed,
       output: out,
     };
   } catch (err) {
@@ -793,6 +789,37 @@ async function createPr(root, { title, body = '', draft = false, base = '' }) {
     }
     return { ok: false, error };
   }
+}
+
+function assessPrReadiness({ remotes = [], ghInstalled = false, authenticated = false } = {}) {
+  if (!remotes.some((remote) => remote !== '.')) return { ok: false, code: 'no_remote', message: '请先为仓库配置远程仓库' };
+  if (!ghInstalled) return { ok: false, code: 'gh_missing', message: '未安装 GitHub CLI（gh），无法创建 Pull Request' };
+  if (!authenticated) return { ok: false, code: 'gh_auth', message: 'GitHub CLI 尚未登录，请先执行 gh auth login' };
+  return { ok: true };
+}
+
+async function prReadiness(root, run = execAsync) {
+  const remoteResult = await safeGit(root, ['remote']);
+  if (!remoteResult.ok) return { ok: false, code: 'git', message: remoteResult.error || '无法读取远程仓库' };
+  const remotes = remoteResult.stdout.split('\n').map((name) => name.trim()).filter(Boolean);
+  let ghInstalled = false;
+  try { await run('gh', ['--version'], { cwd: root, windowsHide: true, maxBuffer: 32 * 1024 }); ghInstalled = true; } catch {}
+  if (!ghInstalled) return assessPrReadiness({ remotes, ghInstalled: false, authenticated: false });
+  let authenticated = false;
+  try { await run('gh', ['auth', 'status'], { cwd: root, windowsHide: true, maxBuffer: 64 * 1024 }); authenticated = true; } catch {}
+  return assessPrReadiness({ remotes, ghInstalled: true, authenticated });
+}
+
+function parsePullRequestOutput(output, title) {
+  const text = String(output || '').trim();
+  const match = text.match(/https?:\/\/[^\s]+\/pull\/(\d+)(?=$|[\s).,])/i);
+  const url = match ? match[0].replace(/[).,]+$/, '') : text;
+  const numberMatch = url.match(/\/pull\/(\d+)$/i);
+  return {
+    url,
+    number: numberMatch ? Number(numberMatch[1]) : null,
+    title,
+  };
 }
 
 /**
@@ -910,4 +937,7 @@ module.exports = {
   createBranch,
   deleteBranch,
   createPr,
+  parsePullRequestOutput,
+  assessPrReadiness,
+  prReadiness,
 };

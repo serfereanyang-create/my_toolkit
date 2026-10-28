@@ -16,6 +16,7 @@ interface ToastItem {
   kind: ToastKind;
   title: string;
   body?: string;
+  retryable?: boolean;
 }
 
 const TOAST_MS: Record<ToastKind, number> = {
@@ -54,7 +55,7 @@ export function appNotice(title: string, body?: string, kind: ToastKind = 'error
   window.dispatchEvent(new CustomEvent(NOTICE_EVENT, { detail: { kind, title, body } }));
 }
 
-export function ToastLayer({ onFocusChat }: { onFocusChat: () => void }) {
+export function ToastLayer({ onFocusChat, onRetry }: { onFocusChat: () => void; onRetry?: () => void }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const seqRef = useRef(0);
   const timersRef = useRef<Map<number, number>>(new Map());
@@ -113,7 +114,7 @@ export function ToastLayer({ onFocusChat }: { onFocusChat: () => void }) {
         // copied.
         const didWork = event.producedActivity !== false;
         toast = event.status === 'error'
-          ? { kind: 'error', title: '本轮执行失败', body: reason ? reason.slice(0, 200) : 'CLI 没有返回失败原因' }
+          ? { kind: 'error', title: '本轮执行失败', body: reason ? reason.slice(0, 200) : 'CLI 没有返回失败原因', retryable: true }
           : didWork
             ? { kind: 'success', title: '任务完成', body: '智能体已完成本轮工作' }
             : { kind: 'info', title: '本轮已回复', body: '未执行任何操作（只做了回复）' };
@@ -160,6 +161,9 @@ export function ToastLayer({ onFocusChat }: { onFocusChat: () => void }) {
             <button type="button" className="toast-close" onClick={() => dismiss(toast.id)} aria-label="关闭提醒">
               <X size={13} />
             </button>
+            {toast.retryable && onRetry && (
+              <button type="button" className="toast-retry" onClick={() => { onRetry(); dismiss(toast.id); }}>重试</button>
+            )}
             {toast.kind === 'approval' && (
               <span className="toast-pulse" aria-hidden="true" />
             )}

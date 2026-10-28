@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, BookOpen, ChevronDown, ChevronRight, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertTriangle, BookOpen, ChevronDown, ChevronRight, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import { useQualityRevision } from '../lib/qualityRevision';
 
@@ -75,6 +75,14 @@ export function SkillPanel() {
         <div className="skill-panel-error" role="alert">
           <AlertTriangle size={14} />
           <span>{error}</span>
+          <button type="button" className="skill-panel-retry" onClick={() => void refresh()} disabled={loading}>重试</button>
+        </div>
+      )}
+
+      {loading && !error && skills.length === 0 && (
+        <div className="skill-panel-loading" role="status" aria-busy="true">
+          <Loader2 size={15} className="skill-panel-spin" />
+          正在扫描工作区技能…
         </div>
       )}
 

@@ -30,6 +30,7 @@ export function PersonalizeSettings({ prefs, savePref }: { prefs: Prefs; savePre
           control={
             <input
               className="settings-text-field"
+              aria-label="称呼"
               value={nickname}
               placeholder="例如 小明"
               onChange={(event) => setNickname(event.target.value)}
@@ -42,6 +43,7 @@ export function PersonalizeSettings({ prefs, savePref }: { prefs: Prefs; savePre
           control={
             <input
               className="settings-text-field"
+              aria-label="职业或角色"
               value={role}
               placeholder="例如 前端工程师"
               onChange={(event) => setRole(event.target.value)}
@@ -93,6 +95,7 @@ export function PersonalizeSettings({ prefs, savePref }: { prefs: Prefs; savePre
           description="告诉助手你希望它记住的偏好"
           control={
             <TextArea
+              label="自定义指令内容"
               value={instructions}
               onChange={setInstructions}
               placeholder="例如 回答请使用中文，代码优先给 TypeScript 示例..."

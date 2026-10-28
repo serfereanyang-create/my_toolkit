@@ -26,6 +26,8 @@ const { readGlobalMemory } = require('./memory-global.cjs');
 const { prepareMediaPreview } = require('./media-preview.cjs');
 const { syncPersonaFile } = require('./persona.cjs');
 const { selectWorkspaceCandidate } = require('./workspace-picker.cjs');
+const { pickWorkspaceFile } = require('./file-picker.cjs');
+const { inspectAttachments } = require('./attachment-inspection.cjs');
 
 function withDeadline(promise, timeoutMs, message) {
   let timer;
@@ -37,7 +39,7 @@ function withDeadline(promise, timeoutMs, message) {
   });
 }
 
-function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, messageQueues, automation, agentManager, terminalManager, previewService, previewRuntime, backgroundBrowser, backgroundApp, guiControl, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings, subagentRuns }) {
+function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, usage, messageQueues, composerDrafts, automation, agentManager, terminalManager, previewService, previewRuntime, backgroundBrowser, backgroundApp, guiControl, ensureFimServer, ensureCompletionService, ensureLanguageServer, snippets, bookmarks, fileHistory, notes, sessionTags, keybindings, subagentRuns }) {
   const queueScopes = new Set();
   const queueRoot = root => { if (typeof root !== 'string' || !path.isAbsolute(root)) throw new Error('需要绝对工作区路径。'); return path.resolve(root); };
   ipcMain.handle('messageQueue.load', async (_event, root) => {
@@ -51,6 +53,29 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     const requested = queueRoot(root);
     if (!queueScopes.has(requested)) throw new Error('未授权的消息队列工作区。');
     await messageQueues.save(requested, state);
+    return { ok: true };
+  });
+  ipcMain.handle('messageQueue.restore', async (_event, root, messages) => {
+    const requested = queueRoot(root);
+    if (!queueScopes.has(requested)) throw new Error('未授权的消息队列工作区。');
+    return messageQueues.restore(requested, messages);
+  });
+  const draftScopes = new Set();
+  ipcMain.handle('composerDraft.load', async (_event, root) => {
+    const requested = queueRoot(root);
+    if (requested !== queueRoot(workspace.getRoot())) throw new Error('草稿工作区已变化。');
+    const drafts = await composerDrafts.load(requested);
+    draftScopes.add(requested);
+    return drafts;
+  });
+  ipcMain.handle('composerDraft.save', async (_event, root, drafts) => {
+    const requested = queueRoot(root);
+    if (!draftScopes.has(requested)) throw new Error('未授权的草稿工作区。');
+    await composerDrafts.save(requested, drafts);
+    return { ok: true };
+  });
+  ipcMain.handle('composerDraft.flush', async () => {
+    await composerDrafts.flush();
     return { ok: true };
   });
   async function materializePersona(root) {
@@ -349,45 +374,18 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
    * 由渲染进程那一侧做，这里只保证「选的是个存在且可读的文件」。
    */
   ipcMain.handle('files.pick', async (_event, options) => {
-    const input = options && typeof options === 'object' ? options : {};
-    const title = typeof input.title === 'string' && input.title.trim()
-      ? input.title.trim().slice(0, 120)
-      : '选择文件';
-
-    const filters = [];
-    if (Array.isArray(input.filters)) {
-      for (const entry of input.filters.slice(0, 8)) {
-        if (!entry || typeof entry !== 'object') continue;
-        const name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim().slice(0, 60) : '文件';
-        const extensions = Array.isArray(entry.extensions)
-          ? entry.extensions
-              .filter((ext) => typeof ext === 'string')
-              .map((ext) => ext.replace(/^\./, '').trim().toLowerCase())
-              .filter((ext) => /^[a-z0-9]{1,10}$/.test(ext))
-              .slice(0, 24)
-          : [];
-        if (extensions.length > 0) filters.push({ name, extensions });
-      }
-    }
-
     // 起始目录锁在工作区根：不读渲染进程给的 defaultPath，否则那个参数就成了
     // 「让用户在任意目录里挑文件」的后门。
-    const root = workspace.getRoot();
-    const picked = await dialog.showOpenDialog(mainWindow, {
-      title,
-      properties: ['openFile'],
-      filters: filters.length > 0 ? filters : undefined,
-      defaultPath: root || undefined,
+    return pickWorkspaceFile({
+      dialog,
+      owner: mainWindow,
+      root: workspace.getRoot(),
+      options,
+      stat: (source) => fs.stat(source),
     });
-    if (picked.canceled || picked.filePaths.length === 0) return { ok: false, canceled: true };
-
-    const source = picked.filePaths[0];
-    const stat = await fs.stat(source).catch(() => null);
-    if (!stat || !stat.isFile()) return { ok: false, error: '无法读取所选文件' };
-    return { ok: true, path: source };
   });
 
-  ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
+  ipcMain.handle('files.inspect', async (_event, paths) => inspectAttachments(paths));
 
   // Attachment thumbnails: read one image and hand back a data URL. Only
   // images, only a regular file, and only under the size cap — the renderer
@@ -413,6 +411,9 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     const buffer = await fs.readFile(absolutePath);
     return `data:${type};base64,${buffer.toString('base64')}`;
   });
+
+
+  ipcMain.handle('fs.read', async (_event, relativePath) => await workspace.readFile(relativePath));
   ipcMain.handle('fs.write', async (_event, relativePath, content) => await workspace.writeFile(relativePath, content));
   
   // Save pasted image — store inside the current workspace so the agent can
@@ -534,7 +535,16 @@ function registerIpc({ mainWindow, workspace, settings, secrets, connectivity, u
     onChange: (absolutePath) => {
       const mainWindowRef = mainWindow;
       if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-        mainWindowRef.webContents.send('editor.fileChanged', { path: absolutePath });
+        const root = workspace.getRoot();
+        if (!root) return;
+        const normalizedRoot = path.resolve(root);
+        const normalizedPath = path.resolve(absolutePath);
+        const relativeCheck = path.relative(normalizedRoot, normalizedPath);
+        if (relativeCheck.startsWith('..') || path.isAbsolute(relativeCheck)) return;
+        const relativePath = root
+          ? path.relative(root, absolutePath).replace(/\\/g, '/')
+          : absolutePath;
+        mainWindowRef.webContents.send('editor.fileChanged', { path: relativePath, workspaceRoot: normalizedRoot });
       }
     },
   });
@@ -1444,6 +1454,7 @@ Edited code:`;
   ipcMain.handle('git.createBranch',  async (_e, name) => git.createBranch(workspace.getRoot(), name));
   ipcMain.handle('git.deleteBranch',  async (_e, name, force) => git.deleteBranch(workspace.getRoot(), name, force));
   ipcMain.handle('git.createPr',      async (_e, opts) => git.createPr(workspace.getRoot(), opts || {}));
+  ipcMain.handle('git.prReadiness',   async () => git.prReadiness(workspace.getRoot()));
 }
 
 module.exports = { registerIpc };

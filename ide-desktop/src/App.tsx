@@ -11,6 +11,7 @@ import { ConversationStream } from './components/ConversationStream';
 import { CoveragePanel } from './components/CoveragePanel';
 import { DiffReview } from './components/DiffReview/DiffReview';
 import { EditorView, type OpenFile } from './components/Editor/EditorView';
+import type { MonacoSelection } from './components/Editor/MonacoEditor';
 import { FileTree } from './components/FileTree';
 import { GitPanel } from './components/GitPanel';
 import { GitCapsule } from './components/GitCapsule';
@@ -40,6 +41,7 @@ import { FileHistoryPanel } from './components/FileHistoryPanel';
 import { CodeStatsPanel } from './components/CodeStatsPanel';
 import { SessionNotesDrawer, NOTES_DRAFT_KEY, NOTES_WIDTH } from './components/SessionNotesDrawer';
 import { SettingsView, type SettingsNavId } from './components/Settings/SettingsView';
+import { PetReopenButton, PetWidget, type PetSignal } from './components/PetWidget';
 import { TaskCard } from './components/TaskCard';
 import { Terminal } from './components/Terminal';
 import { TerminalFloat } from './components/TerminalFloat';
@@ -53,6 +55,7 @@ import { cueForEvent, playCue, soundVolume } from './lib/notifySounds';
 import { Welcome } from './components/Welcome';
 import { desktop } from './lib/ipc';
 import { settingsPatch, type SettingsPatch } from './lib/settingsPatch';
+import { clampCodeFontSize, clampUiFontSize } from './lib/uiFontSize';
 import { appReducer, initialState, sessionToChat } from './lib/state';
 import { queueForSession } from './lib/messageQueueSelect';
 import { returnedQueueMessages } from './lib/cancelledQueue';
@@ -61,7 +64,10 @@ import { setLanguageWorkspaceRoot } from './lib/languageProviders';
 import { transcriptFileName, transcriptToMarkdown } from './lib/transcriptExport';
 import { loadRecent, rankRecent, touchRecent, type RecentFile } from './lib/recentFiles';
 import type { MentionItem } from './components/MentionPicker';
+import { terminalMentionContext } from './lib/terminalOutput';
+import { composerDraftScope, createComposerDraftStore, type ComposerSubmission } from './lib/composerDraft';
 import type { ChatItem, ReasoningEffort, SessionMeta, ThemeMode, ToolScope } from './types';
+import { normalizePetSettings, readPetSettings, writePetSettings, type PetSettings } from './lib/pet';
 
 type MainView = 'newtab' | 'chat' | 'files' | 'search' | 'snippets' | 'bookmarks' | 'history' | 'stats' | 'git' | 'automation' | 'settings' | 'editor' | 'quality' | 'computer' | 'memory';
 type QualityOverlay = 'review' | 'coverage' | 'performance' | 'refactor' | null;
@@ -100,9 +106,18 @@ export default function App() {
   const [qualityOverlay, setQualityOverlay] = useState<QualityOverlay>(null);
   // Line-reveal request from quality panels into the Monaco editor.
   const [pendingReveal, setPendingReveal] = useState<{ path: string; line: number } | null>(null);
+  const [selectedCode, setSelectedCode] = useState<MonacoSelection | null>(null);
   // Versioned Help / What's New overlay (Rail help menu).
   const [helpOverlay, setHelpOverlay] = useState<HelpOverlayTab | null>(null);
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
+  const [composerDrafts] = useState(() => createComposerDraftStore(desktop.composerDraft ? {
+    load: root => desktop.composerDraft.load(root),
+    save: (root, drafts) => desktop.composerDraft.save(root, drafts),
+    onError: (_root, error) => appNotice('草稿恢复或保存失败，当前输入仍在窗口中', cleanIpcError(error), 'error'),
+  } : undefined));
+  useEffect(() => {
+    if (state.workspaceRoot) void composerDrafts.load(state.workspaceRoot);
+  }, [state.workspaceRoot, composerDrafts]);
   const [booting, setBooting] = useState(true);
   const [settingsPage, setSettingsPage] = useState<SettingsNavId | undefined>(undefined);
   // Terminal output ring-buffer for @terminal mention
@@ -143,6 +158,16 @@ export default function App() {
   const [sessionTags, setSessionTags] = useState<Record<string, string[]>>({});
   // 子智能体目录: number of subagents currently running, for the tab badge.
   const [runningSubagentCount, setRunningSubagentCount] = useState(0);
+  const [petSignal, setPetSignal] = useState<PetSignal>(null);
+  const [petSettings, setPetSettings] = useState<PetSettings>(() => readPetSettings(window.localStorage));
+
+  const updatePetSettings = useCallback((patch: Partial<PetSettings>) => {
+    setPetSettings((previous) => {
+      const next = normalizePetSettings({ ...previous, ...patch });
+      writePetSettings(next, window.localStorage);
+      return next;
+    });
+  }, []);
 
   // Track running subagents from the agent stream. The directory panel polls
   // the store for its own list; this counter exists so the badge is right even
@@ -284,6 +309,8 @@ export default function App() {
         dispatch({ type: 'queue/restore', messages: returnedQueueMessages(event, sessionId) });
       }
       dispatch({ type: 'agent/event', event });
+      if (event.type === 'turn_done') setPetSignal({ kind: event.status === 'error' ? 'failed' : 'done', nonce: Date.now() });
+      else if (event.type === 'error') setPetSignal({ kind: 'failed', nonce: Date.now() });
       // System notification cues (WebAudio): confirmation needed / task done
       // / error. Volume 0 (sounds off) short-circuits; auto-decided approvals
       // are silent by design. Never throws.
@@ -384,8 +411,17 @@ export default function App() {
   // in styles.css is one of ten `calc(var(--fs-base) ± Npx)` tokens, so writing
   // this one variable moves the entire interface. It deliberately does NOT touch
   // the root font-size, which would scale icons and spacing along with the text.
-  const uiFontSize = Number(state.settings?.preferences?.uiFontSize) || undefined;
-  const codeFontSize = Number(state.settings?.preferences?.codeFontSize) || undefined;
+  //
+  // The value is normalized on read, not just in the field that writes it: a
+  // settings file written by an older build, or hand-edited, must not be able to
+  // push the whole interface to 6px or 40px. Below 12 the smallest steps stop
+  // being readable even with their floor, above 20 the seven tiers pack into a
+  // 5px band and the hierarchy disappears — both measured on the real UI.
+  const uiFontSize = clampUiFontSize(state.settings?.preferences?.uiFontSize);
+  // Same normalization on read for --fs-code: writing an absolute px replaces
+  // the token's own `max(var(--fs-floor), …)` expression, so a stored 8px would
+  // reach the code surfaces unguarded.
+  const codeFontSize = clampCodeFontSize(state.settings?.preferences?.codeFontSize);
   const chineseFont = String(state.settings?.preferences?.uiChineseFont || 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif');
   const englishFont = String(state.settings?.preferences?.uiEnglishFont || 'Inter, Segoe UI, system-ui, -apple-system, BlinkMacSystemFont, sans-serif');
   const interfaceLanguage = String(state.settings?.preferences?.['gen.language'] || 'auto');
@@ -824,11 +860,12 @@ export default function App() {
    * handling applies for free. The findings come back as a `review_report`
    * event, not as this call's return value.
    */
-  async function ensureSession(): Promise<string> {
+  async function ensureSession(onStarted?: (sessionId: string) => void): Promise<string> {
     const root = stateRef.current.workspaceRoot;
     const sequence = switchSequenceRef.current;
     const requested = stateRef.current.activeSessionId;
     const result = await desktop.agent.start(requested ?? undefined);
+    onStarted?.(result.sessionId);
     if (sequence !== switchSequenceRef.current || root !== stateRef.current.workspaceRoot) throw new Error('会话或工作区已切换，未发送此消息');
     dispatch({ type: 'agent/bind', sessionId: result.sessionId });
     if (result.running) dispatch({ type: 'agent/event', event: { type: 'turn_start', sessionId: result.sessionId } });
@@ -878,18 +915,27 @@ export default function App() {
   // `revision`, the pane is keyed on it, and the component remounts and re-reads.
   // Without this the pane keeps showing the bytes the agent just replaced.
   useEffect(() => {
-    const unsub = desktop.editor.onFileChanged(async ({ path }) => {
-      dispatch({ type: 'preview/changed', absolutePath: path });
+    const unsub = desktop.editor.onFileChanged(async ({ path, workspaceRoot: eventRoot }) => {
+      const eventSequence = switchSequenceRef.current;
+      const currentRoot = stateRef.current.workspaceRoot;
+      if (eventRoot && eventRoot !== currentRoot) return;
+      const absolutePath = eventRoot
+        ? `${eventRoot.replace(/[\\/]+$/, '')}/${path.replace(/^[/\\]+/, '')}`.replace(/\\/g, '/')
+        : path;
+      dispatch({ type: 'preview/changed', absolutePath });
 
       const tab = openFilesRef.current.find((f) => f.path === path);
       if (!tab) return;
       const fresh = await desktop.editor.readFile(path);
+      if (eventSequence !== switchSequenceRef.current || currentRoot !== stateRef.current.workspaceRoot) return;
       if (!fresh.ok || fresh.content === undefined) return;
       const stat = await desktop.editor.stat(path);
+      if (eventSequence !== switchSequenceRef.current || currentRoot !== stateRef.current.workspaceRoot) return;
       const mtimeMs = stat.ok ? stat.mtimeMs : undefined;
       if (mtimeMs !== undefined) diskMtimes.current.set(path, mtimeMs);
       const newContent = fresh.content;
       setOpenFiles((prev) => prev.map((f) => {
+        if (eventSequence !== switchSequenceRef.current || currentRoot !== stateRef.current.workspaceRoot) return f;
         if (f.path !== path) return f;
         if (!f.dirty) {
           return { ...f, content: newContent, external: undefined, stale: false };
@@ -909,6 +955,25 @@ export default function App() {
     setOpenFiles(prev => prev.map(f =>
       f.path === path ? { ...f, content, dirty: true, stale: f.stale } : f
     ));
+  }
+
+  async function handleReloadExternal(path: string) {
+    const fresh = await desktop.editor.readFile(path);
+    if (!fresh.ok || fresh.content === undefined) {
+      appNotice('加载磁盘版本失败', fresh.error ?? '无法读取外部文件');
+      return;
+    }
+    const stat = await desktop.editor.stat(path);
+    if (stat.ok && stat.mtimeMs !== undefined) diskMtimes.current.set(path, stat.mtimeMs);
+    setOpenFiles((files) => files.map((file) => file.path === path
+      ? { ...file, content: fresh.content!, dirty: false, external: undefined, stale: false }
+      : file));
+  }
+
+  function handleKeepExternal(path: string) {
+    setOpenFiles((files) => files.map((file) => file.path === path
+      ? { ...file, external: undefined, stale: true }
+      : file));
   }
 
   // Watch the files the preview panes are showing, so an agent's write to an
@@ -1009,11 +1074,13 @@ export default function App() {
     }
   }
 
-  async function submitPrompt(text: string, files?: Array<{ path: string; name: string; size: number; category: string; mediaType?: string; icon: string }>, mentions?: MentionItem[]) {
+  async function submitPrompt(text: string, files?: Array<{ path: string; name: string; size: number; category: string; mediaType?: string; icon: string }>, mentions?: MentionItem[], draftSubmission?: ComposerSubmission): Promise<boolean> {
     if (switchingSessionRef.current) {
       dispatch({ type: 'agent/event', event: { type: 'info', message: '会话正在切换，请稍候再发送消息。' } });
-      return;
+      return false;
     }
+    const requestRoot = stateRef.current.workspaceRoot;
+    const requestSequence = switchSequenceRef.current;
     setMainView('chat');
 
     // ── AI action slash commands ───────────────────────────────────────────────
@@ -1026,43 +1093,43 @@ export default function App() {
       const extra = text.replace('/explain', '').trim();
       if (!hasCodeContext) {
         dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: '请先用 **@文件名** 引用要解释的文件，再执行 /explain。' } });
-        return;
+        return false;
       }
       const msg = `请解释以下引用文件的逻辑、复杂度和潜在问题${extra ? `（${extra}）` : ''}：`;
-      return submitPrompt(msg, files, mentions);
+      return submitPrompt(msg, files, mentions, draftSubmission);
     }
     if (text.startsWith('/fix')) {
       if (!hasCodeContext) {
         dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: '请先用 **@文件名** 引用要修复的文件，再执行 /fix。' } });
-        return;
+        return false;
       }
       const msg = '请修复以下引用文件中的 bug，只返回修改后的完整代码：';
-      return submitPrompt(msg, files, mentions);
+      return submitPrompt(msg, files, mentions, draftSubmission);
     }
     if (text.startsWith('/test')) {
       if (!hasCodeContext) {
         dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: '请先用 **@文件名** 引用要测试的文件，再执行 /test。' } });
-        return;
+        return false;
       }
       const msg = '请为以下引用文件生成完整的单元测试，覆盖主要分支和边界条件：';
-      return submitPrompt(msg, files, mentions);
+      return submitPrompt(msg, files, mentions, draftSubmission);
     }
     if (text.startsWith('/comment')) {
       if (!hasCodeContext) {
         dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: '请先用 **@文件名** 引用要注释的文件，再执行 /comment。' } });
-        return;
+        return false;
       }
       const msg = '请为以下引用文件添加规范的文档注释（JSDoc/类型注释），不要改变逻辑：';
-      return submitPrompt(msg, files, mentions);
+      return submitPrompt(msg, files, mentions, draftSubmission);
     }
     if (text.startsWith('/edit ')) {
       const instruction = text.replace('/edit ', '').trim();
       if (!hasCodeContext) {
         dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: '请先用 **@文件名** 引用要修改的文件，再执行 /edit。' } });
-        return;
+        return false;
       }
       const msg = `按照以下指令修改引用文件，只返回修改后的完整代码：\n指令：${instruction}`;
-      return submitPrompt(msg, files, mentions);
+      return submitPrompt(msg, files, mentions, draftSubmission);
     }
 
     // Expand @-mentions into real context before sending
@@ -1077,11 +1144,18 @@ export default function App() {
           } catch { parts.push(`**@${m.label}** (\`${m.path}\`) — 无法读取`); }
         } else if (m.type === 'url' && m.path) {
           parts.push(`**@${m.label}**: ${m.path}`);
+        } else if (m.type === 'terminal' && m.content) {
+          parts.push(terminalMentionContext(m.label, m.content));
         }
       }
       if (parts.length > 0) {
         expandedText = `${text}\n\n--- 引用上下文 ---\n${parts.join('\n\n')}`;
       }
+    }
+
+    if (requestRoot !== stateRef.current.workspaceRoot || requestSequence !== switchSequenceRef.current) {
+      appNotice('会话已变化，消息没有发送', '原草稿已保留，请在对应会话重新发送。', 'info');
+      return false;
     }
 
     if (expandedText === '/help') {
@@ -1100,21 +1174,21 @@ export default function App() {
           ].join('\n'),
         },
       });
-      return;
+      return true;
     }
     if (expandedText === '/status') {
       dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: `agent=${state.agentStatus} workspace=${state.workspaceRoot}` } });
-      return;
+      return true;
     }
     if (expandedText === '/model') {
       const provider = state.settings?.providers.find((item) => item.id === state.settings?.activeProviderId);
       dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: provider ? provider.model : 'mock-code-agent-v1' } });
-      return;
+      return true;
     }
     if (expandedText === '/provider') {
       const provider = state.settings?.providers.find((item) => item.id === state.settings?.activeProviderId);
-      dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: provider ? provider.label : 'Mock' } });
-      return;
+      dispatch({ type: 'agent/event', event: { type: 'assistant_message', text: provider ? provider.label : '模拟模式' } });
+      return true;
     }
 
     // While a turn is in flight the CLI rejects a second prompt outright
@@ -1139,7 +1213,7 @@ export default function App() {
       // Submitting into a queue that is already being served needs no extra
       // push — the in-flight send will finish and the next trigger picks this
       // up. Only a queue that nothing is watching needs one.
-      return;
+      return true;
     }
 
     // Show the user's message immediately so it never silently disappears,
@@ -1151,25 +1225,46 @@ export default function App() {
     let submittedSessionId = sessionId;
     try {
       dispatch({ type: 'agent/status', status: 'starting' });
-      const sessionId = await ensureSession();
+      const sessionId = await ensureSession(started => { submittedSessionId = started; });
       submittedSessionId = sessionId;
       if (submission.cancelled) throw new Error('Agent bridge cancelled before sending');
       const toolScope = (stateRef.current.settings?.preferences?.toolScope as ToolScope | undefined) ?? 'auto';
       await desktop.agent.prompt(expandedText, files, toolScope, sessionId);
+      return true;
     } catch (error) {
-      if (submittedRoot !== stateRef.current.workspaceRoot || submission.sequence !== switchSequenceRef.current) return;
       // Surface the real reason (e.g. "API key is missing") in the conversation
       // instead of failing silently, and reset so the next prompt can retry.
       const message = error instanceof Error ? error.message : String(error);
       if (submission.cancelled || (/cancelled|canceled|not running/i.test(message) && (stateRef.current.queuePausedSessions ?? []).some(paused => paused === (submittedSessionId ?? '') || paused === ''))) {
         const owner = submittedSessionId ?? stateRef.current.activeSessionId ?? '';
-        pauseQueue(owner);
-        dispatch({ type: 'queue/restore', messages: [{ id: `cancelled-send-${crypto.randomUUID()}`, sessionId: owner, text: expandedText, files: files?.map(file => ({ path: file.path, name: file.name, size: file.size })), createdAt: Date.now() }] });
-        return;
+        await retainFailedMessage(submittedRoot, { id: `cancelled-send-${crypto.randomUUID()}`, sessionId: owner, text: expandedText, files: files?.map(file => ({ path: file.path, name: file.name, size: file.size })), createdAt: Date.now() });
+        return true;
       }
-      dispatch({ type: 'agent/event', event: { type: 'error', message: `无法启动对话：${cleanIpcError(message)}` } });
-      dispatch({ type: 'agent/status', status: 'offline' });
+      const recovered = draftSubmission && composerDrafts.recover(draftSubmission.scope, composerDraftScope(submittedRoot, submittedSessionId), draftSubmission.draft);
+      if (submittedRoot === stateRef.current.workspaceRoot && submission.sequence === switchSequenceRef.current) {
+        dispatch({ type: 'agent/event', event: { type: 'error', message: `无法启动对话：${cleanIpcError(message)}` } });
+        dispatch({ type: 'agent/status', status: 'offline' });
+      } else {
+        appNotice('原会话消息未发送', '未发送的内容已保留在对应会话。', 'error');
+      }
+      if (draftSubmission && !recovered) {
+        await retainFailedMessage(submittedRoot, { id: `failed-send-${crypto.randomUUID()}`, sessionId: submittedSessionId ?? '', text: expandedText, files: files?.map(file => ({ path: file.path, name: file.name, size: file.size })), createdAt: Date.now() });
+        return true;
+      }
+      return false;
     } finally { if (pendingSubmissionRef.current === submission) pendingSubmissionRef.current = null; }
+  }
+
+  async function retainFailedMessage(root: string, message: import('./types').QueuedMessage) {
+    if (stateRef.current.workspaceRoot === root) {
+      pauseQueue(message.sessionId);
+      dispatch({ type: 'queue/restore', messages: [message] });
+    }
+    try { await desktop.messageQueue.restore(root, [message]); }
+    catch (error) {
+      appNotice('未发送消息暂存失败', cleanIpcError(error), 'error');
+      throw error;
+    }
   }
 
   /**
@@ -1202,6 +1297,7 @@ export default function App() {
     if (decision.action !== 'send') return;
 
     const next = decision.message;
+    const submittedRoot = stateRef.current.workspaceRoot;
     sendInFlightRef.current.add(sessionId);
     try {
       // Adopt an orphaned entry — queued while the bridge was still starting, so
@@ -1215,7 +1311,10 @@ export default function App() {
       await desktop.agent.prompt(next.text, next.files, toolScope, sessionId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      dispatch({ type: 'agent/event', event: { type: 'error', message: `队列消息发送失败：${cleanIpcError(message)}` } });
+      await retainFailedMessage(submittedRoot, { ...next, sessionId }).catch(() => undefined);
+      if (stateRef.current.workspaceRoot === submittedRoot && stateRef.current.activeSessionId === sessionId) {
+        dispatch({ type: 'agent/event', event: { type: 'error', message: `队列消息发送失败：${cleanIpcError(message)}` } });
+      }
     } finally {
       sendInFlightRef.current.delete(sessionId);
     }
@@ -1539,7 +1638,7 @@ export default function App() {
           sessionId={state.activeSessionId ?? undefined}
         />
         {confirmationDialogs}
-        <ToastLayer onFocusChat={() => setMainView('chat')} />
+        <ToastLayer onFocusChat={() => setMainView('chat')} onRetry={() => { setMainView('chat'); void submitPrompt('/retry'); }} />
         {paletteOpen && (
           <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
         )}
@@ -1549,6 +1648,18 @@ export default function App() {
           onClose={() => setQuickOpen(false)}
           onPick={(path) => { void handleOpenFileAtLine(path); }}
         />
+        {!petSettings.visible && <PetReopenButton onShow={() => updatePetSettings({ visible: true })} />}
+        {petSettings.visible && (
+          <PetWidget
+            settings={petSettings}
+            agentStatus={state.agentStatus}
+            needsApproval={Boolean(pendingApproval)}
+            needsReview={state.pendingDiffs.some((diff) => diff.status === 'pending')}
+            signal={petSignal}
+            onChange={updatePetSettings}
+            onFocusChat={() => setMainView('chat')}
+          />
+        )}
       </>
     );
   }
@@ -1560,9 +1671,13 @@ export default function App() {
     .filter(([id]) => id !== state.activeSessionId)
     .reduce((sum, [, count]) => sum + count, 0);
   const backgroundWorkCount = backgroundRunning.length + backgroundApprovals;
+  // 顶栏只放得下一个计数，完整说法留给 tooltip —— 徽标写全句子时会被挤成竖排。
   const backgroundWorkLabel = backgroundApprovals > 0
     ? `${backgroundRunning.length} 个会话运行中 · ${backgroundApprovals} 个待审批`
     : `${backgroundRunning.length} 个会话运行中`;
+  const backgroundWorkBadge = backgroundApprovals > 0
+    ? `${backgroundRunning.length} 运行 · ${backgroundApprovals} 待批`
+    : `${backgroundRunning.length} 运行中`;
 
   const titleMap: Record<MainView, { icon: JSX.Element; label: string }> = {
     newtab: { icon: <LayoutGrid size={16} />, label: '新标签页' },
@@ -1609,8 +1724,8 @@ export default function App() {
         // alone would let the two tracks together exceed the window.
         '--preview-w': state.preview.open ? `${state.preview.width}px` : '0px',
         // 右栏常驻面板（环境 / 上下文 / 输出）：宽度固定、没有拖拽手柄，
-        // 拿不到上下文数据时收成 0，别留一条空列。
-        '--context-w': contextPanel ? '244px' : '0px',
+        // 拿不到上下文数据时收成 0，别留一条空列。字号提过一档，宽度跟着放宽。
+        '--context-w': contextPanel ? '264px' : '0px',
       } as React.CSSProperties}
     >
       <Rail
@@ -1690,7 +1805,7 @@ export default function App() {
               title={backgroundWorkLabel}
               onClick={() => setMainView('chat')}
             >
-              {backgroundWorkLabel}
+              {backgroundWorkBadge}
             </button>
           )}
           {mainView === 'chat' && (
@@ -1772,7 +1887,7 @@ export default function App() {
 
         {mainView === 'git' && (
           <div className="secondary">
-            <GitPanel state={state} forcePush={Boolean(state.settings?.preferences?.gitForcePush)} branchPrefix={typeof state.settings?.preferences?.gitBranchPrefix === 'string' ? state.settings.preferences.gitBranchPrefix : 'codex/'} onOpenFile={(path, line) => { void handleOpenFileAtLine(path, line); }} />
+            <GitPanel state={state} forcePush={Boolean(state.settings?.preferences?.gitForcePush)} branchPrefix={typeof state.settings?.preferences?.gitBranchPrefix === 'string' ? state.settings.preferences.gitBranchPrefix : 'yoycode/'} onOpenFile={(path, line) => { void handleOpenFileAtLine(path, line); }} />
           </div>
         )}
 
@@ -1815,11 +1930,13 @@ export default function App() {
           onClose={() => setQualityOverlay(null)}
           file={activeFile ?? undefined}
           code={activeFile ? openFiles.find(f => f.path === activeFile)?.content : undefined}
+          onOpenFile={handleOpenFileAtLine}
         />
         <CoveragePanel
           visible={qualityOverlay === 'coverage'}
           onClose={() => setQualityOverlay(null)}
           onOpenFile={handleOpenFileAtLine}
+          onAskAgent={(text) => { setQualityOverlay(null); setMainView('chat'); setPrefill({ text, nonce: Date.now() }); }}
         />
         <PerformancePanel
           visible={qualityOverlay === 'performance'}
@@ -1829,21 +1946,8 @@ export default function App() {
         <RefactorPanel
           visible={qualityOverlay === 'refactor'}
           onClose={() => setQualityOverlay(null)}
-          onApplied={() => {
-            // 重构由 CLI 直接写盘。重读所有打开的 tab，让编辑器与磁盘一致；
-            // 未打开的文件无需处理（下次打开时自然读到新内容）。
-            for (const file of openFilesRef.current) {
-              void (async () => {
-                try {
-                  const result = await desktop.editor.readFile(file.path);
-                  if (!result?.ok || typeof result.content !== 'string') return;
-                  const content = result.content;
-                  setOpenFiles((prev) => prev.map((f) => (f.path === file.path ? { ...f, content, dirty: false, stale: false } : f)));
-                  diskMtimes.current.delete(file.path);
-                } catch { /* 文件可能被重命名，忽略 */ }
-              })();
-            }
-          }}
+          selectedCode={selectedCode ?? undefined}
+          onAskAgent={(text) => { setQualityOverlay(null); setMainView('chat'); setPrefill({ text, nonce: Date.now() }); }}
         />
 
         {/* Versioned Help / What's New content (Rail help menu). */}
@@ -1872,9 +1976,11 @@ export default function App() {
             onSaveFile={handleSaveFile}
             onCloseFile={handleCloseFile}
             onContentChange={handleContentChange}
+            onReloadExternal={handleReloadExternal}
+            onKeepExternal={handleKeepExternal}
             onSetActive={handleSetActiveFile}
             editorOptions={{
-              fontSize: Number(state.settings?.preferences?.codeFontSize) || 13,
+              fontSize: clampCodeFontSize(state.settings?.preferences?.codeFontSize) ?? 13,
               fontFamily: "'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', 'Noto Sans Mono CJK SC', Consolas, monospace",
               tabSize: Number(state.settings?.preferences?.editorTabSize) || 2,
               // Off unless the user asked for it: at this column width the
@@ -1886,6 +1992,7 @@ export default function App() {
             }}
             pendingReveal={pendingReveal}
             onRevealDone={() => setPendingReveal(null)}
+            onSelectionChange={setSelectedCode}
           />
         )}
 
@@ -1893,6 +2000,8 @@ export default function App() {
           <Composer
             state={state}
             prefill={prefill}
+            draftStore={composerDrafts}
+            onPrefillConsumed={(nonce) => setPrefill(current => current?.nonce === nonce ? null : current)}
             onSubmit={submitPrompt}
             onCancel={cancelTurn}
             // Filtered through the same rule the drain uses (lib/messageQueueSelect),
@@ -2093,7 +2202,7 @@ export default function App() {
       )}
 
       {/* Key task-state reminders (approval needed / done / error / offline) */}
-      <ToastLayer onFocusChat={() => setMainView('chat')} />
+      <ToastLayer onFocusChat={() => setMainView('chat')} onRetry={() => { setMainView('chat'); void submitPrompt('/retry'); }} />
 
       {confirmationDialogs}
 
@@ -2110,6 +2219,18 @@ export default function App() {
       />
       {(state.settings?.preferences?.['gen.approvalModal'] !== false) && (
         <ApprovalModal item={pendingApproval} onApprove={approve} />
+      )}
+      {!petSettings.visible && <PetReopenButton onShow={() => updatePetSettings({ visible: true })} />}
+      {petSettings.visible && (
+        <PetWidget
+          settings={petSettings}
+          agentStatus={state.agentStatus}
+          needsApproval={Boolean(pendingApproval)}
+          needsReview={state.pendingDiffs.some((diff) => diff.status === 'pending')}
+          signal={petSignal}
+          onChange={updatePetSettings}
+          onFocusChat={() => setMainView('chat')}
+        />
       )}
     </div>
   );

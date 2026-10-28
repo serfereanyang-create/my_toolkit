@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, FileCode2, FileImage, FileJson, FileText, Folder, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, FileCode2, FileImage, FileJson, FileText, Folder, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import type { GitFileStat, GitStatus } from '../lib/ipc';
 import type { ChatItem } from '../types';
@@ -129,7 +129,7 @@ export function ReviewPanel({
             className="review-ai-run"
             onClick={() => onRunReview?.()}
             disabled={!onRunReview || reviewRunning}
-            title={onRunReview ? '运行 /review（会消耗 token，需要几十秒）' : '当前无法发送消息'}
+            title={onRunReview ? '运行 /review（会消耗词元，需要几十秒）' : '当前无法发送消息'}
           >
             {reviewRunning ? '审查中…' : latestReview ? '重新审查' : '开始审查'}
           </button>
@@ -196,6 +196,7 @@ export function ReviewPanel({
         <div className="review-error" role="alert">
           <AlertTriangle size={14} />
           <span>{status.error ?? '当前工作区不是 Git 仓库'}</span>
+          <button type="button" className="review-retry" onClick={() => void refresh()} disabled={loading}>重试</button>
         </div>
       )}
 
@@ -203,10 +204,17 @@ export function ReviewPanel({
         <div className="review-error" role="alert">
           <AlertTriangle size={14} />
           <span>{error}</span>
+          <button type="button" className="review-retry" onClick={() => void refresh()} disabled={loading}>重试</button>
         </div>
       )}
 
-      {!error && !loading && visible.length === 0 && (
+      {loading && files.length === 0 && !error && (
+        <div className="review-panel-loading" role="status" aria-busy="true">
+          <Loader2 size={14} className="review-spin" />正在读取文件变更…
+        </div>
+      )}
+
+      {!error && !loading && !(status && !status.ok) && visible.length === 0 && (
         <div className="review-empty">
           <FileText size={24} />
           <strong>没有{filter === 'all' ? '' : filterLabel}的文件变更</strong>

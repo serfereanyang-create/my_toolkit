@@ -25,6 +25,7 @@ export const MAX_THUMBNAIL_BYTES = 8 * 1024 * 1024;
  * 只是没图看，不值得为此弹一个错误。
  */
 export async function withThumbnail(file: DetectedFile): Promise<DetectedFile> {
+  if (file.attachmentError) return file;
   if (file.preview) return file;
   if (file.category !== 'image') return file;
   if (!file.path) return file;

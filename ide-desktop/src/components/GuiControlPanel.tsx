@@ -1,19 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ArrowRightLeft,
-  Camera,
-  CheckCircle2,
-  CircleAlert,
-  Crosshair,
-  Keyboard,
-  LoaderCircle,
-  Monitor,
-  MousePointerClick,
-  RefreshCw,
-  Sparkles,
-  Type,
-  X,
-} from 'lucide-react';
+import { ArrowRightLeft, Camera, ExternalLink, CheckCircle2, CircleAlert, Crosshair, Keyboard, LoaderCircle, Monitor, MousePointerClick, RefreshCw, Sparkles, Type, X } from 'lucide-react';
 import { desktop, type GuiToolResult } from '../lib/ipc';
 
 /*
@@ -196,6 +182,7 @@ export function GuiControlPanel({ onAskAgent, desktopMode }: {
   /** A Shift-drag in progress over the capture, in capture pixels. */
   const [dragBand, setDragBand] = useState<{ from: { x: number; y: number }; to: { x: number; y: number } } | null>(null);
   const [typed, setTyped] = useState('');
+  const [openPath, setOpenPath] = useState('');
   /** A focus-taking action awaiting the user's yes. */
   const [pending, setPending] = useState<{ tool: string; input: Record<string, unknown>; label: string; detail?: string } | null>(null);
   const requestSeq = useRef(0);
@@ -316,6 +303,23 @@ export function GuiControlPanel({ onAskAgent, desktopMode }: {
     if (result) { setNotice(result.output); void refreshWindows(); }
   }
 
+  async function openNativeApp() {
+    const path = openPath.trim();
+    if (!path) return;
+    const result = await run('computer_open', { path });
+    if (result) {
+      const pid = result.output.match(/\(pid (\d+)\)/)?.[1];
+      if (pid) {
+        const ready = await run('computer_wait_window', { window: pid, timeoutMs: 10_000 });
+        if (!ready) {
+          setNotice('应用已启动，但窗口尚未出现；可稍后刷新窗口列表。');
+        }
+      }
+      setOpenPath('');
+      setNotice((current) => current || result.output);
+      await refreshWindows();
+    }
+  }
   async function screenshot() {
     // The selected window, not the desktop. A desktop grab returns whatever the
     // person is currently looking at — their browser, a chat, a game — which is
@@ -489,7 +493,6 @@ export function GuiControlPanel({ onAskAgent, desktopMode }: {
     );
   }
 
-
   if (!status) {
     return <div className="gui-panel gui-panel-empty"><LoaderCircle size={16} className="gui-spin" />正在连接电脑操控…</div>;
   }
@@ -517,6 +520,18 @@ export function GuiControlPanel({ onAskAgent, desktopMode }: {
           </div>
         </div>
         <div className="gui-head-actions">
+          <div className="gui-launch-app">
+            <input
+              value={openPath}
+              onChange={(event) => setOpenPath(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void openNativeApp(); } }}
+              placeholder="启动 .exe/.lnk"
+              aria-label="原生应用路径"
+            />
+            <button type="button" className="gui-btn" onClick={() => void openNativeApp()} disabled={Boolean(busy) || !openPath.trim()} title="启动工作区内或已授权的原生应用">
+              <ExternalLink size={14} />启动应用
+            </button>
+          </div>
           <button type="button" className="gui-btn" onClick={() => void refreshWindows()} disabled={Boolean(busy)}>
             <RefreshCw size={14} className={busy === 'computer_list_windows' ? 'gui-spin' : undefined} />刷新
           </button>
@@ -538,7 +553,7 @@ export function GuiControlPanel({ onAskAgent, desktopMode }: {
       {!desktopMode && (
         <div className="gui-banner">
           <ArrowRightLeft size={14} />
-          <span>当前为「仅后台执行」。这个面板直接操作真实窗口，需要前台焦点；智能体在后台模式里只会使用隐藏浏览器。</span>
+          <span>当前为「仅后台执行」。窗口读取和原生窗口截图仍可在后台完成；激活、点击、输入等会改变前台的操作需要切换到「桌面」执行，网页任务使用隐藏浏览器。</span>
         </div>
       )}
 

@@ -3,6 +3,7 @@ import { PlayCircle, AlertCircle, Loader, PackagePlus, RefreshCw } from 'lucide-
 import type { PreviewTab, ProjectDescriptor } from '../../types';
 import type { AppAction } from '../../lib/state';
 import { desktop } from '../../lib/ipc';
+import { scrollBehavior } from '../../lib/reduceMotion';
 
 type Props = { tab: PreviewTab; dispatch: React.Dispatch<AppAction>; workspaceRoot: string };
 
@@ -20,7 +21,7 @@ export function RuntimeStatus({ tab, dispatch, workspaceRoot }: Props) {
   }, [desc.token]);
 
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    logsEndRef.current?.scrollIntoView({ behavior: scrollBehavior() });
   }, [logs]);
 
   // Auto-start static sites that already have a built index.html

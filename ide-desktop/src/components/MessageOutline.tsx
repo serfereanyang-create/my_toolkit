@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ListTree, ChevronDown, ChevronRight } from 'lucide-react';
 import { extractOutline, filterOutline, walkOutline } from '../lib/markdownOutline';
+import { scrollBehavior } from '../lib/reduceMotion';
 
 /**
  * Iteration 12 — floating table-of-contents for long assistant replies.
@@ -28,12 +29,13 @@ export function MessageOutline({ text, anchorPrefix }: { text: string; anchorPre
     const el = document.getElementById(anchorPrefix ? `${anchorPrefix}--${id}` : id);
     if (!el) return;
     // Prefer scrolling the nearest scrollable ancestor smoothly.
+    // behavior 走 scrollBehavior()：减动效档位下退回瞬时滚动（CSS 覆盖不到 JS 滚动）。
     const scroller = el.closest('.stream') ?? el.parentElement;
     if (scroller && 'scrollTo' in scroller) {
       const top = el.getBoundingClientRect().top - (scroller.getBoundingClientRect().top) + scroller.scrollTop - 8;
-      scroller.scrollTo({ top, behavior: 'smooth' });
+      scroller.scrollTo({ top, behavior: scrollBehavior() });
     } else {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      el.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
     }
   }
 

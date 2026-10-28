@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Gift, Chrome, Keyboard, HelpCircle } from 'lucide-react';
+import { usePopoverFocus } from '../lib/usePopoverFocus';
 
 export type HelpAction = 'whats-new' | 'extensions' | 'shortcuts' | 'help';
 
@@ -12,6 +13,7 @@ const ITEMS: Array<{ id: HelpAction; name: string; icon: JSX.Element; group: 1 |
 
 export function HelpMenu({ onClose, onPick }: { onClose: () => void; onPick: (action: HelpAction) => void }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  usePopoverFocus(ref);
 
   useEffect(() => {
     function onDown(event: MouseEvent) {

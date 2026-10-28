@@ -16,7 +16,7 @@ export function EnvironmentSettings() {
       <section className="settings-group">
         <SectionHeader
           title="选择项目"
-          action={<button type="button" className="settings-action-btn">添加项目</button>}
+          action={<button type="button" className="settings-action-btn" title="暂未接入：环境管理还没有数据源" disabled>添加项目</button>}
         />
         <EmptyState title="尚无项目" description="添加的项目将显示在此处" />
       </section>

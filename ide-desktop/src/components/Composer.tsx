@@ -1,4 +1,4 @@
-import { Plus, ShieldCheck, ArrowUp, Square, Gauge, Terminal, AtSign, FileEdit, ChevronDown, Paperclip } from 'lucide-react';
+import { Plus, ShieldCheck, ArrowUp, Square, Gauge, Terminal, AtSign, FileEdit, ChevronDown, Paperclip, LoaderCircle } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { AppState, QueuedMessage, ReasoningEffort, ToolScope } from '../types';
@@ -19,6 +19,8 @@ import { loadInputHistory, pushInputHistory } from '../lib/inputHistory';
 import { modelReasoningCapability } from '../lib/modelCapabilities';
 import { contextBudget, estimateTokens, tokenBreakdown } from '../lib/tokenEstimate';
 import { appNotice } from './ToastLayer';
+import { composerDraftScope, type ComposerDraftStore, type ComposerSubmission } from '../lib/composerDraft';
+import { useComposerDraft } from '../lib/useComposerDraft';
 
 /**
  * 原生能力按需取，不在模块顶层读 window：node 环境下的组件测试没有
@@ -27,9 +29,8 @@ import { appNotice } from './ToastLayer';
 type NativeAttachmentApi = {
   files?: {
     pick?: (options: { title?: string; filters?: Array<{ name: string; extensions: string[] }> })
-      => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+      => Promise<{ ok: boolean; path?: string; size?: number; canceled?: boolean; error?: string }>;
   };
-  editor?: { stat?: (absolutePath: string) => Promise<{ ok: boolean; size?: number }> };
 };
 
 const nativeAttachmentApi = () => (globalThis as unknown as { zcodeDesktop?: NativeAttachmentApi }).zcodeDesktop;
@@ -43,10 +44,12 @@ const ATTACHMENT_FILTERS = [{
 // approvalLabel is imported from ApprovalMenu and used via approvalMenuLabel below.
 // No local duplicate needed.
 
-export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, onPickPlugin, onPickModel, onPickEffort, onPickToolScope, onManageModels, terminalOutput, queue, queuePaused, onQueueResume, onQueueSendNow, onQueueEdit, onQueueRemove }: {
+export function Composer({ state, prefill, draftStore, onPrefillConsumed, onSubmit, onCancel, onPickApproval, onPickPlugin, onPickModel, onPickEffort, onPickToolScope, onManageModels, terminalOutput, queue, queuePaused, onQueueResume, onQueueSendNow, onQueueEdit, onQueueRemove }: {
   state: AppState;
   prefill?: { text: string; nonce: number } | null;
-  onSubmit: (text: string, files?: DetectedFile[], mentions?: MentionItem[]) => void;
+  draftStore?: ComposerDraftStore;
+  onPrefillConsumed?: (nonce: number) => void;
+  onSubmit: (text: string, files?: DetectedFile[], mentions?: MentionItem[], submission?: ComposerSubmission) => void | boolean | Promise<void | boolean>;
   onCancel: () => void;
   onPickApproval: (mode: import('../types').ApprovalMode) => void;
   onPickPlugin: (plugin: PluginItem) => void;
@@ -63,8 +66,17 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   onQueueEdit?: (id: string, text: string) => void;
   onQueueRemove?: (id: string) => void;
 }) {
-  const [text, setText] = useState('');
-  const [attachedFiles, setAttachedFiles] = useState<DetectedFile[]>([]);
+  const draftScope = composerDraftScope(state.workspaceRoot, state.activeSessionId);
+  const { text, files: attachedFiles, mentions, setText, setFiles: setAttachedFiles, setMentions, acknowledge, read: readDraft, recheckFiles } = useComposerDraft(draftScope, draftStore);
+  const [pendingScopes, setPendingScopes] = useState<string[]>([]);
+  const submissionInFlight = useRef(new Set<string>());
+  const sending = pendingScopes.includes(draftScope);
+  const activeDraftScope = useRef(draftScope);
+  activeDraftScope.current = draftScope;
+  const textRef = useRef(text);
+  const previousFilesRef = useRef<DetectedFile[]>(attachedFiles);
+  const autoPromptRef = useRef<string | null>(null);
+  textRef.current = text;
   const [isDragging, setIsDragging] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -77,7 +89,6 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionAtIndex, setMentionAtIndex] = useState(-1);
-  const [mentions, setMentions] = useState<MentionItem[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useLayoutEffect(() => {
@@ -105,26 +116,12 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   const [historyIndex, setHistoryIndex] = useState(-1);
   useEffect(() => { historyRef.current = loadInputHistory(); }, []);
 
-  // An unsent draft belongs to the conversation it was typed in. `text` used to
-  // be a single piece of state for the whole composer, so switching sessions
-  // carried the draft across with no visible sign — the next Enter sent the
-  // previous conversation's prompt into this one. Keep one draft per session
-  // and swap it on switch, so going back finds the text where it was left.
-  const sessionId = state.activeSessionId ?? '';
-  const draftsRef = useRef<Map<string, string>>(new Map());
-  const draftSessionRef = useRef(sessionId);
-  const textRef = useRef(text);
-  textRef.current = text;
   useEffect(() => {
-    if (sessionId === draftSessionRef.current) return;
-    draftsRef.current.set(draftSessionRef.current, textRef.current);
-    draftSessionRef.current = sessionId;
-    setText(draftsRef.current.get(sessionId) ?? '');
-    // The recall cursor is per-conversation too. Left alone, switching away
-    // mid-recall carried the index over and the new conversation's first ↑
-    // landed on the second-newest entry (and ↓ then "advanced" from there).
     setHistoryIndex(-1);
-  }, [sessionId]);
+    setMentionOpen(false);
+    setMentionQuery('');
+    setSlashMenuOpen(false);
+  }, [draftScope]);
 
   // 常规页开关的真实消费点：发送快捷键、上下文用量入口、插件入口。
   const prefs = state.settings?.preferences ?? {};
@@ -135,6 +132,8 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   useEffect(() => {
     if (prefill) {
       setText(prefill.text);
+      autoPromptRef.current = null;
+      onPrefillConsumed?.(prefill.nonce);
       textareaRef.current?.focus();
     }
   }, [prefill?.nonce]);
@@ -143,9 +142,17 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   // so the effect fires when files are replaced or removed, not just added.
   // Guard: only auto-fill when the textarea is still empty, never overwrite user text.
   useEffect(() => {
-    if (attachedFiles.length > 0 && !text.trim()) {
-      setText(generateSmartPrompt(attachedFiles));
+    const generated = generateSmartPrompt(attachedFiles);
+    const previousGenerated = generateSmartPrompt(previousFilesRef.current);
+    const current = textRef.current;
+    const isAutomatic = !current.trim() || current === autoPromptRef.current || current === previousGenerated;
+    if (isAutomatic) {
+      if (current !== generated) setText(generated);
+      autoPromptRef.current = generated || null;
+    } else {
+      autoPromptRef.current = null;
     }
+    previousFilesRef.current = attachedFiles;
   }, [attachedFiles]);
 
   const running = state.agentStatus === 'running' || state.agentStatus === 'starting';
@@ -203,7 +210,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
   const contextRate = state.contextStats && contextWindow
     ? Math.min(100, (state.contextStats.inputTokens / contextWindow) * 100) : null;
   const contextTitle = state.contextStats
-    ? `上下文与缓存：${state.contextStats.inputTokens.toLocaleString()} 输入 tokens${contextRate !== null ? ` / ${contextRate.toFixed(1)}%` : ''}`
+    ? `上下文与缓存：输入 ${state.contextStats.inputTokens.toLocaleString()} 词元${contextRate !== null ? ` / ${contextRate.toFixed(1)}%` : ''}`
     : '上下文与缓存（完成一次真实请求后显示）';
   const approval = state.settings?.approval ?? 'ask';
   const changeTotals = sessionChangeTotals(state.chat);
@@ -230,22 +237,45 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
     return () => window.removeEventListener('keydown', onKey);
   }, [menuOpen, modelMenuOpen, thinkingMenuOpen, toolScopeMenuOpen, approvalMenuOpen, contextMenuOpen, slashMenuOpen, mentionOpen, running, onCancel, state.chat]);
 
-  function submit() {
+  async function submit() {
     const value = text.trim();
-    if (!value) return;
-    setText('');
-    setHistoryIndex(-1);
-    historyRef.current = pushInputHistory(value);
-    const files = attachedFiles.length > 0 ? attachedFiles : undefined;
-    const currentMentions = mentions.length > 0 ? mentions : undefined;
-    setAttachedFiles([]);
-    setMentions([]);
-    onSubmit(value, files, currentMentions);
+    if (!value || submissionInFlight.current.has(draftScope)) return;
+    submissionInFlight.current.add(draftScope);
+    setPendingScopes(previous => [...previous, draftScope]);
+    try {
+      let files = attachedFiles.length > 0 ? attachedFiles : undefined;
+      if (files) {
+        const checked = await recheckFiles();
+        if (activeDraftScope.current !== draftScope) return;
+        const current = readDraft();
+        if (current.text !== text || current.mentions !== mentions || JSON.stringify(current.files.map(file => file.path)) !== JSON.stringify(files.map(file => file.path))) {
+          appNotice('草稿已变更', '已保留最新内容，请再次发送。', 'info');
+          return;
+        }
+        if (checked.some(file => file.attachmentError)) {
+          appNotice('附件无法发送', '请恢复文件后重新检查，或移除失效附件。草稿已保留。', 'error');
+          return;
+        }
+        files = checked;
+      }
+      const submitted = readDraft();
+      const accepted = await onSubmit(value, files, mentions.length > 0 ? mentions : undefined, { scope: draftScope, draft: submitted });
+      if (accepted === false) return;
+      acknowledge(submitted);
+      setHistoryIndex(-1);
+      historyRef.current = pushInputHistory(value);
+    } catch (error) {
+      appNotice('消息未发送，草稿已保留', error instanceof Error ? error.message : String(error), 'error');
+    } finally {
+      submissionInFlight.current.delete(draftScope);
+      setPendingScopes(previous => previous.filter(scope => scope !== draftScope));
+    }
   }
 
   function handleTextChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const newText = event.target.value;
     setText(newText);
+    autoPromptRef.current = null;
     setHistoryIndex(-1);
 
     // Slash command: open menu when input starts with '/' and has no space yet.
@@ -274,6 +304,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
     const before = text.slice(0, mentionAtIndex);
     const after  = text.slice(atEnd);
     setText(`${before}@${item.label}${after}`);
+    autoPromptRef.current = null;
     setMentions((prev) => [...prev.filter((m) => m.id !== item.id), item]);
     setMentionOpen(false);
     setMentionQuery('');
@@ -299,7 +330,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
     }
     // 缩略图是异步读的：先等它，卡片一出现就是「对的那张图」，不会先闪一个图标再换。
     const withPreview = await withThumbnails(newFiles);
-    setAttachedFiles([...attachedFiles, ...withPreview]);
+    setAttachedFiles(files => [...files, ...withPreview].slice(0, MAX_FILE_COUNT));
   }
 
   function handleDragOver(event: React.DragEvent) { event.preventDefault(); setIsDragging(true); }
@@ -328,8 +359,13 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
         if (!picked.canceled && picked.error) appNotice('添加附件失败', picked.error, 'error');
         return;
       }
-      const info = await api.editor?.stat?.(picked.path).catch(() => undefined);
-      const file = detectedFileFromPath(picked.path, info?.ok ? info.size ?? 0 : 0);
+      if (typeof picked.size !== 'number') throw new Error('无法读取所选文件大小，请重新选择文件。');
+      const file = detectedFileFromPath(picked.path, picked.size);
+      const validation = validateFile(file);
+      if (!validation.valid) {
+        appNotice('文件无法添加', validation.error, 'error');
+        return;
+      }
       const [withPreview] = await withThumbnails([file]);
       setAttachedFiles((files) => [...files, withPreview ?? file]);
     } catch (error) {
@@ -398,7 +434,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
     }
 
     if (newFiles.length > 0) {
-      setAttachedFiles([...attachedFiles, ...newFiles]);
+      setAttachedFiles(files => [...files, ...newFiles].slice(0, MAX_FILE_COUNT));
     }
   }
 
@@ -456,7 +492,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
               ))}
             </div>
           )}
-          {attachedFiles.length > 0 && <FileAttachmentList files={attachedFiles} onRemove={removeFile} />}
+          {attachedFiles.length > 0 && <FileAttachmentList files={attachedFiles} onRemove={removeFile} onRetry={() => { void recheckFiles(); }} />}
           <div className="composer-input-row">
             <textarea ref={textareaRef} value={text} onChange={handleTextChange}
               onPaste={handlePaste}
@@ -509,7 +545,18 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
                 onClick={() => setMenuOpen((o) => !o)}><Plus size={18} /></button>
             )}
             <button type="button" className={`icon-button ${mentionOpen ? 'active' : ''}`} title="引用文件/符号 (@)" aria-label="引用文件或符号" aria-expanded={mentionOpen}
-              onClick={() => { setText((t) => t + '@'); setMentionOpen(true); setMentionQuery(''); textareaRef.current?.focus(); }}>
+              onClick={() => {
+                const start = textareaRef.current?.selectionStart ?? text.length;
+                const end = textareaRef.current?.selectionEnd ?? start;
+                setText(`${text.slice(0, start)}@${text.slice(end)}`);
+                setMentionAtIndex(start);
+                setMentionOpen(true);
+                setMentionQuery('');
+                window.requestAnimationFrame(() => {
+                  textareaRef.current?.focus();
+                  textareaRef.current?.setSelectionRange(start + 1, start + 1);
+                });
+              }}>
               <AtSign size={15} /></button>
             <button
               type="button"
@@ -538,7 +585,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
             </div>
             {running
               ? <button type="button" className="composer-send composer-stop" title="停止" aria-label="停止当前任务" onClick={onCancel}><Square size={15} /></button>
-              : <button type="button" className="composer-send" title="发送" aria-label="发送消息" onClick={submit} disabled={!text.trim()}><ArrowUp size={17} /></button>}
+              : <button type="button" className="composer-send" title={sending ? '正在发送' : '发送'} aria-label="发送消息" aria-busy={sending || undefined} onClick={() => { void submit(); }} disabled={!text.trim() || sending}>{sending ? <LoaderCircle size={17} /> : <ArrowUp size={17} />}</button>}
           </div>
         </div>
         <div className="composer-footer">
@@ -555,7 +602,7 @@ export function Composer({ state, prefill, onSubmit, onCancel, onPickApproval, o
               <span
                 className={`composer-budget composer-budget-${draftBudget.level}`}
                 title={draftBreakdown
-                  ? `草稿约 ${draftTokens} tokens / 可用 ${draftBudget.usable.toLocaleString()}（${(draftBudget.ratio * 100).toFixed(1)}%）\n`
+                  ? `草稿约 ${draftTokens} 词元 / 可用 ${draftBudget.usable.toLocaleString()}（${(draftBudget.ratio * 100).toFixed(1)}%）\n`
                     + `中文 ${draftBreakdown.cjk} · 拉丁 ${draftBreakdown.latin} · 数字 ${draftBreakdown.digit} · 路径 ${draftBreakdown.dense} · 符号 ${draftBreakdown.symbol}`
                   : undefined}
               >

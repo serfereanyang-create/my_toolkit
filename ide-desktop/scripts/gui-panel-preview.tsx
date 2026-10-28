@@ -117,6 +117,9 @@ function reply(tool: string, input: Record<string, unknown>) {
       },
     };
   }
+  if (tool === 'computer_open') {
+    return { ok: true, output: 'Started C:/workspace/tools/Fixture.exe (pid 4242).' };
+  }
   if (tool === 'computer_screenshot') {
     return {
       ok: true,

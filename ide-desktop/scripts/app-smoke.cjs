@@ -1,4 +1,6 @@
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const electron = require('electron');
 const { app } = electron;
 const Module = require('node:module');
@@ -126,6 +128,16 @@ async function clickPoint(point) {
   for (const type of ['mousePressed', 'mouseReleased']) await previewWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type, button: 'left', clickCount: 1, ...point });
   await settle();
 }
+async function dragPoint(from, to) {
+  await previewWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, ...from });
+  const steps = 4;
+  for (let index = 1; index <= steps; index += 1) {
+    const point = { x: from.x + (to.x - from.x) * index / steps, y: from.y + (to.y - from.y) * index / steps };
+    await previewWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', button: 'left', buttons: 1, ...point });
+  }
+  await previewWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, ...to });
+  await settle();
+}
 async function capture(name) {
   await settle();
   await new Promise((resolve, reject) => {
@@ -152,6 +164,17 @@ app.whenReady().then(async () => {
   await waitFor('!!document.querySelector(".rail")', 'restored isolated workspace');
   previewWindow.webContents.debugger.attach('1.3');
   await evaluate(`(() => {
+    const key = 'yoycode.pet.v1';
+    const current = JSON.parse(localStorage.getItem(key) || '{}');
+    localStorage.setItem(key, JSON.stringify({ ...current, visible: true, right: 24, bottom: 24 }));
+  })()`);
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('App reload after pet state reset did not finish')), 30000);
+    previewWindow.webContents.once('did-finish-load', () => { clearTimeout(timeout); resolve(); });
+    previewWindow.webContents.reload();
+  });
+  await waitFor('!!document.querySelector(".rail")', 'reloaded isolated workspace');
+  await evaluate(`(() => {
     const NativeWorker = window.Worker;
     const audit = [];
     window.appWorkerReview = audit;
@@ -173,6 +196,49 @@ app.whenReady().then(async () => {
     await capture('startup');
   });
   assert.equal(booted, true, 'App startup gate');
+  await check('YOY pet opens, hides, restores, and renders in the real App', async () => {
+    assert.equal(await exists('[data-testid="pet-widget"]'), true);
+    const spriteLoaded = await evaluate(`new Promise(resolve => { const image = new Image(); image.onload = () => resolve(true); image.onerror = () => resolve(false); image.src = new URL('pets/blue-maid-pet-spritesheet.webp', location.href).href; })`);
+    assert.equal(spriteLoaded, true, 'YOYcode pet sprite must load from the production bundle');
+    assert.match(await evaluate('getComputedStyle(document.querySelector(".pet-sprite")).backgroundImage'), /blue-maid-pet-spritesheet/);
+    assert.equal(await evaluate('getComputedStyle(document.querySelector(".pet-sprite")).animationName'), 'none', 'idle pet must stay still');
+    assert.match(await text('.pet-caption'), /待机|待命中/);
+    await click('[data-testid="pet-widget"] .pet-orb');
+    await waitFor('!!document.querySelector(".pet-popover")', 'pet popover');
+    await waitFor('Number(document.querySelector(".pet-sprite")?.dataset.petFrame || 0) > 0', 'pet discrete wave frame');
+    assert.equal(await evaluate('getComputedStyle(document.querySelector(".pet-sprite")).animationName'), 'none', 'pet motion must not scroll the sprite sheet with CSS animation');
+    assert.match(await text('.pet-popover'), /YOY 宠物/);
+    await click('.pet-popover-actions button:last-child');
+    await waitFor('!!document.querySelector(".pet-reopen")', 'pet reopen button');
+    await click('.pet-reopen');
+    await waitFor('!!document.querySelector("[data-testid=pet-widget]")', 'restored pet widget');
+    const before = await evaluate('(() => { const r = document.querySelector("[data-testid=pet-widget] .pet-orb").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()');
+    await dragPoint(before, { x: 100, y: 120 });
+    await waitFor('(() => { const r = document.querySelector("[data-testid=pet-widget]").getBoundingClientRect(); return r.left < window.innerWidth / 2 && r.top < window.innerHeight / 2; })()', 'pet full viewport drag');
+    const dragged = await evaluate('(() => { const r = document.querySelector("[data-testid=pet-widget]").getBoundingClientRect(); return { left: r.left, top: r.top }; })()');
+    assert.ok(dragged.left < 400 && dragged.top < 400, JSON.stringify(dragged));
+    await capture('pet-widget');
+    // Park the pet back in its own corner before anything else runs. Dragged to
+    // the top left it sits over the rail's 新建 row and the settings page's
+    // 返回应用 button (it is `position: fixed; z-index: 80`), so a later click
+    // lands on the pet and is silently swallowed - which is how a "new
+    // conversation" click turned into "the same conversation once more". The
+    // drag itself is the mechanism this check already proved works this run, so
+    // it is also the reliable way back: any long drag towards the bottom right
+    // clamps to the 12px margin the app uses.
+    const corner = await evaluate('(() => { const r = document.querySelector("[data-testid=pet-widget] .pet-orb").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: innerWidth, height: innerHeight }; })()');
+    await dragPoint({ x: corner.x, y: corner.y }, { x: corner.width - 60, y: corner.height - 70 });
+    await waitFor('(() => { const r = document.querySelector("[data-testid=pet-widget]").getBoundingClientRect(); return r.left > window.innerWidth / 2 && r.top > window.innerHeight / 2; })()', 'pet parked back in its corner');
+    // The rail's new-conversation row must be clickable once the pet check is
+    // over: this is the exact thing the drag had been stealing.
+    const railHit = await evaluate(`(() => {
+      const control = document.querySelector('.rail-primary-new');
+      const r = control.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return { covered: Boolean(hit && hit.closest('[data-testid="pet-widget"]')), target: hit ? hit.tagName + ' ' + hit.className : null };
+    })()`);
+    assert.equal(railHit.covered, false, `the pet must not cover the rail's new-conversation control: ${JSON.stringify(railHit)}`);
+  });
   const repositoryBefore = { status: runGit('status', '--porcelain=v1'), diff: runGit('diff', '--binary'), cached: runGit('diff', '--cached', '--binary') };
   const expectedFiles = repositoryBefore.status.split(/\r?\n/).filter(Boolean).length;
   const navigated = await check('Source control is reachable directly from the App sidebar', async () => {
@@ -189,6 +255,7 @@ app.whenReady().then(async () => {
       previewWindow.webContents.reload();
     }),
     sendKey: (event) => previewWindow.webContents.debugger.sendCommand('Input.dispatchKeyEvent', event),
+    insertText: (text) => previewWindow.webContents.debugger.sendCommand('Input.insertText', { text }),
     /** Move the mouse without pressing: :hover-revealed controls need the state
      *  established before a click, or the click lands on what is underneath. */
     moveMouse: (point) => previewWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point }),
@@ -202,6 +269,36 @@ app.whenReady().then(async () => {
   const runNewTab = () => require('./app-newtab-checks.cjs')(reviewContext);
   const runContextPanel = () => require('./app-context-checks.cjs')(reviewContext);
   const runAttachments = () => require('./app-attachment-checks.cjs')(reviewContext);
+  if (process.argv.includes('--editor-race-only')) {
+    await require('./app-editor-race-checks.cjs')(reviewContext);
+    assert.deepEqual(reports.filter(report => !report.ok), [], 'editor workspace race failures');
+    assert.deepEqual(errors, [], 'renderer errors');
+    return;
+  }
+  if (process.argv.includes('--send-recovery-only')) {
+    await require('./app-send-recovery-checks.cjs')(reviewContext);
+    assert.deepEqual(reports.filter(report => !report.ok), [], 'failed send recovery failures');
+    assert.deepEqual(errors, [], 'renderer errors');
+    return;
+  }
+  if (process.argv.includes('--attachment-recovery-only')) {
+    await require('./app-attachment-recovery-checks.cjs')(reviewContext);
+    assert.deepEqual(reports.filter(report => !report.ok), [], 'attachment recovery failures');
+    assert.deepEqual(errors, [], 'renderer errors');
+    return;
+  }
+  if (process.argv.includes('--drafts-only')) {
+    await require('./app-draft-checks.cjs')(reviewContext);
+    assert.deepEqual(reports.filter(report => !report.ok), [], 'composer draft failures');
+    assert.deepEqual(errors, [], 'renderer errors');
+    return;
+  }
+  if (process.argv.includes('--terminal-only')) {
+    await require('./app-terminal-checks.cjs')(reviewContext);
+    assert.deepEqual(reports.filter(report => !report.ok), [], 'terminal reference failures');
+    assert.deepEqual(errors, [], 'renderer errors');
+    return;
+  }
   if (process.argv.includes('--writes-only') || process.argv.includes('--sync-only') || process.argv.includes('--background-only') || process.argv.includes('--cancel-only') || process.argv.includes('--tasks-only') || process.argv.includes('--copy-only') || process.argv.includes('--newtab-only') || process.argv.includes('--context-only') || process.argv.includes('--attach-only')) {
     if (process.argv.includes('--attach-only')) await runAttachments(); else if (process.argv.includes('--context-only')) await runContextPanel(); else if (process.argv.includes('--newtab-only')) await runNewTab(); else if (process.argv.includes('--copy-only')) await runCopy(); else if (process.argv.includes('--tasks-only')) await runTaskBoard(); else if (process.argv.includes('--cancel-only')) await runCancellation(); else if (process.argv.includes('--background-only')) await runBackground(); else if (process.argv.includes('--sync-only')) await runSync(); else await runWrites();
     assert.deepEqual(reports.filter(report => !report.ok), [], 'real App write failures');
@@ -220,7 +317,8 @@ app.whenReady().then(async () => {
     await openDiff('src/partial.ts', '已暂存');
     assert.match(await text('.git-diff-row.add'), /"staged"/);
     assert.doesNotMatch(await text('.git-diff-row.add'), /"working"/);
-    await click('.git-diff-source button:first-child');
+    await evaluate('document.querySelector(".git-diff-source button:first-child").click()');
+    await settle();
     await waitFor('document.querySelector(".git-diff-row.add")?.textContent.includes("working")', 'working diff');
     assert.match(await text('.git-diff-row.del'), /"staged"/);
   });
@@ -228,7 +326,8 @@ app.whenReady().then(async () => {
     await openDiff('src/new.ts', '未跟踪');
     assert.equal(await evaluate('document.querySelectorAll(".git-diff-row.add").length'), 2);
     assert.match(await text('.git-diff-scroll'), /新文件/);
-    await click('.git-diff-source button:nth-child(2)');
+    await evaluate('document.querySelector(".git-diff-source button:nth-child(2)").click()');
+    await settle();
     await waitFor('document.querySelector(".git-diff-empty")?.textContent.includes("没有已暂存")', 'empty staged side of new file');
     assert.equal(await evaluate('document.querySelectorAll(".git-diff-row.add").length'), 0);
   });
@@ -257,6 +356,34 @@ app.whenReady().then(async () => {
     await waitFor('document.querySelector(".monaco-editor .active-line-number")?.textContent.trim() === "2"', 'HTML line two');
     assert.match(await text('.monaco-editor .view-lines'), /Updated/);
     await capture('html-source-line-two');
+  });
+  await check('External disk edits show the real editor conflict banner and keep-local action', async () => {
+    await openDiff('src/session.ts');
+    await click('.git-diff-line-link[data-line="3"]');
+    await waitFor('!!document.querySelector(".editor-tabs") && !!document.querySelector(".monaco-editor .view-lines")', 'session editor for external edit');
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const watchResult = await evaluate('window.zcodeDesktop.editor.watchFile("src/session.ts")');
+    assert.equal(watchResult.ok, true, JSON.stringify(watchResult));
+    await evaluate('window.__externalFileEvents = []; void window.zcodeDesktop.editor.onFileChanged(payload => window.__externalFileEvents.push(payload.path));');
+    const sessionPath = path.join(fixture, 'src', 'session.ts');
+    const localContent = fs.readFileSync(sessionPath, 'utf8');
+    const editorPoint = await evaluate('(() => { const r = document.querySelector(".monaco-editor .view-lines").getBoundingClientRect(); return { x: r.left + 80, y: r.top + 20 }; })()');
+    await clickPoint(editorPoint);
+    await previewWindow.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17 });
+    await previewWindow.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+    await previewWindow.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+    await previewWindow.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17 });
+    await previewWindow.webContents.debugger.sendCommand('Input.insertText', { text: 'export const localDraft = true;\n' });
+    await waitFor('!!document.querySelector(".editor-tab.dirty")', 'local editor draft');
+    fs.writeFileSync(sessionPath, `${localContent}export const externallyChanged = true;\n`);
+    await waitFor('window.zcodeDesktop.editor.stat("src/session.ts").then(stat => stat.size > ' + localContent.length + ')', 'external file stat update');
+    await waitFor('window.__externalFileEvents.includes("src/session.ts")', 'external file IPC event');
+    await waitFor('!!document.querySelector(".editor-external-banner")', 'external file banner');
+    assert.match(await text('.editor-external-banner'), /磁盘内容已被外部修改/);
+    assert.equal(await evaluate('document.querySelectorAll(".editor-external-banner button").length'), 2);
+    fs.writeFileSync(sessionPath, localContent);
+    await click('.editor-external-banner button.secondary');
+    await waitFor('!document.querySelector(".editor-external-banner")', 'keep local editor content');
   });
   await check('Inspector uses the same real diff reader with consistent unique file counts', async () => {
     await click('.rail button[aria-label="对话"]');
@@ -324,7 +451,11 @@ app.whenReady().then(async () => {
   fs.writeFileSync(path.join(output, 'dom-summary.json'), JSON.stringify(await evaluate('({ title: document.title, sidebar: [...document.querySelectorAll(".rail button[aria-label]")].map(button => button.getAttribute("aria-label")), content: document.querySelector(".main")?.textContent?.slice(0, 3000) })'), null, 2));
   assert.deepEqual(reports.filter(report => !report.ok), [], 'real App workflow failures');
   assert.deepEqual(errors, [], 'renderer errors');
-}).catch((error) => { console.error(error.stack || error); process.exitCode = 1; }).finally(() => {
+}).catch((error) => { console.error(error.stack || error); process.exitCode = 1; }).finally(async () => {
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    try { await evaluate('window.zcodeDesktop?.composerDraft?.flush()'); }
+    catch (error) { console.error(error.stack || error); process.exitCode = 1; }
+  }
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ mode: process.argv.includes('--attach-only') ? 'attach-only' : process.argv.includes('--context-only') ? 'context-only' : process.argv.includes('--newtab-only') ? 'newtab-only' : process.argv.includes('--copy-only') ? 'copy-only' : process.argv.includes('--tasks-only') ? 'tasks-only' : process.argv.includes('--cancel-only') ? 'cancel-only' : process.argv.includes('--background-only') ? 'background-only' : process.argv.includes('--background') ? 'full-workflows' : process.argv.includes('--sync-only') ? 'sync-only' : process.argv.includes('--writes-only') ? 'writes-only' : process.argv.includes('--sync') ? process.argv.includes('--writes') ? 'all-git' : 'read-and-sync' : process.argv.includes('--writes') ? 'read-and-writes' : 'read-only', reports, errors, fixture, profile }, null, 2));
   if (errors.length) console.error(errors.map(message => message.slice(0, 360)).join('\n'));
   if (previewWindow && !previewWindow.isDestroyed()) previewWindow.destroy();

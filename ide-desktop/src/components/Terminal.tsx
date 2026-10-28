@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, X, TerminalSquare, ClipboardCopy } from 'lucide-react';
+import { AlertTriangle, Plus, X, TerminalSquare, ClipboardCopy, Loader2 } from 'lucide-react';
 import { Terminal as Xterm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { desktop } from '../lib/ipc';
+import { nextRovingTabId, type RovingTabKey } from '../lib/rovingTabs';
+import { readTerminalOutput } from '../lib/terminalOutput';
 
 type TermTab = {
   id: string;
@@ -25,9 +27,10 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const tabsRef = useRef<Map<string, TermTab>>(new Map());
-  const outputBufRef = useRef<string[]>([]);
   const [tabs, setTabs] = useState<{ id: string; title: string }[]>([]);
   const [activeId, setActiveId] = useState<string>('');
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const terminalTheme = () => {
     const dark = typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark';
@@ -64,9 +67,6 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
       if (!tab) return;
       if (event.type === 'data') {
         tab.term.write(event.data);
-        const plain = event.data.replace(/\x1b\[[0-9;]*[mGKHF]/g, '');
-        const lines = plain.split(/\r?\n/);
-        outputBufRef.current = [...outputBufRef.current, ...lines].slice(-200);
       } else if (event.type === 'exit') {
         tab.term.write(`\r\n[进程已退出，代码 ${event.code}]\r\n`);
       }
@@ -75,20 +75,38 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
   }, []);
 
   async function createTab() {
-    const term = new Xterm({
-      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', 'Noto Sans Mono CJK SC', Consolas, monospace",
-      fontSize: codeFontSize(), cursorBlink: true,
-      theme: terminalTheme(),
-      convertEol: false,
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    const result = await desktop.terminal.create({ cwd });
-    const onData = term.onData((data) => { void desktop.terminal.write(result.id, data); });
-    const tab: TermTab = { id: result.id, title: shortCwd(result.cwd), term, fit, disposeData: () => onData.dispose() };
-    tabsRef.current.set(result.id, tab);
-    setTabs((prev) => [...prev, { id: result.id, title: tab.title }]);
-    setActiveId(result.id);
+    setCreating(true);
+    setError(null);
+    let term: Xterm | null = null;
+    try {
+      const result = await desktop.terminal.create({ cwd });
+      term = new Xterm({
+        fontFamily: "'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', 'Noto Sans Mono CJK SC', Consolas, monospace",
+        fontSize: codeFontSize(), cursorBlink: true,
+        theme: terminalTheme(),
+        convertEol: false,
+      });
+      const fit = new FitAddon();
+      term.loadAddon(fit);
+      /*
+       * xterm swallows every key it can map, including Ctrl+T, so while the
+       * terminal had focus the app's own "底部终端" shortcut never fired and
+       * Tab/Shift+Tab are sent to the shell — the panel was a keyboard trap
+       * with no exit. Let the toggle chord through to the window handler;
+       * everything else stays with the PTY, which is what a terminal is for.
+       */
+      term.attachCustomKeyEventHandler((event) => !(event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && (event.key === 't' || event.key === 'T')));
+      const onData = term.onData((data) => { void desktop.terminal.write(result.id, data); });
+      const tab: TermTab = { id: result.id, title: shortCwd(result.cwd), term, fit, disposeData: () => onData.dispose() };
+      tabsRef.current.set(result.id, tab);
+      setTabs((prev) => [...prev, { id: result.id, title: tab.title }]);
+      setActiveId(result.id);
+    } catch (err) {
+      term?.dispose();
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreating(false);
+    }
   }
 
   function closeTab(id: string) {
@@ -108,6 +126,19 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
       tabsRef.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Closing the panel (X button or Ctrl+T from inside the terminal) removes
+  // the node that had focus, so focus used to land on <body> — the next Tab
+  // restarted from the top of the app. Hand it back to the composer instead.
+  useEffect(() => {
+    return () => {
+      window.requestAnimationFrame(() => {
+        if (!document.activeElement || document.activeElement === document.body) {
+          document.querySelector<HTMLElement>('.composer textarea')?.focus();
+        }
+      });
+    };
   }, []);
 
   useEffect(() => {
@@ -157,25 +188,61 @@ export function Terminal({ cwd, onClose, onCaptureOutput }: {
     <section className="terminal-panel">
       <div className="terminal-tabs">
         {tabs.map((tab) => (
-          <div key={tab.id} className={`terminal-tab ${tab.id === activeId ? 'active' : ''}`} role="tab" tabIndex={tab.id === activeId ? 0 : -1} aria-selected={tab.id === activeId}
-            onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setActiveId(tab.id); } }}>
+          <div key={tab.id} className={`terminal-tab ${tab.id === activeId ? 'active' : ''}`} role="tab" tabIndex={tab.id === activeId ? 0 : -1} aria-selected={tab.id === activeId} data-terminal-tab-id={tab.id}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setActiveId(tab.id); return; }
+              if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') {
+                event.preventDefault();
+                const next = nextRovingTabId(tabs.map((item) => item.id), tab.id, event.key as RovingTabKey);
+                if (!next) return;
+                setActiveId(next);
+                window.requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-terminal-tab-id="${CSS.escape(next)}"]`)?.focus());
+              }
+            }}>
             <button type="button" className="terminal-tab-label" onClick={() => setActiveId(tab.id)} title={tab.title} aria-label={`切换到终端 ${tab.title}`}>
               <TerminalSquare size={13} /><span>{tab.title}</span>
             </button>
             <button type="button" className="terminal-tab-close" onClick={() => closeTab(tab.id)} aria-label={`关闭终端 ${tab.title}`}><X size={12} /></button>
           </div>
         ))}
-        <button type="button" className="terminal-new" onClick={() => void createTab()} aria-label="新建终端"><Plus size={14} /></button>
+        <button type="button" className="terminal-new" onClick={() => void createTab()} disabled={creating} aria-label="新建终端">
+          {creating ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
+        </button>
         <span className="terminal-tabs-spacer" />
         {onCaptureOutput && (
-          <button type="button" className="terminal-capture-btn" onClick={() => onCaptureOutput(outputBufRef.current.join('\n'))}
+          <button type="button" className="terminal-capture-btn" disabled={!activeId} onClick={() => {
+            const tab = tabsRef.current.get(activeId);
+            if (!tab) return;
+            tab.term.write('', () => {
+              if (tabsRef.current.get(tab.id) === tab) onCaptureOutput(readTerminalOutput(tab.term.buffer.active));
+            });
+          }}
             title="引用输出到对话 (@terminal)">
             <ClipboardCopy size={13} /> 引用输出
           </button>
         )}
         <button type="button" className="terminal-close" onClick={onClose} aria-label="关闭终端面板"><X size={15} /></button>
       </div>
-      <div className="terminal-host" ref={hostRef} />
+      {error && (
+        <div className="terminal-error" role="alert">
+          <AlertTriangle size={14} />
+          <span>{error}</span>
+          <button type="button" onClick={() => void createTab()} disabled={creating}>重试</button>
+        </div>
+      )}
+      <div className="terminal-body">
+        {tabs.length === 0 && (
+          <div className="terminal-empty" role="status">
+            <TerminalSquare size={22} />
+            <strong>还没有终端</strong>
+            <span>新建一个终端后，命令输出可以引用到对话里。</span>
+            <button type="button" className="btn-secondary" onClick={() => void createTab()} disabled={creating}>
+              {creating ? '正在启动…' : '新建终端'}
+            </button>
+          </div>
+        )}
+        <div className="terminal-host" ref={hostRef} />
+      </div>
     </section>
   );
 }

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
-import { MonacoEditor, type MonacoEditorOptions } from './MonacoEditor';
+import { MonacoEditor, type MonacoEditorOptions, type MonacoSelection } from './MonacoEditor';
 import { EditorTabs, type EditorTab } from './EditorTabs';
-import { FileText } from 'lucide-react';
+import { AlertTriangle, FileText } from 'lucide-react';
 import { ConfirmDialog } from '../ConfirmDialog';
 
 export interface ExternalFileSnapshot {
@@ -27,6 +27,8 @@ export interface EditorViewProps {
   onSaveFile: (path: string, content: string) => void;
   onCloseFile: (path: string) => void;
   onContentChange: (path: string, content: string) => void;
+  onReloadExternal: (path: string) => void;
+  onKeepExternal: (path: string) => void;
   onSetActive: (path: string) => void;
   /** User editor preferences (settings → 外观); applied to Monaco live. */
   editorOptions?: MonacoEditorOptions;
@@ -34,6 +36,7 @@ export interface EditorViewProps {
   pendingReveal?: { path: string; line: number } | null;
   /** Called after the pending reveal was applied. */
   onRevealDone?: () => void;
+  onSelectionChange?: (selection: MonacoSelection) => void;
 }
 
 export function EditorView({
@@ -42,10 +45,13 @@ export function EditorView({
   onSaveFile,
   onCloseFile,
   onContentChange,
+  onReloadExternal,
+  onKeepExternal,
   onSetActive,
   editorOptions,
   pendingReveal,
   onRevealDone,
+  onSelectionChange,
 }: EditorViewProps) {
   const tabs: EditorTab[] = openFiles.map(f => ({ path: f.path, dirty: f.dirty, stale: f.stale }));
   const [pendingClose, setPendingClose] = useState<string | null>(null);
@@ -102,6 +108,14 @@ export function EditorView({
         onTabClick={onSetActive}
         onTabClose={handleTabClose}
       />
+      {activeFileData?.external && (
+        <div className="editor-external-banner" role="alert">
+          <AlertTriangle size={15} />
+          <span>磁盘内容已被外部修改。你可以加载磁盘版本，或继续保留当前本地编辑。</span>
+          <button type="button" onClick={() => onReloadExternal(activeFileData.path)}>加载磁盘版本</button>
+          <button type="button" className="secondary" onClick={() => onKeepExternal(activeFileData.path)}>继续保留</button>
+        </div>
+      )}
       {activeFileData && (
         <MonacoEditor
           key={activeFileData.path}
@@ -114,6 +128,7 @@ export function EditorView({
           editorOptions={{ ...editorOptions, fontFamily: editorOptions?.fontFamily ?? "'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', Consolas, monospace" }}
           pendingReveal={pendingReveal}
           onRevealDone={onRevealDone}
+          onSelectionChange={onSelectionChange}
         />
       )}
     </div>

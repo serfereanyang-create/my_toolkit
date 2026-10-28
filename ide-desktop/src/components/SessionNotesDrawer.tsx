@@ -104,7 +104,7 @@ export function SessionNotesDrawer({ sessionId, onClose, onDraftChange }: {
         <span className="notes-count">{notes.length}</span>
         <button className="icon-button" title="关闭" onClick={onClose}><X size={15} /></button>
       </div>
-      {error && <div className="notes-error">{error}</div>}
+      {error && <div className="notes-error" role="alert"><span>{error}</span><button type="button" className="panel-retry" onClick={() => { void refresh(); }} disabled={loading}>重试</button></div>}
       <div className="notes-list">
         {loading && <div className="notes-empty">载入中…</div>}
         {!loading && notes.length === 0 && (

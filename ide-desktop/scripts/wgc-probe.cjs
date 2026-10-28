@@ -7,6 +7,8 @@
  * The window is never shown, never focused, never activated.
  */
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const { app, BrowserWindow, desktopCapturer } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');

@@ -140,7 +140,7 @@ export function WorkspaceToolsPanel({
       />
       <header className="workspace-tools-header">
         <div>
-          <span className="workspace-tools-eyebrow">WORKSPACE</span>
+          <span className="workspace-tools-eyebrow">工作区</span>
           <h2>工作区工具</h2>
         </div>
         <button type="button" className="workspace-tools-close" onClick={onClose} aria-label="关闭工具面板" title="关闭">

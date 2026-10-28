@@ -44,6 +44,12 @@ class MessageQueueStore {
   async load(root) {
     const key = rootKey(root);
     await this.writes.get(key)?.catch(() => undefined);
+    const data = await this.readSnapshot(root);
+    return { ...data, pausedSessions: [...new Set([...data.pausedSessions, ...data.messages.map(message => message.sessionId)])] };
+  }
+
+  async readSnapshot(root) {
+    const key = rootKey(root);
     const file = await this.file(root);
     try {
       const actual = await fs.realpath(file);
@@ -52,8 +58,7 @@ class MessageQueueStore {
       if (stat.size > MAX_BYTES) throw new Error('消息队列超过 32 MB，未读取或覆盖原文件。');
       const stored = JSON.parse(await fs.readFile(actual, 'utf8'));
       if (stored.version !== 1 || stored.root !== key) throw new Error('消息队列归属或版本无效，原文件保持不变。');
-      const data = snapshot(stored);
-      return { ...data, pausedSessions: [...new Set([...data.pausedSessions, ...data.messages.map(message => message.sessionId)])] };
+      return snapshot(stored);
     } catch (error) {
       if (error.code === 'ENOENT') return { messages: [], pausedSessions: [] };
       throw error;
@@ -65,14 +70,37 @@ class MessageQueueStore {
     const normalized = snapshot(value);
     const text = JSON.stringify({ version: 1, root: key, ...normalized }, null, 2);
     if (Buffer.byteLength(text, 'utf8') > MAX_BYTES) throw new Error('消息队列超过 32 MB，未覆盖原文件。');
+    return this.enqueue(key, () => this.writeSnapshot(root, text));
+  }
+
+  restore(root, messages) {
+    const key = rootKey(root);
+    const recovered = snapshot({ messages, pausedSessions: [] }).messages;
+    return this.enqueue(key, async () => {
+      const current = await this.readSnapshot(root);
+      const existing = new Set(current.messages.map(message => message.id));
+      const merged = {
+        messages: [...recovered.filter(message => !existing.has(message.id)), ...current.messages],
+        pausedSessions: [...new Set([...current.pausedSessions, ...recovered.map(message => message.sessionId)])],
+      };
+      const text = JSON.stringify({ version: 1, root: key, ...merged }, null, 2);
+      if (Buffer.byteLength(text, 'utf8') > MAX_BYTES) throw new Error('消息队列超过 32 MB，未覆盖原文件。');
+      await this.writeSnapshot(root, text);
+      return merged;
+    });
+  }
+
+  async writeSnapshot(root, text) {
+    const file = await this.file(root);
+    const temporary = path.join(path.dirname(file), `${path.basename(file)}.${randomUUID()}.tmp`);
+    await fs.writeFile(temporary, text, { flag: 'wx' });
+    try { await renameWithRetry(temporary, file); }
+    catch (error) { await fs.unlink(temporary).catch(() => undefined); throw error; }
+  }
+
+  enqueue(key, action) {
     const previous = this.writes.get(key) ?? Promise.resolve();
-    const saving = previous.catch(() => undefined).then(async () => {
-      const file = await this.file(root);
-      const temporary = path.join(path.dirname(file), `${path.basename(file)}.${randomUUID()}.tmp`);
-      await fs.writeFile(temporary, text, { flag: 'wx' });
-      try { await renameWithRetry(temporary, file); }
-      catch (error) { await fs.unlink(temporary).catch(() => undefined); throw error; }
-    }).finally(() => { if (this.writes.get(key) === saving) this.writes.delete(key); });
+    const saving = previous.catch(() => undefined).then(action).finally(() => { if (this.writes.get(key) === saving) this.writes.delete(key); });
     this.writes.set(key, saving);
     return saving;
   }

@@ -138,6 +138,18 @@ export type TrajectoryRecord = {
   toolNames: string[];
   promptChars: number;
   usage?: { inputTokens?: number; outputTokens?: number };
+  streamMetrics?: {
+    transport: 'sse' | 'json';
+    durationMs: number;
+    timeToFirstEventMs: number | null;
+    timeToFirstOutputMs: number | null;
+    eventCount: number;
+    outputDeltaCount: number;
+    outputChars: number;
+    interEventP50Ms: number | null;
+    interEventP95Ms: number | null;
+    maxInterEventMs: number | null;
+  };
 };
 
 /** A project-memory entry from the CLI's shared memory store (read-only). */
@@ -286,10 +298,11 @@ type ZCodeDesktopApi = {
   };
   /** 「选一个文件」的唯一入口。起始目录由主进程锁在工作区根，不接受调用方指定。 */
   files: {
+    inspect(paths: string[]): Promise<import('./attachmentValidation').AttachmentInspection[]>;
     pick(options: {
       title?: string;
       filters?: Array<{ name: string; extensions: string[] }>;
-    }): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+    }): Promise<{ ok: boolean; path?: string; size?: number; canceled?: boolean; error?: string }>;
   };
   editor: {
     readFile(absolutePath: string): Promise<{ ok: boolean; content?: string; error?: string }>;
@@ -297,7 +310,7 @@ type ZCodeDesktopApi = {
     watchFile(absolutePath: string): Promise<{ ok: boolean; alreadyWatching?: boolean; error?: string }>;
     unwatchFile(absolutePath: string): Promise<{ ok: boolean }>;
     stat(absolutePath: string): Promise<{ ok: boolean; mtimeMs?: number; size?: number; error?: string }>;
-    onFileChanged(handler: (payload: { path: string }) => void): () => void;
+    onFileChanged(handler: (payload: { path: string; workspaceRoot?: string }) => void): () => void;
   };
   settings: {
     get(): Promise<DesktopSettings>;
@@ -399,6 +412,12 @@ type ZCodeDesktopApi = {
   messageQueue: {
     load(root: string): Promise<{ messages: import('../types').QueuedMessage[]; pausedSessions: string[] }>;
     save(root: string, state: { messages: import('../types').QueuedMessage[]; pausedSessions: string[] }): Promise<{ ok: boolean }>;
+    restore(root: string, messages: import('../types').QueuedMessage[]): Promise<{ messages: import('../types').QueuedMessage[]; pausedSessions: string[] }>;
+  };
+  composerDraft: {
+    load(root: string): Promise<import('./composerDraft').ComposerDraftRecord[]>;
+    save(root: string, drafts: import('./composerDraft').ComposerDraftRecord[]): Promise<{ ok: boolean }>;
+    flush(): Promise<{ ok: boolean }>;
   };
   agent: {
     start(resumeSessionId?: string): Promise<{ ok: boolean; sessionId: string; reused?: boolean; running?: boolean; taskBoard?: import('../types').TaskBoard | null }>;
@@ -603,6 +622,7 @@ type ZCodeDesktopApi = {
     createBranch(name: string): Promise<{ ok: boolean; branch?: string; error?: string }>;
     deleteBranch(name: string, force?: boolean): Promise<{ ok: boolean; branch?: string; error?: string }>;
     createPr(opts: { title: string; body?: string; draft?: boolean; base?: string }): Promise<{ ok: boolean; url?: string; number?: number | null; title?: string; output?: string; error?: string }>;
+    prReadiness(): Promise<{ ok: boolean; code?: string; message?: string }>;
   };
 };
 

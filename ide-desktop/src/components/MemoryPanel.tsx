@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BrainCircuit, ChevronDown, ChevronRight, FileText, FolderGit2, RefreshCw, Clock, Search } from 'lucide-react';
+import { AlertCircle, BrainCircuit, ChevronDown, ChevronRight, FileText, FolderGit2, Loader2, RefreshCw, Clock, Search } from 'lucide-react';
 import { desktop, type GlobalMemorySnapshot, type ProjectMemorySummary } from '../lib/ipc';
 
 /*
@@ -118,9 +118,15 @@ export function MemoryPanel({ onOpenFile }: { onOpenFile?: (path: string) => voi
         </button>
       </header>
 
-      {error && <div className="gtx-error" role="alert"><span>{error}</span></div>}
+      {error && <div className="gtx-error" role="alert"><AlertCircle size={15} /><span>{error}</span><button type="button" className="gtx-btn" onClick={() => void refresh()} disabled={loading}>重试</button></div>}
 
-      {totalEdits === 0 ? (
+      {loading && !snapshot && !error && (
+        <div className="gtx-empty mem-loading" role="status" aria-busy="true">
+          <Loader2 size={14} className="spin" />正在读取记忆…
+        </div>
+      )}
+
+      {loading && !snapshot ? null : totalEdits === 0 ? (
         <div className="gtx-repo-empty">
           <BrainCircuit size={26} />
           <h2>还没有任何编辑记录</h2>

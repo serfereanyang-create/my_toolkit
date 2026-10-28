@@ -7,11 +7,21 @@ import { displayPath } from '../lib/paths';
 import { copyText } from '../lib/clipboard';
 
 // Risk level → color + icon + label
-const RISK_META: Record<string, { color: string; Icon: React.ElementType; label: string }> = {
-  write:   { color: 'var(--warn)', Icon: FileEdit,  label: '写文件' },
-  shell:   { color: 'var(--danger)', Icon: Terminal,  label: '命令执行' },
-  network: { color: 'var(--blue)', Icon: Globe,     label: '网络请求' },
-  read:    { color: 'var(--fg-muted)', Icon: Wrench,    label: '读取' },
+// Colours here are drawn as *text* on the card surface, so they must be the
+// ink tokens, not the accent ones: --warn as text is 2.82:1 on the app surface
+// and 2.44-2.47:1 on the badge's own warm tint.
+/** Three colours per risk, because they are read at different weights. `ink` is
+ *  the badge text at 12px and has to clear 4.5:1 against the card, which the
+ *  solid `--warn` does not — it is an accent. `edge` draws the badge border,
+ *  which is UI graphics and answers to 3:1 instead; for the other three risks
+ *  the accent already clears that, only the light orange does not (2.44-2.47 on
+ *  the card tint) and gets a darkened twin. `accent` is what the card's gradient
+ *  keys off, where the ink's brown would just look like a dirty edge. */
+const RISK_META: Record<string, { ink: string; edge: string; accent: string; Icon: React.ElementType; label: string }> = {
+  write:   { ink: 'var(--warn-ink)',   edge: 'var(--warn-edge)', accent: 'var(--warn)',     Icon: FileEdit,  label: '写文件' },
+  shell:   { ink: 'var(--danger-ink)', edge: 'var(--danger)',    accent: 'var(--danger)',   Icon: Terminal,  label: '命令执行' },
+  network: { ink: 'var(--blue-ink)',   edge: 'var(--blue)',      accent: 'var(--blue)',     Icon: Globe,     label: '网络请求' },
+  read:    { ink: 'var(--fg-muted)',   edge: 'var(--fg-muted)',  accent: 'var(--fg-muted)', Icon: Wrench,    label: '读取' },
 };
 
 /** "." is the workspace root. Rendered after the 路径 label it reads as a
@@ -116,16 +126,15 @@ export function ToolCard({ item, onApprove }: {
                        : null;
 
     const inputPreview = formatInput(item.tool, item.input);
-    // approval_overlay.rs headlines per request kind.
     const headline = risk === 'shell' || risk === 'network'
-      ? 'Would you like to run the following command?'
-      : 'Would you like to make the following edits?';
+      ? '要执行下面这条命令吗？'
+      : '要对下面这些文件做修改吗？';
 
     return (
       <section className={`tool-card approval-card ${decided ? 'decided' : ''}`}
-        style={{ '--approval-risk-color': meta.color } as React.CSSProperties}>
+        style={{ '--approval-risk-color': meta.accent } as React.CSSProperties}>
         <div className="approval-header">
-          <span className="approval-risk-badge" style={{ color: meta.color, borderColor: meta.color }}>
+          <span className="approval-risk-badge" style={{ color: meta.ink, borderColor: meta.edge }}>
             <RiskIcon size={12} />
             {meta.label}
           </span>
@@ -156,17 +165,17 @@ export function ToolCard({ item, onApprove }: {
             <button className="approval-btn allow-once"
               title="快捷键 y"
               onClick={() => onApprove(item.requestId, 'allow_once')}>
-              Yes, proceed <kbd>y</kbd>
+              允许一次 <kbd>y</kbd>
             </button>
             <button className="approval-btn allow-session"
               title="快捷键 a"
               onClick={() => onApprove(item.requestId, 'allow_session')}>
-              Yes, and don't ask again this session <kbd>a</kbd>
+              本次会话都允许 <kbd>a</kbd>
             </button>
             <button className="approval-btn deny"
               title="快捷键 n / Esc — 拒绝后可直接输入新的指示"
               onClick={() => onApprove(item.requestId, 'deny')}>
-              No, and tell Codex what to do differently <kbd>n</kbd>
+              拒绝并说明要怎么改 <kbd>n</kbd>
             </button>
           </div>
         )}

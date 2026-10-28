@@ -251,7 +251,7 @@ export function TurnSummary({ item, onApprove, onUndo, now, onOpenFile, expandAl
 
         {item.ctxTokens ? (
           <span className="turn-ctx" title="本轮真实上下文占用（来自 CLI context_stats 事件）">
-            上下文 {formatTokensCompact(item.ctxTokens)} tokens
+            上下文 {formatTokensCompact(item.ctxTokens)} 词元
             {item.cacheRate !== null && item.cacheRate !== undefined ? ` · 缓存 ${item.cacheRate}%` : ''}
           </span>
         ) : null}

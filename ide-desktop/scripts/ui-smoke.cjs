@@ -1,3 +1,5 @@
+require('./lib/probe-guard.cjs');
+
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -18,6 +20,46 @@ let window;
 
 const evaluate = (expression) => window.webContents.executeJavaScript(expression, true);
 const settle = () => evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+
+// Focus visibility, measured instead of assumed. Two automation traps make the
+// obvious approaches lie in a hidden window: (1) a window that never takes focus
+// has document.hasFocus() === false, so Chromium never matches :focus-visible —
+// synthetic Tab then reports "no ring" for every control; (2) the composer draws
+// its focus state on an ancestor (:focus-within), so looking only at the focused
+// element reports "no ring" for a control that is visibly focused. So: emulate
+// page focus over CDP, focus each control with focusVisible:true, and compare a
+// style signature that includes the focused element and its ancestors. If focus
+// cannot be emulated, the phase is reported as not automatable instead of
+// asserting on a value that means nothing.
+const FOCUS_JS = `(() => {
+  const visible = (element) => { const box = element.getBoundingClientRect(); const style = getComputedStyle(element); return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'; };
+  const describe = (element) => {
+    const classes = typeof element.className === 'string' && element.className.trim() ? '.' + element.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
+    const label = element.getAttribute('aria-label');
+    return (element.tagName.toLowerCase() + classes + (label ? '[' + label.slice(0, 16) + ']' : '')).slice(0, 44);
+  };
+  const signature = (element) => {
+    const parts = [];
+    let node = element;
+    for (let depth = 0; depth < 4 && node && node !== document.body; depth += 1) {
+      const style = getComputedStyle(node);
+      parts.push([style.outlineStyle, style.outlineWidth, style.outlineColor, style.boxShadow, style.borderTopColor, style.borderTopWidth, style.backgroundColor].join('|'));
+      node = node.parentElement;
+    }
+    return parts.join('##');
+  };
+  const stops = [];
+  for (const element of document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')) {
+    if (element.disabled || element.tabIndex < 0 || !visible(element)) continue;
+    if (document.activeElement && document.activeElement !== element) document.activeElement.blur();
+    const before = signature(element);
+    element.focus({ focusVisible: true, preventScroll: true });
+    const after = signature(element);
+    stops.push({ selector: describe(element), focusVisible: element.matches(':focus-visible'), ring: after !== before });
+  }
+  if (document.activeElement) document.activeElement.blur();
+  return { hasFocus: document.hasFocus(), stops };
+})()`;
 
 app.whenReady().then(async () => {
   log('Electron ready');
@@ -68,14 +110,19 @@ app.whenReady().then(async () => {
     await new Promise((resolve) => setTimeout(resolve, 160));
     const report = await evaluate(`(() => {
       const rect = (selector) => { const element = document.querySelector(selector); const box = element.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height, right: box.right, bottom: box.bottom }; };
+      // Geometry is compared with the reading area at scroll top, so "the column
+      // starts at the top of its scroll area" is a statement about layout and not
+      // about how far a previous scenario happened to leave it scrolled.
+      const streamElement = document.querySelector('.stream');
+      if (streamElement) streamElement.scrollTop = 0;
       const main = rect('.main');
       const composer = rect('.composer');
       const stream = document.querySelector('.stream-inner') ? rect('.stream-inner') : null;
       const buttons = [...document.querySelectorAll('.composer-bar button')].map(element => { const box = element.getBoundingClientRect(); return { title: element.title, left: box.left, right: box.right, top: box.top, bottom: box.bottom }; });
       const styles = (selector) => { const style = getComputedStyle(document.querySelector(selector)); return { background: style.background, color: style.color, border: style.borderColor }; };
       const rail = document.querySelector('.rail');
-      const streamElement = document.querySelector('.stream');
-      return { main, composer, stream, buttons, rail: styles('.rail'), activeSession: styles('.rail-convo.active'), newChat: styles('.rail-primary-new'), model: styles('.composer-model'), railOverflow: rail.scrollWidth > rail.clientWidth + 1, streamOverflow: streamElement.scrollWidth > streamElement.clientWidth + 1, bodyOverflow: document.documentElement.scrollWidth > innerWidth || document.documentElement.scrollHeight > innerHeight, focusVisible: !!document.querySelector(':focus-visible') };
+      const scroller = streamElement ? rect('.stream') : null;
+      return { main, composer, stream, scroller, buttons, rail: styles('.rail'), activeSession: styles('.rail-convo.active'), newChat: styles('.rail-primary-new'), model: styles('.composer-model'), railOverflow: rail.scrollWidth > rail.clientWidth + 1, streamOverflow: streamElement.scrollWidth > streamElement.clientWidth + 1, streamFits: streamElement.scrollHeight <= streamElement.clientHeight + 1, bodyOverflow: document.documentElement.scrollWidth > innerWidth || document.documentElement.scrollHeight > innerHeight };
     })()`);
     const failures = [];
     if (report.bodyOverflow) failures.push('page overflows');
@@ -84,6 +131,19 @@ app.whenReady().then(async () => {
     if (report.composer.right > report.main.right + 1 || report.composer.x < report.main.x) failures.push('composer outside main');
     if (report.composer.bottom > height + 1) failures.push('composer below window');
     if (report.stream && Math.abs(report.stream.x - report.composer.x) > 6) failures.push('reading column and composer are misaligned');
+    // Vertical containment: the scroll area stays inside main and above the
+    // composer, the reading column stays inside its scroll area, and while the
+    // content still fits the column cannot reach under the composer.
+    if (report.scroller) {
+      if (report.scroller.y < report.main.y - 1) failures.push('reading area starts above main');
+      if (report.scroller.bottom > report.composer.y + 1) failures.push('reading area overlaps composer');
+      if (report.scroller.bottom > report.main.bottom + 1) failures.push('reading area runs past main');
+    }
+    if (report.stream && report.scroller) {
+      if (report.stream.y < report.scroller.y - 1) failures.push('reading column starts above its scroll area');
+      if (report.stream.x < report.scroller.x - 1 || report.stream.right > report.scroller.right + 1) failures.push('reading column escapes its scroll area');
+      if (report.streamFits && report.stream.bottom > report.composer.y + 1) failures.push('reading column extends under composer');
+    }
     for (const button of report.buttons) if (button.right > report.composer.right + 1 || button.left < report.composer.x - 1) failures.push(`${button.title} outside composer`);
     for (let index = 1; index < report.buttons.length; index += 1) {
       const previous = report.buttons[index - 1];
@@ -94,6 +154,33 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(output, `${observe ? 'before-' : ''}${name}.png`), image.toPNG());
     reports.push({ name, ...report, failures });
     log(`${failures.length ? 'FAIL' : 'PASS'} ${name}: ${failures.join(', ') || 'layout contained'}`);
+  }
+
+  if (!process.argv.includes('--workflows-only')) {
+    window.setContentSize(1280, 860);
+    await evaluate('document.documentElement.dataset.theme = "light"; window.uiPreview.scenario("conversation"); document.querySelector(".chat-shell").style.setProperty("--panel-w", "0px");');
+    await settle();
+    let emulated = false;
+    try {
+      window.webContents.debugger.attach('1.3');
+      await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+      emulated = true;
+    } catch (error) { log(`focus emulation unavailable: ${error.message}`); }
+    await settle();
+    const probe = await evaluate(FOCUS_JS);
+    if (emulated) { try { window.webContents.debugger.detach(); } catch (error) { log(`debugger detach: ${error.message}`); } }
+    const focusFailures = [];
+    const ringless = probe.stops.filter((stop) => !stop.focusVisible || !stop.ring);
+    if (!probe.hasFocus) {
+      // Recorded, explicitly excluded from the assertions: with no page focus
+      // Chromium cannot match :focus-visible, so a verdict here would be about
+      // the harness, not the product.
+      log('SKIP focus-visible: not automatable — the hidden window never takes document focus');
+    } else {
+      for (const stop of ringless) focusFailures.push(`${stop.selector} shows no focus indicator`);
+    }
+    reports.push({ name: 'focus-visible', hasFocus: probe.hasFocus, automatable: probe.hasFocus, stops: probe.stops, failures: focusFailures });
+    if (probe.hasFocus) log(`${focusFailures.length ? 'FAIL' : 'PASS'} focus-visible: ${probe.stops.length} stops, ${ringless.length} without a visible indicator`);
   }
   fs.writeFileSync(path.join(output, `${observe ? 'before-' : ''}layout.json`), JSON.stringify({ reports, errors }, null, 2));
   if (process.argv.includes('--workflows-only')) {

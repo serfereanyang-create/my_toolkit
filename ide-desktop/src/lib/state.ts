@@ -672,7 +672,7 @@ function reduceAgentEvent(state: AppState, event: AgentEvent): AppState {
       ? event.autoDecision
       : undefined;
     const autoReason = typeof event.autoReason === 'string' ? event.autoReason : undefined;
-    const next = appendChat(state, { id: requestId, kind: 'approval', requestId, tool: String(event.tool || 'tool'), message: String(event.message || 'Approval required'), input: event.input, risk: (event.risk as 'read' | 'write' | 'shell' | 'network' | undefined), decided: autoDecision, autoReason, diff: diff && typeof diff.path === 'string' ? { id: requestId, path: diff.path, originalContent: diff.originalContent, modifiedContent: diff.modifiedContent, status: 'pending' } : undefined });
+    const next = appendChat(state, { id: requestId, kind: 'approval', requestId, tool: String(event.tool || 'tool'), message: String(event.message || '需要审批'), input: event.input, risk: (event.risk as 'read' | 'write' | 'shell' | 'network' | undefined), decided: autoDecision, autoReason, diff: diff && typeof diff.path === 'string' ? { id: requestId, path: diff.path, originalContent: diff.originalContent, modifiedContent: diff.modifiedContent, status: 'pending' } : undefined });
     const withDiff = diff && typeof diff.path === 'string'
       ? { ...next, pendingDiffs: [...next.pendingDiffs.filter((d) => d.id !== requestId), { id: requestId, path: diff.path, originalContent: diff.originalContent, modifiedContent: diff.modifiedContent, status: 'pending' as const }] }
       : next;

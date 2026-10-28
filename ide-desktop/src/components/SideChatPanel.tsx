@@ -3,6 +3,7 @@ import { X, Send, MessageSquare, Plus, Loader2 } from 'lucide-react';
 import type { AgentEvent, DesktopSettings } from '../types';
 import './ConversationStream';
 import { desktop } from '../lib/ipc';
+import { scrollBehavior } from '../lib/reduceMotion';
 
 /*
  * SideChatPanel — 独立侧边聊天面板。
@@ -128,9 +129,9 @@ export function SideChatPanel({
     return unsub;
   }, [open, agentStatus, activeId]);
 
-  // Scroll to bottom on new messages
+  // Scroll to bottom on new messages（减动效档位下由 scrollBehavior() 退回瞬时）
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: scrollBehavior() });
   }, [chats]);
 
   function createChat() {

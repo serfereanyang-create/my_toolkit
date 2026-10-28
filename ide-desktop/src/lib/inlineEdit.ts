@@ -48,20 +48,20 @@ export class InlineEditWidget {
     // 输入框
     this.inputElement = document.createElement('textarea');
     this.inputElement.className = 'inline-edit-input';
-    this.inputElement.placeholder = 'Tell AI what to do... (Ctrl+Enter to submit, Esc to cancel)';
+    this.inputElement.placeholder = '告诉 AI 要做什么…（Ctrl+Enter 提交，Esc 取消）';
     this.inputElement.rows = 1;
 
     // 提交按钮
     const submitBtn = document.createElement('button');
     submitBtn.className = 'inline-edit-submit';
-    submitBtn.title = 'Submit (Ctrl+Enter)';
+    submitBtn.title = '提交（Ctrl+Enter）';
     submitBtn.innerHTML = '✓';
     submitBtn.onclick = () => this.submit();
 
     // 取消按钮
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'inline-edit-cancel';
-    cancelBtn.title = 'Cancel (Esc)';
+    cancelBtn.title = '取消（Esc）';
     cancelBtn.innerHTML = '✕';
     cancelBtn.onclick = () => this.hide();
 
@@ -124,7 +124,7 @@ export class InlineEditWidget {
     // 禁用输入
     this.isProcessing = true;
     this.inputElement.disabled = true;
-    this.inputElement.placeholder = 'AI is thinking...';
+    this.inputElement.placeholder = 'AI 正在思考…';
 
     try {
       const context = editorContext.getContext();
@@ -157,7 +157,7 @@ export class InlineEditWidget {
       }
     } catch (err: any) {
       console.error('[InlineEditWidget] Error:', err);
-      this.showToast(`编辑失败: ${err.message || 'Unknown error'}`);
+      this.showToast(`编辑失败: ${err.message || '未知错误'}`);
     } finally {
       this.hide();
     }

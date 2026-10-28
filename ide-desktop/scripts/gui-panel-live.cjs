@@ -67,9 +67,13 @@ const pick = (list) => list
   .filter((w) => !w.cloaked && (w.right - w.left) >= 300 && (w.bottom - w.top) >= 200)
   .sort((a, b) => ((b.right - b.left) * (b.bottom - b.top)) - ((a.right - a.left) * (a.bottom - a.top)));
 const ranked = pick(windows);
-// Prefer an ordinary desktop app; a UWP shell legitimately reports no controls
-// until it is activated, which would prove nothing about reads.
-const target = ranked.find((w) => w.class !== 'Windows.UI.Core.CoreWindow') ?? ranked[0];
+// Prefer an ordinary desktop app; a UWP shell and compositor overlays can
+// legitimately expose no printable surface, which would prove nothing about
+// the background screenshot path.
+const target = ranked.find((w) => w.class !== 'Windows.UI.Core.CoreWindow'
+  && w.class !== 'CEF-OSC-WIDGET'
+  && w.class !== 'Progman'
+  && !/overlay|nvidia/i.test(w.title)) ?? ranked[0];
 
 if (!target) {
   check('a window big enough to read is open', false, 'nothing to read right now');
@@ -94,6 +98,12 @@ if (!target) {
   check(`reading ${hint} left focus alone in every round`, held === rounds.length,
     `${held}/${rounds.length} · ${rounds.map((r) => `${r.beforeRead}→${r.afterRead}`).join(' | ')}`);
   check('the window that had focus still has it', foregroundTitle() === before, `was "${before}"`);
+  const beforeShot = foregroundTitle();
+  const shot = call('computer_window_shot', { window: String(target.pid) });
+  const image = shot.data?.computerImage;
+  check(`background screenshot of ${hint} succeeds`, shot.ok === true, shot.error || '');
+  check('background screenshot returns PNG pixels', image?.mediaType === 'image/png' && typeof image.data === 'string' && image.data.length > 0, image ? `${image.data.length} base64 chars` : 'no image');
+  check('background screenshot leaves focus where it was', foregroundTitle() === beforeShot, `was "${beforeShot}"`);
 }
 
 // Activation must fail loudly rather than pretend, when Windows refuses.

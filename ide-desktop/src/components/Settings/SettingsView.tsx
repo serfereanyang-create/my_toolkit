@@ -22,6 +22,7 @@ import { ArchivedSettings } from './ArchivedSettings';
 import { ModelSettings } from './ModelSettings';
 import { UsageSettings } from './UsageSettings';
 import { searchNavIds } from '../../lib/settingsSearch';
+import { UI_FONT_SIZE_DEFAULT, clampCodeFontSize, clampUiFontSize } from '../../lib/uiFontSize';
 
 const CHINESE_FONT_DEFAULT = 'Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif';
 const ENGLISH_FONT_DEFAULT = 'Inter, Segoe UI, system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
@@ -118,6 +119,7 @@ export function SettingsView({ settings, onBack, onSave, onSaveKey, initialPage,
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索设置..."
+            aria-label="搜索设置项"
           />
         </div>
 
@@ -153,8 +155,8 @@ export function SettingsView({ settings, onBack, onSave, onSaveKey, initialPage,
           <AppearanceSettings
             theme={settings.preferences?.theme ?? 'system'}
             onThemeChange={(theme) => savePref({ theme })}
-            uiFontSize={Number(settings.preferences?.uiFontSize) || 14}
-            codeFontSize={Number(settings.preferences?.codeFontSize) || 12}
+            uiFontSize={clampUiFontSize(settings.preferences?.uiFontSize) ?? UI_FONT_SIZE_DEFAULT}
+            codeFontSize={clampCodeFontSize(settings.preferences?.codeFontSize) ?? 12}
             chineseFont={String(settings.preferences?.uiChineseFont || CHINESE_FONT_DEFAULT)}
             englishFont={String(settings.preferences?.uiEnglishFont || ENGLISH_FONT_DEFAULT)}
             onFontSizeChange={(next) => savePref(next)}

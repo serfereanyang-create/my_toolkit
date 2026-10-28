@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
   // 不暴露 showOpenDialog 的任何其他形态。
   files: {
     pick: (options) => ipcRenderer.invoke('files.pick', options),
+    inspect: (paths) => ipcRenderer.invoke('files.inspect', paths),
   },
   editor: {
     readFile: (relativePath) => ipcRenderer.invoke('editor.readFile', relativePath),
@@ -136,6 +137,12 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
   messageQueue: {
     load: (root) => ipcRenderer.invoke('messageQueue.load', root),
     save: (root, state) => ipcRenderer.invoke('messageQueue.save', root, state),
+    restore: (root, messages) => ipcRenderer.invoke('messageQueue.restore', root, messages),
+  },
+  composerDraft: {
+    load: (root) => ipcRenderer.invoke('composerDraft.load', root),
+    save: (root, drafts) => ipcRenderer.invoke('composerDraft.save', root, drafts),
+    flush: () => ipcRenderer.invoke('composerDraft.flush'),
   },
   agent: {
     // The trailing sessionId on each call targets one conversation's CLI child.
@@ -342,5 +349,6 @@ contextBridge.exposeInMainWorld('zcodeDesktop', {
     createBranch: (name)                       => ipcRenderer.invoke('git.createBranch', name),
     deleteBranch: (name, force)                => ipcRenderer.invoke('git.deleteBranch', name, force),
     createPr:     (opts)                       => ipcRenderer.invoke('git.createPr', opts),
+    prReadiness:  ()                           => ipcRenderer.invoke('git.prReadiness'),
   },
 });

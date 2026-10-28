@@ -82,10 +82,11 @@ export function ProjectAuditPanel() {
         <div className="audit-panel-error" role="alert">
           <AlertTriangle size={14} />
           <span>{error}</span>
+          <button type="button" onClick={() => void run()} disabled={loading}>重试</button>
         </div>
       )}
 
-      {loading && !report && <p className="audit-panel-loading">正在扫描工作区结构…</p>}
+      {loading && !report && <p className="audit-panel-loading" role="status" aria-busy="true">正在扫描工作区结构…</p>}
 
       {report && !loading && !error && (
         <>

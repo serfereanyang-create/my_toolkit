@@ -185,6 +185,7 @@ export function ComputerSettings({ prefs, savePref }: { prefs: Prefs; savePref: 
                 <button
                   className="icon-button"
                   title="移除"
+                  aria-label="移除"
                   onClick={() => removeApp(app)}
                 >
                   <Trash2 size={14} />
@@ -197,15 +198,21 @@ export function ComputerSettings({ prefs, savePref }: { prefs: Prefs; savePref: 
             <input
               className="settings-text-field"
               style={{ flex: 1 }}
+              aria-label="应用名称或路径"
               value={newApp}
               onChange={(e) => setNewApp(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') addApp(); }}
               placeholder="输入应用名称或路径，如 node"
             />
+            {/* `.icon-button` has no :disabled rule in the stylesheet, so a
+                disabled 添加 looked identical to an armed one. The inline
+                opacity is the same stopgap UsageSettings' refresh button uses. */}
             <button
               className="icon-button"
               title="添加"
+              aria-label="添加"
               disabled={!newApp.trim()}
+              style={{ opacity: newApp.trim() ? 1 : 0.45 }}
               onClick={addApp}
             >
               <Plus size={16} />

@@ -147,14 +147,17 @@ function MonacoDiffView({ original, modified }: { original: string; modified: st
     el.innerHTML = '';
     const pre = document.createElement('pre');
     pre.className = 'diff-plain';
-    pre.style.cssText = 'margin:0;padding:8px;font-size:12px;line-height:1.5;overflow:auto;max-height:300px;font-family:var(--font-mono)';
+    pre.style.cssText = 'margin:0;padding:8px;font-size:var(--fs-3);line-height:1.5;overflow:auto;max-height:300px;font-family:var(--font-mono)';
     for (const row of rows) {
       const line = document.createElement('div');
       line.textContent = (row.type === 'del' ? '− ' : row.type === 'add' ? '+ ' : '  ') + row.text;
+      // The row tint stays on the accent (it is a fill); the +/− text is 12px
+      // body copy, so it takes the ink twins: the danger tint left red at
+      // 4.23-4.27:1 and the ok tint at 3.89:1, both under the 4.5:1 floor.
       line.style.cssText = row.type === 'del'
-        ? 'background:color-mix(in srgb, var(--danger) 8%, transparent);color:var(--danger)'
+        ? 'background:color-mix(in srgb, var(--danger) 8%, transparent);color:var(--danger-ink)'
         : row.type === 'add'
-          ? 'background:color-mix(in srgb, var(--ok) 10%, transparent);color:var(--ok)'
+          ? 'background:color-mix(in srgb, var(--ok) 10%, transparent);color:var(--ok-ink)'
           : 'color:var(--fg-muted)';
       pre.appendChild(line);
     }

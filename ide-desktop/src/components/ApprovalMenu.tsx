@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Hand, Wand2, ClipboardList, ShieldOff, Check } from 'lucide-react';
 import type { ApprovalMode } from '../types';
+import { usePopoverFocus } from '../lib/usePopoverFocus';
 
 /*
  * The description states the real file scope, because the approval mode is the
@@ -28,6 +29,7 @@ export function ApprovalMenu({ value, onPick, onClose }: {
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  usePopoverFocus(ref);
 
   useEffect(() => {
     function onDown(e: MouseEvent) {

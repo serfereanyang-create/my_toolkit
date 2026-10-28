@@ -8,7 +8,8 @@
  * - 一键应用
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useId, useState, useEffect } from 'react';
+import { AlertCircle, CheckCircle2, GitBranch, LoaderCircle, X } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 
 /**
@@ -44,10 +45,10 @@ interface RefactorPanelProps {
     file: string;
     startLine: number;
     endLine: number;
+    startColumn?: number;
     content: string;
   };
-  /** 重构已写盘后由 App 提供的真实刷新（重读文件 / 刷新文件树）。 */
-  onApplied?: () => void;
+  onAskAgent?: (prompt: string) => void;
 }
 
 type RefactorType = 'extract-method' | 'rename' | null;
@@ -56,9 +57,12 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
   visible,
   onClose,
   selectedCode,
-  onApplied,
+  onAskAgent,
 }) => {
   const [refactorType, setRefactorType] = useState<RefactorType>(null);
+  // 表单里的 <label> 一直没有 htmlFor，输入框对屏幕阅读器是无名控件；
+  // 光标位置的两个数字框共用一个 label，只能给各自一条 aria-label。
+  const uid = useId();
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,20 +76,34 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
   const [newName, setNewName] = useState('');
   const [cursorPosition, setCursorPosition] = useState<{ line: number; column: number } | null>(null);
   
+  const selectionKey = selectedCode
+    ? `${selectedCode.file}:${selectedCode.startLine}:${selectedCode.endLine}:${selectedCode.startColumn ?? 1}`
+    : '';
+
   useEffect(() => {
-    if (visible && selectedCode) {
-      // 自动检测重构类型
-      if (selectedCode.startLine !== selectedCode.endLine) {
-        setRefactorType('extract-method');
-      }
+    if (!visible) return;
+    setResult(null);
+    setError(null);
+    if (!selectedCode) {
+      setRefactorType(null);
+      setCursorPosition(null);
+      return;
     }
-  }, [visible, selectedCode]);
+    if (selectedCode.startLine !== selectedCode.endLine) {
+      setRefactorType('extract-method');
+      setCursorPosition(null);
+    } else {
+      setRefactorType('rename');
+      setCursorPosition({ line: selectedCode.startLine, column: selectedCode.startColumn ?? 1 });
+    }
+  }, [visible, selectionKey]);
   
   const handleExtractMethod = async () => {
     if (!selectedCode) return;
     
     setLoading(true);
     setError(null);
+    setResult(null);
     
     try {
       const options: ExtractMethodOptions = {
@@ -97,10 +115,9 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
       };
       
       // 调用 CLI 工具
-      const response = await invokeTool('extract_method', {
+      const response = await invokeTool('refactor_preview', {
         file: selectedCode.file,
-        ...options,
-        preview: true,
+        operations: [{ type: 'extract', name: options.methodName, ...options }],
       });
       
       if (response.ok) {
@@ -120,6 +137,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
     
     setLoading(true);
     setError(null);
+    setResult(null);
     
     try {
       const options: RenameOptions = {
@@ -129,9 +147,9 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         newName,
       };
       
-      const response = await invokeTool('rename_symbol', {
+      const response = await invokeTool('refactor_preview', {
         ...options,
-        preview: true,
+        operations: [{ type: 'rename', ...options }],
       });
       
       if (response.ok) {
@@ -146,41 +164,13 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
     }
   };
   
-  const handleApply = async () => {
-    if (!result) return;
-    
-    setLoading(true);
-    
-    try {
-      if (refactorType === 'extract-method') {
-        await invokeTool('extract_method', {
-          file: selectedCode!.file,
-          startLine: selectedCode!.startLine,
-          endLine: selectedCode!.endLine,
-          methodName,
-          useArrowFunction,
-          addTypeAnnotations,
-          preview: false,
-        });
-      } else if (refactorType === 'rename') {
-        await invokeTool('rename_symbol', {
-          file: selectedCode!.file,
-          line: cursorPosition!.line,
-          column: cursorPosition!.column,
-          newName,
-          preview: false,
-        });
-      }
-      
-      // 重构已写盘：交给 App 侧真实刷新（重读文件内容 + 文件树）
-      onApplied?.();
-
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
+  const handleAskAgent = () => {
+    if (!result || !selectedCode || !onAskAgent) return;
+    const prompt = refactorType === 'extract-method'
+      ? `请在工作区文件 ${selectedCode.file} 中应用刚才的 Extract Method 预览：第 ${selectedCode.startLine}-${selectedCode.endLine} 行提取为 ${methodName}，使用${useArrowFunction ? '箭头函数' : '普通函数'}，${addTypeAnnotations ? '添加' : '不添加'}类型注解。先展示变更并请求确认。`
+      : `请在工作区文件 ${selectedCode.file} 中应用刚才的 Rename Symbol 预览：第 ${cursorPosition?.line ?? selectedCode.startLine} 行第 ${cursorPosition?.column ?? 1} 列改名为 ${newName}。先展示变更并请求确认。`;
+    onAskAgent(prompt);
+    onClose();
   };
   
   if (!visible) return null;
@@ -190,24 +180,38 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
       <div className="refactor-panel">
         <div className="refactor-panel-header">
           <h2>代码重构</h2>
-          <button onClick={onClose} className="close-btn">×</button>
+          <button onClick={onClose} className="close-btn" aria-label="关闭重构面板"><X size={16} /></button>
         </div>
         
         <div className="refactor-panel-content">
+          {!selectedCode && !loading && !error && (
+            <div className="refactor-empty" role="status">
+              <GitBranch size={22} />
+              <strong>还没有选中的代码</strong>
+              <span>请先在编辑器中选择代码，或定位到要重命名的符号。</span>
+            </div>
+          )}
+          {loading && (
+            <div className="refactor-loading" role="status" aria-busy="true">
+              <LoaderCircle size={18} className="refactor-spin" />正在生成重构预览…
+            </div>
+          )}
           {/* 重构类型选择 */}
           <div className="refactor-type-selector">
             <button
+              type="button"
               className={refactorType === 'extract-method' ? 'active' : ''}
               onClick={() => setRefactorType('extract-method')}
               disabled={!selectedCode || selectedCode.startLine === selectedCode.endLine}
             >
-              Extract Method
+              提取方法
             </button>
             <button
+              type="button"
               className={refactorType === 'rename' ? 'active' : ''}
               onClick={() => setRefactorType('rename')}
             >
-              Rename Symbol
+              重命名符号
             </button>
           </div>
           
@@ -215,8 +219,9 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
           {refactorType === 'extract-method' && (
             <div className="refactor-form">
               <div className="form-group">
-                <label>方法名称</label>
+                <label htmlFor={`${uid}-method-name`}>方法名称</label>
                 <input
+                  id={`${uid}-method-name`}
                   type="text"
                   value={methodName}
                   onChange={(e) => setMethodName(e.target.value)}
@@ -260,8 +265,9 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
           {refactorType === 'rename' && (
             <div className="refactor-form">
               <div className="form-group">
-                <label>新名称</label>
+                <label htmlFor={`${uid}-new-name`}>新名称</label>
                 <input
+                  id={`${uid}-new-name`}
                   type="text"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
@@ -274,6 +280,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
                 <div className="cursor-position">
                   <input
                     type="number"
+                    aria-label="光标位置·行号"
                     value={cursorPosition?.line || ''}
                     onChange={(e) => setCursorPosition({
                       line: parseInt(e.target.value),
@@ -283,6 +290,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
                   />
                   <input
                     type="number"
+                    aria-label="光标位置·列号"
                     value={cursorPosition?.column || ''}
                     onChange={(e) => setCursorPosition({
                       line: cursorPosition?.line || 1,
@@ -305,8 +313,10 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
           
           {/* 错误信息 */}
           {error && (
-            <div className="error-message">
-              <strong>错误:</strong> {error}
+            <div className="error-message" role="alert">
+              <AlertCircle size={16} />
+              <span><strong>重构失败：</strong>{error}</span>
+              <button type="button" onClick={refactorType === 'rename' ? handleRename : handleExtractMethod}>重试</button>
             </div>
           )}
           
@@ -340,7 +350,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
               
               {/* 安全性 */}
               <div className={`safety-indicator ${result.result.isSafe ? 'safe' : 'unsafe'}`}>
-                {result.result.isSafe ? '✅ 重构安全' : '⚠️ 重构不安全'}
+                {result.result.isSafe ? <><CheckCircle2 size={15} />重构安全</> : <><AlertCircle size={15} />重构不安全</>}
               </div>
               
               {/* 警告 */}
@@ -366,8 +376,8 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
               
               {/* 应用按钮 */}
               {result.result.isSafe && (
-                <button onClick={handleApply} className="apply-btn" disabled={loading}>
-                  应用重构
+                <button type="button" onClick={handleAskAgent} className="apply-btn" disabled={loading || !onAskAgent}>
+                  交给智能体应用
                 </button>
               )}
             </div>
@@ -399,7 +409,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
               
               {/* 安全性 */}
               <div className={`safety-indicator ${result.isSafe ? 'safe' : 'unsafe'}`}>
-                {result.isSafe ? '✅ 重命名安全' : '⚠️ 重命名不安全'}
+                {result.isSafe ? <><CheckCircle2 size={15} />重命名安全</> : <><AlertCircle size={15} />重命名不安全</>}
               </div>
               
               {/* 错误 */}
@@ -450,8 +460,8 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
               
               {/* 应用按钮 */}
               {result.isSafe && (
-                <button onClick={handleApply} className="apply-btn" disabled={loading}>
-                  应用重命名
+                <button type="button" onClick={handleAskAgent} className="apply-btn" disabled={loading || !onAskAgent}>
+                  交给智能体应用
                 </button>
               )}
             </div>
@@ -460,46 +470,6 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
       </div>
       
       <style>{`
-        .refactor-panel-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.5);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 1000;
-        }
-        
-        .refactor-panel {
-          background: var(--bg-app);
-          border-radius: 8px;
-          width: 90%;
-          max-width: 900px;
-          max-height: 90vh;
-          overflow: hidden;
-          display: flex;
-          flex-direction: column;
-          box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
-        }
-        
-        .refactor-panel-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 20px 24px;
-          border-bottom: 1px solid var(--border);
-        }
-        
-        .refactor-panel-header h2 {
-          margin: 0;
-          font-family: var(--font-ui);
-          font-size: 24px;
-          color: var(--fg);
-        }
-        
         .close-btn {
           background: none;
           border: none;
@@ -507,8 +477,6 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
           color: var(--fg-muted);
           cursor: pointer;
           padding: 0;
-          width: 32px;
-          height: 32px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -518,12 +486,27 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
           color: var(--blue);
         }
         
-        .refactor-panel-content {
+        .refactor-empty,
+        .refactor-loading {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          min-height: 180px;
+          margin-bottom: 20px;
           padding: 24px;
-          overflow-y: auto;
-          flex: 1;
+          border: 1px dashed var(--border);
+          border-radius: 8px;
+          color: var(--fg-muted);
+          text-align: center;
         }
-        
+        .refactor-empty strong { color: var(--fg); }
+        .refactor-empty span { max-width: 360px; font-size: var(--fs-5); line-height: 1.6; }
+        .refactor-loading { flex-direction: row; min-height: 72px; border-style: solid; background: var(--bg-elevated); }
+        .refactor-spin { animation: refactor-spin 900ms linear infinite; }
+        @keyframes refactor-spin { to { transform: rotate(360deg); } }
+
         .refactor-type-selector {
           display: flex;
           gap: 12px;
@@ -534,37 +517,34 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
           flex: 1;
           padding: 12px 24px;
           border: 1px solid var(--border);
-          border-radius: 999px;
+          border-radius: var(--r-lg);
           background: var(--bg-elevated);
           color: var(--fg);
-          font-size: 14px;
+          font-size: var(--fs-5);
           font-weight: 500;
           cursor: pointer;
           transition: all 0.2s;
         }
-        
+
         .refactor-type-selector button:hover:not(:disabled) {
-          border-color: var(--blue);
+          border-color: var(--border-strong);
           transform: translateY(-1px);
         }
-        
+
         .refactor-type-selector button.active {
-          background: var(--blue);
+          background: var(--accent);
           color: var(--accent-fg);
-          border-color: var(--blue);
+          border-color: var(--accent);
         }
-        
+
+        .refactor-type-selector button.active:hover:not(:disabled) {
+          background: color-mix(in srgb, var(--accent) 86%, var(--accent-fg));
+          border-color: var(--accent);
+        }
+
         .refactor-type-selector button:disabled {
           opacity: 0.5;
           cursor: not-allowed;
-        }
-        
-        .refactor-form {
-          background: var(--bg-elevated);
-          padding: 20px;
-          border-radius: 8px;
-          border: 1px solid var(--border);
-          margin-bottom: 24px;
         }
         
         .form-group {
@@ -578,7 +558,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         .form-group label {
           display: block;
           margin-bottom: 8px;
-          font-size: 14px;
+          font-size: var(--fs-5);
           font-weight: 500;
           color: var(--fg);
         }
@@ -587,9 +567,11 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         .form-group input[type="number"] {
           width: 100%;
           padding: 10px 12px;
-          border: 1px solid var(--border);
+          /* 边框是输入框唯一的识别边界（1.4.11 要 3:1）：--border 1.24:1、
+             --border-strong 1.37:1 都不够，取 --fg 60%。 */
+          border: 1px solid color-mix(in srgb, var(--fg) 60%, transparent);
           border-radius: 6px;
-          font-size: 14px;
+          font-size: var(--fs-5);
           font-family: var(--font-mono);
         }
         
@@ -611,44 +593,37 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
           width: 100%;
           padding: 12px 24px;
           border: none;
-          border-radius: 999px;
-          background: var(--blue);
           color: var(--accent-fg);
-          font-size: 14px;
+          font-size: var(--fs-5);
           font-weight: 500;
           cursor: pointer;
           transition: all 0.2s;
           margin-top: 16px;
         }
-        
+
         .preview-btn:hover:not(:disabled),
         .apply-btn:hover:not(:disabled) {
-          background: var(--blue);
           transform: translateY(-1px);
         }
-        
+
         .preview-btn:disabled,
         .apply-btn:disabled {
-          opacity: 0.5;
           cursor: not-allowed;
         }
         
         .error-message {
+          display: flex;
+          align-items: center;
+          gap: 8px;
           background: var(--danger-soft);
           border: 1px solid var(--danger);
           border-radius: 6px;
           padding: 12px;
           margin-bottom: 16px;
-          color: var(--danger);
-          font-size: 14px;
+          color: var(--danger-ink);
+          font-size: var(--fs-5);
         }
-        
-        .refactor-preview {
-          background: var(--bg-elevated);
-          border: 1px solid var(--border);
-          border-radius: 8px;
-          padding: 20px;
-        }
+        .error-message > span { flex: 1; min-width: 0; }
         
         .refactor-preview h3,
         .refactor-preview h4 {
@@ -671,7 +646,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
           display: flex;
           justify-content: space-between;
           margin-bottom: 8px;
-          font-size: 14px;
+          font-size: var(--fs-5);
         }
         
         .analysis-row:last-child,
@@ -692,6 +667,10 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         }
         
         .safety-indicator {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
           padding: 12px;
           border-radius: 6px;
           margin-bottom: 16px;
@@ -701,12 +680,12 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         
         .safety-indicator.safe {
           background: color-mix(in srgb, var(--ok) 12%, transparent);
-          color: var(--ok);
+          color: var(--ok-ink);
         }
         
         .safety-indicator.unsafe {
           background: var(--danger-soft);
-          color: var(--danger);
+          color: var(--danger-ink);
         }
         
         .warnings,
@@ -726,7 +705,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         .errors h4 {
           margin-top: 0;
           margin-bottom: 8px;
-          font-size: 14px;
+          font-size: var(--fs-5);
         }
         
         .warnings ul,
@@ -737,18 +716,19 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         
         .warnings li,
         .errors li {
-          font-size: 13px;
+          font-size: var(--fs-4);
           margin-bottom: 4px;
         }
         
         .code-preview pre {
+          /* 同上：反色代码块的字要用背景实色，--bg-hover 是 5% 覆盖色。 */
           background: var(--fg);
-          color: var(--bg-hover);
+          color: var(--bg-app);
           padding: 16px;
           border-radius: 6px;
           overflow-x: auto;
           font-family: var(--font-mono);
-          font-size: 13px;
+          font-size: var(--fs-4);
           line-height: 1.5;
         }
         
@@ -770,7 +750,7 @@ export const RefactorPanel: React.FC<RefactorPanelProps> = ({
         }
         
         .replacements {
-          font-size: 13px;
+          font-size: var(--fs-4);
           color: var(--fg-muted);
         }
         

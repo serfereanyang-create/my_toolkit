@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Boxes, Check } from 'lucide-react';
 import type { ToolScope } from '../types';
+import { usePopoverFocus } from '../lib/usePopoverFocus';
 
 const OPTIONS: { value: ToolScope; label: string; description: string }[] = [
   { value: 'auto', label: '自动', description: '按任务难度自动选择精简/标准/完整工具仓库' },
@@ -22,6 +23,7 @@ export function ToolScopeMenu({ value, onPick, onClose }: {
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  usePopoverFocus(ref);
 
   useEffect(() => {
     function onDown(event: MouseEvent) {

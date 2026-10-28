@@ -13,6 +13,8 @@
  * Run: npx electron scripts/gui-panel-smoke.cjs
  */
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -78,6 +80,7 @@ app.whenReady().then(async () => {
   check('mount reads the selected window', initial.some((c) => c.tool === 'computer_elements' && c.input.window === '100'), JSON.stringify(initial.at(-1)));
   check('reading a window does not ask to steal focus', await evaluate('!document.querySelector(".gui-confirm")'));
 
+
   const windowRows = await evaluate(`document.querySelectorAll('.gui-window').length`);
   check('both windows are listed', windowRows === 2, `rows=${windowRows}`);
   const cloaked = await evaluate(`document.querySelectorAll('.gui-window.cloaked').length`);
@@ -89,6 +92,14 @@ app.whenReady().then(async () => {
   check('the selected window\'s controls are listed', elementRows === 4, `rows=${elementRows}`);
   const verbs = await evaluate(`[...document.querySelectorAll('.gui-element-action')].map(n => n.textContent)`);
   check('each control says what pressing it does', verbs.includes('点击') && verbs.includes('文本'), JSON.stringify(verbs));
+  await type('.gui-launch-app input', 'tools/Fixture.exe');
+  await evaluate('[...document.querySelectorAll(".gui-launch-app button")].find(b => b.textContent.includes("启动应用")).click()');
+  await settle();
+  const guiCallsAfterOpen = await evaluate('window.__guiCalls');
+  const openCall = guiCallsAfterOpen.find((c) => c.tool === 'computer_open');
+  const waitCall = guiCallsAfterOpen.find((c) => c.tool === 'computer_wait_window');
+  check('native app launcher sends only the validated path', openCall?.input.path === 'tools/Fixture.exe', JSON.stringify(openCall));
+  check('native app launcher waits for the returned PID before refreshing', waitCall?.input.window === '4242', JSON.stringify(waitCall));
 
   // 1b. Layout: the panel has to fill the view, not size to its content. A
   //     collapsed body puts both panes at the top of a blank page, which is

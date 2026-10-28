@@ -8,7 +8,8 @@
  * - 覆盖率门禁状态
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useId, useState, useEffect } from 'react';
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Circle, FileWarning, Gauge, LoaderCircle, X } from 'lucide-react';
 import { desktop } from '../lib/ipc';
 import { useQualityRevision } from '../lib/qualityRevision';
 
@@ -26,6 +27,7 @@ interface CoveragePanelProps {
   visible: boolean;
   onClose: () => void;
   onOpenFile?: (path: string, line?: number) => void;
+  onAskAgent?: (prompt: string) => void;
 }
 
 interface FileCoverage {
@@ -65,6 +67,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
   visible,
   onClose,
   onOpenFile,
+  onAskAgent,
 }) => {
   const [loading, setLoading] = useState(false);
   const [coverage, setCoverage] = useState<ProjectCoverage | null>(null);
@@ -73,6 +76,9 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
   const [lcovFile, setLcovFile] = useState('');
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
   const [gateThresholds] = useState({ line: 80, branch: 70, func: 80 });
+  // 输入框的 <label> 只写在旁边、没有 htmlFor：屏幕阅读器读到的是一个没有名字的
+  // 文本框（占位符不参与可访问名）。两个输入框各绑一条。
+  const uid = useId();
   // Workspace revision guard: flag results as stale once the workspace moves on.
   const { capture, current, stale } = useQualityRevision(visible && !loading);
 
@@ -105,16 +111,29 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
     }
   }, [visible]);
   
-  const getCoverageColor = (percent: number) => {
+  // Two ramps off the same thresholds, because a bar fill and a label have
+  // different contrast floors. The accents measure 3.00:1 (--warn) to 4.41:1
+  // (--ok) on the card surface and 2.70-4.33:1 on the hovered row: fine for the
+  // 8px progress fill, under the 4.5:1 body floor for the 14px/600 percentage
+  // text that reads them. Every label branch takes its --*-ink twin
+  // (--ok-ink 6.26:1, --warn-ink 6.27:1, --danger-ink 6.55:1 on the card,
+  // 5.64-5.90:1 once the row is hovered).
+  const getCoverageBarColor = (percent: number) => {
     if (percent >= 80) return 'var(--ok)';
     if (percent >= 60) return 'var(--warn)';
     return 'var(--danger)';
   };
+
+  const getCoverageInk = (percent: number) => {
+    if (percent >= 80) return 'var(--ok-ink)';
+    if (percent >= 60) return 'var(--warn-ink)';
+    return 'var(--danger-ink)';
+  };
   
   const getCoverageIcon = (percent: number) => {
-    if (percent >= 80) return '🟢';
-    if (percent >= 60) return '🟡';
-    return '🔴';
+    if (percent >= 80) return <CheckCircle2 size={14} aria-hidden="true" />;
+    if (percent >= 60) return <Circle size={14} aria-hidden="true" />;
+    return <AlertCircle size={14} aria-hidden="true" />;
   };
   
   const renderProgressBar = (percent: number) => (
@@ -123,7 +142,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         className="progress-fill"
         style={{
           width: `${Math.min(100, percent)}%`,
-          backgroundColor: getCoverageColor(percent),
+          backgroundColor: getCoverageBarColor(percent),
         }}
       />
     </div>
@@ -144,7 +163,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
       <div className="coverage-panel">
         <div className="coverage-panel-header">
           <h2>测试覆盖率</h2>
-          <button onClick={onClose} className="close-btn">×</button>
+          <button onClick={onClose} className="close-btn" aria-label="关闭覆盖率面板"><X size={16} /></button>
         </div>
         {stale && (
           <div className="quality-stale-banner">
@@ -157,18 +176,20 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
           {/* 分析选项 */}
           <div className="coverage-options">
             <div className="option-group">
-              <label>文件模式:</label>
+              <label htmlFor={`${uid}-pattern`}>文件模式:</label>
               <input
+                id={`${uid}-pattern`}
                 type="text"
                 value={pattern}
                 onChange={(e) => setPattern(e.target.value)}
                 placeholder="src/**/*.{ts,tsx}"
               />
             </div>
-            
+
             <div className="option-group">
-              <label>lcov 报告（可选）:</label>
+              <label htmlFor={`${uid}-lcov`}>lcov 报告（可选）:</label>
               <input
+                id={`${uid}-lcov`}
                 type="text"
                 value={lcovFile}
                 onChange={(e) => setLcovFile(e.target.value)}
@@ -181,26 +202,40 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
             </button>
           </div>
           
-          {/* 错误信息 */}
-          {error && (
-            <div className="error-message">
-              <strong>错误:</strong> {error}
+          {loading && (
+            <div className="coverage-loading" role="status" aria-busy="true">
+              <LoaderCircle size={18} className="coverage-spin" />正在分析覆盖率…
             </div>
           )}
-          
+          {/* 错误信息 */}
+          {error && (
+            <div className="error-message" role="alert">
+              <AlertCircle size={16} />
+              <span><strong>分析失败：</strong>{error}</span>
+              <button type="button" onClick={handleAnalyze}>重试</button>
+            </div>
+          )}
+          {!loading && !error && !coverage && (
+            <div className="coverage-empty" role="status">
+              <Gauge size={22} />
+              <strong>还没有覆盖率数据</strong>
+              <span>设好文件模式后点「刷新分析」，或指定 lcov 报告直接读取已有结果。</span>
+            </div>
+          )}
+
           {/* 覆盖率结果 */}
           {coverage && (
             <div className="coverage-result">
               {/* 门禁状态 */}
               <div className={`gate-banner ${allGatesPass ? 'pass' : 'fail'}`}>
-                {allGatesPass ? '✅ 覆盖率门禁通过' : '❌ 覆盖率门禁未通过'}
+                {allGatesPass ? <><CheckCircle2 size={15} />覆盖率门禁通过</> : <><AlertCircle size={15} />覆盖率门禁未通过</>}
               </div>
               
               {/* 总览指标 */}
               <div className="summary-grid">
                 <div className="summary-card">
                   <div className="summary-title">行覆盖率</div>
-                  <div className="summary-value" style={{ color: getCoverageColor(coverage.summary.lineCoverage) }}>
+                  <div className="summary-value" style={{ color: getCoverageInk(coverage.summary.lineCoverage) }}>
                     {coverage.summary.lineCoverage.toFixed(1)}%
                   </div>
                   <div className="summary-detail">
@@ -214,7 +249,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
                 
                 <div className="summary-card">
                   <div className="summary-title">分支覆盖率</div>
-                  <div className="summary-value" style={{ color: getCoverageColor(coverage.summary.branchCoverage) }}>
+                  <div className="summary-value" style={{ color: getCoverageInk(coverage.summary.branchCoverage) }}>
                     {coverage.summary.branchCoverage.toFixed(1)}%
                   </div>
                   <div className="summary-detail">
@@ -228,7 +263,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
                 
                 <div className="summary-card">
                   <div className="summary-title">函数覆盖率</div>
-                  <div className="summary-value" style={{ color: getCoverageColor(coverage.summary.functionCoverage) }}>
+                  <div className="summary-value" style={{ color: getCoverageInk(coverage.summary.functionCoverage) }}>
                     {coverage.summary.functionCoverage.toFixed(1)}%
                   </div>
                   <div className="summary-detail">
@@ -244,7 +279,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
               {/* 未覆盖文件警告 */}
               {coverage.uncoveredFiles.length > 0 && (
                 <div className="uncovered-warning">
-                  ⚠️ {coverage.uncoveredFiles.length} 个文件完全没有测试覆盖
+                  <FileWarning size={15} />{coverage.uncoveredFiles.length} 个文件完全没有测试覆盖
                 </div>
               )}
               
@@ -265,10 +300,10 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
                         >
                           <span className="file-icon">{getCoverageIcon(file.coverage)}</span>
                           <span className="file-path">{file.path}</span>
-                          <span className="file-percent" style={{ color: getCoverageColor(file.coverage) }}>
+                          <span className="file-percent" style={{ color: getCoverageInk(file.coverage) }}>
                             {file.coverage.toFixed(1)}%
                           </span>
-                          <span className="expand-icon">{isExpanded ? '▼' : '▶'}</span>
+                          <span className="expand-icon">{isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
                         </div>
                         
                         {isExpanded && fileDetail && (
@@ -318,15 +353,12 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
                             )}
                             
                             <button
+                              type="button"
                               className="generate-tests-btn"
-                              onClick={async () => {
-                                await invokeTool('generate_tests', {
-                                  file: fileDetail.path,
-                                  framework: 'vitest',
-                                });
-                              }}
+                              disabled={!onAskAgent}
+                              onClick={() => onAskAgent?.(`请为工作区文件 ${fileDetail.path} 生成 Vitest 测试，优先覆盖当前报告中的未覆盖函数和未覆盖行。先检查现有测试结构，展示将要新增或修改的文件，并在写入前请求确认。`)}
                             >
-                              🧪 为此文件生成测试
+                              交给智能体生成测试
                             </button>
                           </div>
                         )}
@@ -341,46 +373,6 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
       </div>
       
       <style>{`
-        .coverage-panel-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.5);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 1000;
-        }
-        
-        .coverage-panel {
-          background: var(--bg-app);
-          border-radius: 8px;
-          width: 90%;
-          max-width: 1000px;
-          max-height: 90vh;
-          overflow: hidden;
-          display: flex;
-          flex-direction: column;
-          box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
-        }
-        
-        .coverage-panel-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 20px 24px;
-          border-bottom: 1px solid var(--border);
-        }
-        
-        .coverage-panel-header h2 {
-          margin: 0;
-          font-family: var(--font-ui);
-          font-size: 24px;
-          color: var(--fg);
-        }
-        
         .close-btn {
           background: none;
           border: none;
@@ -393,38 +385,16 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
           color: var(--blue);
         }
         
-        .coverage-panel-content {
-          padding: 24px;
-          overflow-y: auto;
-          flex: 1;
-        }
-        
-        .coverage-options {
-          background: var(--bg-elevated);
-          padding: 20px;
-          border-radius: 8px;
-          border: 1px solid var(--border);
-          margin-bottom: 24px;
-        }
-        
-        .option-group {
-          margin-bottom: 16px;
-        }
-        
-        .option-group label {
-          display: block;
-          margin-bottom: 8px;
-          font-size: 14px;
-          font-weight: 500;
-          color: var(--fg);
-        }
-        
         .option-group input {
           width: 100%;
           padding: 10px 12px;
-          border: 1px solid var(--border);
+          /* 输入框是白底、卡片也是白底，边框就是它唯一的识别边界，1.4.11 要 3:1。
+             --border（10%）实测 1.24:1、--border-strong（15%）只有 1.37:1，所以
+             这里取 --fg 60%：浅色 #777 / 深色 #8c8c8c 一档，实测 3.9–5.1:1，
+             粗细仍是 1px。 */
+          border: 1px solid color-mix(in srgb, var(--fg) 60%, transparent);
           border-radius: 6px;
-          font-size: 14px;
+          font-size: var(--fs-5);
           font-family: var(--font-mono);
         }
         
@@ -432,49 +402,82 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
           width: 100%;
           padding: 12px 24px;
           border: none;
-          border-radius: 999px;
-          background: var(--blue);
           color: var(--accent-fg);
-          font-size: 14px;
+          font-size: var(--fs-5);
           font-weight: 500;
           cursor: pointer;
         }
-        
-        .analyze-btn:hover:not(:disabled) {
-          background: var(--blue);
-        }
-        
+
         .analyze-btn:disabled {
-          opacity: 0.5;
           cursor: not-allowed;
         }
         
+        .coverage-loading {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          min-height: 72px;
+          margin-bottom: 16px;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          color: var(--fg-muted);
+          background: var(--bg-elevated);
+        }
+        .coverage-spin { animation: coverage-spin 900ms linear infinite; }
+        @keyframes coverage-spin { to { transform: rotate(360deg); } }
+        .coverage-empty {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          min-height: 96px;
+          margin-bottom: 16px;
+          padding: 24px 16px;
+          border: 1px dashed var(--border);
+          border-radius: 8px;
+          color: var(--fg-muted);
+          background: var(--bg-elevated);
+          text-align: center;
+        }
+        .coverage-empty svg { color: var(--fg-dim); }
+        .coverage-empty strong { color: var(--fg); font-size: var(--fs-5); }
+        .coverage-empty span { max-width: 360px; font-size: var(--fs-4); line-height: 1.6; }
         .error-message {
+          display: flex;
+          align-items: center;
+          gap: 8px;
           background: var(--danger-soft);
           border: 1px solid var(--danger);
           border-radius: 6px;
           padding: 12px;
           margin-bottom: 16px;
-          color: var(--danger);
+          color: var(--danger-ink);
         }
+        .error-message > span { flex: 1; min-width: 0; }
         
         .gate-banner {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
           padding: 16px;
           border-radius: 8px;
           text-align: center;
           font-weight: 600;
-          font-size: 16px;
+          font-size: var(--fs-7);
           margin-bottom: 24px;
         }
         
         .gate-banner.pass {
           background: color-mix(in srgb, var(--ok) 12%, transparent);
-          color: var(--ok);
+          color: var(--ok-ink);
         }
         
         .gate-banner.fail {
           background: var(--danger-soft);
-          color: var(--danger);
+          color: var(--danger-ink);
         }
         
         .summary-grid {
@@ -493,7 +496,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         }
         
         .summary-title {
-          font-size: 14px;
+          font-size: var(--fs-5);
           color: var(--fg-muted);
           margin-bottom: 8px;
         }
@@ -506,7 +509,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         }
         
         .summary-detail {
-          font-size: 12px;
+          font-size: var(--fs-3);
           color: var(--fg-muted);
           margin-bottom: 12px;
         }
@@ -526,17 +529,20 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         }
         
         .gate-indicator {
-          font-size: 12px;
+          font-size: var(--fs-3);
           color: var(--fg-muted);
         }
         
         .uncovered-warning {
+          display: flex;
+          align-items: center;
+          gap: 7px;
           background: color-mix(in srgb, var(--warn) 12%, transparent);
           border-left: 3px solid var(--warn);
           padding: 12px 16px;
           margin-bottom: 24px;
           border-radius: 4px;
-          font-size: 14px;
+          font-size: var(--fs-5);
         }
         
         .worst-files-section h3 {
@@ -569,7 +575,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         .file-path {
           flex: 1;
           font-family: var(--font-mono);
-          font-size: 13px;
+          font-size: var(--fs-4);
           color: var(--fg);
           overflow: hidden;
           text-overflow: ellipsis;
@@ -578,12 +584,12 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         
         .file-percent {
           font-weight: 600;
-          font-size: 14px;
+          font-size: var(--fs-5);
         }
         
         .expand-icon {
           color: var(--fg-muted);
-          font-size: 12px;
+          font-size: var(--fs-3);
         }
         
         .file-coverage-detail {
@@ -595,7 +601,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         .detail-stats {
           display: flex;
           gap: 24px;
-          font-size: 13px;
+          font-size: var(--fs-4);
           color: var(--fg-muted);
           margin-bottom: 12px;
         }
@@ -603,7 +609,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         .uncovered-functions,
         .uncovered-lines {
           margin-bottom: 12px;
-          font-size: 13px;
+          font-size: var(--fs-4);
         }
         
         .function-chips,
@@ -620,7 +626,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
           border: 1px solid var(--border);
           border-radius: 999px;
           background: var(--bg-elevated);
-          font-size: 12px;
+          font-size: var(--fs-3);
           font-family: var(--font-mono);
           cursor: pointer;
           color: var(--blue);
@@ -633,7 +639,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
         }
         
         .more-lines {
-          font-size: 12px;
+          font-size: var(--fs-3);
           color: var(--fg-muted);
           align-self: center;
         }
@@ -644,7 +650,7 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({
           border-radius: 999px;
           background: var(--bg-elevated);
           color: var(--blue);
-          font-size: 13px;
+          font-size: var(--fs-4);
           cursor: pointer;
           transition: all 0.2s;
         }

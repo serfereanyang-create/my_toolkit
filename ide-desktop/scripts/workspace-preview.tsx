@@ -112,6 +112,7 @@ const qualityData = (name: string) => {
     commit: (message: string) => result('commit', message, () => { gitStatus.staged = []; return { ok: true, shortHash: 'abc1234', message }; }),
     push: (...args: unknown[]) => result('push', args, () => { gitStatus.ahead = 0; return { ok: true }; }),
     pull: (...args: unknown[]) => result('pull', args, () => { gitStatus.behind = 0; return { ok: true }; }),
+    prReadiness: async () => ({ ok: true }),
     createPr: (args: unknown) => result('pr', args, () => ({ ok: true, url: 'https://example.invalid/pr/1' })),
   },
   quality: {

@@ -21,7 +21,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { command: '/clear',    description: '清空当前会话历史，开始全新对话',            category: 'dialogue' },
   { command: '/retry',    description: '重发上一条用户消息',                        category: 'dialogue' },
   { command: '/history',  description: '显示最近 N 条对话记录（默认 10）',          category: 'dialogue' },
-  { command: '/tokens',   description: '显示上下文字符数及预估 token 用量',         category: 'dialogue' },
+  { command: '/tokens',   description: '显示上下文字符数及预估词元用量',         category: 'dialogue' },
 
   // ── 项目设置 ───────────────────────────────────────────────────────────────
   { command: '/init',   description: '创建或更新工作区 AGENTS.md 指令文件',         category: 'project' },
@@ -147,6 +147,23 @@ export function SlashCommandMenu({ onPick, onClose, initialQuery = '' }: {
 
   useEffect(() => { setActiveIndex(0); }, [search]);
 
+  /* Hand focus back to whoever opened the menu (the composer textarea) when it
+     closes. Without this, Escape dropped keyboard users on <body>, i.e. at the
+     top of the document. The opener has to be read while *rendering*, not in
+     an effect: the search field below carries autoFocus, which React applies
+     during commit, so by the time a useEffect runs document.activeElement is
+     already the menu's own input — restoring to it did nothing once it
+     unmounted. */
+  const [opener] = useState<HTMLElement | null>(() =>
+    document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null);
+  useEffect(() => () => {
+    const current = document.activeElement;
+    const lost = !current || current === document.body || panelRef.current?.contains(current) === true;
+    if (opener?.isConnected && lost) opener.focus();
+  }, [opener]);
+
   useEffect(() => {
     const el = listRef.current?.querySelector(`[data-idx="${activeIndex}"]`) as HTMLElement | null;
     el?.scrollIntoView({ block: 'nearest' });
@@ -224,6 +241,9 @@ export function SlashCommandMenu({ onPick, onClose, initialQuery = '' }: {
         ref={panelRef}
         className="slash-menu slash-menu-resizable"
         style={{ width: size.w, height: size.h }}
+        role="dialog"
+        aria-modal="true"
+        aria-label="斜杠命令"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
@@ -239,7 +259,7 @@ export function SlashCommandMenu({ onPick, onClose, initialQuery = '' }: {
 
         <div className="slash-menu-header">
           <h3>斜杠命令</h3>
-          <button className="slash-menu-close" onClick={onClose}><X size={16} /></button>
+          <button className="slash-menu-close" onClick={onClose} aria-label="关闭"><X size={16} /></button>
         </div>
 
         {/* Search bar */}
@@ -248,12 +268,13 @@ export function SlashCommandMenu({ onPick, onClose, initialQuery = '' }: {
           <input
             autoFocus
             className="slash-menu-search-input"
+            aria-label="搜索命令"
             placeholder="搜索命令…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
           {search && (
-            <button className="slash-menu-search-clear" onClick={() => setSearch('')}>
+            <button className="slash-menu-search-clear" onClick={() => setSearch('')} aria-label="清除搜索">
               <X size={11} />
             </button>
           )}

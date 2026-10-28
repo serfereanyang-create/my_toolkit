@@ -10,7 +10,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
+  AlertCircle,
   AlertTriangle,
+  BarChart3,
   CheckCircle2,
   ChevronRight,
   Info,
@@ -266,12 +268,16 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
     }
   };
 
+  // The badge ring is a 3px border and keeps the accent; the letter inside is
+  // 26px/700 text. --warn measures 3.00:1 on the card — 2.999 to be exact, a
+  // hair under the 3:1 large-text floor — so the letter takes --warn-ink
+  // (6.27:1). The ink twins are the accents wherever they already pass.
   const getScoreGrade = (score: number) => {
-    if (score >= 90) return { grade: 'A', color: 'var(--ok)', text: '优秀' };
-    if (score >= 75) return { grade: 'B', color: 'var(--ok)', text: '良好' };
-    if (score >= 60) return { grade: 'C', color: 'var(--warn)', text: '一般' };
-    if (score >= 40) return { grade: 'D', color: 'var(--danger)', text: '较差' };
-    return { grade: 'F', color: 'var(--danger)', text: '需要重构' };
+    if (score >= 90) return { grade: 'A', color: 'var(--ok)', ink: 'var(--ok-ink)', text: '优秀' };
+    if (score >= 75) return { grade: 'B', color: 'var(--ok)', ink: 'var(--ok-ink)', text: '良好' };
+    if (score >= 60) return { grade: 'C', color: 'var(--warn)', ink: 'var(--warn-ink)', text: '一般' };
+    if (score >= 40) return { grade: 'D', color: 'var(--danger)', ink: 'var(--danger-ink)', text: '较差' };
+    return { grade: 'F', color: 'var(--danger)', ink: 'var(--danger-ink)', text: '需要重构' };
   };
 
   /** 首屏还没拿到任何结果：显示加载状态，而不是一个空壳面板。 */
@@ -385,18 +391,23 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
           aria-busy={loading}
         >
           {error && (
-            <div className="error-message" role="alert">{error}</div>
+            <div className="error-message" role="alert">
+              <AlertCircle size={16} aria-hidden="true" />
+              <span>{error}</span>
+              <button type="button" onClick={() => void handleAnalyze()} disabled={loading}>重试</button>
+            </div>
           )}
 
           {/* 首次加载 / 空结果：面板不该只剩一个空的告警框 */}
           {loading && !hasResults && (
-            <div className="quality-empty" role="status">
+            <div className="quality-empty" role="status" aria-busy="true">
               <Loader2 size={16} className="spin" aria-hidden="true" />
               正在分析 {pattern}…
             </div>
           )}
           {!loading && !hasResults && !error && (
             <div className="quality-empty" role="status">
+              <BarChart3 size={22} aria-hidden="true" />
               还没有分析结果。设好范围后点“重新分析”。
             </div>
           )}
@@ -409,7 +420,7 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
                 return (
                   <section className="score-hero" aria-label="综合质量评分">
                     <div className="score-badge" style={{ borderColor: grade.color }}>
-                      <span className="grade-letter" style={{ color: grade.color }}>{grade.grade}</span>
+                      <span className="grade-letter" style={{ color: grade.ink }}>{grade.grade}</span>
                       <span className="grade-score">{scoreValue} 分</span>
                     </div>
                     <div className="grade-text">
@@ -740,112 +751,71 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
         .quality-dashboard-overlay {
           position: fixed;
           inset: 0;
-          background: rgba(0, 0, 0, 0.5);
           display: flex;
           align-items: center;
           justify-content: center;
           z-index: 1000;
         }
-        
-        .quality-dashboard {
-          background: var(--bg-app);
-          border-radius: 8px;
-          width: 92%;
-          max-width: 1100px;
-          max-height: 92vh;
-          overflow: hidden;
-          display: flex;
-          flex-direction: column;
-          box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
-        }
-        
-        .dashboard-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 20px 24px;
-          border-bottom: 1px solid var(--border);
-        }
-        
-        .dashboard-header h2 {
-          margin: 0;
-          font-family: var(--font-ui);
-          font-size: 24px;
-          color: var(--fg);
-        }
-        
-        .header-actions {
-          display: flex;
-          gap: 12px;
-          align-items: center;
-        }
-        
+
         .pattern-input {
           padding: 8px 12px;
-          border: 1px solid var(--border);
-          border-radius: 6px;
+          /* 输入框边框是它唯一的识别边界（1.4.11 要 3:1）：--border 实测 1.24:1、
+             --border-strong 1.37:1 都不够，取 --fg 60%（在 dashboard-header 的
+             --bg-side 上也还有 3.4:1）。 */
+          border: 1px solid color-mix(in srgb, var(--fg) 60%, transparent);
           font-family: var(--font-mono);
-          font-size: 13px;
+          font-size: var(--fs-4);
           width: 220px;
         }
-        
+
         .refresh-btn {
           padding: 8px 20px;
           border: none;
-          border-radius: 999px;
-          background: var(--blue);
-          color: var(--bg-elevated);
-          font-size: 14px;
+          font-size: var(--fs-5);
           cursor: pointer;
         }
-        
+
         .refresh-btn:disabled { opacity: 0.5; }
-        
+
         .close-btn {
           background: none;
           border: none;
-          font-size: 28px;
+          font-size: var(--fs-10);
           color: var(--fg-muted);
           cursor: pointer;
         }
-        
-        .dashboard-tabs {
-          display: flex;
-          gap: 4px;
-          padding: 0 24px;
-          border-bottom: 1px solid var(--border);
-          background: var(--bg-elevated);
-        }
-        
+
         .tab {
           padding: 14px 24px;
           border: none;
           background: none;
-          font-size: 14px;
+          font-size: var(--fs-5);
           color: var(--fg-muted);
           cursor: pointer;
           border-bottom: 2px solid transparent;
         }
-        
+
         .tab.active {
           color: var(--blue);
           border-bottom-color: var(--blue);
           font-weight: 600;
         }
-        
-        .dashboard-content {
-          padding: 24px;
-          overflow-y: auto;
-          flex: 1;
-        }
-        
+
         .error-message {
+          display: flex;
+          align-items: center;
+          gap: 8px;
           background: var(--danger-soft);
           border-radius: 6px;
           padding: 12px;
-          color: var(--danger);
+          color: var(--danger-ink);
           margin-bottom: 16px;
         }
+        .error-message > svg { flex: none; }
+        .error-message > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+        .error-message > button:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+        .error-message > button:disabled { opacity: .55; cursor: default; }
+        .quality-empty > svg { color: var(--fg-dim); }
         
         .score-hero {
           display: flex;
@@ -880,7 +850,7 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
         }
 
         .grade-score {
-          font-size: 11px;
+          font-size: var(--fs-2);
           color: var(--fg-muted);
           font-variant-numeric: tabular-nums;
         }
@@ -890,14 +860,14 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
         .grade-text h3 {
           margin: 0;
           font-family: var(--font-ui);
-          font-size: 15px;
+          font-size: var(--fs-6);
           font-weight: 650;
           color: var(--fg);
         }
 
         .grade-text p { margin: 0; color: var(--fg-muted); }
 
-        .score-basis { font-size: 12px; margin-top: 2px; }
+        .score-basis { font-size: var(--fs-3); margin-top: 2px; }
 
         /* 扣分明细：让“0 分 / F”这种看不懂的结论变成可核对的三个数 */
         .score-breakdown {
@@ -917,7 +887,7 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
           border-radius: 999px;
           background: var(--bg-side);
           border: 1px solid var(--border-subtle);
-          font-size: 12px;
+          font-size: var(--fs-3);
           color: var(--fg-muted);
         }
 
@@ -952,11 +922,6 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
           transition: border-color 0.15s ease, transform 0.15s ease;
         }
 
-        .metric-card:hover {
-          border-color: var(--blue);
-          transform: translateY(-2px);
-        }
-
         .metric-card:focus-visible {
           outline: 2px solid var(--blue);
           outline-offset: 2px;
@@ -971,10 +936,10 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
 
         .metric-card:hover .metric-chevron { color: var(--blue); }
 
-        .metric-title { font-size: 13px; color: var(--fg-muted); margin-bottom: 4px; }
-        .metric-value { font-size: 28px; font-weight: 650; font-family: var(--font-ui); color: var(--fg); line-height: 1.1; }
-        .metric-label { font-size: 12px; color: var(--fg-muted); margin: 2px 0 6px; }
-        .metric-detail { font-size: 12px; color: var(--fg-muted); }
+        .metric-title { font-size: var(--fs-4); color: var(--fg-muted); margin-bottom: 4px; }
+        .metric-value { font-size: var(--fs-10); font-weight: 650; font-family: var(--font-ui); color: var(--fg); line-height: 1.1; }
+        .metric-label { font-size: var(--fs-3); color: var(--fg-muted); margin: 2px 0 6px; }
+        .metric-detail { font-size: var(--fs-3); color: var(--fg-muted); }
 
         .urgent-section {
           background: var(--bg-elevated);
@@ -988,18 +953,18 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
           align-items: center;
           gap: 8px;
           margin: 0 0 10px;
-          font-size: 14px;
+          font-size: var(--fs-5);
           color: var(--fg);
         }
 
         .urgent-section h3 .section-icon { color: var(--danger); }
         .urgent-section.is-clear { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }
-        .urgent-section.is-clear h3 { color: var(--ok); }
+        .urgent-section.is-clear h3 { color: var(--ok-ink); }
         .urgent-section.is-clear h3 .section-icon { color: var(--ok); }
-        .urgent-clear { margin: 0; font-size: 13px; color: var(--fg-muted); }
+        .urgent-clear { margin: 0; font-size: var(--fs-4); color: var(--fg-muted); }
 
         .urgent-list { margin: 0; padding-left: 20px; }
-        .urgent-list li { margin-bottom: 6px; line-height: 1.6; color: var(--fg); font-size: 13px; }
+        .urgent-list li { margin-bottom: 6px; line-height: 1.6; color: var(--fg); font-size: var(--fs-4); }
         .urgent-list li:last-child { margin-bottom: 0; }
         
         .distribution-section, .hotspots-section,
@@ -1032,14 +997,14 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
         .distribution-legend {
           display: flex;
           gap: 20px;
-          font-size: 13px;
+          font-size: var(--fs-4);
           color: var(--fg-muted);
         }
         
         .hotspots-table {
           width: 100%;
           border-collapse: collapse;
-          font-size: 13px;
+          font-size: var(--fs-4);
         }
         
         .hotspots-table th {
@@ -1056,13 +1021,13 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
         }
         
         .func-name { font-family: var(--font-mono); }
-        .func-kind { color: var(--fg-muted); font-size: 11px; }
+        .func-kind { color: var(--fg-muted); font-size: var(--fs-2); }
         
         .risk-badge {
           padding: 2px 10px;
           border-radius: 999px;
           color: var(--bg-elevated);
-          font-size: 11px;
+          font-size: var(--fs-2);
           text-transform: uppercase;
         }
         
@@ -1075,7 +1040,7 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
         
         .smell-type-name {
           width: 180px;
-          font-size: 13px;
+          font-size: var(--fs-4);
           font-family: var(--font-mono);
           color: var(--fg);
         }
@@ -1097,7 +1062,7 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
         .smell-type-count {
           width: 40px;
           text-align: right;
-          font-size: 13px;
+          font-size: var(--fs-4);
           color: var(--fg-muted);
         }
         
@@ -1118,12 +1083,12 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
           padding: 2px 10px;
           border-radius: 999px;
           color: var(--bg-elevated);
-          font-size: 11px;
+          font-size: var(--fs-2);
           flex-shrink: 0;
         }
         
-        .smell-message { font-size: 14px; color: var(--fg); margin-bottom: 4px; }
-        .smell-location { font-size: 12px; color: var(--fg-muted); font-family: var(--font-mono); }
+        .smell-message { font-size: var(--fs-5); color: var(--fg); margin-bottom: 4px; }
+        .smell-location { font-size: var(--fs-3); color: var(--fg-muted); font-family: var(--font-mono); }
         
         .dep-stats {
           display: grid;
@@ -1143,13 +1108,13 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
         }
         
         .dep-stat-value {
-          font-size: 28px;
+          font-size: var(--fs-10);
           font-weight: bold;
           font-family: var(--font-ui);
           color: var(--fg);
         }
         
-        .dep-stat-label { font-size: 13px; color: var(--fg-muted); margin-top: 4px; }
+        .dep-stat-label { font-size: var(--fs-4); color: var(--fg-muted); margin-top: 4px; }
         
         .cycle-item {
           background: color-mix(in srgb, var(--warn) 12%, transparent);
@@ -1167,21 +1132,21 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
         
         .cycle-module {
           font-family: var(--font-mono);
-          font-size: 13px;
+          font-size: var(--fs-4);
           background: var(--bg-elevated);
           padding: 4px 10px;
           border-radius: 4px;
           color: var(--fg);
         }
         
-        .cycle-arrow { color: var(--warn); }
+        .cycle-arrow { color: var(--warn-ink); }
         
         .god-module-row {
           display: flex;
           justify-content: space-between;
           padding: 10px 12px;
           border-bottom: 1px solid var(--border-subtle);
-          font-size: 13px;
+          font-size: var(--fs-4);
         }
         
         .god-module-path { font-family: var(--font-mono); color: var(--fg); }
@@ -1189,7 +1154,7 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
 
         /* —— 输入区、图例、空状态与窄窗口 —— */
         .pattern-field { display: inline-flex; align-items: center; gap: 8px; }
-        .pattern-label { font-size: 12px; color: var(--fg-muted); white-space: nowrap; }
+        .pattern-label { font-size: var(--fs-3); color: var(--fg-muted); white-space: nowrap; }
         .pattern-input:disabled { opacity: 0.6; }
 
         .refresh-btn {
@@ -1204,9 +1169,6 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 28px;
-          height: 28px;
-          border-radius: 6px;
         }
         .close-btn:hover { background: var(--bg-hover); color: var(--fg); }
 
@@ -1214,7 +1176,7 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
         .legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
         .hotspots-table .num { text-align: right; font-variant-numeric: tabular-nums; }
         .section-icon { color: var(--danger); flex-shrink: 0; }
-        .section-footnote { margin: 6px 0 0; font-size: 12px; color: var(--fg-muted); }
+        .section-footnote { margin: 6px 0 0; font-size: var(--fs-3); color: var(--fg-muted); }
 
         .quality-empty {
           display: flex;
@@ -1225,14 +1187,14 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
           margin: 0;
           padding: 28px 16px;
           text-align: center;
-          font-size: 13px;
+          font-size: var(--fs-4);
           color: var(--fg-muted);
           border: 1px dashed var(--border);
           border-radius: 12px;
           background: var(--bg-elevated);
         }
         .dashboard-content > .quality-empty { margin-bottom: 16px; }
-        .quality-note { margin: 0 0 16px; font-size: 13px; color: var(--fg-muted); }
+        .quality-note { margin: 0 0 16px; font-size: var(--fs-4); color: var(--fg-muted); }
         .urgent-section.is-neutral { border-color: var(--border); }
         .urgent-section.is-neutral h3 { color: var(--fg); }
         .urgent-section.is-neutral h3 .section-icon { color: var(--fg-muted); }
@@ -1264,8 +1226,8 @@ export const QualityDashboard: React.FC<QualityDashboardProps> = ({
         .smell-item:hover { border-color: var(--blue); background: var(--bg-elevated); }
         .smell-item:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
         .smell-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-        .smell-message { display: block; font-size: 13px; color: var(--fg); }
-        .smell-location { display: block; font-size: 12px; color: var(--fg-muted); font-family: var(--font-mono); }
+        .smell-message { display: block; font-size: var(--fs-4); color: var(--fg); }
+        .smell-location { display: block; font-size: var(--fs-3); color: var(--fg-muted); font-family: var(--font-mono); }
         .smell-severity { color: var(--bg-elevated); white-space: nowrap; }
 
         @media (max-width: 880px) {

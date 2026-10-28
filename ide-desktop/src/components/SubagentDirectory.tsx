@@ -97,6 +97,13 @@ export function SubagentDirectory({ sessionId }: { sessionId?: string }) {
         <div className="subagent-error" role="alert">
           <AlertTriangle size={14} />
           <span>{error}</span>
+          <button type="button" className="subagent-retry" onClick={() => void refresh()} disabled={loading}>重试</button>
+        </div>
+      )}
+
+      {loading && !error && running.length === 0 && finished.length === 0 && (
+        <div className="subagent-loading" role="status" aria-busy="true">
+          <Loader2 size={14} className="subagent-spin" />正在读取子智能体…
         </div>
       )}
 

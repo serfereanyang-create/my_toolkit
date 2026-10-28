@@ -108,6 +108,37 @@
   outline: none;
 }
 
+/* Control boundaries (WCAG 1.4.11). --border-strong is a 15%-alpha hairline:
+   over the light card it paints 1.39:1 and over the dark one 1.62:1, and an
+   input's own fill is the same tone as the card (--bg-input === --bg-elevated in
+   both themes), so the edge is the *only* thing that says "this is a field".
+   Mixing a little over half the ink with the raised surface lands between 3.39:1
+   (the nav's #f0f0f0) and 3.89:1 (a white card) in light, and between 4.27:1 and
+   5.45:1 in dark — above the 3:1 floor, still far below body-text weight, and the
+   fills stay as they are. Specificity is held at or below one class where the
+   rules it replaces are class-only, and the number field is excluded on :focus
+   so its own focus ring rule still wins. Scoped to .settings-view: card edges
+   elsewhere keep their quiet weight — those are decoration, not control
+   boundaries. */
+.settings-view :where(.settings-text-field, .settings-textarea, .select-pill, .settings-search),
+.settings-view .number-field input:not(:focus) {
+  border-color: color-mix(in srgb, var(--fg) 58%, var(--bg-elevated));
+}
+
+/* Settings lives outside .chat-shell, so it never picked up that scope's
+   button focus ring: every tab stop here fell back to Chromium's `auto`
+   outline — one device pixel of #e59700 at 2.1–2.4:1 against the panel — and
+   the search field had `outline: none` with only a 9%-alpha halo. Same ring as
+   the rest of the app, on buttons and fields alike. */
+.settings-view button:focus-visible,
+.settings-view input:focus-visible,
+.settings-view select:focus-visible,
+.settings-view textarea:focus-visible,
+.settings-view [role="tab"]:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
 .settings-action-btn,
 .model-add-btn {
   min-height: 32px;
@@ -137,11 +168,11 @@
   border-color: var(--border);
   box-shadow: 0 16px 40px rgb(0 0 0 / 14%), 0 2px 8px rgb(0 0 0 / 8%);
 }
-.model-menu-provider { height: 38px; padding: 0 10px; border-radius: var(--r-lg); font-size: var(--fs-4); font-weight: 650; }
-.model-menu-item { height: 36px; padding: 0 8px 0 12px; border-radius: var(--r-lg); }
+.model-menu-provider { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 0; background: transparent; color: var(--fg); cursor: pointer; transition: background var(--dur) var(--ease); height: 38px; padding: 0 10px; border-radius: var(--r-lg); font-size: var(--fs-4); font-weight: 650; }
+.model-menu-item { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 0; background: transparent; color: var(--fg-muted); font-size: var(--fs-3); cursor: pointer; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); min-height: 36px; height: 36px; padding: 0 8px 0 12px; border-radius: var(--r-lg); }
 .model-menu-item.selected { background: color-mix(in srgb, var(--blue) 7%, var(--bg-hover)); }
 .model-menu-item.picked .model-menu-item-name { color: var(--fg); }
-.model-menu-manage { height: 38px; border-radius: var(--r-lg); font-weight: 600; }
+.model-menu-manage { display: flex; align-items: center; gap: var(--sp-2); width: 100%; padding: 0 var(--sp-2); border: 0; background: transparent; color: var(--fg); font-size: var(--fs-base); cursor: pointer; transition: background var(--dur) var(--ease); height: 38px; border-radius: var(--r-lg); font-weight: 600; }
 
 @media (max-width: 900px) {
   .settings-view { grid-template-columns: 220px minmax(0, 1fr); }

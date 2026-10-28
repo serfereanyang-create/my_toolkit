@@ -4,22 +4,36 @@ import { slugifyHeading } from '../lib/markdownOutline';
 
 /*
  * Minimal, dependency-free markdown renderer for assistant messages.
- * Supports fenced code blocks, inline code, bold/italic, headings, links,
- * unordered/ordered lists, and paragraphs. All text is rendered through React
- * children (never dangerouslySetInnerHTML), so raw HTML in the model output is
- * shown as literal text rather than being injected into the DOM.
+ * Supports fenced code blocks, inline code, bold/italic, six heading levels,
+ * nested unordered/ordered lists, `>` blockquotes (up to four levels, with
+ * paragraphs, lists and fences inside), links and paragraphs. All text is
+ * rendered through React children (never dangerouslySetInnerHTML), so raw HTML
+ * in the model output is shown as literal text rather than being injected into
+ * the DOM.
  *
  * Iteration 12: headings get GitHub-style anchor ids (deduplicated per
  * document) so the outline panel's links can scroll to them.
  */
 
+/** One list item. A plain string is a leaf; the object form carries the nested
+ *  lists written under it. Flat lists keep the string shape they have always
+ *  had, so output without indentation did not change when nesting landed. */
+type ListItem = string | { text: string; children: ListBlock[] };
+
+type ListBlock =
+  | { kind: 'ul'; items: ListItem[] }
+  /** `start` preserves the number the model wrote — a loose list split by
+   *  blank lines used to render every block from 1. */
+  | { kind: 'ol'; items: ListItem[]; start?: number };
+
 type Block =
   | { kind: 'code'; lang: string; text: string }
   | { kind: 'heading'; level: number; text: string }
-  | { kind: 'ul'; items: string[] }
-  /** `start` preserves the number the model wrote — a loose list split by
-   *  blank lines used to render every block from 1. */
-  | { kind: 'ol'; items: string[]; start?: number }
+  | ListBlock
+  /** `>` quote. `blocks` is the body re-parsed after one marker level was
+   *  stripped, so a quote can hold paragraphs, lists, fences and further
+   *  quotes without a second parser. */
+  | { kind: 'quote'; blocks: Block[] }
   /** `mono` keeps the source line breaks: column-aligned output (a table the
    *  model typed with spaces, a file listing) collapses into one unreadable
    *  run if it is joined into a paragraph. */
@@ -82,7 +96,110 @@ export function headingAnchors(headings: string[]): string[] {
   });
 }
 
-export function parseBlocks(src: string): Block[] {
+/** Heading texts in document order, quotes included, so anchor ids stay lined
+ *  up with the order the renderer emits its headings in. */
+function collectHeadingTexts(blocks: Block[], into: string[] = []): string[] {
+  for (const block of blocks) {
+    if (block.kind === 'heading') into.push(block.text);
+    else if (block.kind === 'quote') collectHeadingTexts(block.blocks, into);
+  }
+  return into;
+}
+
+/** Item line: indent, marker (`-`/`*`/`+` or `1.`), then the text. */
+const LIST_ITEM = /^([ \t]*)([-*+]|\d+\.)[ \t]+(.*)$/;
+
+/** Visible list levels: depth 0, 1, 2. Deeper input renders at the third. */
+const MAX_LIST_LEVELS = 3;
+
+/** Quote levels the renderer will nest. Past this the markers stay literal
+ *  text: a line made of `>` must not recurse without bound. */
+const MAX_QUOTE_LEVELS = 4;
+
+/** Leading whitespace as a width; a tab advances to the next multiple of 4. */
+function indentWidth(prefix: string): number {
+  let width = 0;
+  for (const ch of prefix) width += ch === '\t' ? 4 - (width % 4) : 1;
+  return width;
+}
+
+function newListBlock(kind: 'ul' | 'ol', start: number): ListBlock {
+  if (kind === 'ol') return start === 1 ? { kind: 'ol', items: [] } : { kind: 'ol', items: [], start };
+  return { kind: 'ul', items: [] };
+}
+
+/**
+ * Parse one list run into a tree.
+ *
+ * Indentation is the nesting signal: an item indented past the level it
+ * follows becomes that item's child list, which is how models write 2-space,
+ * 4-space and tab nesting. Deeper than MAX_LIST_LEVELS is clamped onto the
+ * deepest level rather than thrown away — a card holding a plan should still
+ * show the fourth level's text, just without another indent step.
+ *
+ * A marker change at the same depth (a `-` run followed by a `1.` run) starts a
+ * new list: at depth 0 that ends this block so the caller opens the next one,
+ * deeper it hangs off the same parent item as an additional child list.
+ */
+function parseList(lines: string[], start: number): { block: ListBlock; next: number } {
+  const stack: Array<{ block: ListBlock; indent: number }> = [];
+  let root: ListBlock | null = null;
+  let i = start;
+
+  while (i < lines.length) {
+    const match = lines[i].match(LIST_ITEM);
+    if (!match) {
+      // A blank line between bullets keeps the list; a blank line before
+      // anything else ends it, so `- item\n\n普通段落` stays two blocks.
+      if (!lines[i].trim() && i + 1 < lines.length && LIST_ITEM.test(lines[i + 1])) { i += 1; continue; }
+      break;
+    }
+    const indent = indentWidth(match[1]);
+    const ordered = !/^[-*+]/.test(match[2]);
+    const kind = ordered ? 'ol' : 'ul';
+    const number = ordered ? Number(match[2].slice(0, -1)) : 1;
+    const text = match[3];
+
+    // Back out to the level this line aligns with. Equal indents are siblings,
+    // so only strictly shallower lines pop.
+    while (stack.length > 1 && indent < stack[stack.length - 1].indent) stack.pop();
+    let level = stack[stack.length - 1];
+    const deeper = level ? indent > level.indent : false;
+
+    if (!level || (deeper && stack.length < MAX_LIST_LEVELS)) {
+      const block = newListBlock(kind, number);
+      if (level) {
+        // Widen the parent item so it can hold a child list.
+        const parentItem = level.block.items[level.block.items.length - 1];
+        const holder = typeof parentItem === 'string' ? { text: parentItem, children: [] } : parentItem;
+        if (typeof parentItem === 'string') level.block.items[level.block.items.length - 1] = holder;
+        holder.children.push(block);
+      } else {
+        root = block;
+      }
+      stack.push({ block, indent });
+      level = stack[stack.length - 1];
+    } else if (level.block.kind !== kind) {
+      if (stack.length === 1) break;
+      const parent = stack[stack.length - 2];
+      const parentItem = parent.block.items[parent.block.items.length - 1];
+      const holder = typeof parentItem === 'string' ? { text: parentItem, children: [] } : parentItem;
+      if (typeof parentItem === 'string') parent.block.items[parent.block.items.length - 1] = holder;
+      const block = newListBlock(kind, number);
+      holder.children.push(block);
+      stack[stack.length - 1] = { block, indent: level.indent };
+      level = stack[stack.length - 1];
+    }
+
+    level.block.items.push(text);
+    i += 1;
+  }
+
+  // `root` is set by the first item; the caller only calls us on a list line.
+  return { block: root as ListBlock, next: i };
+}
+
+export function parseBlocks(src: string, quoteDepth = 0): Block[] {
   const lines = src.replace(/\r\n/g, '\n').split('\n');
   const blocks: Block[] = [];
   let i = 0;
@@ -124,6 +241,29 @@ export function parseBlocks(src: string): Block[] {
       continue;
     }
 
+    // Blockquote. One marker level is stripped and the remainder re-parsed, so
+    // nesting (`>>` / `> >`), lists and fences inside a quote all fall out of
+    // this same function. Lazy continuation (an unmarked line following a
+    // quoted one) is not supported — it ends the quote.
+    if (/^ {0,3}>/.test(line)) {
+      if (quoteDepth >= MAX_QUOTE_LEVELS) {
+        blocks.push({ kind: 'p', text: line.replace(/^ {0,3}>\s?/, '') });
+        i++;
+        continue;
+      }
+      const inner: string[] = [];
+      while (i < lines.length) {
+        const quoted = lines[i].match(/^ {0,3}>\s?(.*)$/);
+        if (quoted) { inner.push(quoted[1]); i++; continue; }
+        // A blank line continues the quote only when the next line is quoted;
+        // `>` on its own already arrives as an empty match above.
+        if (!lines[i].trim() && i + 1 < lines.length && /^ {0,3}>/.test(lines[i + 1])) { inner.push(''); i++; continue; }
+        break;
+      }
+      blocks.push({ kind: 'quote', blocks: parseBlocks(inner.join('\n'), quoteDepth + 1) });
+      continue;
+    }
+
     // GFM table: a row containing pipes followed by a delimiter row.
     if (line.includes('|') && i + 1 < lines.length) {
       const align = tableAlignments(lines[i + 1]);
@@ -143,39 +283,12 @@ export function parseBlocks(src: string): Block[] {
       }
     }
 
-    // Unordered list
-    if (/^\s*[-*+]\s+/.test(line)) {
-      const items: string[] = [];
-      while (i < lines.length) {
-        if (/^\s*[-*+]\s+/.test(lines[i])) {
-          items.push(lines[i].replace(/^\s*[-*+]\s+/, ''));
-          i++;
-          continue;
-        }
-        // Continue across a blank line only when another bullet follows:
-        // models routinely put a blank line between bullets, and stopping
-        // there split one list into a stack of one-item lists.
-        if (!lines[i].trim() && i + 1 < lines.length && /^\s*[-*+]\s+/.test(lines[i + 1])) { i++; continue; }
-        break;
-      }
-      blocks.push({ kind: 'ul', items });
-      continue;
-    }
-
-    // Ordered list
-    if (/^\s*\d+\.\s+/.test(line)) {
-      const start = Number(line.match(/^\s*(\d+)\./)?.[1] ?? 1);
-      const items: string[] = [];
-      while (i < lines.length) {
-        if (/^\s*\d+\.\s+/.test(lines[i])) {
-          items.push(lines[i].replace(/^\s*\d+\.\s+/, ''));
-          i++;
-          continue;
-        }
-        if (!lines[i].trim() && i + 1 < lines.length && /^\s*\d+\.\s+/.test(lines[i + 1])) { i++; continue; }
-        break;
-      }
-      blocks.push({ kind: 'ol', items, ...(start !== 1 ? { start } : {}) });
+    // Unordered / ordered list. Both markers share one parser: indentation is
+    // what nests a list, and a nested list may switch marker kind.
+    if (LIST_ITEM.test(line)) {
+      const { block, next } = parseList(lines, i);
+      blocks.push(block);
+      i = next;
       continue;
     }
 
@@ -186,8 +299,8 @@ export function parseBlocks(src: string): Block[] {
       lines[i].trim() &&
       !/^```/.test(lines[i]) &&
       !/^(#{1,6})\s+/.test(lines[i]) &&
-      !/^\s*[-*+]\s+/.test(lines[i]) &&
-      !/^\s*\d+\.\s+/.test(lines[i]) &&
+      !LIST_ITEM.test(lines[i]) &&
+      !/^ {0,3}>/.test(lines[i]) &&
       !(lines[i].includes('|') && i + 1 < lines.length && tableAlignments(lines[i + 1]))
     ) {
       para.push(lines[i]);
@@ -258,74 +371,109 @@ function renderEmphasis(text: string, keyPrefix: string): ReactNode[] {
   return nodes;
 }
 
+/** `<li>`s for one list level, each item's child lists rendered inside it. */
+function renderListItems(items: ListItem[], keyPrefix: string): ReactNode[] {
+  return items.map((item, idx) => {
+    const node = typeof item === 'string' ? { text: item, children: [] as ListBlock[] } : item;
+    const key = `${keyPrefix}-i${idx}`;
+    return (
+      <li key={key}>
+        {renderInline(node.text, key)}
+        {node.children.map((child, childIdx) => renderList(child, `${key}-${childIdx}`))}
+      </li>
+    );
+  });
+}
+
+function renderList(block: ListBlock, key: string): ReactNode {
+  if (block.kind === 'ol') {
+    return <ol key={key} className="md-list" start={block.start}>{renderListItems(block.items, key)}</ol>;
+  }
+  return <ul key={key} className="md-list">{renderListItems(block.items, key)}</ul>;
+}
+
+function renderBlocks(
+  blocks: Block[],
+  keyPrefix: string,
+  anchorPrefix: string | undefined,
+  anchors: string[],
+  cursor: { at: number },
+): ReactNode[] {
+  return blocks.map((block, idx) => {
+    const key = `${keyPrefix}-${idx}`;
+    switch (block.kind) {
+      case 'code':
+        return (
+          <pre key={key} className="md-code-block" data-lang={block.lang || undefined}>
+            <code>{block.text}</code>
+          </pre>
+        );
+      case 'heading': {
+        // The tag keeps the shift the renderer has always applied (source h1
+        // lands on <h3>, so a reply cannot out-rank the app's own titles) and
+        // caps at <h6>; the size now comes from the level's class, because two
+        // source levels share the <h6> tag and a tag rule cannot tell them
+        // apart.
+        const Tag = (`h${Math.min(block.level + 2, 6)}`) as keyof JSX.IntrinsicElements;
+        const base = anchors[cursor.at++] ?? `heading-${idx}`;
+        const id = anchorPrefix ? `${anchorPrefix}--${base}` : base;
+        const levelClass = `md-h${Math.min(Math.max(block.level, 1), 6)}`;
+        return (
+          <Tag key={key} id={id} className={`md-heading ${levelClass}`}>
+            {renderInline(block.text, key)}
+          </Tag>
+        );
+      }
+      case 'ul':
+      case 'ol':
+        return renderList(block, key);
+      case 'quote':
+        return (
+          <blockquote key={key} className="md-quote">
+            {renderBlocks(block.blocks, key, anchorPrefix, anchors, cursor)}
+          </blockquote>
+        );
+      case 'table':
+        return (
+          <div className="md-table-wrap" key={key}>
+            <table className="md-table">
+              <thead>
+                <tr>
+                  {block.header.map((cell, j) => (
+                    <th key={j} style={block.align[j] ? { textAlign: block.align[j]! } : undefined}>
+                      {renderInline(cell, `th${idx}-${j}`)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {block.rows.map((row, r) => (
+                  <tr key={r}>
+                    {row.map((cell, j) => (
+                      <td key={j} style={block.align[j] ? { textAlign: block.align[j]! } : undefined}>
+                        {renderInline(cell, `td${idx}-${r}-${j}`)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      default:
+        return block.mono
+          ? <pre key={key} className="md-pre-text">{block.text}</pre>
+          : <p key={key} className="md-p">{renderInline(block.text, key)}</p>;
+    }
+  });
+}
+
 export function Markdown({ text, anchorPrefix }: { text: string; anchorPrefix?: string }) {
   const blocks = parseBlocks(text);
   // Precompute stable anchor ids for headings (iteration 12) so the outline
   // sidebar can deep-link into a rendered document. anchorPrefix keeps ids
   // unique across multiple Markdown instances in one transcript.
-  const anchors = headingAnchors(blocks.filter((b): b is Extract<Block, { kind: 'heading' }> => b.kind === 'heading').map((b) => b.text));
-  let anchorAt = 0;
-  return (
-    <div className="md">
-      {blocks.map((block, idx) => {
-        switch (block.kind) {
-          case 'code':
-            return (
-              <pre key={idx} className="md-code-block" data-lang={block.lang || undefined}>
-                <code>{block.text}</code>
-              </pre>
-            );
-          case 'heading': {
-            const Tag = (`h${Math.min(block.level + 2, 6)}`) as keyof JSX.IntrinsicElements;
-            const base = anchors[anchorAt++] ?? `heading-${idx}`;
-            const id = anchorPrefix ? `${anchorPrefix}--${base}` : base;
-            return <Tag key={idx} id={id} className="md-heading">{renderInline(block.text, `h${idx}`)}</Tag>;
-          }
-          case 'ul':
-            return (
-              <ul key={idx} className="md-list">
-                {block.items.map((it, j) => <li key={j}>{renderInline(it, `ul${idx}-${j}`)}</li>)}
-              </ul>
-            );
-          case 'ol':
-            return (
-              <ol key={idx} className="md-list" start={block.start}>
-                {block.items.map((it, j) => <li key={j}>{renderInline(it, `ol${idx}-${j}`)}</li>)}
-              </ol>
-            );
-          case 'table':
-            return (
-              <div className="md-table-wrap" key={idx}>
-                <table className="md-table">
-                  <thead>
-                    <tr>
-                      {block.header.map((cell, j) => (
-                        <th key={j} style={block.align[j] ? { textAlign: block.align[j]! } : undefined}>
-                          {renderInline(cell, `th${idx}-${j}`)}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {block.rows.map((row, r) => (
-                      <tr key={r}>
-                        {row.map((cell, j) => (
-                          <td key={j} style={block.align[j] ? { textAlign: block.align[j]! } : undefined}>
-                            {renderInline(cell, `td${idx}-${r}-${j}`)}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            );
-          default:
-            return block.mono
-              ? <pre key={idx} className="md-pre-text">{block.text}</pre>
-              : <p key={idx} className="md-p">{renderInline(block.text, `p${idx}`)}</p>;
-        }
-      })}
-    </div>
-  );
+  const anchors = headingAnchors(collectHeadingTexts(blocks));
+  const cursor = { at: 0 };
+  return <div className="md">{renderBlocks(blocks, 'md', anchorPrefix, anchors, cursor)}</div>;
 }

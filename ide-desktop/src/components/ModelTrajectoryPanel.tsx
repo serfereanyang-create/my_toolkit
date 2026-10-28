@@ -30,13 +30,25 @@ function TrajectoryRow({ record }: { record: TrajectoryRecord }) {
           <Clock size={11} />
           {formatDuration(record.durationMs)}
         </span>
+        {record.streamMetrics?.timeToFirstOutputMs !== null && record.streamMetrics?.timeToFirstOutputMs !== undefined && (
+          <span className="traj-ttft" title="首个模型输出到达时间">首输出 {formatDuration(record.streamMetrics.timeToFirstOutputMs)}</span>
+        )}
       </button>
       {open && (
         <div className="traj-body">
           <div className="traj-meta">
             发送 {record.requestMessageCount} 条消息 · {record.promptChars} 字符
-            {record.usage?.inputTokens !== undefined && ` · 输入 ${record.usage.inputTokens} tokens`}
+            {record.usage?.inputTokens !== undefined && ` · 输入 ${record.usage.inputTokens} 词元`}
+            {record.streamMetrics && ` · ${record.streamMetrics.transport.toUpperCase()} ${record.streamMetrics.eventCount} 包 · 输出 ${record.streamMetrics.outputChars} 字符`}
           </div>
+          {record.streamMetrics && (
+            <div className="traj-meta">
+              首事件 {record.streamMetrics.timeToFirstEventMs === null ? '—' : formatDuration(record.streamMetrics.timeToFirstEventMs)}
+              {' · '}首输出 {record.streamMetrics.timeToFirstOutputMs === null ? '—' : formatDuration(record.streamMetrics.timeToFirstOutputMs)}
+              {' · '}包间隔 P50 {record.streamMetrics.interEventP50Ms === null ? '—' : formatDuration(record.streamMetrics.interEventP50Ms)}
+              {' · '}P95 {record.streamMetrics.interEventP95Ms === null ? '—' : formatDuration(record.streamMetrics.interEventP95Ms)}
+            </div>
+          )}
           <div className="traj-section-label">请求尾部（实际发送）</div>
           {record.requestTail.map((message, index) => (
             <div key={index} className={`traj-msg role-${message.role}`}>
@@ -125,10 +137,10 @@ export function ModelTrajectoryPanel({ sessionId }: { sessionId?: string }) {
         )}
       </div>
 
-      {loading && <div className="trajectory-empty">正在读取轨迹…</div>}
-      {!loading && error && <div className="trajectory-empty">{error}</div>}
+      {loading && <div className="trajectory-empty" role="status" aria-busy="true">正在读取轨迹…</div>}
+      {!loading && error && <div className="trajectory-empty trajectory-error" role="alert">{error}</div>}
       {!loading && !error && records.length === 0 && (
-        <div className="trajectory-empty">
+        <div className="trajectory-empty" role="status">
           这个会话还没有模型调用记录。轨迹从启用后新建的调用开始记录。
         </div>
       )}

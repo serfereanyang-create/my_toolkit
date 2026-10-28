@@ -62,7 +62,7 @@ export function BookmarksPanel({ onJump }: { onJump: (path: string, line: number
       <div className="bm-head">
         <strong>书签</strong> · {total} 个标记 · {groups.length} 个文件 — 在编辑器最左侧装订线单击可添加/取消
       </div>
-      {error && <div className="snip-error" style={{ margin: 'var(--sp-2)' }}>{error}</div>}
+      {error && <div className="snip-error" role="alert" style={{ margin: 'var(--sp-2)' }}><span>{error}</span><button type="button" className="panel-retry" onClick={() => { void refresh(); }} disabled={loading}>重试</button></div>}
       <div className="bm-list">
         {loading && <div className="bm-empty">载入中…</div>}
         {!loading && total === 0 && (

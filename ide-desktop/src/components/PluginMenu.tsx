@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { desktop } from '../lib/ipc';
+import { usePopoverFocus } from '../lib/usePopoverFocus';
 import {
   CATEGORY_LABEL, DEFAULT_ENABLED_IDS, groupByCategory, pluginMeta, statusMap,
   filterPlugins, type PluginDef, type PluginStatus,
@@ -37,6 +38,7 @@ export function PluginMenu({ prefs, onClose, onPick }: {
   const [defs, setDefs] = useState<PluginDef[]>([]);
   const [status, setStatus] = useState<PluginStatus | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
+  usePopoverFocus(ref);
 
   useEffect(() => {
     let cancelled = false;

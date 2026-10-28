@@ -1,4 +1,6 @@
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const { app, session } = require('electron');
 app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {

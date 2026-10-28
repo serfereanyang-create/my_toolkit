@@ -5,8 +5,10 @@ import { SectionHeader, EmptyState } from './controls';
 export function HooksSettings() {
   return (
     <div className="settings-page">
+      <h1 className="settings-page-title">钩子</h1>
+
       <SectionHeader
-        title="钩子"
+        title="生命周期钩子"
         description={
           <>
             通过配置和已启用的插件管理生命周期钩子。{' '}
@@ -14,7 +16,13 @@ export function HooksSettings() {
           </>
         }
         action={
-          <button type="button" className="settings-icon-btn" aria-label="刷新">
+          <button
+            type="button"
+            className="settings-icon-btn"
+            aria-label="刷新"
+            title="暂未接入：钩子列表还没有数据源"
+            disabled
+          >
             <RefreshCw size={16} />
           </button>
         }

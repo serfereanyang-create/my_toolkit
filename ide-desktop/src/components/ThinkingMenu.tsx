@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { BrainCircuit, Check } from 'lucide-react';
 import type { ReasoningEffort } from '../types';
 import type { ModelReasoningCapability } from '../lib/modelCapabilities';
+import { usePopoverFocus } from '../lib/usePopoverFocus';
 
 const LABELS: Record<ReasoningEffort, string> = {
   auto: '自动', max: '极高', high: '高', medium: '中', low: '低', off: '关闭',
@@ -36,6 +37,7 @@ export function ThinkingMenu({ value, capability, onPick, onClose }: {
 }) {
   const options = optionsFor(capability);
   const ref = useRef<HTMLDivElement | null>(null);
+  usePopoverFocus(ref);
 
   useEffect(() => {
     function onDown(event: MouseEvent) {

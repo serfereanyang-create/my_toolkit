@@ -86,7 +86,7 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
         <SettingRow
           title="自动审核"
           description="高风险操作先由模型审核，低风险自动放行。"
-          control={<Toggle checked={autoReview} onChange={setAutoReview} />}
+          control={<Toggle checked={autoReview} onChange={setAutoReview} label="自动审核" />}
         />
         <SettingRow
           title="子智能体委派"
@@ -163,6 +163,7 @@ export function GeneralSettings({ prefs, savePref, approval, onApprovalChange }:
             <span className="sound-volume-row">
               <input
                 type="range" min={0} max={1} step={0.05}
+                aria-label="提示音音量"
                 value={soundVolume}
                 disabled={!sounds}
                 onChange={(e) => setSoundVolume(Number(e.target.value))}

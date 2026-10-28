@@ -36,16 +36,18 @@ const ALLOWED_TOOLS = new Set([
   'computer_key',
   'computer_scroll',
   'computer_activate',
+  'computer_open',
+  'computer_wait_window',
 ]);
 
 // UIA walks and DWM activation take a few seconds on a busy desktop; a full
 // multi-monitor screenshot plus PNG encode can take longer than a click.
-const TIMEOUT_MS = { 'computer_screenshot': 60_000, 'computer_window_shot': 60_000, 'computer_elements': 60_000, 'computer_press': 60_000 };
+const TIMEOUT_MS = { 'computer_screenshot': 60_000, 'computer_window_shot': 60_000, 'computer_wait_window': 35_000, 'computer_elements': 60_000, 'computer_press': 60_000 };
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_BYTES = 24 * 1024 * 1024;
 const MAX_STDERR_CHARS = 4_000;
 
-function createGuiControlService({ cliRoot }) {
+function createGuiControlService({ cliRoot, spawnImpl = spawn, execPath = process.execPath }) {
   const entry = path.join(cliRoot, 'dist', 'src', 'index.js');
 
   // One action at a time, in submission order. A rejection is absorbed into the
@@ -63,7 +65,7 @@ function createGuiControlService({ cliRoot }) {
       }
 
       const args = [entry, '--gui-tool', tool, '--gui-input', payload, '--quiet'];
-      const child = spawn(process.execPath, args, {
+      const child = spawnImpl(execPath, args, {
         cwd: cliRoot,
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -73,20 +75,26 @@ function createGuiControlService({ cliRoot }) {
       let stdout = '';
       let stderr = '';
       let settled = false;
+      let timer;
+      let abort;
       const timeoutMs = TIMEOUT_MS[tool] ?? DEFAULT_TIMEOUT_MS;
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        if (signal && abort) signal.removeEventListener('abort', abort);
+      };
       const finish = (result) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        cleanup();
         resolve(result);
       };
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         // The child drives the user's real windows; a hung one must not keep
         // the panel's next action queued forever.
         try { child.kill(); } catch { /* already gone */ }
         finish({ ok: false, output: '', error: tool + ' 超时（' + Math.round(timeoutMs / 1000) + ' 秒），已中止。' });
       }, timeoutMs);
-      const abort = () => { try { child.kill(); } catch {} finish({ ok: false, output: '', error: '电脑操控截图已取消。' }); };
+      abort = () => { try { child.kill(); } catch {} finish({ ok: false, output: '', error: '电脑操控截图已取消。' }); };
       signal?.addEventListener('abort', abort, { once: true });
       const finishWithCleanup = finish;
 

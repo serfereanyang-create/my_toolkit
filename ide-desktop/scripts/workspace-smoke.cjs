@@ -1,4 +1,6 @@
 'use strict';
+require('./lib/probe-guard.cjs');
+
 const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -279,9 +281,9 @@ app.whenReady().then(async () => {
     await key('Enter', 'Enter', 13);
     assert.equal(await evaluate('document.querySelector(".gtx-branch-create input").value'), 'new-ui');
     assert.match(await evaluate('document.querySelector(".gtx-error").textContent'), /分支名称已存在/);
-    assert.equal(await evaluate('window.workspacePreview.calls().find(call => call.action === "branch").args'), 'codex/new-ui');
+    assert.equal(await evaluate('window.workspacePreview.calls().find(call => call.action === "branch").args'), 'yoycode/new-ui');
     await key('Enter', 'Enter', 13);
-    await waitFor('window.workspacePreview.snapshot().branch === "codex/new-ui"', 'explicit create retry');
+    await waitFor('window.workspacePreview.snapshot().branch === "yoycode/new-ui"', 'explicit create retry');
   });
   await check('Old workspace completion cannot clear a new pending Git operation', async () => {
     await reset(); await section('提交或推送');
@@ -464,6 +466,8 @@ app.whenReady().then(async () => {
     assert.equal(await evaluate('document.querySelector(".gtx-push").disabled'), true);
     assert.equal(await evaluate('document.querySelector(".gtx-pull").disabled'), true);
     assert.match(await evaluate('document.querySelector(".gtx-sync-targets").textContent'), /尚未配置远程/);
+    assert.equal(await evaluate(`document.querySelector('.gtx-card-head button[title*="远程仓库"]').disabled`), true);
+    assert.match(await evaluate('document.querySelector(".gtx-pr-readiness").textContent'), /配置远程仓库/);
   });
   await check('First publish requires a remote choice and requests tracking explicitly', async () => {
     await reset();
