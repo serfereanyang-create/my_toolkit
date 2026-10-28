@@ -1,0 +1,34 @@
+<w:p>
+  <w:pPr>
+    <w:spacing w:before="120" w:after="80" w:line="360" w:lineRule="auto"/>
+    <w:ind w:firstLineChars="200" w:firstLine="420"/>
+    <w:jc w:val="both"/>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+  </w:pPr>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>输出电压</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>V</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>out</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>可调，针对实际情况可以微调。</w:t>
+  </w:r>
+</w:p>

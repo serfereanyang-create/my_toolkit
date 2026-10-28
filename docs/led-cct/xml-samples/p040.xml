@@ -1,0 +1,58 @@
+<w:p>
+  <w:pPr>
+    <w:spacing w:before="120" w:after="80" w:line="360" w:lineRule="auto"/>
+    <w:ind w:firstLineChars="200" w:firstLine="420"/>
+    <w:jc w:val="both"/>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+  </w:pPr>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>供电电源到</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>ESP32C3</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>之间：</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>5V→</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>保险丝</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>→C3_LDO→3V3</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>输出</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>→AO3400</w:t>
+  </w:r>
+</w:p>

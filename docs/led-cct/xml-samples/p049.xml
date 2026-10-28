@@ -1,0 +1,8 @@
+<w:p>
+  <w:pPr>
+    <w:spacing w:before="120" w:after="80" w:line="300" w:lineRule="auto"/>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+  </w:pPr>
+</w:p>

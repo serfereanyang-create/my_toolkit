@@ -1,0 +1,15 @@
+<w:p w14:paraId="48049DBE" w14:textId="77777777" w:rsidR="007843A8" w:rsidRDefault="007843A8" w:rsidP="007843A8">
+  <w:pPr>
+    <w:spacing w:before="120" w:after="80" w:line="300" w:lineRule="auto"/>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:sectPr w:rsidR="007843A8" w:rsidSect="007843A8">
+      <w:type w:val="continuous"/>
+      <w:pgSz w:w="11906" w:h="16838"/>
+      <w:pgMar w:top="1440" w:right="1797" w:bottom="1440" w:left="1797" w:header="720" w:footer="720" w:gutter="0"/>
+      <w:cols w:num="2" w:space="720"/>
+      <w:docGrid w:linePitch="360"/>
+    </w:sectPr>
+  </w:pPr>
+</w:p>

@@ -1,0 +1,124 @@
+<w:p>
+  <w:pPr>
+    <w:spacing w:before="120" w:after="80" w:line="360" w:lineRule="auto"/>
+    <w:ind w:firstLineChars="200" w:firstLine="420"/>
+    <w:jc w:val="both"/>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+  </w:pPr>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>常见的</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>CCT-LED</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>，对于本系统</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>ESP32C3</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>供电的情况（最高</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>3V3</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>），采取</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>75-150Ω</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>，</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>3V/20mA</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>工作电流的</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>2835</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>、</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>5050</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>双色温</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>LED</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>，每颗功耗约</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>0.06w</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>。</w:t>
+  </w:r>
+</w:p>

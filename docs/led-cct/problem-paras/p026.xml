@@ -1,0 +1,176 @@
+<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex" xmlns:cx1="http://schemas.microsoft.com/office/drawing/2015/9/8/chartex" xmlns:cx2="http://schemas.microsoft.com/office/drawing/2015/10/21/chartex" xmlns:cx3="http://schemas.microsoft.com/office/drawing/2016/5/9/chartex" xmlns:cx4="http://schemas.microsoft.com/office/drawing/2016/5/10/chartex" xmlns:cx5="http://schemas.microsoft.com/office/drawing/2016/5/11/chartex" xmlns:cx6="http://schemas.microsoft.com/office/drawing/2016/5/12/chartex" xmlns:cx7="http://schemas.microsoft.com/office/drawing/2016/5/13/chartex" xmlns:cx8="http://schemas.microsoft.com/office/drawing/2016/5/14/chartex" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:aink="http://schemas.microsoft.com/office/drawing/2016/ink" xmlns:am3d="http://schemas.microsoft.com/office/drawing/2017/model3d" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:oel="http://schemas.microsoft.com/office/2019/extlst" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:w10="urn:schemas-microsoft-com:office:word" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex" xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid" xmlns:w16="http://schemas.microsoft.com/office/word/2018/wordml" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" xmlns:w16sdtdh="http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash" xmlns:w16sdtfl="http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock" xmlns:w16se="http://schemas.microsoft.com/office/word/2015/wordml/symex" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" w14:paraId="780F5799" w14:textId="77777777" w:rsidR="007843A8" w:rsidRDefault="007843A8" w:rsidP="007843A8">
+  <w:pPr>
+    <w:spacing w:before="120" w:after="80" w:line="360" w:lineRule="auto"/>
+    <w:ind w:firstLineChars="200" w:firstLine="420"/>
+    <w:jc w:val="both"/>
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+  </w:pPr>
+  <w:r w:rsidRPr="009F4113">
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>&#27492;&#26102;&#24050;&#32463;&#20302;&#20110;&#19968;&#33324;&#26368;&#20302;&#39640;&#30005;&#24179;&#35302;&#21457;&#38376;&#27099;</w:t>
+  </w:r>
+  <w:r w:rsidRPr="009F4113">
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>2.4V</w:t>
+  </w:r>
+  <w:r w:rsidRPr="009F4113">
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>&#65292;&#23548;&#33268;&#26080;&#27861;&#35782;&#21035;&#22806;&#37096;&#39640;&#30005;&#24179;&#20449;&#21495;&#12290;&#19988;&#30001;&#20110;&#20869;&#37096;</w:t>
+  </w:r>
+  <w:r w:rsidRPr="009F4113">
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>MOS</w:t>
+  </w:r>
+  <w:r w:rsidRPr="009F4113">
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>&#25511;&#21046;&#30005;&#27969;&#65292;&#20854;&#19978;</w:t>
+  </w:r>
+  <w:r w:rsidR="009F4113" w:rsidRPr="009F4113">
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>&#23548;&#36890;&#21151;&#32791;</w:t>
+  </w:r>
+  <m:oMath>
+    <m:sSub>
+      <m:sSubPr>
+        <m:ctrlPr>
+          <w:rPr>
+            <w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math" w:cs="Times New Roman"/>
+            <w:iCs/>
+            <w:lang w:eastAsia="zh-CN"/>
+          </w:rPr>
+        </m:ctrlPr>
+      </m:sSubPr>
+      <m:e>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <w:rPr>
+            <w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math" w:cs="Times New Roman"/>
+            <w:lang w:eastAsia="zh-CN"/>
+          </w:rPr>
+          <m:t>P</m:t>
+        </m:r>
+      </m:e>
+      <m:sub>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <w:rPr>
+            <w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math" w:cs="Times New Roman" w:hint="eastAsia"/>
+            <w:lang w:eastAsia="zh-CN"/>
+          </w:rPr>
+          <m:t>loss</m:t>
+        </m:r>
+      </m:sub>
+    </m:sSub>
+  </m:oMath>
+  <w:r w:rsidR="009F4113" w:rsidRPr="009F4113">
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:iCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>&#65288;&#23548;&#36890;&#26102;&#65292;</w:t>
+  </w:r>
+  <w:r w:rsidR="009F4113" w:rsidRPr="009F4113">
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:iCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>MOS</w:t>
+  </w:r>
+  <w:r w:rsidR="009F4113" w:rsidRPr="009F4113">
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:iCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>&#31649;&#28431;&#26497;&#28304;&#26497;&#30340;&#23548;&#36890;&#38459;&#25239;&#20026;</w:t>
+  </w:r>
+  <m:oMath>
+    <m:sSub>
+      <m:sSubPr>
+        <m:ctrlPr>
+          <w:rPr>
+            <w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math" w:cs="Times New Roman"/>
+            <w:lang w:eastAsia="zh-CN"/>
+          </w:rPr>
+        </m:ctrlPr>
+      </m:sSubPr>
+      <m:e>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <w:rPr>
+            <w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math" w:cs="Times New Roman"/>
+            <w:lang w:eastAsia="zh-CN"/>
+          </w:rPr>
+          <m:t>R</m:t>
+        </m:r>
+      </m:e>
+      <m:sub>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <w:rPr>
+            <w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math" w:cs="Times New Roman"/>
+            <w:lang w:eastAsia="zh-CN"/>
+          </w:rPr>
+          <m:t>DS</m:t>
+        </m:r>
+      </m:sub>
+    </m:sSub>
+  </m:oMath>
+  <w:r w:rsidR="009F4113" w:rsidRPr="009F4113">
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>&#65292;&#19968;&#33324;&#21482;&#26377;&#20960;</w:t>
+  </w:r>
+  <w:r w:rsidR="009F4113" w:rsidRPr="009F4113">
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>m&#937;</w:t>
+  </w:r>
+  <w:r w:rsidR="009F4113">
+    <w:rPr>
+      <w:rFonts w:hint="eastAsia"/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>&#65289;</w:t>
+  </w:r>
+  <w:r w:rsidRPr="007843A8">
+    <w:rPr>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>&#65306;</w:t>
+  </w:r>
+</w:p>

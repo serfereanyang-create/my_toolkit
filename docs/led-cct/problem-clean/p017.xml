@@ -1,0 +1,380 @@
+<w:p w14:paraId="58BEF88E" w14:textId="77777777" w:rsidR="008C65AE" w:rsidRDefault="004F7B18" w:rsidP="008C65AE">
+  <w:pPr>
+    <w:spacing w:before="120" w:after="80" w:line="360" w:lineRule="auto"/>
+    <w:ind w:firstLineChars="200" w:firstLine="420"/>
+    <w:jc w:val="center"/>
+    <w:rPr>
+      <w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/>
+      <w:iCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+  </w:pPr>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:hint="eastAsia"/>
+      <w:iCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>PWM</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:hint="eastAsia"/>
+      <w:iCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>&#21608;&#26399;&#65306;</w:t>
+  </w:r>
+  <m:oMath>
+    <m:sSub>
+      <m:sSubPr>
+        [ctrl]
+      </m:sSubPr>
+      <m:e>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t>T</m:t>
+        </m:r>
+      </m:e>
+      <m:sub>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t>PWM</m:t>
+        </m:r>
+      </m:sub>
+    </m:sSub>
+    <m:r>
+      <m:t xml:space="preserve"> = </m:t>
+    </m:r>
+    <m:f>
+      <m:fPr>
+        [ctrl]
+      </m:fPr>
+      <m:num>
+        <m:r>
+          <m:t>1</m:t>
+        </m:r>
+      </m:num>
+      <m:den>
+        <m:sSub>
+          <m:sSubPr>
+            [ctrl]
+          </m:sSubPr>
+          <m:e>
+            <m:r>
+              <m:t>f</m:t>
+            </m:r>
+          </m:e>
+          <m:sub>
+            <m:r>
+              <m:t>PWM</m:t>
+            </m:r>
+          </m:sub>
+        </m:sSub>
+      </m:den>
+    </m:f>
+    <m:r>
+      <m:t xml:space="preserve"> =100 u</m:t>
+    </m:r>
+    <m:r>
+      <m:t>s</m:t>
+    </m:r>
+  </m:oMath>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:hint="eastAsia"/>
+      <w:iCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t xml:space="preserve">  </w:t>
+  </w:r>
+  <w:r w:rsidR="008C65AE">
+    <w:rPr>
+      <w:rFonts w:hint="eastAsia"/>
+      <w:iCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t xml:space="preserve">                                                                                                    </w:t>
+  </w:r>
+  <w:r w:rsidR="008C65AE">
+    <w:rPr>
+      <w:rFonts w:hint="eastAsia"/>
+      <w:iCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>&#20919;&#26262;&#20809;&#36890;&#36947;&#21344;&#27604;&#65306;</w:t>
+  </w:r>
+  <w:r w:rsidR="008C65AE" w:rsidRPr="008C65AE">
+    <w:t xml:space="preserve"> </w:t>
+  </w:r>
+  <m:oMath>
+    <m:sSub>
+      <m:sSubPr>
+        [ctrl]
+      </m:sSubPr>
+      <m:e>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t>D</m:t>
+        </m:r>
+      </m:e>
+      <m:sub>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t xml:space="preserve"> </m:t>
+        </m:r>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t>c</m:t>
+        </m:r>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t xml:space="preserve"> </m:t>
+        </m:r>
+      </m:sub>
+    </m:sSub>
+    <m:r>
+      <m:rPr>
+        <m:sty m:val="p"/>
+      </m:rPr>
+      <m:t xml:space="preserve">= </m:t>
+    </m:r>
+    <m:f>
+      <m:fPr>
+        [ctrl]
+      </m:fPr>
+      <m:num>
+        <m:sSub>
+          <m:sSubPr>
+            [ctrl]
+          </m:sSubPr>
+          <m:e>
+            <m:r>
+              <m:rPr>
+                <m:sty m:val="p"/>
+              </m:rPr>
+              <m:t>T</m:t>
+            </m:r>
+          </m:e>
+          <m:sub>
+            <m:r>
+              <m:rPr>
+                <m:sty m:val="p"/>
+              </m:rPr>
+              <m:t>on,c</m:t>
+            </m:r>
+          </m:sub>
+        </m:sSub>
+      </m:num>
+      <m:den>
+        <m:sSub>
+          <m:sSubPr>
+            [ctrl]
+          </m:sSubPr>
+          <m:e>
+            <m:r>
+              <m:rPr>
+                <m:sty m:val="p"/>
+              </m:rPr>
+              <m:t>T</m:t>
+            </m:r>
+          </m:e>
+          <m:sub>
+            <m:r>
+              <m:rPr>
+                <m:sty m:val="p"/>
+              </m:rPr>
+              <m:t>PWM</m:t>
+            </m:r>
+          </m:sub>
+        </m:sSub>
+      </m:den>
+    </m:f>
+  </m:oMath>
+  <w:r w:rsidR="008C65AE">
+    <w:rPr>
+      <w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math" w:hint="eastAsia"/>
+      <w:i/>
+      <w:iCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t xml:space="preserve">= </w:t>
+  </w:r>
+  <m:oMath>
+    <m:sSub>
+      <m:sSubPr>
+        [ctrl]
+      </m:sSubPr>
+      <m:e>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t xml:space="preserve"> </m:t>
+        </m:r>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t>D</m:t>
+        </m:r>
+      </m:e>
+      <m:sub>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t xml:space="preserve"> w</m:t>
+        </m:r>
+      </m:sub>
+    </m:sSub>
+    <m:r>
+      <m:rPr>
+        <m:sty m:val="p"/>
+      </m:rPr>
+      <m:t xml:space="preserve">= </m:t>
+    </m:r>
+    <m:f>
+      <m:fPr>
+        [ctrl]
+      </m:fPr>
+      <m:num>
+        <m:sSub>
+          <m:sSubPr>
+            [ctrl]
+          </m:sSubPr>
+          <m:e>
+            <m:r>
+              <m:rPr>
+                <m:sty m:val="p"/>
+              </m:rPr>
+              <m:t>T</m:t>
+            </m:r>
+          </m:e>
+          <m:sub>
+            <m:r>
+              <m:rPr>
+                <m:sty m:val="p"/>
+              </m:rPr>
+              <m:t>on,w</m:t>
+            </m:r>
+          </m:sub>
+        </m:sSub>
+      </m:num>
+      <m:den>
+        <m:sSub>
+          <m:sSubPr>
+            [ctrl]
+          </m:sSubPr>
+          <m:e>
+            <m:r>
+              <m:rPr>
+                <m:sty m:val="p"/>
+              </m:rPr>
+              <m:t>T</m:t>
+            </m:r>
+          </m:e>
+          <m:sub>
+            <m:r>
+              <m:rPr>
+                <m:sty m:val="p"/>
+              </m:rPr>
+              <m:t>PWM</m:t>
+            </m:r>
+          </m:sub>
+        </m:sSub>
+      </m:den>
+    </m:f>
+    <m:r>
+      <m:t xml:space="preserve"> </m:t>
+    </m:r>
+  </m:oMath>
+  <w:r w:rsidR="008C65AE" w:rsidRPr="008C65AE">
+    <w:rPr>
+      <w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math" w:hint="eastAsia"/>
+      <w:iCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>(</w:t>
+  </w:r>
+  <m:oMath>
+    <m:sSub>
+      <m:sSubPr>
+        [ctrl]
+      </m:sSubPr>
+      <m:e>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t>T</m:t>
+        </m:r>
+      </m:e>
+      <m:sub>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t>on,c</m:t>
+        </m:r>
+      </m:sub>
+    </m:sSub>
+    <m:sSub>
+      <m:sSubPr>
+        [ctrl]
+      </m:sSubPr>
+      <m:e>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t>T</m:t>
+        </m:r>
+      </m:e>
+      <m:sub>
+        <m:r>
+          <m:rPr>
+            <m:sty m:val="p"/>
+          </m:rPr>
+          <m:t>on,w</m:t>
+        </m:r>
+      </m:sub>
+    </m:sSub>
+    <m:r>
+      <m:rPr>
+        <m:sty m:val="p"/>
+      </m:rPr>
+      <m:t>&#20998;&#21035;&#23545;&#24212;</m:t>
+    </m:r>
+    <m:r>
+      <m:rPr>
+        <m:sty m:val="p"/>
+      </m:rPr>
+      <m:t>MOS</m:t>
+    </m:r>
+    <m:r>
+      <m:rPr>
+        <m:sty m:val="p"/>
+      </m:rPr>
+      <m:t>&#31649;&#22312;&#21608;&#26399;&#23548;&#36890;&#26102;&#38388;</m:t>
+    </m:r>
+    <m:r>
+      <m:rPr>
+        <m:sty m:val="p"/>
+      </m:rPr>
+      <m:t>)</m:t>
+    </m:r>
+  </m:oMath>
+</w:p>

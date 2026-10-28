@@ -1,0 +1,68 @@
+<w:p>
+  <w:pPr>
+    <w:spacing w:before="120" w:after="80" w:line="300" w:lineRule="auto"/>
+    <w:outlineLvl w:val="1"/>
+    <w:rPr>
+      <w:rFonts w:eastAsia="黑体" w:cs="Times New Roman"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+  </w:pPr>
+  <w:bookmarkStart w:id="3" w:name="_Toc240546089"/>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:eastAsia="黑体" w:cs="Times New Roman"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t x:space="preserve">1.2 </w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:eastAsia="黑体" w:cs="Times New Roman"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>选材（合适的电源，</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:eastAsia="黑体" w:cs="Times New Roman"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>type-c</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:eastAsia="黑体" w:cs="Times New Roman"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>标准电压</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:eastAsia="黑体" w:cs="Times New Roman"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>5V</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:eastAsia="黑体" w:cs="Times New Roman"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>）</w:t>
+  </w:r>
+  <w:bookmarkEnd w:id="3"/>
+</w:p>

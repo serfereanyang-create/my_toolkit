@@ -1,0 +1,39 @@
+<w:p>
+  <w:pPr>
+    <w:spacing w:before="120" w:after="80" w:line="300" w:lineRule="auto"/>
+    <w:outlineLvl w:val="0"/>
+    <w:rPr>
+      <w:rFonts w:ascii="黑体" w:eastAsia="黑体" w:hAnsi="黑体"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+  </w:pPr>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:ascii="Calibri" w:eastAsia="黑体" w:hAnsi="Calibri" w:cs="Calibri"/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t> </w:t>
+  </w:r>
+  <w:bookmarkStart w:id="1" w:name="_Toc240546087"/>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:ascii="黑体" w:eastAsia="黑体" w:hAnsi="黑体" w:hint="eastAsia"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>1.</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:ascii="黑体" w:eastAsia="黑体" w:hAnsi="黑体"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>LED的冷暖+亮度</w:t>
+  </w:r>
+  <w:bookmarkEnd w:id="1"/>
+</w:p>

@@ -1,0 +1,32 @@
+<w:p>
+  <w:pPr>
+    <w:spacing w:before="120" w:after="80" w:line="300" w:lineRule="auto"/>
+    <w:outlineLvl w:val="2"/>
+    <w:rPr>
+      <w:rFonts w:eastAsia="黑体" w:cs="Times New Roman"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+  </w:pPr>
+  <w:bookmarkStart w:id="4" w:name="_Toc240546090"/>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:eastAsia="黑体" w:cs="Times New Roman"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>1.2.1 LDO</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:rFonts w:eastAsia="黑体" w:cs="Times New Roman"/>
+      <w:b/>
+      <w:bCs/>
+      <w:lang w:eastAsia="zh-CN"/>
+    </w:rPr>
+    <w:t>模块</w:t>
+  </w:r>
+  <w:bookmarkEnd w:id="4"/>
+</w:p>
