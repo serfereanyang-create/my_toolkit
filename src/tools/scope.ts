@@ -28,12 +28,34 @@ export function widestScope(a: ResolvedToolScope, b: ResolvedToolScope): Resolve
  * expressed with `risk === 'read'` alone. Anything claiming read-only-ness has
  * to consult this list, and the reviewers that rely on that claim are tested
  * against it (tests/review-readonly.test.ts).
+ *
+ * Membership here answers "is this read-only?", NOT "does the default scope
+ * expose it?" — the second question is DELEGATION_TOOLS.
  */
 export const AGENT_SPAWNING_TOOLS: ReadonlySet<string> = new Set([
   'spawn_subagent',
   'review_loop',
   'workflow_execute',
   'workflow_resume',
+]);
+
+/**
+ * The delegation tools `standard` exposes on purpose, even though they are in
+ * AGENT_SPAWNING_TOOLS. Without `spawn_subagent` a large file set can only be
+ * read one tool call at a time; without `review_loop` nothing ever looks at
+ * this session's output from outside this session. Two schemas are a cheap
+ * price for that at the default scope — the trade and its cost are argued at
+ * the use site in `selectScopedTools`.
+ *
+ * A separate named set rather than inline name comparisons, because this is a
+ * *subset* of AGENT_SPAWNING_TOOLS: `isReadOnlyTool` must keep subtracting all
+ * four, since the read-only experts and reviewers depend on that
+ * (src/experts/profiles.ts, tests/review-readonly.test.ts). Widening the
+ * default scope must not widen what "read-only" means.
+ */
+export const DELEGATION_TOOLS: ReadonlySet<string> = new Set([
+  'spawn_subagent',
+  'review_loop',
 ]);
 
 /** Whether a tool could cause a write by starting another agent. */
@@ -54,7 +76,7 @@ const COMPACT_ALLOW = new Set([
   'git_status', 'git_diff', 'git_diff_staged', 'git_log', 'git_show', 'git_blame',
   'list_files', 'read_file', 'read_lines', 'read_many_files', 'search_text', 'find_files', 'count_files', 'file_info', 'list_tree', 'glob_files', 'filename_search', 'recent_files', 'largest_files', 'directory_summary', 'directory_depth_summary', 'list_dirs', 'empty_dirs', 'file_extensions_in_dir',
   'find_symbol', 'find_references', 'project_index', 'ts_hover', 'ts_goto_definition', 'ts_exact_references',
-  'read_json', 'json_keys', 'json_type_summary', 'read_csv', 'csv_stats', 'csv_preview', 'yaml_parse', 'yaml_query', 'yaml_keys', 'html_to_text', 'html_links', 'html_metadata', 'html_headings', 'markdown_to_html', 'markdown_outline', 'markdown_links', 'markdown_code_blocks', 'xml_to_text', 'xml_summary', 'xml_query', 'ini_parse', 'properties_parse', 'toml_parse', 'rtf_to_text', 'pdf_to_text', 'image_info', 'image_batch_info', 'image_aspect_ratio', 'image_dominant_colors', 'image_transparency', 'image_content_bounds', 'list_zip', 'zip_summary',
+  'read_json', 'json_keys', 'json_type_summary', 'read_csv', 'csv_stats', 'csv_preview', 'yaml_parse', 'yaml_query', 'yaml_keys', 'html_to_text', 'html_links', 'html_metadata', 'html_headings', 'markdown_to_html', 'markdown_outline', 'markdown_links', 'markdown_code_blocks', 'xml_to_text', 'xml_summary', 'xml_query', 'ini_parse', 'properties_parse', 'toml_parse', 'rtf_to_text', 'pdf_to_text', 'docx_to_text', 'image_info', 'image_batch_info', 'image_aspect_ratio', 'image_dominant_colors', 'image_transparency', 'image_content_bounds', 'list_zip', 'zip_summary',
   'word_count', 'head_tail', 'sort_lines', 'replace_text', 'extract_matches', 'trim_text', 'strip_empty_lines', 'dedupe_lines', 'filter_lines', 'text_slice', 'extract_between', 'text_case', 'reverse_text', 'split_text', 'join_text', 'text_frequency', 'line_prefix', 'line_suffix', 'text_contains', 'text_starts_with', 'text_ends_with', 'text_repeat', 'text_truncate', 'text_index_of', 'char_at', 'common_prefix_text', 'common_suffix_text', 'line_numbers', 'line_lengths', 'longest_line', 'shortest_line', 'first_nonempty_line', 'last_nonempty_line', 'count_substring', 'text_equals', 'text_compare', 'text_pad', 'text_wrap', 'text_unwrap', 'text_remove_prefix', 'text_remove_suffix', 'nth_line', 'take_lines', 'drop_lines', 'line_contains', 'text_slugify', 'text_surround', 'text_repeat_lines', 'text_length', 'text_is_empty',
   'base64_encode', 'base64_decode', 'hash_text', 'url_encode', 'url_decode', 'uuid_generate', 'base_convert', 'parse_byte_size', 'byte_size_format', 'format_duration', 'duration_parse', 'current_datetime', 'date_diff', 'calculate', 'number_sum', 'number_average', 'number_median', 'number_min_max', 'number_stats', 'round_number', 'clamp_number', 'percentage_of', 'sequence_generate', 'ratio_simplify', 'number_abs', 'number_sign', 'number_compare', 'number_sort', 'number_unique', 'number_product', 'percentage_change', 'number_range_check', 'number_scale', 'number_modulo', 'number_histogram', 'number_cumsum', 'number_percentile', 'linear_interpolate',
   'path_exists', 'path_normalize', 'path_join', 'path_relative', 'path_dirname', 'path_basename', 'path_extname', 'path_parts', 'path_is_absolute', 'path_change_ext', 'path_ancestors', 'path_depth', 'path_common_prefix', 'path_matches_glob', 'path_compare', 'path_stem', 'path_parent', 'nearest_ancestor_with', 'hidden_files', 'duplicate_filenames', 'sibling_files',
@@ -155,6 +177,59 @@ export function selectScopedTools(registry: ToolRegistry, scope: ResolvedToolSco
     if (scope === 'compact' && tool.name.startsWith('mcp_')) return false;
     if (scope === 'standard' && tool.name.startsWith('plugin_')) return tool.risk === 'read';
     if (scope === 'standard' && tool.name.startsWith('mcp_')) return tool.risk === 'read';
+    /*
+     * standard is the default scope, so whatever it omits is what the agent
+     * reaches for a shell command to do by hand — and hand-written shell is
+     * where the observed failures came from. The allowlists above are an
+     * enumeration, so every new analysis tool used to be invisible here until
+     * someone remembered to add its name; measured on this registry, 127 of 363
+     * tools were missing from standard, 92 of them read-only.
+     *
+     * Read-only is the safe axis to open by: the tool touches nothing, and
+     * `isReadOnlyTool` subtracts the members of AGENT_SPAWNING_TOOLS, which
+     * only *look* read — starting an agent can write whatever the caller's own
+     * `risk` label says.
+     *
+     * Those delegation tools used to stay out for the reason above ("delegation
+     * is a deliberate choice, not a default"). That call has been reversed for
+     * the two in DELEGATION_TOOLS. Without `spawn_subagent` a large file set is
+     * read one call at a time, which is the serial path the scope exists to
+     * avoid; without `review_loop` nothing ever reviews this session's output
+     * from outside it, and self-review does not catch what an independent pass
+     * does. Two schemas for parallel reading plus an external review is the
+     * better trade at the default scope.
+     *
+     * What it costs: the surface is no longer constant inside a session, and it
+     * now varies in *capability*, not only in size — a turn resolving standard
+     * and a turn resolving compact now differ by tools that can write through a
+     * sub-agent. The tool array is serialized ahead of the system block, so
+     * every such change invalidates the cached prefix from byte 0. That is why
+     * the widen-only floor in `resolveToolScope` is load-bearing rather than
+     * tidy: without it, one rephrased prompt could take writes away again
+     * mid-session — cache dead, and the agent unable to finish what it started.
+     *
+     * The workflow tools stay out on purpose, despite the same risk shape. The
+     * difference is what they are for: `spawn_subagent` and `review_loop` are
+     * ways to do the current task faster or better, while `workflow_execute` /
+     * `workflow_resume` replay a stored plan unattended — a mode switch rather
+     * than a reading strategy. Nothing in the default scope's job needs one, so
+     * paying two schemas for them would buy no behaviour, and role-scoped
+     * callers that must not write would still have to subtract them.
+     */
+    if (scope === 'standard' && isReadOnlyTool(tool)) return true;
+    // The one deliberate exception, and only for delegation — the schema trade
+    // and what it costs the cache are argued in the comment above.
+    if (scope === 'standard' && DELEGATION_TOOLS.has(tool.name)) return true;
+    /*
+     * HIGH_VALUE_EXTRA was declared for `limitProviderTools`' ranking and never
+     * read here, so `run_tests`, `lint` and `typecheck` were absent from
+     * standard despite being listed as tools "a coding agent reaches for
+     * constantly". They are shell-risk, so the read-only rule above cannot
+     * reach them, and without them the agent shells out to run tests — which is
+     * strictly worse than a structured call. They do not widen what standard
+     * can do: `run_command` is already in it.
+     */
+    if (scope === 'standard' && HIGH_VALUE_EXTRA.has(tool.name)) return true;
     return false;
   });
 }
@@ -186,6 +261,11 @@ const HIGH_VALUE_EXTRA = new Set([
  *   2. read/inspection allowlist + high-value gates
  *   3. other built-in tools
  *   4. plugin_/mcp_ bridge tools (largest, most replaceable block)
+ *
+ * The delegation tools do not need a rank of their own: they are registered
+ * post-scope (src/agent/agent.ts), so they always arrive as protected names and
+ * land in rank 0. standard also never reaches the cap — it scopes to 332 of 340
+ * — so the trim does not touch it at all; the cap only bites in `full`.
  */
 export function limitProviderTools(
   tools: ToolDefinition[],

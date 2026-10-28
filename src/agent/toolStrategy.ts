@@ -181,6 +181,89 @@ function stripPaths(value: string) {
     .replace(CODE_PATH_GLOBAL_PATTERN, ' ');
 }
 
+/**
+ * What a shell call actually fails on, mapped to the correction that does not
+ * need the shell at all.
+ *
+ * Measured over one long session: 11 of 78 shell calls failed, 6 of them because
+ * the command does not exist in this shell (`tail`, `head`, `grep`,
+ * `ForEach-Object` under cmd.exe). Both halves of that were tool defects rather
+ * than model defects: the schema named the shell but not what is missing from
+ * it, and this function answered "use a platform-correct command" - naming
+ * neither the platform nor the correction. So the retry was a second guess, and
+ * each guess costs a round trip plus a re-read of the file the model was trying
+ * to look at.
+ *
+ * Every entry below points at a dedicated tool that returns the same thing with
+ * no shell, no quoting rules and no approval prompt, which is also the cheaper
+ * path: `head_tail` returns last-20-lines in one call, where `tail` plus a
+ * failure plus a retry is three.
+ */
+const SHELL_REPLACEMENTS: Record<string, string> = {
+  // POSIX filters: absent because the Windows shell is cmd.exe, not /bin/sh.
+  cat: 'read_file reads the whole file',
+  head: 'head_tail with mode "head" and a line count',
+  tail: 'head_tail with mode "tail" (or poll_command for a background job log)',
+  grep: 'search_text',
+  egrep: 'search_text',
+  fgrep: 'search_text',
+  rg: 'search_text',
+  ls: 'list_files',
+  find: 'glob_files or list_files',
+  wc: 'word_count (lines/words/characters) or file_info (byte size)',
+  sed: 'text_slice, replace_text, or apply_patch',
+  awk: 'text_slice, filter_lines, or extract_matches',
+  touch: 'write_file with empty content',
+  cp: 'copy (cmd.exe builtin)',
+  mv: 'move (cmd.exe builtin)',
+  rm: 'del / rmdir behind approval, or a dedicated delete tool',
+  which: 'where (cmd.exe builtin)',
+  export: 'set VAR=value (cmd.exe builtin)',
+  chmod: 'nothing equivalent on Windows - drop it',
+  // PowerShell cmdlets: the shell is cmd.exe, so they need an explicit host.
+  'foreach-object': 'head_tail/take_lines for what it was doing, else powershell -NoProfile -Command "..."',
+  'get-content': 'read_file or head_tail, else powershell -NoProfile -Command "..."',
+  'select-string': 'search_text, else powershell -NoProfile -Command "..."',
+  'get-childitem': 'list_files, else powershell -NoProfile -Command "..."',
+  'where-object': 'filter_lines or search_text, else powershell -NoProfile -Command "..."',
+  'select-object': 'head_tail or nth_line, else powershell -NoProfile -Command "..."',
+  'measure-object': 'word_count, else powershell -NoProfile -Command "..."',
+  'test-path': 'file_info or list_files, else powershell -NoProfile -Command "..."',
+};
+
+/**
+ * The token the shell refused, or undefined if this is not that failure.
+ *
+ * Five message shapes reach here, and only two of them are English:
+ *   - cmd.exe, English: `'tail' is not recognized as an internal or external command`
+ *   - cmd.exe, Chinese: `'tail' 不是内部或外部命令`
+ *   - PowerShell, English: `The term 'Get-Content' is not recognized`
+ *   - PowerShell, Chinese: `无法将“Get-Content”项识别为 cmdlet`
+ *   - /bin/sh: `tail: command not found`
+ *
+ * Plus a sixth that is not a language at all: cmd.exe writes in the console code
+ * page (936 here), and when those bytes are decoded as UTF-8 the Chinese words
+ * become U+FFFD runs - so the two patterns above never match, and the only
+ * surviving signal is the quoted token followed by replacement characters. That
+ * case is why this returns the token from a shape list rather than testing one
+ * fixed phrase: the phrase is the part that does not survive.
+ */
+function missingCommandToken(output: string): string | undefined {
+  const patterns = [
+    /'([\w.:-]+)'\s+is not recognized/i,
+    /The term\s+['"]([\w.:-]+)['"]/i,
+    /'([\w.:-]+)'\s*不是内部或外部命令/,
+    /[“"]([\w.:-]+)\s*[”"]\s*项识别为/,
+    /'([\w.:-]+)'\s*�{2,}/,
+    /^([\w.:-]+): (?:command )?not found/m,
+  ];
+  for (const pattern of patterns) {
+    const hit = pattern.exec(output);
+    if (hit) return hit[1].toLowerCase();
+  }
+  return undefined;
+}
+
 export function recoveryHintForToolFailure(tool: string, output: string): string | undefined {
   const normalized = output.toLowerCase();
   // A path escape is recoverable: the model picked a target outside the
@@ -191,9 +274,20 @@ export function recoveryHintForToolFailure(tool: string, output: string): string
   }
   if (normalized.includes('cancelled by user')) return undefined;
   if (normalized.includes('blocked:')) return 'The command was blocked; choose a dedicated read-only tool or ask for approval only if shell access is required.';
+  // Before the path branch: "grep: command not found" contains "not found", and
+  // answering it with "use project_index to locate the path" sends the model
+  // looking for a file when the command itself is the problem.
+  const missingCommand = missingCommandToken(output);
+  if (missingCommand !== undefined || normalized.includes('is not recognized') || normalized.includes('command not found') || output.includes('不是内部或外部命令') || output.includes('项识别为')) {
+    const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
+    const where = `\`${missingCommand ?? 'that command'}\` is not on ${shell}'s PATH, and ${tool} runs through ${shell}.`;
+    const replacement = missingCommand ? SHELL_REPLACEMENTS[missingCommand] : undefined;
+    if (replacement) return `${where} Use ${replacement}.`;
+    if (missingCommand) return `${where} Use a dedicated tool instead of a shell command, or invoke an interpreter explicitly (on Windows: powershell -NoProfile -Command "...").`;
+    return `${where} Prefer a dedicated tool over the shell.`;
+  }
   if (normalized.includes('old text not found') || normalized.includes('text not found')) return `The ${tool} edit anchor was not found; read_file the target and retry with exact surrounding text.`;
   if (normalized.includes('not found') || normalized.includes('no such file') || normalized.includes('enoent')) return `The ${tool} target was not found; use project_index, list_files, or search_text to locate the correct path.`;
-  if (normalized.includes('is not recognized') || normalized.includes('command not found')) return `The ${tool} command failed on this platform; use a platform-correct command or a dedicated tool.`;
   if (tool === 'search_text' && normalized.includes('no matches')) return 'The search had no matches; broaden the query or use project_index before reading random files.';
   return undefined;
 }

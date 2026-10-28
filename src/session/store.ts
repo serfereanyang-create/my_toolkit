@@ -109,7 +109,22 @@ export class SessionStore {
     return new SessionStore(join(dirname(this.sessionDir), name), this.options);
   }
 
-  async create(options: { provider: ProviderName; model: string; workspaceRoot: string }) {
+  async create(options: {
+    provider: ProviderName;
+    model: string;
+    workspaceRoot: string;
+    /**
+     * Write the record to disk right away. Defaults to true.
+     *
+     * A launched process creates a session before it knows whether the user
+     * will say anything. With an eager write, every launch — every app start,
+     * every spawned child, every harness run — leaves an empty conversation in
+     * the sidebar that nobody ever opened. `createRuntime` passes false: the
+     * record stays in memory and `appendMessage`/`touch` persist it with the
+     * first real turn.
+     */
+    persist?: boolean;
+  }) {
     const now = new Date().toISOString();
     const session: SessionRecord = {
       id: `sess_${now.replace(/[-:.TZ]/g, '').slice(0, 14)}_${randomUUID().slice(0, 8)}`,
@@ -122,7 +137,7 @@ export class SessionStore {
       toolCalls: [],
       finalAnswers: [],
     };
-    await this.save(session);
+    if (options.persist !== false) await this.save(session);
     return session;
   }
 

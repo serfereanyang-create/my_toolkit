@@ -16,7 +16,7 @@ export const healthSnapshotTool = defineTool({
     skipSecurity: { type: 'boolean', description: '跳过安全扫描以加速采集（安全分按 0 问题计）', optional: true },
     skipAnalyzers: { type: 'boolean', description: '只统计规模指标，不跑复杂度/异味分析', optional: true },
   },
-  examples: [{ input: {}, output: '返回本次快照的指标与分数' }],
+  examples: [{ input: { skipSecurity: false, skipAnalyzers: false }, output: '返回本次快照的指标与分数' }],
 
   async execute(input, context): Promise<ToolResult> {
     try {

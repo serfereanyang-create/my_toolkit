@@ -10,6 +10,7 @@ import { insertDocxImageTool } from './docx-image.js';
 import { createPptxTool } from './pptx.js';
 import { convertToPdfTool } from './pdf-convert.js';
 import { pdfToTextTool } from './pdf-text.js';
+import { docxToTextTool } from './docx-text.js';
 import { environmentInfoTool } from './environment.js';
 import { gitDiffTool, gitLogTool, gitStatusTool, gitDiffStagedTool } from './git.js';
 import { diskGrowthTool } from './growth.js';
@@ -172,6 +173,7 @@ export function createDefaultToolRegistry(options?: { excelAutomation?: boolean 
   registry.register(createXlsxTool);
   registry.register(convertToPdfTool);
   registry.register(pdfToTextTool);
+  registry.register(docxToTextTool);
   registry.register(renameFileTool);
   registry.register(applyPatchTool);
   registry.register(fetchUrlTool);

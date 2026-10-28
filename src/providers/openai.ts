@@ -14,6 +14,8 @@ import { buildToolSystemPromptParts } from './protocol.js';
 import { buildAutoCacheMessages } from './cacheStrategy.js';
 import { controlledProvider } from './requestControl.js';
 import { throwIfAborted } from '../utils/cancellation.js';
+import { createStreamMetrics } from './streamMetrics.js';
+import { parseToolArguments } from './toolArguments.js';
 
 export type OpenAIProviderOptions = {
   apiKey?: string;
@@ -62,6 +64,7 @@ export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
         ? vendor.reasoningBodyParam(request.reasoningEffort ?? 'auto', options.model)
         : undefined;
 
+      let streamedOutput = false;
       try {
         return await completeStreaming({
           baseUrl,
@@ -69,8 +72,8 @@ export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
           model: options.model,
           messages,
           tools,
-          onTextDelta: request.onTextDelta,
-          onThinkingDelta: request.onThinkingDelta,
+          onTextDelta: request.onTextDelta ? (delta) => { streamedOutput = true; request.onTextDelta!(delta); } : undefined,
+          onThinkingDelta: request.onThinkingDelta ? (delta) => { streamedOutput = true; request.onThinkingDelta!(delta); } : undefined,
           reasoningEffort: effort,
           vendorExtra,
           vendor,
@@ -78,6 +81,9 @@ export function createOpenAIProvider(options: OpenAIProviderOptions): Provider {
         });
       } catch (streamError) {
         throwIfAborted(request.signal);
+        // Once any delta reached the caller, replaying the request through a
+        // second wire shape could duplicate visible reasoning or tool intent.
+        if (streamedOutput) throw streamError instanceof Error ? streamError : new Error(String(streamError));
         // Stream drops (undici "terminated", proxy idle kill) are common on long tool turns.
         // Retry once non-streaming so the agent can still finish after tools ran.
         try {
@@ -114,6 +120,7 @@ async function completeStreaming(options: {
   vendorExtra?: Record<string, unknown>;
   vendor?: VendorProfile;
 }): Promise<ProviderResponse> {
+  const metrics = createStreamMetrics('sse');
   const buildBody = (withExtras: boolean): Record<string, unknown> => {
     const body: Record<string, unknown> = {
       model: options.model,
@@ -162,7 +169,7 @@ async function completeStreaming(options: {
   let streamError: unknown;
 
   try {
-    for await (const data of iterateSseDataLines(response, undefined, options.signal)) {
+    for await (const data of iterateSseDataLines(response, undefined, options.signal, (data) => { if (data && data !== '[DONE]') metrics.event(); })) {
       if (data === '[DONE]') break;
       if (!data) continue;
       let json: OpenAIStreamChunk;
@@ -179,10 +186,12 @@ async function completeStreaming(options: {
         ? (delta as { reasoning_content: string }).reasoning_content : '';
       if (reasoning) {
         reasoningParts.push(reasoning);
+        metrics.output(reasoning);
         options.onThinkingDelta?.(reasoning);
       }
       if (typeof delta.content === 'string' && delta.content) {
         contentParts.push(delta.content);
+        metrics.output(delta.content);
         options.onTextDelta?.(delta.content);
       }
       for (const call of delta.tool_calls ?? []) {
@@ -190,7 +199,7 @@ async function completeStreaming(options: {
         const current = toolCalls.get(index) ?? { arguments: '' };
         if (call.id) current.id = call.id;
         if (call.function?.name) current.name = `${current.name ?? ''}${call.function.name}`;
-        if (typeof call.function?.arguments === 'string') current.arguments += call.function.arguments;
+        if (typeof call.function?.arguments === 'string') { current.arguments += call.function.arguments; metrics.output(call.function.arguments); }
         toolCalls.set(index, current);
       }
     }
@@ -201,14 +210,16 @@ async function completeStreaming(options: {
 
   const content = contentParts.join('');
   const fromTools = actionsFromToolCalls(toolCalls);
+  const streamMetrics = metrics.finish();
   if (fromTools.length > 0) {
-      return { actions: fromTools, usage, thinking: reasoningParts.join('') || undefined, raw: { stream: events, content, partial: Boolean(streamError) } };
+      return { actions: fromTools, usage, thinking: reasoningParts.join('') || undefined, streamMetrics, raw: { stream: events, content, partial: Boolean(streamError) } };
   }
   if (content.trim()) {
     return {
       actions: parseToolActions(content),
       usage,
       thinking: reasoningParts.join('') || undefined,
+      streamMetrics,
       raw: { stream: events, content, partial: Boolean(streamError) },
     };
   }
@@ -218,6 +229,7 @@ async function completeStreaming(options: {
   return {
     actions: parseOpenAIToolCalls({ content }),
     usage,
+    streamMetrics,
     raw: { stream: events, content },
   };
 }
@@ -233,6 +245,7 @@ async function completeNonStreaming(options: {
   vendorExtra?: Record<string, unknown>;
   vendor?: VendorProfile;
 }): Promise<ProviderResponse> {
+  const metrics = createStreamMetrics('json');
   const buildBody = (withExtras: boolean): Record<string, unknown> => {
     const body: Record<string, unknown> = {
       model: options.model,
@@ -281,12 +294,15 @@ async function completeNonStreaming(options: {
       };
     }>;
   };
+  metrics.event();
   const usage = usageFromOpenAI(json.usage, options.vendor);
   const message = json.choices?.[0]?.message;
   const content = typeof message?.content === 'string' ? message.content : '';
   // 非流式下部分厂商把推理文本放在 message.reasoning_content
   const thinking = typeof message?.reasoning_content === 'string' && message.reasoning_content
     ? message.reasoning_content : undefined;
+  metrics.output(content || thinking || '');
+  const streamMetrics = metrics.finish();
   const toolCalls = new Map<number, { id?: string; name?: string; arguments: string }>();
   for (const [index, call] of (message?.tool_calls ?? []).entries()) {
     toolCalls.set(index, {
@@ -296,11 +312,12 @@ async function completeNonStreaming(options: {
     });
   }
   const fromTools = actionsFromToolCalls(toolCalls);
-  if (fromTools.length > 0) return { actions: fromTools, usage, thinking, raw: { nonStream: json, content } };
+  if (fromTools.length > 0) return { actions: fromTools, usage, thinking, streamMetrics, raw: { nonStream: json, content } };
   return {
     actions: content ? parseToolActions(content) : parseOpenAIToolCalls({ content }),
     usage,
     thinking,
+    streamMetrics,
     raw: { nonStream: json, content },
   };
 }
@@ -311,18 +328,9 @@ function actionsFromToolCalls(toolCalls: Map<number, { id?: string; name?: strin
     .map(([, call]) => ({
       type: 'tool' as const,
       tool: call.name ?? 'unknown_tool',
-      input: parseArgs(call.arguments),
+      input: parseToolArguments(call.arguments).input,
     }))
     .filter((action) => action.tool !== 'unknown_tool');
-}
-
-function parseArgs(value: string): unknown {
-  if (!value.trim()) return {};
-  try {
-    return JSON.parse(value);
-  } catch {
-    return { raw: value };
-  }
 }
 
 // Normalize OpenAI's usage block to our real-token shape. Returns undefined when

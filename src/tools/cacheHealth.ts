@@ -18,8 +18,8 @@ export const cacheHealthTool = defineTool({
     limit: { type: 'number', description: '分析最近 N 轮，默认 60', optional: true },
   },
   examples: [
-    { input: {}, output: '返回最近 60 轮的命中率统计与诊断' },
-    { input: { limit: 20 }, output: '只分析最近 20 轮' },
+    { input: { limit: 60 }, output: '返回最近 60 轮的命中率统计与诊断' },
+    { input: { limit: 20, logPath: '/path/to/usage.jsonl' }, output: '只分析指定台账的最近 20 轮' },
   ],
 
   async execute(input): Promise<ToolResult> {

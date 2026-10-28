@@ -2,6 +2,8 @@ import type { AgentAction, Provider, ProviderRequest, ProviderResponse } from '.
 import { controlledProvider } from './requestControl.js';
 import { fetchWithRetry, iterateSseDataLines, toOpenAIResponsesTools, buildToolSystemPromptParts } from './protocol.js';
 import { isReasoningParamRejection, openaiReasoningEffort } from './reasoning.js';
+import { createStreamMetrics } from './streamMetrics.js';
+import { parseToolArguments } from './toolArguments.js';
 
 export type OpenAIResponsesProviderOptions = { apiKey?: string; baseUrl?: string; model: string };
 
@@ -54,8 +56,7 @@ function parseResponseActions(output: unknown): AgentAction[] {
     if (!item || typeof item !== 'object') return [];
     const obj = item as Record<string, unknown>;
     if (obj.type !== 'function_call' || typeof obj.name !== 'string' || typeof obj.arguments !== 'string') return [];
-    let input: unknown = {};
-    try { input = JSON.parse(obj.arguments); } catch { input = { raw: obj.arguments }; }
+    const input = parseToolArguments(obj.arguments).input;
     return [{ type: 'tool' as const, tool: obj.name, input, callId: typeof obj.call_id === 'string' ? obj.call_id : undefined }];
   });
 }
@@ -86,10 +87,13 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
       const input: unknown[] = useServerContinuation && request.continuation?.toolOutputs?.length
         ? request.continuation.toolOutputs.map((item) => ({ type: 'function_call_output', call_id: item.callId, output: item.output }))
         : request.messages.filter((message) => message.role !== 'system').flatMap((message) => {
-          const items: unknown[] = [{ role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content }];
+          const items: unknown[] = [{
+            role: message.role === 'assistant' ? 'assistant' : 'user',
+            content: message.name ? `[tool:${message.name}] ${message.content}` : message.content,
+          }];
           // Computer-control screenshots ride on tool messages; the Responses
           // API takes images as a separate user input_image item.
-          if (message.role === 'tool' && message.parts) {
+          if ((message.role === 'user' || message.role === 'tool') && message.parts) {
             for (const part of message.parts) {
               if (part.type === 'image') {
                 items.push({ role: 'user', content: [{ type: 'input_image', image_url: `data:${part.mediaType};base64,${part.data}` }] });
@@ -116,6 +120,7 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
       const effort = openaiReasoningEffort(request.reasoningEffort);
       if (effort) body.reasoning = { effort };
       body.stream = true;
+      const requestMetrics = createStreamMetrics('sse');
       const postResponses = () => fetchWithRetry(`${base}/responses`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${options.apiKey}` }, body: JSON.stringify(body), signal: request.signal });
       let response = await postResponses();
       if (!response.ok) {
@@ -133,12 +138,15 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
 
       const contentType = response.headers.get('content-type') ?? '';
       if (!contentType.includes('text/event-stream')) {
+        const metrics = createStreamMetrics('json');
         const json = await response.json() as Record<string, unknown>;
+        metrics.event();
         const toolActions = parseResponseActions(json.output);
         const text = typeof json.output_text === 'string' ? json.output_text : collectText(json.output);
         const thinking = typeof json.reasoning_content === 'string' ? json.reasoning_content : collectThinking(json.output);
+        metrics.output(text || thinking || '');
         const continuation = typeof json.id === 'string' && toolActions.length > 0 ? { responseId: json.id, status: 'pending' as const, updatedAt: new Date().toISOString() } : undefined;
-        return { actions: toolActions.length ? toolActions : [{ type: 'message', content: text || '(empty response)' }], thinking, continuation, usage: usageFromResponse(json.usage), raw: json };
+        return { actions: toolActions.length ? toolActions : [{ type: 'message', content: text || '(empty response)' }], thinking, continuation, usage: usageFromResponse(json.usage), streamMetrics: metrics.finish(), raw: json };
       }
 
       const textParts: string[] = [];
@@ -147,7 +155,8 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
       const events: unknown[] = [];
       let responseId: string | undefined;
       let usage: ProviderResponse['usage'];
-      for await (const data of iterateSseDataLines(response, undefined, request.signal)) {
+      const metrics = requestMetrics;
+      for await (const data of iterateSseDataLines(response, undefined, request.signal, (data) => { if (data && data !== '[DONE]') metrics.event(); })) {
         if (data === '[DONE]') break;
         if (!data) continue;
         let event: Record<string, unknown>;
@@ -156,10 +165,11 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
         const type = typeof event.type === 'string' ? event.type : '';
         if (type === 'response.output_text.delta') {
           const delta = typeof event.delta === 'string' ? event.delta : '';
-          if (delta) { textParts.push(delta); request.onTextDelta?.(delta); }
+          if (delta) { textParts.push(delta); metrics.output(delta); request.onTextDelta?.(delta); }
         } else if (type === 'response.reasoning_summary_text.delta' || type === 'response.reasoning_text.delta') {
           if (typeof event.delta === 'string' && event.delta) {
             thinkingParts.push(event.delta);
+            metrics.output(event.delta);
             request.onThinkingDelta?.(event.delta);
           }
         } else if (type === 'response.output_item.added' || type === 'response.output_item.done') {
@@ -169,7 +179,7 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
           }
         } else if (type === 'response.function_call_arguments.delta') {
           const callId = typeof event.call_id === 'string' ? event.call_id : '';
-          if (callId) { const current = calls.get(callId) ?? { name: '', args: '', complete: false }; current.args += typeof event.delta === 'string' ? event.delta : ''; calls.set(callId, current); }
+          if (callId) { const current = calls.get(callId) ?? { name: '', args: '', complete: false }; const delta = typeof event.delta === 'string' ? event.delta : ''; current.args += delta; metrics.output(delta); calls.set(callId, current); }
         } else if (type === 'response.function_call_arguments.done') {
           const callId = typeof event.call_id === 'string' ? event.call_id : '';
           if (callId && calls.has(callId)) calls.get(callId)!.complete = true;
@@ -184,13 +194,12 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
       const toolActions: AgentAction[] = [];
       for (const [callId, call] of calls) {
         if (!call.complete || !call.name) continue;
-        let input: unknown = {};
-        try { input = JSON.parse(call.args || '{}'); } catch { input = { raw: call.args }; }
+        const input = parseToolArguments(call.args || '{}').input;
         toolActions.push({ type: 'tool', tool: call.name, input, callId });
       }
       const text = textParts.join('');
       const continuation = responseId && toolActions.length > 0 ? { responseId, pendingCalls: toolActions.filter((a): a is Extract<AgentAction, { type: 'tool' }> => a.type === 'tool').map((a) => ({ callId: a.callId!, name: a.tool })), status: 'pending' as const, updatedAt: new Date().toISOString() } : undefined;
-      return { actions: toolActions.length ? toolActions : [{ type: 'message', content: text || '(empty response)' }], thinking: thinkingParts.join('') || undefined, continuation, usage, raw: { events, responseId } };
+      return { actions: toolActions.length ? toolActions : [{ type: 'message', content: text || '(empty response)' }], thinking: thinkingParts.join('') || undefined, continuation, usage, streamMetrics: metrics.finish(), raw: { events, responseId } };
     },
   };
   return controlledProvider(provider);

@@ -61,7 +61,10 @@ export async function createAgentRuntime(config: AppConfig) {
   const gitPublisher = new LocalGitPublisher(config.workspaceRoot, gitProcess, gitAudit);
   const session = config.resumeSessionId
     ? await sessions.load(config.resumeSessionId)
-    : await sessions.create({ provider: provider.name, model: provider.model, workspaceRoot: config.workspaceRoot });
+    // persist: false — a fresh process has no conversation yet. Writing the
+    // record here put an empty session in the sidebar for every launch (app
+    // starts, spawned children, test harnesses); the first turn creates the file.
+    : await sessions.create({ provider: provider.name, model: provider.model, workspaceRoot: config.workspaceRoot, persist: false });
   if (config.resumeSessionId && session.lastTurn?.status === 'running') session.providerContinuation = undefined;
 
   const hooks = createNoopHooks();

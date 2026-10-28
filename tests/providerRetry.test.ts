@@ -100,3 +100,19 @@ test('resolveRequestRetries reads AICODE_REQUEST_RETRIES with bounds', () => {
     else process.env.AICODE_REQUEST_RETRIES = previous;
   }
 });
+
+test('withModelRetry stops before replaying a request after streamed output', async () => {
+  let calls = 0;
+  let streamed = false;
+  await assert.rejects(
+    withModelRetry(
+      async () => {
+        calls += 1;
+        streamed = true;
+        throw new Error('ECONNRESET after delta');
+      },
+      { baseDelayMs: 1, canRetry: () => !streamed },
+    ),
+  );
+  assert.equal(calls, 1);
+});

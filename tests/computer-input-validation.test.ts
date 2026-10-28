@@ -66,3 +66,41 @@ test('computer_window_shot takes the same window argument as the other tools', (
   assert.throws(() => shot!.validate({}), /window is required/);
   assert.throws(() => shot!.validate({ window: 'x'.repeat(201) }), /too long/);
 });
+
+test('computer_open validates executable paths without accepting command arguments', () => {
+  const open = toolsByName().get('computer_open');
+  assert.ok(open);
+  assert.equal(open!.risk, 'shell');
+  assert.deepEqual(open!.validate({ path: 'tools/MyApp.exe' }), { path: 'tools/MyApp.exe' });
+  assert.deepEqual(open!.validate({ path: 'C:\\Apps\\MyApp.lnk' }), { path: 'C:\\Apps\\MyApp.lnk' });
+  assert.deepEqual(open!.validate({ path: 'tools/run.ps1' }), { path: 'tools/run.ps1' });
+  assert.throws(() => open!.validate({ path: 'tools/MyApp.exe', args: ['--unsafe'] }), /only accepts path/);
+});
+
+test('computer_open refuses scripts before touching the filesystem', async () => {
+  const open = toolsByName().get('computer_open')!;
+  const result = await open.execute({ path: 'tools/run.ps1' }, { workspaceRoot: process.cwd(), approval: 'auto' } as never);
+  assert.equal(result.ok, false);
+  assert.match(result.output, /only .exe and .lnk/);
+});
+
+test('computer_close requires an explicit window and always prompts', () => {
+  const close = toolsByName().get('computer_close');
+  assert.ok(close);
+  assert.equal(close!.risk, 'shell');
+  assert.equal(close!.alwaysPrompt, true);
+  assert.deepEqual(close!.validate({ window: 'Fixture' }), { window: 'Fixture' });
+  assert.throws(() => close!.validate({}), /window/);
+  assert.throws(() => close!.validate({ window: 'Fixture', force: true }), /only accepts/);
+});
+
+test('computer_wait_window validates a bounded read-only wait', () => {
+  const wait = toolsByName().get('computer_wait_window');
+  assert.ok(wait);
+  assert.equal(wait!.risk, 'read');
+  assert.deepEqual(wait!.validate({ window: 'Fixture', timeoutMs: 5000 }), { window: 'Fixture', timeoutMs: 5000 });
+  assert.deepEqual(wait!.validate({ window: 'Fixture' }), { window: 'Fixture', timeoutMs: 10000 });
+  assert.throws(() => wait!.validate({ window: 'Fixture', timeoutMs: 99 }), /100 to 30000/);
+  assert.throws(() => wait!.validate({ window: 'Fixture', timeoutMs: 30001 }), /100 to 30000/);
+  assert.throws(() => wait!.validate({ window: 'Fixture', args: [] }), /only accepts/);
+});

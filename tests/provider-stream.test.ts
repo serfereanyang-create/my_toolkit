@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { createServer } from 'node:http';
 import { createAnthropicProvider } from '../src/providers/anthropic.js';
 import { createOpenAIProvider } from '../src/providers/openai.js';
 import { iterateSseDataLines } from '../src/providers/protocol.js';
@@ -55,8 +56,40 @@ test('OpenAI streaming accumulates text deltas and tool call arguments', async (
     });
     assert.deepEqual(deltas, ['Hel', 'lo']);
     assert.deepEqual(result.actions, [{ type: 'tool', tool: 'read_file', input: { path: 'README.md' } }]);
+    assert.equal(result.streamMetrics?.transport, 'sse');
+    assert.equal(result.streamMetrics?.eventCount, 4);
+    assert.equal(result.streamMetrics?.outputChars, 25);
+    assert.equal(result.streamMetrics?.timeToFirstOutputMs !== null, true);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAI records TTFT and packet cadence from a real local HTTP SSE response', async () => {
+  const server = createServer(async (_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'hello' } }] })}\n\n`);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: ' world' } }] })}\n\ndata: [DONE]\n\n`);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  try {
+    const provider = createOpenAIProvider({ apiKey: 'k', baseUrl: `http://127.0.0.1:${address.port}/v1`, model: 'm' });
+    const result = await provider.complete({
+      messages: [{ role: 'user', content: 'hi', createdAt: new Date().toISOString() }],
+      tools: [],
+      workspaceRoot: process.cwd(),
+    });
+    assert.equal(result.streamMetrics?.transport, 'sse');
+    assert.equal(result.streamMetrics?.eventCount, 2);
+    assert.ok((result.streamMetrics?.timeToFirstOutputMs ?? 0) >= 25);
+    assert.ok((result.streamMetrics?.interEventP50Ms ?? 0) >= 20);
+    assert.equal(result.streamMetrics?.outputChars, 11);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
 
@@ -92,6 +125,40 @@ test('OpenAI streaming recovers partial tool calls when stream terminates mid-fl
       workspaceRoot: process.cwd(),
     });
     assert.deepEqual(result.actions, [{ type: 'tool', tool: 'read_file', input: { path: 'README.md' } }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAI does not fall back to non-stream after a thinking delta', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    const encoder = new TextEncoder();
+    let step = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        step += 1;
+        if (step === 1) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'thinking' } }] })}\n\n`));
+          return;
+        }
+        controller.error(new Error('terminated after thinking'));
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+
+  try {
+    const provider = createOpenAIProvider({ apiKey: 'k', baseUrl: 'https://openai.test/v1', model: 'm' });
+    await assert.rejects(provider.complete({
+      messages: [{ role: 'user', content: 'hi', createdAt: new Date().toISOString() }],
+      tools,
+      workspaceRoot: process.cwd(),
+      onThinkingDelta: () => undefined,
+    }), /terminated after thinking/);
+    assert.equal(calls, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }

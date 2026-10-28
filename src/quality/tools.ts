@@ -64,8 +64,8 @@ export const qualityGateCheckTool = defineTool({
     pattern: { type: 'string', description: '文件 glob，默认 **/*.{ts,tsx}', optional: true },
   },
   examples: [
+    { input: { type: 'declared', threshold: 80, declaredValue: 85 }, output: '覆盖率 85 ≥ 80，通过（declared 类型必须带 declaredValue）' },
     { input: { type: 'security', threshold: 0 }, output: '安全门禁检查结果' },
-    { input: { type: 'declared', threshold: 80, declaredValue: 85 }, output: '覆盖率 85 ≥ 80，通过' },
   ],
 
   async execute(input, context): Promise<ToolResult> {

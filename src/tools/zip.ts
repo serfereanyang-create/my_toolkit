@@ -179,6 +179,31 @@ type ZipLocalFileHeader = {
   dataOffset: number;
 };
 
+/**
+ * Read one member of a ZIP archive into memory.
+ *
+ * Office files (.docx/.xlsx/.pptx) are ZIP archives whose payload is a single
+ * XML part, and reading them means exactly this: find the member, inflate it,
+ * hand the XML to a parser. Extracting to disk first would litter the
+ * workspace with `word/document.xml` for something the user only asked to read.
+ *
+ * Returns null when the member is absent, so callers can say "this is not a
+ * Word document" instead of throwing an unzip error. Sizes are checked against
+ * the declared and the actual length, the same zip-bomb reasoning as extract_zip.
+ */
+export function readZipMember(buffer: Buffer, memberName: string, maxBytes = 64 * 1024 * 1024): Buffer | null {
+  const header = readZipLocalHeaders(buffer).find((entry) => entry.name === memberName);
+  if (!header) return null;
+  if (header.uncompressedSize > maxBytes) return null;
+  if (header.compressionMethod === 0) {
+    return buffer.subarray(header.dataOffset, header.dataOffset + header.uncompressedSize);
+  }
+  if (header.compressionMethod !== 8) return null;
+  const compressed = buffer.subarray(header.dataOffset, header.dataOffset + header.compressedSize);
+  const inflated = inflateRawSync(compressed, { maxOutputLength: maxBytes });
+  return inflated.length > maxBytes ? null : inflated;
+}
+
 function readZipLocalHeaders(buffer: Buffer): ZipLocalFileHeader[] {
   const headers: ZipLocalFileHeader[] = [];
   let offset = 0;

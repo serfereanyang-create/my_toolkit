@@ -44,6 +44,10 @@ export const auditQualityTool = defineTool({
       optional: true,
     },
   },
+  examples: [
+    { input: { pattern: 'src/**/*.{ts,tsx,js,jsx}' }, output: '审计匹配文件并输出综合质量报告' },
+    { input: { pattern: 'src/**/*.ts', includeTests: true, minSeverity: 'major' }, output: '只保留 major 及以上问题' },
+  ],
   execute: async (args: AuditQualityArgs, context: any) => {
     const { pattern = 'src/**/*.{ts,tsx,js,jsx}', includeTests = false, minSeverity = 'minor' } = args;
     // No process.cwd() fallback: a missing workspace root must surface as an
@@ -115,6 +119,10 @@ export const scanSecurityTool = defineTool({
       optional: true,
     },
   },
+  examples: [
+    { input: { pattern: 'src/**/*.ts' }, output: '扫描匹配文件的安全问题' },
+    { input: { file: 'src/api/user.ts', minSeverity: 'high' }, output: '只扫描单个文件里的高危问题' },
+  ],
   execute: async (args: ScanSecurityArgs, context: any) => {
     const { file, pattern, minSeverity = 'low' } = args;
     // No process.cwd() fallback: a missing workspace root must surface as an

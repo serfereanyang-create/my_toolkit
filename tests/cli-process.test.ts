@@ -45,8 +45,16 @@ test('CLI emits JSON events for prompt mode', async () => {
 });
 
 test('CLI --no-color suppresses ANSI escape sequences', async () => {
-  const result = await execFileAsync(process.execPath, [cliPath, '--provider', 'mock', '--approval', 'auto', '--no-color', '--prompt', '你好']);
+  // 隔离会话目录：不带 --session-dir 时 CLI 会往当前工作区（仓库根的
+  // .aicode/sessions）写一条会话，于是每跑一次测试就在侧边栏多一个「你好」。
+  const workspace = await mkdtemp(join(tmpdir(), 'aicode-cli-nocolor-'));
+  const result = await execFileAsync(process.execPath, [
+    cliPath, '--provider', 'mock', '--approval', 'auto', '--no-color',
+    '--workspace', workspace, '--session-dir', join(workspace, 'sessions'),
+    '--prompt', '你好',
+  ]);
   assert.doesNotMatch(result.stdout, /\u001b\[/);
+  await rm(workspace, { recursive: true, force: true });
 });
 
 test('CLI --no-input exits nonzero without a prompt', async () => {

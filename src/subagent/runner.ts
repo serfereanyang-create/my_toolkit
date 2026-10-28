@@ -16,6 +16,31 @@ import { formatHandoff, runSubAgentWithRollover, type RolloverSegment } from './
 import type { SubAgentResult, SubAgentSpec } from './types.js';
 
 /**
+ * The registry a sub-agent may draw tools from — the parent's current set.
+ *
+ * This used to be `parentRuntime.allTools`, the whole registry, filtered only by
+ * the expert profile. That made scope unenforceable across delegation: a parent
+ * in `standard` cannot see `delete_path` or `git_init`, but `general` is
+ * `toolFilter: () => true` with `toolScopeOverride: 'full'` (see
+ * experts/profiles.ts), and `spawn_subagent` picks the expert by goal when the
+ * caller does not name one — so a delegated child could reach every tool the
+ * parent was denied, with approvals forced on (`confirm` in the sub-runtime).
+ * Scope narrowing that stops at the process boundary is not a policy.
+ *
+ * `parentRuntime.tools` is the resolved scope plus the post-scope injections
+ * (`spawn_subagent`, `computer_*`, `propose_plan` — see agent.ts:722-773), i.e.
+ * exactly what the parent may call at this moment, so "the child never exceeds
+ * the parent" holds by construction. `allTools` remains the fallback for a
+ * runtime assembled without a resolved scope (tests, embedding callers).
+ */
+export function subAgentToolCeiling(
+  parentRuntime: Pick<AgentRuntime, 'tools' | 'allTools' | 'resolvedToolScope'>,
+): ToolRegistry {
+  if (parentRuntime.resolvedToolScope) return parentRuntime.tools;
+  return parentRuntime.allTools ?? parentRuntime.tools;
+}
+
+/**
  * Swap the sub-runtime onto another dispatch tier's provider.
  *
  * Returns the overrides to spread into the sub-runtime. Undefined when the
@@ -198,7 +223,11 @@ export async function runSubAgent(
     if (!firstSessionId) firstSessionId = subSession.id;
 
     // ── 3. 构建受限工具集 ──────────────────────────────────────────────────────
-    const sourceTools = parentRuntime.allTools ?? parentRuntime.tools;
+    //
+    // The child's ceiling is the parent's CURRENT set, not the whole registry —
+    // see subAgentToolCeiling for why that is a security property and not a
+    // tidy-up. The expert profile narrows it further.
+    const sourceTools = subAgentToolCeiling(parentRuntime);
     const filteredTools = ToolRegistry.fromTools(
       sourceTools.list().filter((tool) =>
         profile.toolFilter({ name: tool.name, risk: tool.risk, description: tool.description }),

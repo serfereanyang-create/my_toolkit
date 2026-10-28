@@ -97,6 +97,8 @@ export type ModelRetryOptions = {
   baseDelayMs?: number;
   /** UI hook — upstream emits StreamError("Reconnecting... n/max") per retry. */
   onRetry?: (attempt: number, maxRetries: number, delayMs: number, error: unknown) => void;
+  /** Optional guard for retries that would replay unsafe or duplicate output. */
+  canRetry?: (error: unknown, attempt: number) => boolean;
 };
 
 export async function withModelRetry<T>(
@@ -114,7 +116,7 @@ export async function withModelRetry<T>(
       return result;
     } catch (error) {
       throwIfAborted(options.signal);
-      if (!isRetryableModelError(error) || attempt >= maxRetries) throw error;
+      if (!isRetryableModelError(error) || attempt >= maxRetries || options.canRetry?.(error, attempt) === false) throw error;
       const delayMs = backoffDelayMs(attempt + 1, baseDelayMs);
       options.onRetry?.(attempt + 1, maxRetries, delayMs, error);
       await abortableDelay(delayMs, options.signal);

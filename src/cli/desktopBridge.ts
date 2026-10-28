@@ -525,9 +525,15 @@ async function handleUserMessage(command: Extract<BridgeCommand, { type: 'user_m
   if (command.reasoningEffort) runtime.reasoningEffort = command.reasoningEffort;
   if (command.toolScope) {
     runtime.toolScope = command.toolScope;
-    // Same reasoning as set_tool_scope: an explicit per-message choice is the
-    // user's, so drop the session floor rather than widening it back.
-    runtime.sessionToolScopeFloor = undefined;
+    // 只有**明确的**档位才算用户的选择，才该把会话下限清掉。
+    //
+    // 桌面端每条消息都会带 toolScope，而 agent-bridge 的默认值就是 'auto'
+    // （electron/agent-bridge.cjs: this.toolScope = options.toolScope || 'auto'）。
+    // 之前这里无条件清空下限，于是每一轮都按那句话重新推一遍工具面：问复杂了
+    // full、问简单了 standard，工具数组在缓存段最前面（tools → system →
+    // messages），它一变整段前缀就从第 0 字节失效 —— 表现就是「每次一被请求就
+    // 重新建缓存、缓存率一直很低」。实测账本里同一会话出现过 340 → 246 个工具。
+    if (command.toolScope !== 'auto') runtime.sessionToolScopeFloor = undefined;
   }
   const submission = await prepareSubmittedUserTurn(runtime, command.text, filePaths);
   emitEvent({ type: 'turn_start', sessionId: runtime.session.id, prompt: submission.displayText ?? submission.prompt });

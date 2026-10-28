@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { AutomationManager } from '../src/automation/manager.js';
 import { AutomationStore } from '../src/automation/store.js';
 import type { AutomationTask, CronTrigger } from '../src/automation/types.js';
+import { createAgentRuntime } from '../src/runtime/createRuntime.js';
 
 async function tempWorkspace(name: string) {
   const root = await mkdtemp(join(tmpdir(), `aicode-automation-${name}-`));
@@ -278,23 +279,28 @@ test('AutomationManager: runTask is no longer blocked by security scanner', asyn
       maxTasks: 5,
     });
     
-    // 创建一个模拟的 runtime
-    const mockRuntime = {
-      config: { workspaceRoot: workspace.root },
-      sessions: {} as any,
-      session: { id: 'test_session', workspaceRoot: workspace.root } as any,
-    } as any;
-    
-    // 运行任务应该不会抛出 "security scanner" 错误
+    // Use a real runtime with the mock provider so this test exercises the
+    // production automation/task-board contract instead of a partial fake.
+    const created = await createAgentRuntime({
+      provider: 'mock',
+      model: 'mock-code-agent-v1',
+      approval: 'auto',
+      workspaceRoot: workspace.root,
+      sessionDir: join(workspace.root, 'sessions'),
+      noBanner: true,
+      json: true,
+    });
     try {
-      const result = await manager.runTask(task.id, mockRuntime);
-      // 如果执行到这里说明 runTask 方法可以调用了
+      created.runtime.provider = {
+        name: 'mock',
+        model: 'automation-fixture',
+        complete: async () => ({ actions: [{ type: 'message', content: 'TASK_DONE: automation fixture completed' }] }),
+      } as any;
+      const result = await manager.runTask(task.id, created.runtime);
       assert.ok(result);
       assert.ok(['success', 'failed', 'blocked'].includes(result.status));
-    } catch (error) {
-      // 预期可能因为 mock runtime 不完整而失败，但不应该是安全扫描错误
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      assert.ok(!errorMsg.includes('security scanner'), 'Should not be blocked by security scanner');
+    } finally {
+      await created.close();
     }
   } finally {
     await workspace.cleanup();

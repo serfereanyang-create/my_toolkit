@@ -4,7 +4,7 @@ import { detectDuplicateDeps } from './duplicateDeps.js';
 export const dedupDepsTool: ToolDefinition<Record<string, never>> = {
   name: 'detect_duplicate_deps',
   description: '扫描 node_modules，检出被多次安装且版本不一致的依赖（可用于 dedupe/hoist 决策）',
-  inputHint: '{} 直接运行',
+  inputHint: '{}',
   risk: 'read',
 
   validate(_input) {

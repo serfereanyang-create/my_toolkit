@@ -4,6 +4,7 @@ import { cacheControl } from './cacheStrategy.js';
 import { createRequestControl } from './requestControl.js';
 import { abortable, abortableDelay, throwIfAborted } from '../utils/cancellation.js';
 import { netFetch } from '../utils/net.js';
+import { parseToolArguments } from './toolArguments.js';
 
 /**
  * Runtime facts the model would otherwise have to guess or discover via a tool
@@ -130,7 +131,7 @@ export function parseOpenAIToolCalls(message: {
     actions.push({
       type: 'tool',
       tool: name,
-      input: parseToolArguments(call.function?.arguments),
+      input: parseToolArguments(call.function?.arguments).input,
     });
   }
   if (actions.length > 0) return uniqueActions(actions);
@@ -170,52 +171,90 @@ export function toolInputSchema(tool: ProviderToolSpec): Record<string, unknown>
   return tool.inputSchema ?? schemaFromInputHint(tool.inputHint);
 }
 
+/**
+ * Keys that are the point of the call whenever the tool's own example shows
+ * them: omit one and the tool can only answer "… is required". Applied ONLY to
+ * keys present in the example, which is what used to go wrong — `required` was
+ * built from whatever appeared anywhere in the hint text, so a hint mentioning
+ * `"Button"` produced a required `to` that the tool does not accept.
+ */
+const REQUIRED_KEYS = ['path', 'query', 'command', 'content', 'oldText', 'newText', 'from', 'to'];
+
 export function schemaFromInputHint(inputHint: string): Record<string, unknown> {
-  const properties: Record<string, { type: string }> = {};
-  const required: string[] = [];
-  const objectMatch = inputHint.match(/\{([\s\S]*)\}/);
-  const body = objectMatch?.[1] ?? '';
-  for (const fieldMatch of body.matchAll(/"([A-Za-z_][\w]*)"\s*:/g)) {
-    const key = fieldMatch[1]!;
-    properties[key] = { type: inferJsonTypeFromHint(body, key) };
-  }
-  // Common tool fields used across the registry even when not present in freeform hints.
-  for (const key of ['path', 'query', 'command', 'maxFiles', 'maxMatches', 'maxBytes', 'timeoutMs', 'drive', 'hours', 'minMb', 'limit', 'includeVersions', 'maxSessions', 'maxResults', 'kind', 'from', 'to', 'oldText', 'newText', 'content']) {
-    if (!properties[key] && inputHint.includes(key)) properties[key] = { type: inferJsonTypeFromHint(inputHint, key) };
-  }
-  if (Object.keys(properties).length === 0) {
-    return { type: 'object', additionalProperties: true };
-  }
-  for (const key of Object.keys(properties)) {
-    if (['path', 'query', 'command', 'content', 'oldText', 'newText', 'from', 'to'].includes(key)) required.push(key);
-  }
+  const example = exampleObject(inputHint);
+  if (!example) return { type: 'object', additionalProperties: true };
+  const properties: Record<string, Record<string, unknown>> = {};
+  for (const [key, value] of Object.entries(example)) properties[key] = describeJsonValue(value);
+  if (Object.keys(properties).length === 0) return { type: 'object', additionalProperties: true };
   return {
     type: 'object',
     properties,
-    required: required.filter((key) => key in properties),
+    required: REQUIRED_KEYS.filter((key) => key in properties),
     additionalProperties: true,
   };
 }
 
-function inferJsonTypeFromHint(hint: string, key: string): string {
-  const field = new RegExp(`"${key}"\\s*:\\s*`).exec(hint);
-  if (field) {
-    const value = hint.slice(field.index + field[0].length);
-    if (value.startsWith('"')) return 'string';
-    if (/^(?:true|false)\b/.test(value)) return 'boolean';
-    if (/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?(?:\s*[,}]|$)/.test(value)) return 'number';
+/**
+ * The example object a hint carries, decoded.
+ *
+ * This used to be a regex over the hint body, which produced a schema the model
+ * could not follow: a key mentioned in prose (`"Button"` in a window title)
+ * became a phantom property because the fallback matched substrings; every
+ * array was typed `string`; and a nested object's keys were flattened to the
+ * top level. Reading the example as data — the same repair path the model's own
+ * arguments go through — keeps the types and the nesting it actually shows.
+ */
+function exampleObject(inputHint: string): Record<string, unknown> | null {
+  const start = inputHint.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+  for (let index = start; index < inputHint.length; index += 1) {
+    const char = inputHint[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end = index + 1;
+        break;
+      }
+    }
   }
-  if (/number|max|limit|hours|bytes|timeout/i.test(key)) return 'number';
-  return 'string';
+  if (end < 0) return null;
+  const text = inputHint.slice(start, end);
+  const parsed = parseToolArguments(text);
+  if (!parsed.ok) return null;
+  return isPlainRecord(parsed.input) ? parsed.input : null;
 }
 
-function parseToolArguments(value: string | undefined): unknown {
-  if (!value || !value.trim()) return {};
-  try {
-    return JSON.parse(value);
-  } catch {
-    return { raw: value };
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function describeJsonValue(value: unknown): Record<string, unknown> {
+  if (Array.isArray(value)) {
+    const first = value[0];
+    return first === undefined ? { type: 'array' } : { type: 'array', items: describeJsonValue(first) };
   }
+  if (isPlainRecord(value)) {
+    const properties: Record<string, Record<string, unknown>> = {};
+    for (const [key, nested] of Object.entries(value)) properties[key] = describeJsonValue(nested);
+    return { type: 'object', properties, additionalProperties: true };
+  }
+  if (typeof value === 'number') return { type: 'number' };
+  if (typeof value === 'boolean') return { type: 'boolean' };
+  if (typeof value === 'string') return { type: 'string' };
+  // null in an example says nothing about the type the tool wants.
+  return {};
 }
 
 export function toToolAwareMessages(messages: AgentMessage[]) {
@@ -478,13 +517,13 @@ export async function fetchWithRetry(url: string, init: Parameters<typeof fetch>
   } finally { control.dispose(); }
 }
 
-export async function* iterateSseDataLines(response: Response, idleTimeoutMs = 90_000, signal?: AbortSignal): AsyncGenerator<string> {
+export async function* iterateSseDataLines(response: Response, idleTimeoutMs = 90_000, signal?: AbortSignal, onData?: (data: string) => void): AsyncGenerator<string> {
   throwIfAborted(signal);
   if (!response.body) {
     const text = await abortable(response.text(), signal);
     for (const line of text.split(/\r?\n/)) {
       const data = extractSseData(line);
-      if (data !== undefined) yield data;
+      if (data !== undefined) { onData?.(data); yield data; }
     }
     return;
   }
@@ -508,12 +547,12 @@ export async function* iterateSseDataLines(response: Response, idleTimeoutMs = 9
       buffer = parts.pop() ?? '';
       for (const line of parts) {
         const data = extractSseData(line);
-        if (data !== undefined) yield data;
+        if (data !== undefined) { onData?.(data); yield data; }
       }
     }
     if (buffer.trim()) {
       const data = extractSseData(buffer);
-      if (data !== undefined) yield data;
+      if (data !== undefined) { onData?.(data); yield data; }
     }
   } catch (error) {
     throwIfAborted(signal);
@@ -521,7 +560,7 @@ export async function* iterateSseDataLines(response: Response, idleTimeoutMs = 9
     if (buffer.trim()) {
       for (const line of buffer.split(/\r?\n/)) {
         const data = extractSseData(line);
-        if (data !== undefined) yield data;
+        if (data !== undefined) { onData?.(data); yield data; }
       }
     }
     throw error;

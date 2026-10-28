@@ -13,6 +13,12 @@ export async function abortable<T>(work: Promise<T>, signal?: AbortSignal | null
   const cancelled = new Promise<never>((_resolve, reject) => {
     onAbort = () => reject(abortReason(signal));
     signal.addEventListener('abort', onAbort, { once: true });
+    // AbortSignal never replays an abort that already happened. If the signal
+    // fired between the `signal.aborted` check above and this listener being
+    // attached, `cancelled` would never settle: the work would run to
+    // completion and the cancel would be silently ignored. Re-check after
+    // attaching closes that window.
+    if (signal.aborted) onAbort();
   });
   try { return await Promise.race([work, cancelled]); }
   finally { signal.removeEventListener('abort', onAbort!); }

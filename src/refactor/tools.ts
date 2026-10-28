@@ -458,10 +458,75 @@ export const refactorPreviewTool = defineTool({
   ],
   
   async execute({ file, operations }, context): Promise<ToolResult> {
-    return {
-      ok: false,
-      output: 'Refactor Preview 功能尚未实现，敬请期待',
-    };
+    try {
+      if (!Array.isArray(operations) || operations.length !== 1) {
+        return { ok: false, output: '当前预览一次只支持一个重构操作。' };
+      }
+
+      const operation = operations[0];
+      if (typeof operation !== 'object' || operation === null || Array.isArray(operation)) {
+        return { ok: false, output: '重构操作必须是对象。' };
+      }
+
+      const record = operation as Record<string, unknown>;
+      if (record.type === 'extract') {
+        const startLine = record.startLine;
+        const endLine = record.endLine;
+        const methodName = typeof record.name === 'string' ? record.name : record.methodName;
+        if (typeof startLine !== 'number' || typeof endLine !== 'number' || typeof methodName !== 'string' || !methodName.trim()) {
+          return { ok: false, output: 'Extract Method 预览需要 name、startLine 和 endLine。' };
+        }
+
+        const preview = await previewExtractMethod(file, context.cwd, {
+          methodName,
+          startLine,
+          endLine,
+          useArrowFunction: record.useArrowFunction === true,
+          addTypeAnnotations: record.addTypeAnnotations !== false,
+        });
+        const lines = [
+          '# Extract Method 预览',
+          '',
+          `安全性：${preview.result.isSafe ? '安全' : '不安全'}`,
+          `方法：${preview.result.signature.name}`,
+          `输入参数：${preview.result.variableAnalysis.inputs.join(', ') || '无'}`,
+          `返回值：${preview.result.variableAnalysis.outputs.join(', ') || '无'}`,
+        ];
+        if (preview.result.warnings.length > 0) {
+          lines.push('', '警告：', ...preview.result.warnings.map((warning) => `- ${warning}`));
+        }
+        return { ok: true, output: lines.join('\n'), data: preview };
+      }
+
+      if (record.type === 'rename') {
+        const line = record.line;
+        const column = record.column;
+        const newName = record.newName;
+        if (typeof line !== 'number' || typeof column !== 'number' || typeof newName !== 'string' || !newName.trim()) {
+          return { ok: false, output: 'Rename Symbol 预览需要 line、column 和 newName。' };
+        }
+
+        const result = await renameSymbol(context.cwd, {
+          file,
+          line,
+          column,
+          newName,
+          updateStringLiterals: record.updateStringLiterals === true,
+        });
+        if (!result.isSafe) {
+          return { ok: false, output: result.errors.join('\n') || '重命名预览未通过安全检查。' };
+        }
+        return {
+          ok: true,
+          output: generateDiff(result),
+          data: result,
+        };
+      }
+
+      return { ok: false, output: `不支持的重构类型：${String(record.type ?? '')}` };
+    } catch (error) {
+      return { ok: false, output: `重构预览失败: ${error instanceof Error ? error.message : String(error)}` };
+    }
   },
 });
 

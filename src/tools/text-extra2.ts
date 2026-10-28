@@ -104,7 +104,7 @@ export const commonSuffixTextTool: ToolDefinition<{ left: string; right: string 
 };
 
 export const lineNumbersTool: ToolDefinition<{ path?: string; text?: string; start: number }> = {
-  name: 'line_numbers', description: 'Prefix each line with a line number. Read-only transform.', inputHint: '{ "text": "a\nb", "start": 1 }', risk: 'read',
+  name: 'line_numbers', description: 'Prefix each line with a line number. Read-only transform.', inputHint: '{ "text": "a\\nb", "start": 1 }', risk: 'read',
   validate(input) { const record = asRecord(input); return { ...textOrPath(input), start: typeof record.start === 'number' ? Math.floor(record.start) : 1 }; },
   async execute(input, context) { const text = await resolveText(input, context.workspaceRoot); const output = text.split(/\r?\n/).map((line, i) => `${input.start + i}\t${line}`).join('\n'); return { ok: true, output }; },
 };

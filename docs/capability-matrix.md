@@ -6,11 +6,13 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | --- | --- | --- |
 | Command UX/help/version | Implemented | `--help`, `--version`, prompt mode, REPL, slash commands, multiline paste (`"""`/`/paste`), `/attach`, `/paste-image`, 25KB text cap, no forced column reflow on user paste |
 | Attachments / vision | Implemented MVP | Images staged → multimodal parts (OpenAI image_url / Anthropic base64); other files path notes + tools; store under `.aicode/attachments/<session>` |
+| Tool surface / scoping | Implemented | `auto` resolves per turn to compact / standard / full from prompt complexity, the task board and reasoning effort (`src/tools/scope.ts`); `/scope` and config `toolScope` override verbatim. Resolution is floored per session (`sessionToolScopeFloor`, `src/agent/agent.ts:154`), so the tool array only ever grows and the cached prompt prefix stays valid. Verified surface: 363 registered tools — compact 200 (197 read / 3 network), standard 332 (295 / 29 write / 5 shell / 3 network), full 363; standard = the two allowlists + every `isReadOnlyTool` tool + `DELEGATION_TOOLS` + `HIGH_VALUE_EXTRA`, so everything it hides is write/shell/network. Read-only is `risk === 'read'` minus `AGENT_SPAWNING_TOOLS`, never `risk` alone. `MAX_PROVIDER_TOOLS` = 340 caps the request last, after the post-scope injections. Per-tool table: `docs/tool-surface.md` |
+| Sub-agent delegation | Implemented | `spawn_subagent` (parallel sub-agents, depth ≤ 3) and `review_loop` (executor → reviewer → revise) are in `standard` via `DELEGATION_TOOLS`, and are also injected post-scope, so the root agent has them at every scope including compact; a child's registry is capped at the parent's current set (`subAgentToolCeiling`, `src/subagent/runner.ts:36`), so delegation cannot exceed the parent's scope. Known gap: a child's approvals are hardcoded to `true` (`src/subagent/runner.ts:285`), so `ask`/`plan` confirmations are skipped for delegated writes — `deny` still blocks, because the approval gate runs before `confirm` |
 | Stdout/stderr/JSON | Implemented | Human output, `--json` JSONL events, stderr errors, `--no-color`, `--quiet` |
 | Errors/exit codes/debug | Implemented | Nonzero prompt failures, `--debug`, concise default errors |
 | Config/env/profile/auth | Implemented | `.aicode/config.json`, `--config`, `--profile`, env/flag precedence, redacted `/config` |
 | Automation/CI | Implemented | `--prompt`, `--ci`, `--no-input`, stable JSON final event |
-| Shell completion | Implemented | `completion bash|zsh|fish|powershell` |
+| Shell completion | Implemented | `completion {bash,zsh,fish,powershell}` |
 | Doctor diagnostics | Implemented | `--doctor`, JSON doctor output |
 | Safety approvals/path policy | Implemented | approval modes (ask/auto/plan/deny), structural command analysis (`src/safety/commandAnalysis.ts`: quote-aware segments, interpreter recursion, base64 `-EncodedCommand` decode, pipe-into-shell, target-aware recursive delete, redirect-write and credential-store guards), workspace path guard, checkpoint before writes — see `docs/safety-policy.md` |
 | File tools | Implemented | list/read/write/search/patch/rename/docx |
@@ -29,28 +31,29 @@ This matrix tracks what the CLI can prove through implementation, tests, and aud
 | Tool-failure recovery | Implemented | A failed tool call is information, not the end of the turn: the loop feeds the reason plus a recovery hint back and lets the model pick another route (`MAX_TOOL_FAILURE_RETRIES` = 3, `MAX_TOTAL_TOOL_FAILURES` = 8). A policy block gets exactly one alternative attempt (and the hint forbids rephrasing the same blocked command), then the turn ends. A step that only re-requests already-completed calls three times ends the turn instead of spinning (`MAX_STUCK_STEPS`; suppressed inside planning turns, which have their own cap and final-call nudge). Pinned by `tests/agent-tool-failure-recovery.test.ts` |
 | Semantic code search | Implemented MVP | `build_semantic_index` + `semantic_search`: exported symbols get embeddings in `.aicode/semantic/vectors.db`, cosine search in pure JS. Embedder is chosen honestly: OpenAI-compatible `/embeddings` automatically when `OPENAI_API_KEY` is set (`AICODE_EMBED_BASE_URL` for a relay, `AICODE_EMBED_MODEL` to override), an explicitly-labelled local feature hash otherwise (`AICODE_EMBED_PROVIDER=local` to force offline), anthropic fails loudly rather than faking vectors. Index and query must share one vector space: a different provider/model refuses the incremental update (`embedder_changed`, needs `force: true`), and a query from another space fails before spending an embedding call — the query engine never rewrites the index metadata it is comparing against. Both tools print the embedder, model and dimensions with their results, and `--doctor` reports the same. Pinned by `tests/semantic-space.test.ts` + `tests/embedder.test.ts`. Note `better-sqlite3` must stay >= 13 (11.x's prebuilt binary corrupts memory on Node 24 under GC) |
 | Per-call model tiering | Implemented | Every model call is routed by what the step is for, not by a setting: plan turns and failed steps escalate, plain tool follow-through drops to the cheap tier, everything else is standard (`src/dispatch/stepRouter.ts`). Tiers and fallback chains are derived from the credentialed providers in `~/.zcode/v2/config.json` (`tierCatalog.ts`: name heuristics expensive/standard/cheap, active model pinned first, no tier with fewer than two usable models), so there is nothing to configure and no UI. Off-switches: `AICODE_DISPATCH=0`, config `dispatch: false`, and an explicit `--base-url` (a fixture/proxy endpoint is never re-routed). Provider failover only on availability faults — a 401 is an answer, not a reason to spend more. Pinned by `tests/dispatchRouting.test.ts` |
-| Git workflow | Implemented MVP | Board branch on `/plan confirm` (`aicode/board-*`); confirmed board commit after completion; read-only git tools; hidden snapshots + `/rollback`; confirmed `/git publish` only; no auto-push |
+| Git workflow | Implemented MVP | Board branch on `/plan confirm` (`aicode/board-*`); confirmed board commit after completion; 6 read-only inspection tools (`git_status`/`git_diff`/`git_diff_staged`/`git_log`/`git_show`/`git_blame`) plus 13 write tools from `src/tools/git-write.ts` (`git_init`, `git_add`, `git_commit`, `git_branch`, `git_checkout`, `git_stash`, `git_fetch`, `git_pull`, `git_merge`, `git_cherry_pick`, `git_tag`, `git_reset`, `git_restore`) — all registered `autoApprove` so `auto` mode can commit like CC, while `ask` still confirms and `deny` blocks; `git_restore`'s destructive variant (`staged: false`, discards uncommitted edits) is `alwaysPrompt` and confirms in every mode; force-push, `reset --hard`, `clean -f` and `checkout --force` are not implemented at all; hidden snapshots + `/rollback`; `/git publish` is the only push path and always confirms |
 | Git safety / rollback log | Implemented MVP | `.aicode/git-safety/audit.jsonl`, `refs/aicode/checkpoints/*`, dirty-tree protection, all-or-nothing conflict checks |
-| Providers | Implemented MVP | mock, OpenAI-compatible, Anthropic adapters; native tools/tool_calls and tool_use with text JSON fallback; SSE text streaming |
+| Providers | Implemented MVP | mock, OpenAI-compatible, OpenAI Responses, Anthropic and Gemini adapters (`src/providers/index.ts`); grok/glm/kimi/deepseek ride the OpenAI-compatible path with their own vendor profiles (`src/providers/vendors.ts`); native tools/tool_calls and tool_use with text JSON fallback; SSE text streaming |
 | Tests/audit | Implemented | typecheck, node:test suite, structural audit above 100 checks, mock smoke + optional live provider smoke |
 | Plugins/hooks | Implemented MVP | `.aicode/plugins.json` command tools, approval policy, `beforeTool`, `afterTool`, `onError` hooks |
 | MCP | Implemented MVP | stdio JSON-RPC client (Content-Length), `.aicode/mcp.json`, tools bridged as `mcp_<server>_<tool>`, `/mcp` + `/mcp reload`, doctor check, `AICODE_MCP=0` disable; no HTTP/SSE remote transport yet |
 | OS sandbox | Implemented | Process sandbox for `run_command` + plugin tools: workspace cwd, secret env scrub (`AICODE_SANDBOX=0` disables scrub), timeout process-tree kill, command null-byte/length guards; shell reads fenced to the read allowlist and shell egress to the network allowlist; kernel-enforced resource ceilings via Windows Job Object (`src/safety/resourceLimits.ts`, cached supervisor) and `ulimit` on Unix (`AICODE_SANDBOX_LIMITS=0` to disable, `AICODE_SANDBOX_MEMORY_MB` / `AICODE_SANDBOX_MAX_PROCS` to tune); see `docs/safety-policy.md`; still no container/AppContainer |
-| Native provider streaming/tool calls | Implemented MVP | Native tool calling + SSE text streaming for OpenAI/Anthropic; mock remains non-streaming |
+| Native provider streaming/tool calls | Implemented MVP | Native tool calling + SSE text streaming for OpenAI/Anthropic/Gemini/Responses; each model call records transport, first-event/first-output latency, event count and packet-gap percentiles in the trajectory; mock remains non-streaming |
 | Signed distribution/update | Advanced / not complete | npm-style package metadata exists; signed release/update is future work |
 
 ## Final Verification Checklist
 
-Run these from the repository root:
+Run these from this repository's root (the `cli` directory — the paths below are
+repo-relative; prefix them with `cli/` only if you are in a parent workspace):
 
 ```bash
-npm --prefix cli run typecheck
-npm --prefix cli test
-npm --prefix cli run audit:100
-npm --prefix cli run live-smoke
-node cli/dist/src/index.js --version
-node cli/dist/src/index.js --help
-MSYS2_ARG_CONV_EXCL='*' node cli/dist/src/index.js --provider mock --approval auto --json --prompt "帮我看看项目索引"
-node cli/dist/src/index.js --provider mock --workspace cli --doctor
-node cli/dist/src/index.js completion bash
+npm run typecheck
+npm test
+npm run audit:100
+npm run live-smoke
+node dist/src/index.js --version
+node dist/src/index.js --help
+MSYS2_ARG_CONV_EXCL='*' node dist/src/index.js --provider mock --approval auto --json --prompt "帮我看看项目索引"
+node dist/src/index.js --provider mock --workspace . --doctor
+node dist/src/index.js completion bash
 ```

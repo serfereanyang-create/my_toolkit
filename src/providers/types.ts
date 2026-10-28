@@ -98,6 +98,8 @@ export type ProviderResponse = {
   thinking?: string;
   /** Real token usage extracted from the provider response, when available. */
   usage?: ProviderUsage;
+  /** Timing and cadence facts for streamed provider responses. */
+  streamMetrics?: import('./streamMetrics.js').StreamMetrics;
   continuation?: ResponsesContinuation;
 };
 

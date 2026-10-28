@@ -122,7 +122,7 @@ export const textSurroundTool: ToolDefinition<{ path?: string; text?: string; be
 };
 
 export const textRepeatLinesTool: ToolDefinition<{ path?: string; text?: string; count: number }> = {
-  name: 'text_repeat_lines', description: 'Repeat each line N times before moving to the next line. Read-only transform.', inputHint: '{ "text": "a\nb", "count": 2 }', risk: 'read',
+  name: 'text_repeat_lines', description: 'Repeat each line N times before moving to the next line. Read-only transform.', inputHint: '{ "text": "a\\nb", "count": 2 }', risk: 'read',
   validate(input) { const record = asRecord(input); return { ...textOrPath(input), count: typeof record.count === 'number' && record.count > 0 ? Math.min(Math.floor(record.count), 1000) : 2 }; },
   async execute(input, context) { const out: string[] = []; for (const line of lines(await resolveText(input, context.workspaceRoot))) for (let i = 0; i < input.count; i += 1) out.push(line); return { ok: true, output: out.join('\n') }; },
 };

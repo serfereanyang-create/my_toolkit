@@ -82,7 +82,7 @@ export const stripEmptyLinesTool: ToolDefinition<{ path?: string; text?: string 
 export const dedupeLinesTool: ToolDefinition<{ path?: string; text?: string }> = {
   name: 'dedupe_lines',
   description: 'Remove duplicate lines while preserving first-seen order. Read-only.',
-  inputHint: '{ "text": "a\nb\na" }',
+  inputHint: '{ "text": "a\\nb\\na" }',
   risk: 'read',
   validate: textOrPath,
   async execute(input, context) {
@@ -288,7 +288,7 @@ export const textFrequencyTool: ToolDefinition<{ path?: string; text?: string; m
 export const linePrefixTool: ToolDefinition<{ path?: string; text?: string; prefix: string }> = {
   name: 'line_prefix',
   description: 'Prefix every line with a string. Useful for quoting, commenting, or indenting text. Read-only transform.',
-  inputHint: '{ "text": "a\nb", "prefix": "> " }',
+  inputHint: '{ "text": "a\\nb", "prefix": "> " }',
   risk: 'read',
   validate(input) {
     const record = asRecord(input);
@@ -304,7 +304,7 @@ export const linePrefixTool: ToolDefinition<{ path?: string; text?: string; pref
 export const lineSuffixTool: ToolDefinition<{ path?: string; text?: string; suffix: string }> = {
   name: 'line_suffix',
   description: 'Append a suffix to every line. Useful for adding delimiters, commas, or comments. Read-only transform.',
-  inputHint: '{ "text": "a\nb", "suffix": "," }',
+  inputHint: '{ "text": "a\\nb", "suffix": "," }',
   risk: 'read',
   validate(input) {
     const record = asRecord(input);

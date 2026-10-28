@@ -13,7 +13,7 @@ function asRecord(input: unknown): Record<string, unknown> {
 export const currentDatetimeTool: ToolDefinition<{ timezone?: string }> = {
   name: 'current_datetime',
   description: 'Return the current date and time (ISO 8601 UTC plus local), and a Unix timestamp. Read-only.',
-  inputHint: '{}',
+  inputHint: '{ "timezone": "Asia/Shanghai" }',
   risk: 'read',
   validate(input) {
     if (input === undefined || input === null) return {};

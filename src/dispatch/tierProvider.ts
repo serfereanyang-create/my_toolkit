@@ -46,10 +46,21 @@ export function tierProvider(
   // chain member actually answered must be visible there.
   const identity = { name: infos[0].provider.name, model: infos[0].provider.model };
   const complete: AgentRuntime['provider']['complete'] = async (request) => {
+    let streamedOutput = false;
+    const guardedRequest = {
+      ...request,
+      onTextDelta: request.onTextDelta
+        ? (delta: string) => { streamedOutput = true; request.onTextDelta!(delta); }
+        : undefined,
+      onThinkingDelta: request.onThinkingDelta
+        ? (delta: string) => { streamedOutput = true; request.onThinkingDelta!(delta); }
+        : undefined,
+    };
     const answered = await completeWithFallback(
       infos,
-      (provider) => provider.complete(request),
+      (provider) => provider.complete(guardedRequest),
       onFallback,
+      () => !streamedOutput,
     );
     identity.name = answered.provider.name;
     identity.model = answered.provider.model;
@@ -75,6 +86,7 @@ export async function completeWithFallback<T>(
   members: Array<{ entry: ResolvedTier; provider: AgentRuntime['provider'] }>,
   call: (provider: AgentRuntime['provider']) => Promise<T>,
   onFallback?: (failed: ResolvedTier, next: ResolvedTier, error: unknown) => void,
+  canFallback?: (error: unknown, index: number) => boolean,
 ): Promise<{ value: T; provider: AgentRuntime['provider'] }> {
   let lastError: unknown;
   for (let index = 0; index < members.length; index += 1) {
@@ -85,7 +97,7 @@ export async function completeWithFallback<T>(
     } catch (error) {
       lastError = error;
       const next = members[index + 1];
-      if (!next || !isFallbackWorthy(error)) throw error;
+      if (!next || !isFallbackWorthy(error) || canFallback?.(error, index) === false) throw error;
       onFallback?.(entry, next.entry, error);
     }
   }

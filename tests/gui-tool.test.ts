@@ -12,9 +12,9 @@ import { GUI_TOOL_NAMES, runGuiTool } from '../src/cli/guiTool.js';
 test('the allowlist is exactly the computer_* actions the panel offers', () => {
   assert.deepEqual([...GUI_TOOL_NAMES].sort(), [
     'computer_activate', 'computer_click', 'computer_drag', 'computer_elements',
-    'computer_key', 'computer_list_windows', 'computer_press',
-    'computer_screenshot', 'computer_scroll', 'computer_type',
-    'computer_window_shot',
+    'computer_key', 'computer_list_windows', 'computer_open',
+    'computer_press', 'computer_screenshot', 'computer_scroll',
+    'computer_type', 'computer_wait_window', 'computer_window_shot',
   ]);
 });
 

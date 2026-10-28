@@ -1,5 +1,6 @@
 import type { AgentAction, Provider, ProviderRequest, ProviderResponse } from './types.js';
 import { controlledProvider } from './requestControl.js';
+import { createStreamMetrics } from './streamMetrics.js';
 import { buildToolSystemPrompt, iterateSseDataLines, parseToolActions, toolInputSchema } from './protocol.js';
 import { netFetch } from '../utils/net.js';
 
@@ -57,18 +58,19 @@ export function createGeminiProvider(options: GeminiProviderOptions): Provider {
         const budgets: Record<string, number> = { low: 2048, medium: 8192, high: 16384, max: 24576 };
         body.generationConfig = { ...(body.generationConfig as object), thinkingConfig: { thinkingBudget: budgets[request.reasoningEffort] ?? 8192 } };
       }
+      const metrics = createStreamMetrics('sse');
       const response = await netFetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': options.apiKey }, body: JSON.stringify(body), signal: request.signal });
       if (!response.ok) throw new Error(`Gemini request failed: ${response.status} ${await response.text()}`);
       const events: GeminiResponse[] = [];
-      for await (const data of iterateSseDataLines(response, undefined, request.signal)) {
+      for await (const data of iterateSseDataLines(response, undefined, request.signal, (data) => { if (data && data !== '[DONE]') metrics.event(); })) {
         if (data === '[DONE]') break;
         if (!data) continue;
         let event: GeminiResponse;
         try { event = JSON.parse(data) as GeminiResponse; } catch { continue; }
         events.push(event);
         for (const part of event.candidates?.[0]?.content?.parts ?? []) {
-          if (part.text && part.thought) request.onThinkingDelta?.(part.text);
-          else if (part.text) request.onTextDelta?.(part.text);
+          if (part.text && part.thought) { metrics.output(part.text); request.onThinkingDelta?.(part.text); }
+          else if (part.text) { metrics.output(part.text); request.onTextDelta?.(part.text); }
         }
       }
       const parts = events.flatMap((e) => e.candidates?.[0]?.content?.parts ?? []);
@@ -87,7 +89,7 @@ export function createGeminiProvider(options: GeminiProviderOptions): Provider {
             ...(cached !== undefined ? { cacheReadTokens: cached } : {}),
           }
         : undefined;
-      return { actions: actions.length > 0 ? actions : parseToolActions(textParts.join('')), thinking, raw: { events }, usage: usageBlock };
+      return { actions: actions.length > 0 ? actions : parseToolActions(textParts.join('')), thinking, raw: { events }, usage: usageBlock, streamMetrics: metrics.finish() };
     },
   };
   return controlledProvider(provider);

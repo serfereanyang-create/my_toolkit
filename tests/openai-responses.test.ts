@@ -6,6 +6,13 @@ function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+function sseResponse(lines: string[]) {
+  return new Response(`${lines.map((line) => `data: ${line}`).join('\n')}\n\ndata: [DONE]\n\n`, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
+
 test('Responses provider posts instructions/input and maps output text and usage', async () => {
   const originalFetch = globalThis.fetch;
   let seenUrl = '';
@@ -39,9 +46,58 @@ test('Responses provider posts instructions/input and maps output text and usage
     assert.equal(result.usage?.inputTokens, 4);
     assert.equal(result.usage?.cacheReadTokens, 6);
     assert.equal(result.thinking, 'plan');
+    assert.equal(result.streamMetrics?.transport, 'json');
+    assert.equal(result.streamMetrics?.eventCount, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('Responses streaming exposes cadence metrics alongside text deltas', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => sseResponse([
+    JSON.stringify({ type: 'response.output_text.delta', delta: 'hello' }),
+    JSON.stringify({ type: 'response.output_text.delta', delta: ' world' }),
+    JSON.stringify({ type: 'response.completed', response: { id: 'resp_1', usage: { input_tokens: 2, output_tokens: 2 } } }),
+  ]);
+  try {
+    const deltas: string[] = [];
+    const provider = createOpenAIResponsesProvider({ apiKey: 'k', baseUrl: 'https://api.example.test/v1', model: 'gpt-5' });
+    const result = await provider.complete({
+      messages: [{ role: 'user', content: 'hello', createdAt: new Date().toISOString() }],
+      tools: [], workspaceRoot: 'C:/work', reasoningEffort: 'off', onTextDelta: (delta) => deltas.push(delta),
+    });
+    assert.deepEqual(deltas, ['hello', ' world']);
+    assert.equal(result.streamMetrics?.transport, 'sse');
+    assert.equal(result.streamMetrics?.eventCount, 3);
+    assert.equal(result.streamMetrics?.outputChars, 11);
+    assert.equal(result.streamMetrics?.timeToFirstOutputMs !== null, true);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('Responses provider preserves user and tool image parts', async () => {
+  const originalFetch = globalThis.fetch;
+  let seenBody: Record<string, unknown> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    seenBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return response({ output_text: 'seen' });
+  };
+  try {
+    const provider = createOpenAIResponsesProvider({ apiKey: 'k', baseUrl: 'https://api.example.test/v1', model: 'gpt-5' });
+    await provider.complete({
+      messages: [
+        { role: 'user', content: 'look at this', createdAt: new Date().toISOString(), parts: [{ type: 'image', mediaType: 'image/png', data: 'dXNlcg==' }] },
+        { role: 'tool', name: 'computer_screenshot', content: 'window capture', createdAt: new Date().toISOString(), parts: [{ type: 'image', mediaType: 'image/png', data: 'c2NyZWVu' }] },
+      ],
+      tools: [], workspaceRoot: 'C:/work', reasoningEffort: 'off',
+    });
+    const input = seenBody?.input as Array<Record<string, unknown>>;
+    assert.equal(input[0]?.role, 'user');
+    assert.deepEqual(input[0]?.content, 'look at this');
+    assert.deepEqual(input[1], { role: 'user', content: [{ type: 'input_image', image_url: 'data:image/png;base64,dXNlcg==' }] });
+    assert.match(String(input[2]?.content), /\[tool:computer_screenshot\] window capture/);
+    assert.deepEqual(input[3], { role: 'user', content: [{ type: 'input_image', image_url: 'data:image/png;base64,c2NyZWVu' }] });
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test('Responses provider does not leak API key into URL', async () => {

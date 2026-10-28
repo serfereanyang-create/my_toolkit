@@ -82,6 +82,20 @@ shell 侧同样挡：`cat ~/.ssh/id_rsa`、`Get-Content <home>/.kube/config` 这
 
 读工具照常（`list_files` 正常返回）。所以这一项是验证 + 测试固化，不是新造。
 
+### 4b. 「只读」有两套语义，别混用
+
+- **审批门**按 `risk`（read/write/shell/network）× 模式判。`deny` 只放行 `read`。
+- **工具面收缩 / 只读承诺**按 `isReadOnlyTool`（`src/tools/scope.ts:70`）= `risk === 'read'` **且**不在 `AGENT_SPAWNING_TOOLS`。那四个是可以起会写的子智能体的工具：`spawn_subagent`（risk 标 `read`）、`review_loop`（`shell`）、`workflow_execute` / `workflow_resume`（`write`）。所以任何「只读」角色都必须减掉它们——`src/experts/profiles.ts` 的 `code_search` / `code_review` 就是靠 `isReadOnlyTool`，`tests/review-readonly.test.ts` 钉住这条。
+- `ToolDefinition` 上**没有** `readonly` 字段；`spawn_subagent` 的 `readonly: true` 参数是「换成只读专家 `code_search`」（`src/subagent/runner.ts:108` 的 `expertIdForSubAgentRequest`），不是事后过滤。
+
+工具面每一档具体有哪些工具，见 `docs/tool-surface.md`。
+
+### 4c. 子智能体的边界
+
+- **工具源**：`subAgentToolCeiling`（`src/subagent/runner.ts:36`）把子的 registry 限制在父**当轮**的集合（含 post-scope 注入的 `spawn_subagent` 等），只有父没有解析过作用域时（测试、嵌入调用）才回落全量。所以「子不比父做得多」是构造保证，不靠 profile 自觉。深度上限 3（`MAX_SUBAGENT_DEPTH`）。
+- **审批恒真**：子 runtime 的 `confirm` / `toolConfirm` 硬编码为 `true`（`src/subagent/runner.ts:285-286`）。所以 `ask` / `plan` 模式下「每次写盘都要人确认」对委派出去的子任务**不生效**——这是已知未补的口子。
+- **`deny` 仍然有效**：`decideApproval` 在 registry 里先判（`src/tools/registry.ts:63`），`deny`、命令黑名单、`alwaysPrompt` 的破坏性工具都在 `confirm` 之前出结论，所以只读模式挡得住子代理的写。
+
 ### 5. 桌面主窗口 `sandbox: true`
 
 `electron/main.cjs` 的 `webPreferences` 从 `sandbox: false` 改为 `true`。渲染进程渲染的是模型输出、工具输出、文件内容——都可能带脚本，它的所有特权本来就只通过 `preload.cjs` 的 IPC 拿。`preload.cjs` 只 `require('electron')` 的 `contextBridge` / `ipcRenderer`，沙箱化 preload 支持。
@@ -125,12 +139,6 @@ shell 侧同样挡：`cat ~/.ssh/id_rsa`、`Get-Content <home>/.kube/config` 这
 2. 带管道 stdio 的子进程会钉住父进程的事件循环。常驻 supervisor 不 unref 的话，任何「等进程退出」的场景（测试、`--json` 跑完一轮）都会永久挂住——当时整个测试套件从 26s 变成挂死。
 3. 超时后先把 promise resolve 再去杀进程，调用方立刻 `rm` 临时工作区会拿到 `EBUSY`（Windows 上 cwd 还占着）。现在等 supervisor 真的退出再 resolve。
 4. 每个 supervisor 都 `Add-Type` 一遍，等于每个测试文件现场编译一次 C#：25 个文件并行跑时 CPU 被打满，套件从 32s 涨到 90s，还连累几个时序敏感的用例偶发失败。缓存 DLL 后这些症状一起消失。并发写同一个 DLL 用 `<dll>.<PID>.tmp` + `Move-Item -Force`，抢输了就 `LoadFrom` 已有的那份。
-
-
-
-`electron/main.cjs` 的 `webPreferences` 从 `sandbox: false` 改为 `true`。渲染进程渲染的是模型输出、工具输出、文件内容——都可能带脚本，它的所有特权本来就只通过 `preload.cjs` 的 IPC 拿。`preload.cjs` 只 `require('electron')` 的 `contextBridge` / `ipcRenderer`，沙箱化 preload 支持。
-
-验证：`npx electron scripts/app-smoke.cjs`（真实 preload + 主进程 IPC，含 Monaco、TS worker、主题持久化）、`--writes --sync`（写文件、暂存、提交、push/pull 全流程）全绿；`npm test` 625 项全绿。
 
 ## 测试与验证
 

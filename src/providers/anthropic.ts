@@ -11,6 +11,8 @@ import {
   toAnthropicTools,
 } from './protocol.js';
 import { cacheControl } from './cacheStrategy.js';
+import { parseToolArguments } from './toolArguments.js';
+import { createStreamMetrics } from './streamMetrics.js';
 
 export type AnthropicProviderOptions = {
   apiKey?: string;
@@ -76,6 +78,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
       // thinking budget first; if the endpoint rejects the thinking param (custom
       // proxies often don't support it), retry once without it rather than failing.
       const thinking = anthropicThinking(request.reasoningEffort);
+      const requestMetrics = createStreamMetrics('sse');
       let response = await fetchWithRetry(`${baseUrl}/messages`, {
         signal: request.signal,
         method: 'POST',
@@ -111,7 +114,9 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
 
       const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
       if (contentType.includes('application/json')) {
+        const metrics = createStreamMetrics('json');
         const json = await response.json() as Record<string, unknown>;
+        metrics.event();
         events.push(json);
         applyUsage(json.usage ?? (json.message as Record<string, unknown> | undefined)?.usage);
         const content = Array.isArray(json.content) ? json.content as Array<Record<string, unknown>> : [];
@@ -120,12 +125,14 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
           if (block.type === 'text' && typeof block.text === 'string') textParts.push(block.text);
           if (block.type === 'thinking' && typeof block.thinking === 'string') thinkingParts.push(block.thinking);
         }
+        metrics.output(textParts.join('') || thinkingParts.join(''));
         const actions = parseAnthropicContentBlocks(content);
         const usage = buildProviderUsage(inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens);
-        return { actions, thinking: thinkingParts.join('') || undefined, usage, raw: { response: json, text: textParts.join('') } };
+        return { actions, thinking: thinkingParts.join('') || undefined, usage, streamMetrics: metrics.finish(), raw: { response: json, text: textParts.join('') } };
       }
 
-      for await (const data of iterateSseDataLines(response, undefined, request.signal)) {
+      const metrics = requestMetrics;
+      for await (const data of iterateSseDataLines(response, undefined, request.signal, (data) => { if (data && data !== '[DONE]') metrics.event(); })) {
         if (data === '[DONE]') break;
         if (!data) continue;
         let json: AnthropicStreamEvent;
@@ -160,10 +167,12 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
         if (json.type === 'content_block_delta' && json.delta) {
           if (json.delta.type === 'text_delta' && typeof json.delta.text === 'string' && json.delta.text) {
             textParts.push(json.delta.text);
+            metrics.output(json.delta.text);
             request.onTextDelta?.(json.delta.text);
           }
           if (json.delta.type === 'thinking_delta' && typeof json.delta.thinking === 'string' && json.delta.thinking) {
             thinkingParts.push(json.delta.thinking);
+            metrics.output(json.delta.thinking);
             request.onThinkingDelta?.(json.delta.thinking);
           }
           if (json.delta.type === 'input_json_delta' && typeof json.delta.partial_json === 'string') {
@@ -183,15 +192,15 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
           .map(([, block]) => ({
             type: 'tool' as const,
             tool: block.name ?? 'unknown_tool',
-            input: parseJsonObject(block.inputJson),
+            input: parseToolArguments(block.inputJson).input,
           }))
           .filter((action) => action.tool !== 'unknown_tool');
-        if (actions.length > 0) return { actions, thinking: thinkingParts.join('') || undefined, usage, raw: { stream: events, text: textParts.join('') } };
+        if (actions.length > 0) return { actions, thinking: thinkingParts.join('') || undefined, usage, streamMetrics: metrics.finish(), raw: { stream: events, text: textParts.join('') } };
       }
 
       const text = textParts.join('');
-      if (text) return { actions: parseToolActions(text), thinking: thinkingParts.join('') || undefined, usage, raw: { stream: events, text } };
-      return { actions: parseAnthropicContentBlocks([]), thinking: thinkingParts.join('') || undefined, usage, raw: { stream: events, text } };
+      if (text) return { actions: parseToolActions(text), thinking: thinkingParts.join('') || undefined, usage, streamMetrics: metrics.finish(), raw: { stream: events, text } };
+      return { actions: parseAnthropicContentBlocks([]), thinking: thinkingParts.join('') || undefined, usage, streamMetrics: metrics.finish(), raw: { stream: events, text } };
     },
   };
   return controlledProvider(provider);
@@ -205,15 +214,6 @@ function buildAnthropicHeaders(apiKey: string, customProvider?: boolean): Record
     ...(customProvider ? { 'anthropic-beta': 'prompt-caching-2024-07-31' } : {}),
     accept: 'text/event-stream',
   };
-}
-
-function parseJsonObject(value: string): unknown {
-  if (!value.trim()) return {};
-  try {
-    return JSON.parse(value);
-  } catch {
-    return { raw: value };
-  }
 }
 
 type AnthropicUsage = {

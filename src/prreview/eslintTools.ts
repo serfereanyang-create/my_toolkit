@@ -3,8 +3,8 @@ import { suggestEslintConfig } from './eslintConfig.js';
 
 export const generateEslintConfigTool: ToolDefinition<{ write?: boolean }> = {
   name: 'generate_eslint_config',
-  description: '基于 package.json 信号推荐 ESLint flat config（eslint.config.js 文本与所需依赖）',
-  inputHint: '{ "write": false }  预览（推荐）或写出到 workspace 根',
+  description: '基于 package.json 信号推荐 ESLint flat config（eslint.config.js 文本与所需依赖）。默认只预览，write=true 才写出到 workspace 根。',
+  inputHint: '{ "write": false }',
   risk: 'write',
 
   validate(input) {

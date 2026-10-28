@@ -21,6 +21,31 @@ test('legacy inference reads each value without borrowing digits or booleans fro
   assert.equal(parsed.properties.limit!.type, 'number');
 });
 
+test('hint-derived schemas do not invent properties, flatten nesting or mistype arrays', () => {
+  type Shape = {
+    properties?: Record<string, { type?: string; items?: { type: string }; properties?: Record<string, { type?: string }> }>;
+    required?: string[];
+  };
+  // "Button" contains "to": the old substring fallback turned that into a
+  // required `to` parameter the tool does not accept.
+  const phantom = schemaFromInputHint('{ "window": "Button", "topN": 3 }') as Shape;
+  assert.equal(phantom.properties!.to, undefined);
+  assert.deepEqual(phantom.required, []);
+
+  const arrays = schemaFromInputHint('{ "files": ["a.txt", "b.txt"], "paths": ["src"] }') as Shape;
+  assert.deepEqual(arrays.properties!.files, { type: 'array', items: { type: 'string' } });
+
+  // A nested example used to dump its keys at the top level.
+  const nested = schemaFromInputHint('{ "context": { "name": "x", "fields": ["a"] } }') as Shape;
+  assert.equal(nested.properties!.name, undefined);
+  assert.equal(nested.properties!.context!.type, 'object');
+  assert.equal(nested.properties!.context!.properties!.fields!.type, 'array');
+
+  // required is read from the example, not from the hint prose.
+  assert.deepEqual((schemaFromInputHint('{ "path": "a.ts", "note": "x" }') as Shape).required, ['path']);
+  assert.deepEqual((schemaFromInputHint('plain prose with no object') as Shape).properties, undefined);
+});
+
 test('three native provider formats preserve explicit schemas and optional fields', () => {
   assert.deepEqual(toOpenAITools([spec])[0]!.function.parameters, schema);
   assert.deepEqual(toAnthropicTools([spec])[0]!.input_schema, schema);

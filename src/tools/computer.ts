@@ -13,8 +13,8 @@
  */
 
 import { execFile } from 'node:child_process';
-import { mkdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile, stat } from 'node:fs/promises';
+import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
 import type { ToolDefinition, ToolContext, ToolResult } from './types.js';
@@ -41,6 +41,9 @@ export const COMPUTER_TOOL_NAMES = new Set([
   'computer_scroll',
   'computer_list_windows',
   'computer_activate',
+  'computer_open',
+  'computer_close',
+  'computer_wait_window',
 ]);
 
 /**
@@ -69,7 +72,7 @@ export const COMPUTER_USE_STRATEGY =
   // status bar" turned into "send me their screen"; a window capture is the
   // app being worked on and disturbs nothing.
   + 'To see a specific app use computer_window_shot — it returns that window\'s own pixels even while it is behind other windows or minimized, and never activates anything. A minimized window is restored offscreen for the length of the capture and put straight back, so the user\'s screen never changes; such a capture is for READING only, because a minimized window has no on-screen position to click. Not every app allows this: one that clamps its position back on screen is refused rather than shown to the user, and the error says so — fall back to computer_elements for it. Use computer_screenshot only when the whole desktop is genuinely what you need (finding which apps are open, or a point outside any window). '
-  + 'Prefer the accessibility tree over pixels: computer_elements lists named/interactive controls with an index each; click them by index with computer_press instead of guessing coordinates when the target has a name (buttons, menus, title bars). Re-run computer_elements after the UI changes — indices only cover the latest snapshot. '
+  + 'To start a native Windows application, use computer_open with a workspace-relative or allowed absolute .exe/.lnk path, then computer_wait_window with the returned PID before computer_list_windows and computer_window_shot to verify it. Use computer_close only after the user confirms closing that window. computer_open accepts no command-line arguments; paths outside the workspace require the 任意应用 setting and still follow shell approval. '  + 'Prefer the accessibility tree over pixels: computer_elements lists named/interactive controls with an index each; click them by index with computer_press instead of guessing coordinates when the target has a name (buttons, menus, title bars). Re-run computer_elements after the UI changes — indices only cover the latest snapshot. '
   // Codex's coordinate model, and the reason it exists: an absolute screen
   // point stops meaning anything the moment the window moves, while an image
   // pixel plus the id of the capture it was read from stays verifiable.
@@ -545,7 +548,7 @@ type ElementsInput = { window: string };
 export const computerElementsTool: ToolDefinition<ElementsInput> = {
   name: 'computer_elements',
   description: 'Read the accessibility (UIA) control tree of a window via PowerShell — names, control types and screen rects of buttons/menus/fields, with a stable index per element. Prefer this over screenshots for finding click targets: pass the returned index to computer_press. window accepts a pid ("12345") or a title substring ("记事本"). Re-run after the UI changes; indexes cover only the latest snapshot.',
-  inputHint: '{ "window": "12345" }  // pid or title substring',
+  inputHint: '{ "window": "12345" }',
   risk: 'read',
   parallelSafe: false,
 
@@ -961,7 +964,7 @@ function isBlankImage(png: Buffer): boolean {
 export const computerWindowShotTool: ToolDefinition<WindowShotInput> = {
   name: 'computer_window_shot',
   description: 'Capture ONE window\'s own pixels into a PNG without touching the user\'s desktop: it works while the window is behind others, on another virtual desktop, or minimized, and never activates, raises or focuses anything. A minimized window is restored offscreen just long enough to render and put back — nothing appears on the user\'s screen. An app that refuses to be placed off-screen is not captured at all, because the only other way to photograph it would be to show it to the user. Returns a screenshotId — pass it with x/y in image pixels to computer_click / computer_scroll / computer_drag to act on a point you can see (a minimized capture is readable but not clickable, and says so). Use this instead of computer_screenshot whenever you need to see a specific app: the desktop grab returns whatever the user is currently looking at, not the app you are working on. window accepts a pid ("12345") or a title substring ("记事本").',
-  inputHint: '{ "window": "记事本" }  // pid or title substring',
+  inputHint: '{ "window": "记事本" }',
   risk: 'read',
   parallelSafe: false,
 
@@ -1673,6 +1676,184 @@ export const computerDragTool: ToolDefinition<DragInput> = {
   },
 };
 
+// ── computer_open ────────────────────────────────────────────────────────────
+
+type OpenComputerInput = { path: string };
+
+export const computerOpenTool: ToolDefinition<OpenComputerInput> = {
+  name: 'computer_open',
+  description: 'Launch one native Windows application from a workspace-relative or allowed absolute .exe/.lnk path. Does not accept command-line arguments. Use computer_list_windows after launch, then inspect or capture the new window. Shell-risk action: approval still applies.',
+  inputHint: '{ "path": "tools/MyApp.exe" }',
+  risk: 'shell',
+  parallelSafe: false,
+
+  validate(input: unknown): OpenComputerInput {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('computer_open input must be an object');
+    const record = input as Record<string, unknown>;
+    if (Object.keys(record).some((key) => key !== 'path')) throw new Error('computer_open only accepts path');
+    if (typeof record.path !== 'string' || !record.path.trim() || record.path.length > 2000) throw new Error('path must be a non-empty executable path');
+    return { path: record.path.trim() };
+  },
+
+  async execute(input: OpenComputerInput, context: ToolContext): Promise<ToolResult> {
+    if (!isWindows()) return fail(WINDOWS_ONLY);
+    const target = resolve(isAbsolute(input.path) ? input.path : context.workspaceRoot, input.path);
+    const extension = extname(target).toLowerCase();
+    if (extension !== '.exe' && extension !== '.lnk') return fail('computer_open: only .exe and .lnk files can be launched; command-line arguments and scripts are not accepted.');
+    const workspace = resolve(context.workspaceRoot);
+    const outside = relative(workspace, target).startsWith('..') || isAbsolute(relative(workspace, target));
+    if (outside && context.computerAnyApp !== true) return fail('computer_open: this path is outside the workspace. Enable 任意应用 or use a workspace-relative executable.');
+    try {
+      const info = await stat(target);
+      if (!info.isFile()) return fail(`computer_open: not a file: ${target}`);
+    } catch (error) {
+      return fail(`computer_open: cannot read ${target}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const encoded = Buffer.from(target, 'utf8').toString('base64');
+    const encodedWorkspace = Buffer.from(workspace, 'utf8').toString('base64');
+    const allowOutside = context.computerAnyApp === true ? '$true' : '$false';
+    const script = [
+      `$requested = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))`,
+      `$workspaceRoot = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedWorkspace}'))`,
+      '$launch = $requested',
+      '$extension = [IO.Path]::GetExtension($requested).ToLowerInvariant()',
+      'if ($extension -eq ".lnk") {',
+      '  try {',
+      '    $shortcutShell = New-Object -ComObject WScript.Shell',
+      '    $shortcut = $shortcutShell.CreateShortcut($requested)',
+      '    if (-not [string]::IsNullOrWhiteSpace([string]$shortcut.Arguments)) { Write-Output "error|shortcut arguments are not accepted"; exit 3 }',
+      '    $launch = [string]$shortcut.TargetPath',
+      '  } catch { Write-Output ("error|cannot resolve shortcut: " + $_.Exception.Message); exit 3 }',
+      '}',
+      'try { $launch = [IO.Path]::GetFullPath($launch) } catch { Write-Output "error|invalid launch target"; exit 3 }',
+      'if ([IO.Path]::GetExtension($launch).ToLowerInvariant() -ne ".exe") { Write-Output "error|shortcut target must be an .exe"; exit 3 }',
+      '$rootNorm = $workspaceRoot.TrimEnd("\\") + "\\"',
+      '$launchNorm = $launch.TrimEnd("\\")',
+      '$outsideTarget = -not ($launchNorm.StartsWith($rootNorm, [StringComparison]::OrdinalIgnoreCase) -or $launchNorm.Equals($workspaceRoot.TrimEnd("\\"), [StringComparison]::OrdinalIgnoreCase))',
+      `if ($outsideTarget -and -not ${allowOutside}) { Write-Output "denied|launch target is outside the workspace"; exit 4 }`,
+      'if (-not (Test-Path -LiteralPath $launch -PathType Leaf)) { Write-Output "error|launch target does not exist"; exit 3 }',
+      '$working = Split-Path -Parent $launch',
+      '$process = Start-Process -FilePath $launch -WorkingDirectory $working -PassThru',
+      'Write-Output "started|$($process.Id)|$launch"',
+    ].join('\n');
+    try {
+      const output = await runPs(script, 30_000);
+      if (output.startsWith('denied|')) return fail(`computer_open: ${output.slice('denied|'.length)}`);
+      if (output.startsWith('error|')) return fail(`computer_open: ${output.slice('error|'.length)}`);
+      const parts = output.split('|');
+      const pid = parts[0] === 'started' ? parts[1]?.trim() ?? '' : '';
+      const launchedTarget = parts[0] === 'started' ? parts.slice(2).join('|') : '';
+      if (!/^\d+$/.test(pid)) return fail(`computer_open: application started without a readable PID: ${output.slice(0, 500)}`);
+      return { ok: true, output: `Started ${launchedTarget || target} (pid ${pid}). Use computer_list_windows, then computer_elements or computer_window_shot to inspect it.` };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return fail(`computer_open failed: ${message.slice(0, 500)}`);
+    }
+  },
+};
+// ── computer_close ───────────────────────────────────────────────────────────
+
+type CloseComputerInput = { window: string };
+
+export const computerCloseTool: ToolDefinition<CloseComputerInput> = {
+  name: 'computer_close',
+  description: 'Request closing a native Windows window by title substring or PID. Destructive: always requires explicit approval. It never activates the target, but the app may show its own unsaved-changes dialog; use computer_list_windows afterward to verify the result.',
+  inputHint: '{ "window": "12345" }',
+  risk: 'shell',
+  alwaysPrompt: true,
+  parallelSafe: false,
+
+  validate(input: unknown): CloseComputerInput {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('computer_close input must be an object');
+    const record = input as Record<string, unknown>;
+    if (Object.keys(record).some((key) => key !== 'window')) throw new Error('computer_close only accepts window');
+    if (typeof record.window !== 'string' || !record.window.trim() || record.window.length > 200) throw new Error('window must be a non-empty title substring or PID');
+    return { window: record.window.trim() };
+  },
+
+  async execute(input: CloseComputerInput, _context: ToolContext): Promise<ToolResult> {
+    if (!isWindows()) return fail(WINDOWS_ONLY);
+    const isPid = /^\d+$/.test(input.window);
+    const pid = isPid ? input.window : '0';
+    const title = isPid ? '' : escapePs(input.window);
+    const script = [
+      WINDOW_TYPE_DEF,
+      WINDOW_RESOLVER,
+      'Add-Type -TypeDefinition @"',
+      'using System; using System.Runtime.InteropServices;',
+      'public static class YoyClose { [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l); }',
+      '"@',
+      `$hit = YoyBest @(YoyWindows) ${pid} '${title}'`,
+      'if (-not $hit) { Write-Output "yoy:not-found"; exit }',
+      '[YoyClose]::PostMessage([IntPtr]$hit.Hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null',
+      'Start-Sleep -Milliseconds 300',
+      '$still = [YoyWin]::IsWindow([IntPtr]$hit.Hwnd)',
+      'Write-Output ("yoy:closed={0}|{1}" -f (-not $still), $hit.Title)',
+    ].join('\n');
+    try {
+      const output = await runPs(script, 30_000);
+      if (output.includes('yoy:not-found')) return fail(`computer_close: no window matched "${input.window}". Run computer_list_windows for candidates.`);
+      const line = output.split(/\r?\n/).find((item) => item.startsWith('yoy:closed='));
+      if (!line) return fail(`computer_close: no close result for "${input.window}".`);
+      const closed = line.startsWith('yoy:closed=True|');
+      return { ok: true, output: closed ? `Close requested for "${input.window}" and the window is gone.` : `Close requested for "${input.window}", but the window is still present; it may be waiting for an unsaved-changes decision.` };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return fail(`computer_close failed: ${message.slice(0, 500)}`);
+    }
+  },
+};
+// ── computer_wait_window ────────────────────────────────────────────────────
+
+type WaitWindowInput = { window: string; timeoutMs: number };
+
+export const computerWaitWindowTool: ToolDefinition<WaitWindowInput> = {
+  name: 'computer_wait_window',
+  description: 'Wait for a native Windows window matching a title substring or PID without activating it or changing foreground focus. Use after computer_open before computer_elements or computer_window_shot.',
+  inputHint: '{ "window": "My App", "timeoutMs": 10000 }',
+  risk: 'read',
+  parallelSafe: false,
+
+  validate(input: unknown): WaitWindowInput {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('computer_wait_window input must be an object');
+    const record = input as Record<string, unknown>;
+    if (Object.keys(record).some((key) => key !== 'window' && key !== 'timeoutMs')) throw new Error('computer_wait_window only accepts window and timeoutMs');
+    if (typeof record.window !== 'string' || !record.window.trim() || record.window.length > 200) throw new Error('window must be a non-empty title substring or PID');
+    const timeoutMs = record.timeoutMs === undefined ? 10_000 : Number(record.timeoutMs);
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) throw new Error('timeoutMs must be an integer from 100 to 30000');
+    return { window: record.window.trim(), timeoutMs };
+  },
+
+  async execute(input: WaitWindowInput, _context: ToolContext): Promise<ToolResult> {
+    if (!isWindows()) return fail(WINDOWS_ONLY);
+    const isPid = /^\d+$/.test(input.window);
+    const pid = isPid ? input.window : '0';
+    const title = isPid ? '' : escapePs(input.window);
+    const script = [
+      WINDOW_TYPE_DEF,
+      WINDOW_RESOLVER,
+      `$deadline = [DateTime]::UtcNow.AddMilliseconds(${input.timeoutMs})`,
+      'while ([DateTime]::UtcNow -lt $deadline) {',
+      `  $hit = YoyBest @(YoyWindows) ${pid} '${title}'`,
+      '  if ($hit) {',
+      '    Write-Output ("yoy:window={0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}" -f $hit.Pid, $hit.AppPid, $hit.Class, $hit.Cloaked, $hit.Iconic, $hit.Left, $hit.Top, $hit.Right, $hit.Bottom, $hit.Title)',
+      '    exit',
+      '  }',
+      '  Start-Sleep -Milliseconds 100',
+      '}',
+      'Write-Output "yoy:timeout"',
+    ].join('\n');
+    try {
+      const output = await runPs(script, input.timeoutMs + 5_000);
+      const line = output.split(/\r?\n/).find((item) => item.startsWith('yoy:window='));
+      if (!line) return fail(`computer_wait_window: timed out after ${input.timeoutMs}ms waiting for "${input.window}".`);
+      return { ok: true, output: `Window "${input.window}" is available without changing foreground focus. ${line.slice('yoy:window='.length)}` };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return fail(`computer_wait_window failed: ${message.slice(0, 500)}`);
+    }
+  },
+};
 // ── computer_list_windows ───────────────────────────────────────────────────
 
 type ListWindowsInput = Record<string, never>;
@@ -1777,7 +1958,7 @@ type ActivateInput = { target: string };
 export const computerActivateTool: ToolDefinition<ActivateInput> = {
   name: 'computer_activate',
   description: 'Bring a window to the foreground and focus it, by pid (e.g. "12345") or by title substring (e.g. "记事本"). Required before computer_type/computer_key reach the intended app. This is the only tool that moves the user\'s focus, so call it only when the task actually needs that window in front — never as a side effect of inspecting one. Takes `window` like the other computer_* tools; `target` is accepted as an alias.',
-  inputHint: '{ "window": "Notepad" }  // pid or title substring',
+  inputHint: '{ "window": "Notepad" }',
   risk: 'shell',
 
   validate(input: unknown): ActivateInput {
@@ -1860,5 +2041,8 @@ export function createComputerTools(): ToolDefinition[] {
     computerScrollTool,
     computerListWindowsTool,
     computerActivateTool,
+    computerOpenTool,
+    computerCloseTool,
+    computerWaitWindowTool,
   ];
 }

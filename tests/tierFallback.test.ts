@@ -136,6 +136,28 @@ test('completeWithFallback stops on non-availability errors and cancellation wit
   }
 });
 
+test('completeWithFallback does not replay on a provider error after streamed output', async () => {
+  const member = (model: string) => ({
+    entry: { tier: 'cheap', providerName: model, provider: 'mock', model } as never,
+    provider: { name: 'mock', model } as never,
+  });
+  const seen: string[] = [];
+  let streamed = false;
+  await assert.rejects(
+    completeWithFallback(
+      [member('primary'), member('backup')],
+      async (provider) => {
+        seen.push(provider.model);
+        streamed = true;
+        throw Object.assign(new Error('connection reset after delta'), { status: 503 });
+      },
+      undefined,
+      () => !streamed,
+    ),
+  );
+  assert.deepEqual(seen, ['primary']);
+});
+
 test('applyTierOverride resolves the full chain and reports the primary', { skip: !hasV2 }, () => {
   const runtime = {
     config: { provider: 'openai', model: 'parent-model', workspaceRoot: process.cwd() },

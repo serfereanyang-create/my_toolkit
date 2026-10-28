@@ -9,9 +9,21 @@ export type RunCommandInput = {
   maxOutputBytes?: number;
 };
 
+/*
+ * The platform line the model kept ignoring, made specific.
+ *
+ * It used to say only "commands run through cmd.exe" - true, and useless when
+ * the model's next call is `tail -20 file` or `... | ForEach-Object { ... }`.
+ * Measured: 6 of 11 shell failures in one session were exactly that, and each
+ * one cost three calls (the guess, the failure, the retry) plus a re-read of the
+ * file it was trying to inspect. Naming the missing set costs ~70 tokens in the
+ * cached prefix and removes the whole class, so this is the one shell fix with
+ * no trade-off behind it.
+ */
 const SHELL_HINT = process.platform === 'win32'
   ? ' Commands run through cmd.exe: use Windows syntax (dir, %VAR%, &&), and Windows paths ("C:\\Users\\me\\x.txt" or a workspace-relative path) — an MSYS path like /c/Users/me/x.txt does not exist here.'
-  : ' Commands run through /bin/sh.';
+    + ' cmd.exe has no POSIX filters (head, tail, grep, sed, awk, ls, cat, wc) and no PowerShell cmdlets (Get-Content, Select-String, ForEach-Object, Get-ChildItem): for those, use the dedicated tool instead — head_tail (mode "head"/"tail"), read_lines, search_text, list_files, read_file, word_count, text_slice — or invoke PowerShell explicitly as powershell -NoProfile -Command "...".'
+  : ' Commands run through /bin/sh. For file reads, searches, line ranges and counts prefer the dedicated tools (read_file, search_text, list_files, head_tail, read_lines, word_count) over shelling out.';
 
 export const runCommandTool: ToolDefinition<RunCommandInput> = {
   name: 'run_command',

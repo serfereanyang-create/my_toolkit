@@ -490,12 +490,19 @@ export async function runWithResourceLimits(options: LimitedRunOptions): Promise
   let settled = false;
   let timedOut = false;
   let cancelled = false;
+  let abortRequested = false;
 
   const killTree = () => {
-    if (!childPid) return;
-    try {
-      spawn(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(childPid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-    } catch { /* ignore */ }
+    if (!childPid) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      try {
+        const killer = spawn(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(childPid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        killer.once('close', () => resolve());
+        killer.once('error', () => resolve());
+      } catch {
+        resolve();
+      }
+    });
   };
 
   // Waiting for the supervisor to actually die matters: resolving the promise
@@ -508,12 +515,30 @@ export async function runWithResourceLimits(options: LimitedRunOptions): Promise
     child.once('close', () => { clearTimeout(cap); finish(); });
   });
 
+  const waitForPidExit = (pid: number | undefined, capMs: number) => new Promise<void>((resolve) => {
+    if (!pid) { resolve(); return; }
+    let finished = false;
+    let poll: ReturnType<typeof setInterval> | undefined;
+    const cap = setTimeout(finish, capMs);
+    function finish() {
+      if (finished) return;
+      finished = true;
+      if (poll) clearInterval(poll);
+      clearTimeout(cap);
+      resolve();
+    }
+    poll = setInterval(() => {
+      try { process.kill(pid, 0); } catch { finish(); }
+    }, 25);
+    poll.unref?.();
+  });
+
   const done = await new Promise<SupervisorMessage>((resolve) => {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
       timedOut = true;
-      killTree();
+      void killTree();
       // 超时兜底：连 supervisor 一起收掉，job 里的残留进程随 KILL_ON_JOB_CLOSE 消失。
       try { active.child.kill(); } catch { /* ignore */ }
       active.broken = true;
@@ -522,23 +547,16 @@ export async function runWithResourceLimits(options: LimitedRunOptions): Promise
 
     const abort = () => {
       if (settled) return;
+      abortRequested = true;
       settled = true;
       cancelled = true;
       clearTimeout(timer);
-      killTree();
+      options.signal?.removeEventListener('abort', abort);
       // Same reason as the timeout path: give the kill a moment to land before
       // the caller inspects (and deletes) anything.
-      void Promise.race([
-        new Promise<void>((doneWaiting) => {
-          const poll = setInterval(() => {
-            let alive = true;
-            try { process.kill(childPid as number, 0); } catch { alive = false; }
-            if (!alive) { clearInterval(poll); doneWaiting(); }
-          }, 25);
-          setTimeout(() => { clearInterval(poll); doneWaiting(); }, 1_500);
-          poll.unref?.();
-        }),
-      ]).then(() => resolve({ type: 'done', id, code: null as unknown as number }));
+      void Promise.all([killTree(), waitForPidExit(childPid, 3_000)])
+        .then(() => new Promise<void>((doneWaiting) => setTimeout(doneWaiting, 75)))
+        .then(() => resolve({ type: 'done', id, code: null as unknown as number }));
     };
     options.signal?.addEventListener('abort', abort, { once: true });
     if (options.signal?.aborted) abort();
@@ -547,6 +565,7 @@ export async function runWithResourceLimits(options: LimitedRunOptions): Promise
       resolve: (message) => {
         if (message.type === 'started') {
           childPid = message.pid;
+          if (abortRequested) void killTree();
           return;
         }
         if (settled) return;
@@ -558,7 +577,7 @@ export async function runWithResourceLimits(options: LimitedRunOptions): Promise
     });
 
     try {
-      active.child.stdin.write(`${request}\n`);
+      if (!abortRequested) active.child.stdin.write(`${request}\n`);
     } catch {
       settled = true;
       clearTimeout(timer);

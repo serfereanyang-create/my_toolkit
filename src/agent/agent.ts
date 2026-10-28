@@ -1084,6 +1084,9 @@ async function runAgentTurnCore(
       // codex-rs two-tier retry collapsed onto the single complete() entry:
       // transport-class failures (5xx/network/timeout) back off exponentially
       // and re-issue the whole request; 429/4xx and user cancels propagate.
+      // Once text or thinking has reached the UI, replaying the whole request
+      // could duplicate the partial answer, so that request becomes terminal.
+      let streamedOutput = false;
       response = await withRequestControl({
           signal: runtime.requestSignal,
           timeoutMs: runtime.config.requestTimeoutMs,
@@ -1092,8 +1095,8 @@ async function runAgentTurnCore(
           workspaceRoot: runtime.config.workspaceRoot,
           projectContext,
           toolStrategy,
-          onTextDelta: (delta) => { transcript.partial += delta; runtime.ui.assistantDelta(delta); },
-          onThinkingDelta: (delta) => runtime.ui.thinkingDelta(delta),
+          onTextDelta: (delta) => { streamedOutput = true; transcript.partial += delta; runtime.ui.assistantDelta(delta); },
+          onThinkingDelta: (delta) => { streamedOutput = true; runtime.ui.thinkingDelta(delta); },
           reasoningEffort: effectiveEffort,
           desktopBridge: runtime.config.desktopBridge,
           delegation: runtime.config.delegation,
@@ -1103,8 +1106,12 @@ async function runAgentTurnCore(
         () => runtime.provider.complete(request),
         {
           signal: request.signal,
+          canRetry: () => !streamedOutput,
           onRetry: (attempt, maxRetries, delayMs, error) => {
-            runtime.ui.info(`Reconnecting… ${attempt}/${maxRetries} (${delayMs}ms) — ${error instanceof Error ? error.message : String(error)}`);
+            const detail = error instanceof Error ? error.message : String(error);
+            runtime.ui.info(locale === 'zh'
+              ? `正在重连… ${attempt}/${maxRetries}（${delayMs}ms）— ${detail}`
+              : `Reconnecting… ${attempt}/${maxRetries} (${delayMs}ms) — ${detail}`);
           },
         },
       ));
@@ -1151,6 +1158,7 @@ async function runAgentTurnCore(
               ...(typeof response.usage.cacheReadTokens === 'number' ? { cacheReadTokens: response.usage.cacheReadTokens } : {}),
             }
           : undefined,
+        streamMetrics: response.streamMetrics,
       });
       // Accumulate the real token usage this step reported (if any).
       if (response.usage) {
@@ -1617,8 +1625,12 @@ async function executeToolAction(
   });
   // Feed the circuit breaker with this attempt's outcome (success resets the
   // consecutive-failure counter; failures accumulate toward a cooldown trip).
+  // A payload the provider could not parse is the model's formatting mistake,
+  // not the tool's health: counting it cooled every file tool down in sequence
+  // and pushed the model to route around the very tool it needed.
   const cancelled = runtime.cancelRequested?.() === true || runtime.requestSignal?.aborted === true;
-  if (!cancelled) globalToolHealth.observe(action.tool, result.ok === true);
+  const unparsedArguments = isRecord(action.input) && typeof action.input.raw === 'string';
+  if (!cancelled && !unparsedArguments) globalToolHealth.observe(action.tool, result.ok === true);
   runtime.ui.toolResult(action.tool, result);
   const recoveryHint = result.ok || cancelled ? undefined : recoveryHintForToolFailure(action.tool, result.output);
   const successHint = result.ok && !cancelled ? nextStepHint(action.tool, result.output, result.output?.length ?? 0) : undefined;
@@ -2276,9 +2288,10 @@ function buildContextStats(
   const systemPrompt = share(systemPromptChars);
   // Start with the measured "other" component; then add any rounding remainder
   // so every real input token is represented exactly once.
-  const measuredOther = share(otherChars);
-  const attributed = messages + systemTools + mcpTools + skills + systemPrompt + measuredOther;
-  const other = measuredOther + Math.max(0, input - attributed);
+  // Let `other` absorb the complete rounding remainder, including a negative
+  // remainder when the rounded named buckets overshoot by one token. The
+  // displayed categories must sum exactly to the provider's real input total.
+  const other = Math.max(0, input - (messages + systemTools + mcpTools + skills + systemPrompt));
   const localCache = collectCacheProbe();
   // 窗口和自动压缩阈值一起报出去，而不是让界面自己乘 0.9：这两个数是压缩策略
   // 的一部分，改动时就该只有一处；界面照抄数字，永远和真实行为一致。

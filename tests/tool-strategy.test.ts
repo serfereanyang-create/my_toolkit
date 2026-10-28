@@ -5,6 +5,7 @@ import { createAnthropicProvider } from '../src/providers/anthropic.js';
 import { createOpenAIProvider } from '../src/providers/openai.js';
 import { buildToolSystemPrompt, buildToolSystemPromptParts } from '../src/providers/protocol.js';
 import { formatToolStrategy, planToolStrategy, recentToolResultsFromSession, recoveryHintForToolFailure } from '../src/agent/toolStrategy.js';
+import { runCommandTool } from '../src/tools/shell.js';
 
 test('recentToolResultsFromSession uses structured status and preserves duplicate tool order', () => {
   const createdAt = '2026-07-10T00:00:00.000Z';
@@ -531,4 +532,53 @@ test('recovery hints explain path and edit failures', () => {
   // rather than have the turn ended for it.
   assert.match(recoveryHintForToolFailure('read_file', 'Path escapes workspace') ?? '', /retry with a workspace-relative path/);
   assert.match(recoveryHintForToolFailure('read_file', '路径越出工作区') ?? '', /retry with a workspace-relative path/);
+});
+test('a missing shell command is answered with the replacement, in both locales', () => {
+  // The English shapes.
+  const english = recoveryHintForToolFailure(
+    'run_command',
+    "'tail' is not recognized as an internal or external command,\noperable program or batch file.",
+  ) ?? '';
+  assert.match(english, /`tail` is not on cmd\.exe's PATH/);
+  assert.match(english, /head_tail/);
+  // This machine's cmd.exe answers in Chinese; a matcher that only knew "is not
+  // recognized" never fired here, so the model got no correction at all.
+  const chinese = recoveryHintForToolFailure(
+    'run_command',
+    "'grep' 不是内部或外部命令，也不是可运行的程序\n或批处理文件。",
+  ) ?? '';
+  assert.match(chinese, /`grep` is not on/);
+  assert.match(chinese, /search_text/);
+  // That same Chinese message with its GBK bytes decoded as UTF-8: the words are
+  // gone, only U+FFFD runs are left, and the token is the one surviving signal.
+  assert.match(
+    recoveryHintForToolFailure('run_command', "'ForEach-Object' ����\n����") ?? '',
+    /`foreach-object` is not on .*powershell -NoProfile|head_tail/,
+  );
+  // PowerShell cmdlets refused by cmd.exe, both locales.
+  assert.match(
+    recoveryHintForToolFailure('run_command', "The term 'Get-Content' is not recognized as the name of a cmdlet") ?? '',
+    /read_file|head_tail/,
+  );
+  assert.match(
+    recoveryHintForToolFailure('run_command', '无法将“ForEach-Object”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。') ?? '',
+    /powershell -NoProfile|head_tail|take_lines/,
+  );
+  // A command nobody mapped still gets the shell named and the way out.
+  assert.match(
+    recoveryHintForToolFailure('run_command', "'frobnicate' is not recognized as an internal or external command") ?? '',
+    /`frobnicate` is not on .*(dedicated tool|powershell)/,
+  );
+  // "grep: command not found" also contains "not found" - it must not be
+  // answered with path advice, which is what the order of these branches decides.
+  const posix = recoveryHintForToolFailure('run_command', 'grep: command not found') ?? '';
+  assert.match(posix, /search_text/);
+  assert.doesNotMatch(posix, /locate the correct path/);
+});
+test('run_command tells the model which shell it gets and what that shell lacks', () => {
+  const description = runCommandTool.description;
+  assert.match(description, /cmd\.exe|\/bin\/sh/);
+  // The failure class that actually cost calls: POSIX filters and PowerShell
+  // cmdlets under cmd.exe, answered by naming the dedicated tools instead.
+  assert.match(description, /head_tail|read_lines|search_text|list_files/);
 });

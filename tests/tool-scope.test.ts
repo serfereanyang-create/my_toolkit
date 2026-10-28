@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createDefaultToolRegistry } from '../src/tools/index.js';
-import { MAX_PROVIDER_TOOLS, limitProviderTools, resolveToolScope, selectScopedTools } from '../src/tools/scope.js';
+import {
+  AGENT_SPAWNING_TOOLS,
+  DELEGATION_TOOLS,
+  MAX_PROVIDER_TOOLS,
+  canSpawnAgent,
+  isReadOnlyTool,
+  limitProviderTools,
+  resolveToolScope,
+  selectScopedTools,
+} from '../src/tools/scope.js';
 
 function names(scope: 'compact' | 'standard' | 'full') {
   return selectScopedTools(createDefaultToolRegistry(), scope).map((tool) => tool.name);
@@ -183,4 +192,107 @@ test('capping after injection keeps the serialized count under the ceiling', () 
   assert.ok(MAX_PROVIDER_TOOLS < 350);
   const kept = new Set(result.tools.map((tool) => tool.name));
   for (const name of protectedNames) assert.ok(kept.has(name), `${name} must survive`);
+});
+
+/*
+ * standard is the default scope, so a tool missing here is a tool the agent
+ * works around with a shell command. The allowlists are an enumeration and had
+ * drifted: 127 of 363 tools were absent from standard, 92 of them read-only.
+ * read-only is now the axis rather than a name list.
+ */
+test('standard reaches read-only analysis tools without naming each one', () => {
+  const standard = names('standard');
+  for (const tool of ['semantic_search', 'repo_map', 'codebase_search', 'explain_code', 'find_similar_code', 'review_code', 'health_report']) {
+    assert.ok(standard.includes(tool), `expected standard to expose ${tool}`);
+  }
+});
+
+/*
+ * Delegation used to be excluded from standard on the grounds that "delegation
+ * is a deliberate choice, not a default". That changed for exactly two tools:
+ * without spawn_subagent a large file set can only be read serially, and
+ * without review_loop nothing reviews the session's output from outside it.
+ * Two schemas for parallel reading plus an independent review pass is the
+ * better default.
+ *
+ * The exception is scoped to delegation and does NOT extend to workflow. Same
+ * risk shape (a call that starts agents, so `risk` alone is not the whole
+ * story), different purpose: spawn_subagent/review_loop are ways to do this
+ * task faster or better, while workflow_execute/workflow_resume replay a stored
+ * plan unattended — a mode switch, not a reading strategy. Nothing in a default
+ * scope's job needs it, so it would cost schemas and buy no behaviour. It also
+ * keeps the rule honest: every entry point that runs a plan without a human
+ * watching stays behind an explicit scope choice.
+ *
+ * The read-only claim itself is unchanged — isReadOnlyTool still subtracts all
+ * of AGENT_SPAWNING_TOOLS, which is what the read-only experts and reviewers
+ * rely on (tests/review-readonly.test.ts). Standard's exception is an allowlist
+ * applied on top, not a redefinition of read-only.
+ */
+test('standard refuses direct writes, but exposes the two delegation tools', () => {
+  const standard = names('standard');
+  const reg = createDefaultToolRegistry();
+  const byName = new Map(reg.list().map((tool) => [tool.name, tool]));
+
+  // Genuine writes and execution stay behind the allowlists.
+  for (const tool of ['delete_path', 'rename_symbol', 'extract_method', 'git_init']) {
+    assert.ok(!standard.includes(tool), `standard must not expose ${tool}`);
+  }
+  // `spawn_subagent` carries risk `read`, so this is the case the read-only rule
+  // would have let through if it had not been subtracted — and now re-admitted
+  // by name. The risk label must stay `read`, or the two rules stop being
+  // distinguishable and this exception becomes untestable.
+  assert.equal(byName.get('spawn_subagent')?.risk, 'read', 'this test guards the read-only exception');
+  assert.ok(byName.has('review_loop'), 'review_loop must be in the registry for scope to see it');
+
+  // Delegation is now in.
+  for (const tool of ['spawn_subagent', 'review_loop']) {
+    assert.ok(standard.includes(tool), `standard must expose ${tool}`);
+    assert.equal(canSpawnAgent(tool), true, `${tool} must still be treated as able to write`);
+    assert.equal(isReadOnlyTool(byName.get(tool)!), false, `${tool} must not count as read-only`);
+  }
+  // Every tool standard re-admits by delegation must be one of the spawners, and
+  // the read-only filter must never have learned about them.
+  for (const name of DELEGATION_TOOLS) {
+    assert.ok(AGENT_SPAWNING_TOOLS.has(name), `${name} must be in AGENT_SPAWNING_TOOLS`);
+  }
+
+  // Workflow execution stays out.
+  for (const tool of ['workflow_execute', 'workflow_resume']) {
+    assert.ok(!standard.includes(tool), `standard must not expose ${tool}`);
+  }
+  // And compact, the read-only scope, gets neither.
+  const compact = names('compact');
+  for (const tool of ['spawn_subagent', 'review_loop', 'workflow_execute', 'workflow_resume']) {
+    assert.ok(!compact.includes(tool), `compact must not expose ${tool}`);
+  }
+});
+
+test('the tools HIGH_VALUE_EXTRA lists are actually selectable in standard', () => {
+  // They were declared for the provider cap's ranking and never read by scope
+  // selection, so `run_tests` was `full`-only while `run_command` — which the
+  // agent then used to hand-write the same thing — was already present.
+  const standard = names('standard');
+  for (const tool of ['run_tests', 'lint', 'typecheck']) {
+    assert.ok(standard.includes(tool), `expected standard to expose ${tool}`);
+  }
+  // compact stays a read-only scope: running tests is not a read.
+  const compact = names('compact');
+  for (const tool of ['run_tests', 'lint', 'typecheck']) {
+    assert.ok(!compact.includes(tool), `compact must not expose ${tool}`);
+  }
+});
+
+test('widening read-only into standard leaves the tool array under the provider cap', () => {
+  const counts = ['compact', 'standard', 'full'].map((scope) => names(scope as 'compact' | 'standard' | 'full').length);
+  // 236 before the read-only widening, 330 after it, 332 once the two delegation
+  // tools were admitted. The floor tracks the delegation decision, not a target.
+  assert.ok(counts[1] >= 332, `standard should be at least 332 (236 → 330 read-only → 332 with delegation); saw ${counts[1]}`);
+  assert.ok(counts[1] < counts[2], `standard must stay smaller than full: ${counts.join(' / ')}`);
+  assert.ok(counts[1] <= MAX_PROVIDER_TOOLS, `standard (${counts[1]}) must fit under the cap of ${MAX_PROVIDER_TOOLS}`);
+  // The cap runs AFTER the post-scope injections, so the headroom has to cover
+  // the tools scope selection cannot see: propose_plan, open_pull_request and
+  // supervisor_status (computer/browser tools are switch-gated and are covered
+  // by the protected-name rank instead).
+  assert.ok(counts[1] + 3 <= MAX_PROVIDER_TOOLS, `standard (${counts[1]}) plus 3 post-scope tools must still fit under ${MAX_PROVIDER_TOOLS}`);
 });

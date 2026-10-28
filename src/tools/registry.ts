@@ -54,7 +54,7 @@ export class ToolRegistry {
           locale,
           kind: 'invalid_input',
           tool: name,
-          detail: errorMessage(error),
+          detail: invalidInputDetail(tool, input, error, locale),
         }),
       };
     }
@@ -300,4 +300,45 @@ async function buildWriteDiff(
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Validation failures used to report only the schema complaint ("path is
+ * required"), which told the model nothing it could act on: it could not see
+ * that its whole payload had arrived as `{ raw: "..." }`. Echo what was
+ * received plus the tool's own hint so the retry can actually differ.
+ */
+function invalidInputDetail(tool: ToolDefinition, input: unknown, error: unknown, locale: string) {
+  const reason = errorMessage(error);
+  const zh = locale === 'zh';
+  const record = isRecord(input) ? input : {};
+  const hint = typeof tool.inputHint === 'string' && tool.inputHint.trim() ? tool.inputHint.trim() : '';
+  const expected = hint ? (zh ? `期望的参数：${hint}` : `expected: ${hint}`) : '';
+  const raw = typeof record.raw === 'string' ? record.raw : undefined;
+  if (raw !== undefined) {
+    const preview = raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
+    // `reason` is the schema's complaint, not the reason the repair failed — the
+    // SyntaxError is lost by the time we get here. Listing it as a separate
+    // part stops the message from claiming "could not be repaired (path is
+    // required)", which the model cannot act on.
+    const parts = [
+      zh ? '参数不是合法 JSON，自动修复后仍无法解析' : 'arguments were not valid JSON and could not be repaired',
+      zh ? `校验结果：${reason}` : `validation: ${reason}`,
+      expected,
+      zh ? `收回的原文：${preview}` : `received: ${preview}`,
+    ].filter(Boolean);
+    return parts.join(zh ? '；' : '; ');
+  }
+  const keys = Object.keys(record);
+  // This text becomes the tool result and enters the model's context, so it is
+  // bounded the same way the raw preview is: twenty keys, 200 characters.
+  const echoed = keys.length > 20 ? [...keys.slice(0, 20), '…'] : keys;
+  const keyList = echoed.join(', ');
+  const keyText = keyList.length > 200 ? `${keyList.slice(0, 200)}…` : keyList;
+  const parts = [
+    reason,
+    keys.length ? (zh ? `收到的键：${keyText}` : `received keys: ${keyText}`) : '',
+    expected,
+  ].filter(Boolean);
+  return parts.join(zh ? '；' : '; ');
 }

@@ -85,6 +85,16 @@ export async function acquireFileLock(lockPath: string, options: LockOptions = {
   const deadline = now() + timeoutMs;
   let delay = options.retryDelayMs ?? DEFAULTS.retryDelayMs;
   let lastCode: string | undefined;
+  /**
+   * 「报冲突但看不见锁文件」连续出现了几次。
+   *
+   * 这不是疑心病：Windows 上 `unlink` 与 `open(...,'wx')` 撞在一起时，`open`
+   * 报 EPERM，紧跟的 `stat` 也报 ENOENT（名字正在被删），于是「冲突码 + 文件
+   * 不在场」这种组合会真实地闪一下——20 个并发写在跑测试时就这么撞过一次
+   * （EPERM，但锁文件早已被上一个释放者删掉）。所以这里连续容忍几次，扛不过
+   * 才认定是真的没权限，把原始错误抛出去。
+   */
+  let absentStreak = 0;
 
   for (;;) {
     await mkdir(dirname(lockPath), { recursive: true }).catch(() => undefined);
@@ -110,8 +120,16 @@ export async function acquireFileLock(lockPath: string, options: LockOptions = {
       if (!CONTENTION_CODES.has(code)) throw error;
       // Windows 上「文件已被别人打开」报 EPERM/EBUSY 而不是 EEXIST（`wx` 的
       // 独占语义落到 Win32 上是 share mode）。锁文件不在场时，同样的错误码
-      // 就真的是没权限——那种要立刻抛，不能伪装成「在等锁」等到超时。
-      if (code !== 'EEXIST' && code !== 'ENOENT' && !(await exists(lockPath))) throw error;
+      // 多半是真的没权限——那要立刻抛，不能伪装成「在等锁」等到超时；但删锁
+      // 与建锁撞车的那一瞬间也会长成这样，所以给几次机会再判死。
+      if (code === 'EEXIST' || code === 'ENOENT' || (await exists(lockPath))) {
+        absentStreak = 0;
+      } else if (++absentStreak > MAX_ABSENT_STREAK) {
+        throw error;
+      } else {
+        // 让正在进行的删锁先落地，否则重试还是同一个瞬间。
+        await sleep(2);
+      }
     }
 
     // 有人的锁在这儿。先看看是不是被抛下的（持有者已死），是就摘掉立刻再抢；
@@ -127,6 +145,9 @@ export async function acquireFileLock(lockPath: string, options: LockOptions = {
 
 /** 「有人在用」的错误码。EEXIST 是标准答案，其余是 Windows 的几种说法。 */
 const CONTENTION_CODES = new Set(['EEXIST', 'EPERM', 'EBUSY', 'EACCES', 'ENOENT']);
+
+/** 冲突码连续「看不见锁文件」的上限，超过就认定是真的没权限（见 acquireFileLock）。 */
+const MAX_ABSENT_STREAK = 5;
 
 async function exists(path: string): Promise<boolean> {
   try {

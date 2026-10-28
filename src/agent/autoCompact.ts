@@ -3,6 +3,7 @@ import { withModelRetry } from '../providers/retry.js';
 import { withRequestControl } from '../providers/requestControl.js';
 import { throwIfAborted } from '../utils/cancellation.js';
 import type { AgentRuntime } from './agent.js';
+import { compactMessagesForModel } from './contextBudget.js';
 import { autoCompactTokenLimit, resolveModelContextWindow } from './modelWindows.js';
 
 /**
@@ -69,7 +70,22 @@ export const SUMMARIZATION_PROMPT =
 /** compact.rs SUMMARY_PREFIX semantics. */
 export const SUMMARY_PREFIX = '[compacted session history] Another agent started this task and produced the following handoff summary.';
 
-/** compact.rs: the summarization request = full history + trailing user prompt, no tools. */
+/**
+ * compact.rs: the summarization request = full history + trailing user prompt,
+ * no tools.
+ *
+ * "Full history" means the packed history, not the stored one. A live session
+ * legitimately holds single tool results larger than the whole window — one
+ * real desktop session carried a 2.7 MB `fetch_url` page — because every
+ * ordinary step is clipped down to the per-role limits before it is sent (see
+ * `compactMessagesForModel`, codex `truncation_policy`). Feeding the raw array
+ * here made the summarization prompt itself ~694k tokens against a 272k
+ * window: the provider answered 400, `runAutoCompact` kept the history that
+ * caused it, and the next step rebuilt the identical oversized request — so
+ * auto-compaction failed on every step forever while normal turns kept working.
+ * Callers pack first (see `runAutoCompact`); the prompt is appended afterwards
+ * so it can never be clipped away.
+ */
 export function buildCompactRequestMessages(messages: AgentMessage[]): AgentMessage[] {
   return [
     ...messages,
@@ -123,10 +139,27 @@ async function runAutoCompact(
   const emitCompact = runtime.compactEmit;
   emitCompact?.({ phase: 'started', auto: true, before: messages.length });
   try {
+    // Pack the history before summarizing it, exactly as a normal step does.
+    //
+    // Without this the request carried the raw stored messages, and a single
+    // oversized tool result (a 2.7 MB fetch_url page is real, measured in a
+    // desktop session) put the summarization prompt itself over the window.
+    // The provider rejects that with a context-length error, the history is
+    // kept, and the next step rebuilds the same request: auto-compaction can
+    // then never succeed, no matter how far over the limit the session grows.
+    // The packed form is the same one the model just answered, so a summary of
+    // it is a summary of what was actually in context.
+    const packed = compactMessagesForModel(messages, { model: runtime.provider.model });
+    if (packed.truncated) {
+      runtime.ui.info(
+        `Compaction request packed to fit the window: ${packed.originalChars} → ${packed.compactChars} chars`
+        + (packed.droppedMessages ? `, oldest ${packed.droppedMessages} message(s) dropped` : '') + '.',
+      );
+    }
     const request: ProviderRequest = {
       signal: runtime.requestSignal,
       timeoutMs: runtime.config.requestTimeoutMs,
-      messages: buildCompactRequestMessages(messages),
+      messages: buildCompactRequestMessages(packed.messages),
       tools: [],
       workspaceRoot: runtime.config.workspaceRoot,
     };

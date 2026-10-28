@@ -33,6 +33,8 @@ export const GUI_TOOL_NAMES = new Set([
   'computer_key',
   'computer_scroll',
   'computer_activate',
+  'computer_open',
+  'computer_wait_window',
 ]);
 
 export type GuiToolResult = {
