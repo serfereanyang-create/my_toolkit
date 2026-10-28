@@ -90,7 +90,6 @@
 .setting-row-control { min-width: 150px; justify-content: flex-end; }
 
 .settings-text-field,
-.settings-select,
 .settings-search input,
 .model-field input,
 .model-field select {
@@ -99,7 +98,6 @@
 }
 
 .settings-text-field:focus,
-.settings-select:focus,
 .model-field input:focus,
 .model-field select:focus,
 .settings-search:focus-within {
