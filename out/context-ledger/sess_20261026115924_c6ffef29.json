@@ -1,0 +1,5027 @@
+{
+  "session": {
+    "file": "C:\\Users\\34516\\ZCodeProject\\cli\\.aicode\\sessions\\sess_20261026115924_c6ffef29.json",
+    "id": "sess_20261026115924_c6ffef29",
+    "provider": "openai",
+    "model": "deepseek-v4.1-flash",
+    "messageCount": 148,
+    "toolCallCount": 169,
+    "trajectoryFile": "C:\\Users\\34516\\ZCodeProject\\cli\\.aicode\\sessions\\sess_20261026115924_c6ffef29.trajectory.jsonl",
+    "trajectoryExists": true,
+    "usageLog": "C:\\Users\\34516\\.aicode\\usage.jsonl"
+  },
+  "rounds": [
+    {
+      "i": 0,
+      "turn": 1,
+      "step": 1,
+      "requestMessageCount": 4,
+      "promptChars": 2275,
+      "inputTokens": 23745,
+      "outputTokens": 165,
+      "cacheReadTokens": 0,
+      "promptTokens": 23745,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": true,
+      "turnFirst": true,
+      "surface": {
+        "scope": "compact",
+        "count": 238,
+        "fingerprint": "414dacb1a318",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 1,
+      "turn": 2,
+      "step": 1,
+      "requestMessageCount": 6,
+      "promptChars": 2824,
+      "inputTokens": 28082,
+      "outputTokens": 272,
+      "cacheReadTokens": 0,
+      "promptTokens": 28082,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": true
+    },
+    {
+      "i": 2,
+      "turn": 2,
+      "step": 2,
+      "requestMessageCount": 7,
+      "promptChars": 4758,
+      "inputTokens": 729,
+      "outputTokens": 230,
+      "cacheReadTokens": 28032,
+      "promptTokens": 28761,
+      "hitRate": 0.9746531761760717,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 3,
+      "turn": 2,
+      "step": 3,
+      "requestMessageCount": 9,
+      "promptChars": 7685,
+      "inputTokens": 1171,
+      "outputTokens": 274,
+      "cacheReadTokens": 28672,
+      "promptTokens": 29843,
+      "hitRate": 0.9607613175619073,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 4,
+      "turn": 2,
+      "step": 4,
+      "requestMessageCount": 11,
+      "promptChars": 17407,
+      "inputTokens": 2568,
+      "outputTokens": 237,
+      "cacheReadTokens": 29824,
+      "promptTokens": 32392,
+      "hitRate": 0.9207211657199309,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 5,
+      "turn": 2,
+      "step": 5,
+      "requestMessageCount": 13,
+      "promptChars": 57678,
+      "inputTokens": 45996,
+      "outputTokens": 968,
+      "cacheReadTokens": 0,
+      "promptTokens": 45996,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 6,
+      "turn": 2,
+      "step": 6,
+      "requestMessageCount": 16,
+      "promptChars": 90664,
+      "inputTokens": 8403,
+      "outputTokens": 465,
+      "cacheReadTokens": 45952,
+      "promptTokens": 54355,
+      "hitRate": 0.8454052065127403,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 7,
+      "turn": 2,
+      "step": 7,
+      "requestMessageCount": 19,
+      "promptChars": 102821,
+      "inputTokens": 60297,
+      "outputTokens": 1346,
+      "cacheReadTokens": 0,
+      "promptTokens": 60297,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 8,
+      "turn": 2,
+      "step": 8,
+      "requestMessageCount": 21,
+      "promptChars": 114947,
+      "inputTokens": 3049,
+      "outputTokens": 2353,
+      "cacheReadTokens": 60288,
+      "promptTokens": 63337,
+      "hitRate": 0.9518606817500039,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 9,
+      "turn": 3,
+      "step": 1,
+      "requestMessageCount": 23,
+      "promptChars": 118089,
+      "inputTokens": 60821,
+      "outputTokens": 868,
+      "cacheReadTokens": 3968,
+      "promptTokens": 64789,
+      "hitRate": 0.06124496442297304,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 10,
+      "turn": 3,
+      "step": 2,
+      "requestMessageCount": 25,
+      "promptChars": 118165,
+      "inputTokens": 38328,
+      "outputTokens": 224,
+      "cacheReadTokens": 26496,
+      "promptTokens": 64824,
+      "hitRate": 0.4087375046279156,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 11,
+      "turn": 3,
+      "step": 3,
+      "requestMessageCount": 27,
+      "promptChars": 132614,
+      "inputTokens": 68454,
+      "outputTokens": 566,
+      "cacheReadTokens": 0,
+      "promptTokens": 68454,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 12,
+      "turn": 3,
+      "step": 4,
+      "requestMessageCount": 30,
+      "promptChars": 137342,
+      "inputTokens": 1522,
+      "outputTokens": 1461,
+      "cacheReadTokens": 68352,
+      "promptTokens": 69874,
+      "hitRate": 0.9782179351403956,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 13,
+      "turn": 3,
+      "step": 5,
+      "requestMessageCount": 33,
+      "promptChars": 142286,
+      "inputTokens": 71219,
+      "outputTokens": 550,
+      "cacheReadTokens": 0,
+      "promptTokens": 71219,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 14,
+      "turn": 3,
+      "step": 6,
+      "requestMessageCount": 36,
+      "promptChars": 143410,
+      "inputTokens": 513,
+      "outputTokens": 458,
+      "cacheReadTokens": 71168,
+      "promptTokens": 71681,
+      "hitRate": 0.9928432918067549,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 15,
+      "turn": 3,
+      "step": 7,
+      "requestMessageCount": 38,
+      "promptChars": 143516,
+      "inputTokens": 71736,
+      "outputTokens": 347,
+      "cacheReadTokens": 0,
+      "promptTokens": 71736,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 16,
+      "turn": 3,
+      "step": 8,
+      "requestMessageCount": 40,
+      "promptChars": 151254,
+      "inputTokens": 2811,
+      "outputTokens": 934,
+      "cacheReadTokens": 71680,
+      "promptTokens": 74491,
+      "hitRate": 0.9622638976520653,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 17,
+      "turn": 3,
+      "step": 9,
+      "requestMessageCount": 42,
+      "promptChars": 151902,
+      "inputTokens": 402,
+      "outputTokens": 2100,
+      "cacheReadTokens": 74368,
+      "promptTokens": 74770,
+      "hitRate": 0.994623512103785,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 18,
+      "turn": 3,
+      "step": 10,
+      "requestMessageCount": 43,
+      "promptChars": 151914,
+      "inputTokens": 10013,
+      "outputTokens": 1784,
+      "cacheReadTokens": 64768,
+      "promptTokens": 74781,
+      "hitRate": 0.8661023522017625,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 19,
+      "turn": 3,
+      "step": 11,
+      "requestMessageCount": 47,
+      "promptChars": 177763,
+      "inputTokens": 81465,
+      "outputTokens": 1507,
+      "cacheReadTokens": 0,
+      "promptTokens": 81465,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 20,
+      "turn": 3,
+      "step": 12,
+      "requestMessageCount": 49,
+      "promptChars": 178183,
+      "inputTokens": 165,
+      "outputTokens": 2118,
+      "cacheReadTokens": 81408,
+      "promptTokens": 81573,
+      "hitRate": 0.9979772718914347,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 21,
+      "turn": 3,
+      "step": 13,
+      "requestMessageCount": 52,
+      "promptChars": 179980,
+      "inputTokens": 692,
+      "outputTokens": 1714,
+      "cacheReadTokens": 81536,
+      "promptTokens": 82228,
+      "hitRate": 0.9915843751520164,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 22,
+      "turn": 3,
+      "step": 14,
+      "requestMessageCount": 53,
+      "promptChars": 183059,
+      "inputTokens": 831,
+      "outputTokens": 680,
+      "cacheReadTokens": 82176,
+      "promptTokens": 83007,
+      "hitRate": 0.989988796125628,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 23,
+      "turn": 3,
+      "step": 15,
+      "requestMessageCount": 54,
+      "promptChars": 183071,
+      "inputTokens": 201,
+      "outputTokens": 2702,
+      "cacheReadTokens": 82816,
+      "promptTokens": 83017,
+      "hitRate": 0.9975788091595698,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 24,
+      "turn": 4,
+      "step": 1,
+      "requestMessageCount": 7,
+      "promptChars": 5611,
+      "inputTokens": 27577,
+      "outputTokens": 500,
+      "cacheReadTokens": 1536,
+      "promptTokens": 29113,
+      "hitRate": 0.05275993542403737,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 25,
+      "turn": 4,
+      "step": 2,
+      "requestMessageCount": 9,
+      "promptChars": 5804,
+      "inputTokens": 137,
+      "outputTokens": 854,
+      "cacheReadTokens": 29056,
+      "promptTokens": 29193,
+      "hitRate": 0.9953070941664097,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 26,
+      "turn": 4,
+      "step": 3,
+      "requestMessageCount": 12,
+      "promptChars": 16467,
+      "inputTokens": 2571,
+      "outputTokens": 480,
+      "cacheReadTokens": 29184,
+      "promptTokens": 31755,
+      "hitRate": 0.9190363722248465,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 27,
+      "turn": 4,
+      "step": 4,
+      "requestMessageCount": 14,
+      "promptChars": 24455,
+      "inputTokens": 2360,
+      "outputTokens": 396,
+      "cacheReadTokens": 31744,
+      "promptTokens": 34104,
+      "hitRate": 0.9307999061693643,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 28,
+      "turn": 4,
+      "step": 5,
+      "requestMessageCount": 16,
+      "promptChars": 52745,
+      "inputTokens": 7331,
+      "outputTokens": 616,
+      "cacheReadTokens": 34048,
+      "promptTokens": 41379,
+      "hitRate": 0.822832837912951,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 29,
+      "turn": 4,
+      "step": 6,
+      "requestMessageCount": 18,
+      "promptChars": 61365,
+      "inputTokens": 2539,
+      "outputTokens": 1499,
+      "cacheReadTokens": 41344,
+      "promptTokens": 43883,
+      "hitRate": 0.9421416038101315,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 30,
+      "turn": 4,
+      "step": 7,
+      "requestMessageCount": 20,
+      "promptChars": 67386,
+      "inputTokens": 43998,
+      "outputTokens": 656,
+      "cacheReadTokens": 1536,
+      "promptTokens": 45534,
+      "hitRate": 0.03373303465542232,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 31,
+      "turn": 4,
+      "step": 8,
+      "requestMessageCount": 22,
+      "promptChars": 72061,
+      "inputTokens": 1436,
+      "outputTokens": 1468,
+      "cacheReadTokens": 45440,
+      "promptTokens": 46876,
+      "hitRate": 0.969365986858947,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 32,
+      "turn": 4,
+      "step": 9,
+      "requestMessageCount": 24,
+      "promptChars": 72204,
+      "inputTokens": 214,
+      "outputTokens": 640,
+      "cacheReadTokens": 46720,
+      "promptTokens": 46934,
+      "hitRate": 0.9954404056760557,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 33,
+      "turn": 4,
+      "step": 10,
+      "requestMessageCount": 26,
+      "promptChars": 76426,
+      "inputTokens": 1263,
+      "outputTokens": 1747,
+      "cacheReadTokens": 46848,
+      "promptTokens": 48111,
+      "hitRate": 0.9737482072706866,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 34,
+      "turn": 4,
+      "step": 11,
+      "requestMessageCount": 28,
+      "promptChars": 76616,
+      "inputTokens": 46651,
+      "outputTokens": 281,
+      "cacheReadTokens": 1536,
+      "promptTokens": 48187,
+      "hitRate": 0.03187581712910121,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 35,
+      "turn": 4,
+      "step": 12,
+      "requestMessageCount": 30,
+      "promptChars": 78544,
+      "inputTokens": 47264,
+      "outputTokens": 1064,
+      "cacheReadTokens": 1536,
+      "promptTokens": 48800,
+      "hitRate": 0.031475409836065574,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 36,
+      "turn": 4,
+      "step": 13,
+      "requestMessageCount": 33,
+      "promptChars": 79270,
+      "inputTokens": 49080,
+      "outputTokens": 1025,
+      "cacheReadTokens": 0,
+      "promptTokens": 49080,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 37,
+      "turn": 4,
+      "step": 14,
+      "requestMessageCount": 35,
+      "promptChars": 90986,
+      "inputTokens": 3200,
+      "outputTokens": 769,
+      "cacheReadTokens": 49024,
+      "promptTokens": 52224,
+      "hitRate": 0.9387254901960784,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 38,
+      "turn": 4,
+      "step": 15,
+      "requestMessageCount": 37,
+      "promptChars": 102589,
+      "inputTokens": 56333,
+      "outputTokens": 304,
+      "cacheReadTokens": 0,
+      "promptTokens": 56333,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 39,
+      "turn": 4,
+      "step": 16,
+      "requestMessageCount": 38,
+      "promptChars": 102789,
+      "inputTokens": 193,
+      "outputTokens": 478,
+      "cacheReadTokens": 56192,
+      "promptTokens": 56385,
+      "hitRate": 0.9965771038396737,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 40,
+      "turn": 4,
+      "step": 17,
+      "requestMessageCount": 39,
+      "promptChars": 103649,
+      "inputTokens": 315,
+      "outputTokens": 1483,
+      "cacheReadTokens": 56320,
+      "promptTokens": 56635,
+      "hitRate": 0.9944380683323033,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 41,
+      "turn": 4,
+      "step": 18,
+      "requestMessageCount": 42,
+      "promptChars": 104203,
+      "inputTokens": 265,
+      "outputTokens": 1597,
+      "cacheReadTokens": 56576,
+      "promptTokens": 56841,
+      "hitRate": 0.9953378723104801,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 42,
+      "turn": 4,
+      "step": 19,
+      "requestMessageCount": 43,
+      "promptChars": 105853,
+      "inputTokens": 795,
+      "outputTokens": 733,
+      "cacheReadTokens": 56576,
+      "promptTokens": 57371,
+      "hitRate": 0.9861428247720974,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 43,
+      "turn": 4,
+      "step": 20,
+      "requestMessageCount": 45,
+      "promptChars": 106607,
+      "inputTokens": 304,
+      "outputTokens": 1593,
+      "cacheReadTokens": 57344,
+      "promptTokens": 57648,
+      "hitRate": 0.9947266167082986,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 44,
+      "turn": 4,
+      "step": 21,
+      "requestMessageCount": 47,
+      "promptChars": 107639,
+      "inputTokens": 356,
+      "outputTokens": 753,
+      "cacheReadTokens": 57600,
+      "promptTokens": 57956,
+      "hitRate": 0.9938574090689488,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 45,
+      "turn": 4,
+      "step": 22,
+      "requestMessageCount": 49,
+      "promptChars": 109140,
+      "inputTokens": 594,
+      "outputTokens": 676,
+      "cacheReadTokens": 57856,
+      "promptTokens": 58450,
+      "hitRate": 0.9898374679213002,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 46,
+      "turn": 4,
+      "step": 23,
+      "requestMessageCount": 51,
+      "promptChars": 110253,
+      "inputTokens": 422,
+      "outputTokens": 635,
+      "cacheReadTokens": 58368,
+      "promptTokens": 58790,
+      "hitRate": 0.992821908487838,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 47,
+      "turn": 4,
+      "step": 24,
+      "requestMessageCount": 53,
+      "promptChars": 111196,
+      "inputTokens": 351,
+      "outputTokens": 591,
+      "cacheReadTokens": 58752,
+      "promptTokens": 59103,
+      "hitRate": 0.9940612151667428,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 48,
+      "turn": 4,
+      "step": 25,
+      "requestMessageCount": 55,
+      "promptChars": 111889,
+      "inputTokens": 364,
+      "outputTokens": 2030,
+      "cacheReadTokens": 59008,
+      "promptTokens": 59372,
+      "hitRate": 0.9938691639156505,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 49,
+      "turn": 4,
+      "step": 26,
+      "requestMessageCount": 57,
+      "promptChars": 113430,
+      "inputTokens": 615,
+      "outputTokens": 1036,
+      "cacheReadTokens": 59264,
+      "promptTokens": 59879,
+      "hitRate": 0.9897292873962491,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 50,
+      "turn": 4,
+      "step": 27,
+      "requestMessageCount": 58,
+      "promptChars": 113956,
+      "inputTokens": 58508,
+      "outputTokens": 1110,
+      "cacheReadTokens": 1536,
+      "promptTokens": 60044,
+      "hitRate": 0.025581240423689294,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 51,
+      "turn": 4,
+      "step": 28,
+      "requestMessageCount": 60,
+      "promptChars": 115827,
+      "inputTokens": 533,
+      "outputTokens": 2637,
+      "cacheReadTokens": 60032,
+      "promptTokens": 60565,
+      "hitRate": 0.9911995376867828,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 52,
+      "turn": 4,
+      "step": 29,
+      "requestMessageCount": 61,
+      "promptChars": 116266,
+      "inputTokens": 168,
+      "outputTokens": 2399,
+      "cacheReadTokens": 60544,
+      "promptTokens": 60712,
+      "hitRate": 0.9972328370009224,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 53,
+      "turn": 4,
+      "step": 30,
+      "requestMessageCount": 62,
+      "promptChars": 116406,
+      "inputTokens": 214,
+      "outputTokens": 719,
+      "cacheReadTokens": 60544,
+      "promptTokens": 60758,
+      "hitRate": 0.9964778300799895,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 54,
+      "turn": 4,
+      "step": 31,
+      "requestMessageCount": 63,
+      "promptChars": 118195,
+      "inputTokens": 598,
+      "outputTokens": 980,
+      "cacheReadTokens": 60672,
+      "promptTokens": 61270,
+      "hitRate": 0.990239921658234,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 55,
+      "turn": 4,
+      "step": 32,
+      "requestMessageCount": 66,
+      "promptChars": 119767,
+      "inputTokens": 61819,
+      "outputTokens": 1990,
+      "cacheReadTokens": 0,
+      "promptTokens": 61819,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 56,
+      "turn": 5,
+      "step": 1,
+      "requestMessageCount": 67,
+      "promptChars": 120917,
+      "inputTokens": 36022,
+      "outputTokens": 334,
+      "cacheReadTokens": 26368,
+      "promptTokens": 62390,
+      "hitRate": 0.4226318320243629,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 57,
+      "turn": 5,
+      "step": 2,
+      "requestMessageCount": 68,
+      "promptChars": 160884,
+      "inputTokens": 12501,
+      "outputTokens": 402,
+      "cacheReadTokens": 62336,
+      "promptTokens": 74837,
+      "hitRate": 0.832956959792616,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 58,
+      "turn": 5,
+      "step": 3,
+      "requestMessageCount": 70,
+      "promptChars": 170549,
+      "inputTokens": 77371,
+      "outputTokens": 1004,
+      "cacheReadTokens": 0,
+      "promptTokens": 77371,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 59,
+      "turn": 5,
+      "step": 4,
+      "requestMessageCount": 73,
+      "promptChars": 178006,
+      "inputTokens": 2400,
+      "outputTokens": 1212,
+      "cacheReadTokens": 77312,
+      "promptTokens": 79712,
+      "hitRate": 0.9698916097952629,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 60,
+      "turn": 5,
+      "step": 5,
+      "requestMessageCount": 75,
+      "promptChars": 178113,
+      "inputTokens": 78245,
+      "outputTokens": 2201,
+      "cacheReadTokens": 1536,
+      "promptTokens": 79781,
+      "hitRate": 0.019252704277960917,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 61,
+      "turn": 6,
+      "step": 1,
+      "requestMessageCount": 80,
+      "promptChars": 180976,
+      "inputTokens": 54237,
+      "outputTokens": 459,
+      "cacheReadTokens": 26624,
+      "promptTokens": 80861,
+      "hitRate": 0.3292563782293071,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 62,
+      "turn": 6,
+      "step": 2,
+      "requestMessageCount": 82,
+      "promptChars": 189660,
+      "inputTokens": 2831,
+      "outputTokens": 630,
+      "cacheReadTokens": 80768,
+      "promptTokens": 83599,
+      "hitRate": 0.9661359585640976,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 63,
+      "turn": 6,
+      "step": 3,
+      "requestMessageCount": 84,
+      "promptChars": 193771,
+      "inputTokens": 1309,
+      "outputTokens": 326,
+      "cacheReadTokens": 83584,
+      "promptTokens": 84893,
+      "hitRate": 0.9845805896834839,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 64,
+      "turn": 6,
+      "step": 4,
+      "requestMessageCount": 86,
+      "promptChars": 194411,
+      "inputTokens": 85122,
+      "outputTokens": 1502,
+      "cacheReadTokens": 0,
+      "promptTokens": 85122,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 65,
+      "turn": 6,
+      "step": 5,
+      "requestMessageCount": 88,
+      "promptChars": 195515,
+      "inputTokens": 569,
+      "outputTokens": 1223,
+      "cacheReadTokens": 84864,
+      "promptTokens": 85433,
+      "hitRate": 0.9933398101436213,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 66,
+      "turn": 6,
+      "step": 6,
+      "requestMessageCount": 90,
+      "promptChars": 205695,
+      "inputTokens": 3249,
+      "outputTokens": 4447,
+      "cacheReadTokens": 85376,
+      "promptTokens": 88625,
+      "hitRate": 0.9633399153737658,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 67,
+      "turn": 6,
+      "step": 7,
+      "requestMessageCount": 93,
+      "promptChars": 216889,
+      "inputTokens": 3496,
+      "outputTokens": 1939,
+      "cacheReadTokens": 88576,
+      "promptTokens": 92072,
+      "hitRate": 0.962029715874533,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 68,
+      "turn": 6,
+      "step": 8,
+      "requestMessageCount": 95,
+      "promptChars": 219680,
+      "inputTokens": 717,
+      "outputTokens": 2727,
+      "cacheReadTokens": 92032,
+      "promptTokens": 92749,
+      "hitRate": 0.9922694584308187,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 69,
+      "turn": 6,
+      "step": 9,
+      "requestMessageCount": 97,
+      "promptChars": 219844,
+      "inputTokens": 142,
+      "outputTokens": 2104,
+      "cacheReadTokens": 92672,
+      "promptTokens": 92814,
+      "hitRate": 0.9984700583963626,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 70,
+      "turn": 6,
+      "step": 10,
+      "requestMessageCount": 99,
+      "promptChars": 220340,
+      "inputTokens": 151,
+      "outputTokens": 2094,
+      "cacheReadTokens": 92800,
+      "promptTokens": 92951,
+      "hitRate": 0.9983754881604286,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 71,
+      "turn": 6,
+      "step": 11,
+      "requestMessageCount": 101,
+      "promptChars": 235675,
+      "inputTokens": 97374,
+      "outputTokens": 3076,
+      "cacheReadTokens": 0,
+      "promptTokens": 97374,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 72,
+      "turn": 6,
+      "step": 12,
+      "requestMessageCount": 103,
+      "promptChars": 237094,
+      "inputTokens": 515,
+      "outputTokens": 3216,
+      "cacheReadTokens": 97280,
+      "promptTokens": 97795,
+      "hitRate": 0.9947338821003119,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 73,
+      "turn": 7,
+      "step": 1,
+      "requestMessageCount": 105,
+      "promptChars": 240322,
+      "inputTokens": 99561,
+      "outputTokens": 2271,
+      "cacheReadTokens": 0,
+      "promptTokens": 99561,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 74,
+      "turn": 7,
+      "step": 2,
+      "requestMessageCount": 107,
+      "promptChars": 247315,
+      "inputTokens": 2130,
+      "outputTokens": 1464,
+      "cacheReadTokens": 99456,
+      "promptTokens": 101586,
+      "hitRate": 0.9790325438544681,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 75,
+      "turn": 7,
+      "step": 3,
+      "requestMessageCount": 109,
+      "promptChars": 251655,
+      "inputTokens": 102801,
+      "outputTokens": 891,
+      "cacheReadTokens": 0,
+      "promptTokens": 102801,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 76,
+      "turn": 7,
+      "step": 4,
+      "requestMessageCount": 111,
+      "promptChars": 253433,
+      "inputTokens": 544,
+      "outputTokens": 832,
+      "cacheReadTokens": 102784,
+      "promptTokens": 103328,
+      "hitRate": 0.9947352121399814,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 77,
+      "turn": 7,
+      "step": 5,
+      "requestMessageCount": 113,
+      "promptChars": 264814,
+      "inputTokens": 106455,
+      "outputTokens": 1438,
+      "cacheReadTokens": 0,
+      "promptTokens": 106455,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 78,
+      "turn": 7,
+      "step": 6,
+      "requestMessageCount": 115,
+      "promptChars": 265136,
+      "inputTokens": 181,
+      "outputTokens": 2389,
+      "cacheReadTokens": 106368,
+      "promptTokens": 106549,
+      "hitRate": 0.9983012510675839,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 79,
+      "turn": 7,
+      "step": 7,
+      "requestMessageCount": 116,
+      "promptChars": 265271,
+      "inputTokens": 225,
+      "outputTokens": 3779,
+      "cacheReadTokens": 106368,
+      "promptTokens": 106593,
+      "hitRate": 0.9978891672061018,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 80,
+      "turn": 7,
+      "step": 8,
+      "requestMessageCount": 119,
+      "promptChars": 265692,
+      "inputTokens": 232,
+      "outputTokens": 1741,
+      "cacheReadTokens": 106496,
+      "promptTokens": 106728,
+      "hitRate": 0.9978262499063039,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 81,
+      "turn": 7,
+      "step": 9,
+      "requestMessageCount": 121,
+      "promptChars": 266572,
+      "inputTokens": 389,
+      "outputTokens": 452,
+      "cacheReadTokens": 106624,
+      "promptTokens": 107013,
+      "hitRate": 0.9963649276256156,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 82,
+      "turn": 7,
+      "step": 10,
+      "requestMessageCount": 123,
+      "promptChars": 268210,
+      "inputTokens": 585,
+      "outputTokens": 2792,
+      "cacheReadTokens": 107008,
+      "promptTokens": 107593,
+      "hitRate": 0.9945628433076501,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 83,
+      "turn": 8,
+      "step": 1,
+      "requestMessageCount": 127,
+      "promptChars": 267732,
+      "inputTokens": 103793,
+      "outputTokens": 1690,
+      "cacheReadTokens": 1536,
+      "promptTokens": 105329,
+      "hitRate": 0.014582878409554823,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 260,
+        "fingerprint": "7989f7a3028c",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": true
+    },
+    {
+      "i": 84,
+      "turn": 8,
+      "step": 2,
+      "requestMessageCount": 128,
+      "promptChars": 267877,
+      "inputTokens": 160,
+      "outputTokens": 2420,
+      "cacheReadTokens": 105216,
+      "promptTokens": 105376,
+      "hitRate": 0.9984816276951108,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 260,
+        "fingerprint": "7989f7a3028c",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 85,
+      "turn": 9,
+      "step": 1,
+      "requestMessageCount": 130,
+      "promptChars": 270068,
+      "inputTokens": 105028,
+      "outputTokens": 491,
+      "cacheReadTokens": 1536,
+      "promptTokens": 106564,
+      "hitRate": 0.01441387335310236,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 260,
+        "fingerprint": "7989f7a3028c",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 86,
+      "turn": 9,
+      "step": 2,
+      "requestMessageCount": 132,
+      "promptChars": 278999,
+      "inputTokens": 149,
+      "outputTokens": 729,
+      "cacheReadTokens": 108800,
+      "promptTokens": 108949,
+      "hitRate": 0.9986323876309099,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 260,
+        "fingerprint": "7989f7a3028c",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 87,
+      "turn": 9,
+      "step": 3,
+      "requestMessageCount": 133,
+      "promptChars": 281702,
+      "inputTokens": 863,
+      "outputTokens": 318,
+      "cacheReadTokens": 108928,
+      "promptTokens": 109791,
+      "hitRate": 0.9921396107149038,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 260,
+        "fingerprint": "7989f7a3028c",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 88,
+      "turn": 10,
+      "step": 1,
+      "requestMessageCount": 137,
+      "promptChars": 281941,
+      "inputTokens": 110291,
+      "outputTokens": 1179,
+      "cacheReadTokens": 1536,
+      "promptTokens": 111827,
+      "hitRate": 0.01373550215958579,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": true
+    },
+    {
+      "i": 89,
+      "turn": 11,
+      "step": 1,
+      "requestMessageCount": 139,
+      "promptChars": 283378,
+      "inputTokens": 110977,
+      "outputTokens": 1109,
+      "cacheReadTokens": 1536,
+      "promptTokens": 112513,
+      "hitRate": 0.01365175579710789,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 90,
+      "turn": 11,
+      "step": 2,
+      "requestMessageCount": 140,
+      "promptChars": 283522,
+      "inputTokens": 307,
+      "outputTokens": 142,
+      "cacheReadTokens": 112256,
+      "promptTokens": 112563,
+      "hitRate": 0.9972726384335883,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 91,
+      "turn": 11,
+      "step": 3,
+      "requestMessageCount": 141,
+      "promptChars": 287285,
+      "inputTokens": 113837,
+      "outputTokens": 1926,
+      "cacheReadTokens": 0,
+      "promptTokens": 113837,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 92,
+      "turn": 12,
+      "step": 1,
+      "requestMessageCount": 143,
+      "promptChars": 289505,
+      "inputTokens": 114895,
+      "outputTokens": 1025,
+      "cacheReadTokens": 0,
+      "promptTokens": 114895,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 93,
+      "turn": 12,
+      "step": 2,
+      "requestMessageCount": 145,
+      "promptChars": 303292,
+      "inputTokens": 3994,
+      "outputTokens": 1824,
+      "cacheReadTokens": 114816,
+      "promptTokens": 118810,
+      "hitRate": 0.9663833010689336,
+      "repayed": false,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 94,
+      "turn": 12,
+      "step": 3,
+      "requestMessageCount": 146,
+      "promptChars": 303432,
+      "inputTokens": 92489,
+      "outputTokens": 1117,
+      "cacheReadTokens": 26368,
+      "promptTokens": 118857,
+      "hitRate": 0.22184642048848616,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": false,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    },
+    {
+      "i": 95,
+      "turn": 13,
+      "step": 1,
+      "requestMessageCount": 148,
+      "promptChars": 305780,
+      "inputTokens": 125468,
+      "outputTokens": 2132,
+      "cacheReadTokens": 0,
+      "promptTokens": 125468,
+      "hitRate": 0,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 340,
+        "fingerprint": "9fcb597de77e",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": true
+    },
+    {
+      "i": 96,
+      "turn": 14,
+      "step": 1,
+      "requestMessageCount": 150,
+      "promptChars": 307978,
+      "inputTokens": 94552,
+      "outputTokens": 2644,
+      "cacheReadTokens": 32000,
+      "promptTokens": 126552,
+      "hitRate": 0.2528604842278273,
+      "repayed": true,
+      "coldStart": false,
+      "turnFirst": true,
+      "surface": {
+        "scope": "standard",
+        "count": 340,
+        "fingerprint": "9fcb597de77e",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false
+    }
+  ],
+  "turns": [
+    {
+      "turn": 1,
+      "firstRound": 0,
+      "lastRound": 0,
+      "rounds": 1,
+      "inputTokens": 23745,
+      "cacheReadTokens": 0,
+      "promptTokens": 23745,
+      "hitRate": 0,
+      "surface": {
+        "scope": "compact",
+        "count": 238,
+        "fingerprint": "414dacb1a318",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": null,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_580f40fd"
+    },
+    {
+      "turn": 2,
+      "firstRound": 1,
+      "lastRound": 8,
+      "rounds": 8,
+      "inputTokens": 150295,
+      "cacheReadTokens": 192768,
+      "promptTokens": 343063,
+      "hitRate": 0.5619026242993269,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": true,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_796a8c94"
+    },
+    {
+      "turn": 3,
+      "firstRound": 9,
+      "lastRound": 23,
+      "rounds": 15,
+      "inputTokens": 409173,
+      "cacheReadTokens": 708736,
+      "promptTokens": 1117909,
+      "hitRate": 0.6339836247852016,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_baa7c691"
+    },
+    {
+      "turn": 4,
+      "firstRound": 24,
+      "lastRound": 55,
+      "rounds": 32,
+      "inputTokens": 418368,
+      "cacheReadTokens": 1236736,
+      "promptTokens": 1655104,
+      "hitRate": 0.7472255519894823,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_a7a89243"
+    },
+    {
+      "turn": 5,
+      "firstRound": 56,
+      "lastRound": 60,
+      "rounds": 5,
+      "inputTokens": 206539,
+      "cacheReadTokens": 167552,
+      "promptTokens": 374091,
+      "hitRate": 0.44789102116864615,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_4d5e4d45"
+    },
+    {
+      "turn": 6,
+      "firstRound": 61,
+      "lastRound": 72,
+      "rounds": 12,
+      "inputTokens": 249712,
+      "cacheReadTokens": 824576,
+      "promptTokens": 1074288,
+      "hitRate": 0.7675558137110347,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_e6b3a995"
+    },
+    {
+      "turn": 7,
+      "firstRound": 73,
+      "lastRound": 82,
+      "rounds": 10,
+      "inputTokens": 313103,
+      "cacheReadTokens": 735104,
+      "promptTokens": 1048207,
+      "hitRate": 0.7012965950427731,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_caae12b4"
+    },
+    {
+      "turn": 8,
+      "firstRound": 83,
+      "lastRound": 84,
+      "rounds": 2,
+      "inputTokens": 103953,
+      "cacheReadTokens": 106752,
+      "promptTokens": 210705,
+      "hitRate": 0.5066419876130135,
+      "surface": {
+        "scope": "standard",
+        "count": 260,
+        "fingerprint": "7989f7a3028c",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": true,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_8a6fb941"
+    },
+    {
+      "turn": 9,
+      "firstRound": 85,
+      "lastRound": 87,
+      "rounds": 3,
+      "inputTokens": 106040,
+      "cacheReadTokens": 219264,
+      "promptTokens": 325304,
+      "hitRate": 0.674027986129897,
+      "surface": {
+        "scope": "standard",
+        "count": 260,
+        "fingerprint": "7989f7a3028c",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_ff81e30f"
+    },
+    {
+      "turn": 10,
+      "firstRound": 88,
+      "lastRound": 88,
+      "rounds": 1,
+      "inputTokens": 110291,
+      "cacheReadTokens": 1536,
+      "promptTokens": 111827,
+      "hitRate": 0.01373550215958579,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": true,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_a5b6df47"
+    },
+    {
+      "turn": 11,
+      "firstRound": 89,
+      "lastRound": 91,
+      "rounds": 3,
+      "inputTokens": 225121,
+      "cacheReadTokens": 113792,
+      "promptTokens": 338913,
+      "hitRate": 0.3357557839327497,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_250edb13"
+    },
+    {
+      "turn": 12,
+      "firstRound": 92,
+      "lastRound": 94,
+      "rounds": 3,
+      "inputTokens": 211378,
+      "cacheReadTokens": 141184,
+      "promptTokens": 352562,
+      "hitRate": 0.4004515517837997,
+      "surface": {
+        "scope": "standard",
+        "count": 274,
+        "fingerprint": "100d3d2baece",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_a9536950"
+    },
+    {
+      "turn": 13,
+      "firstRound": 95,
+      "lastRound": 95,
+      "rounds": 1,
+      "inputTokens": 125468,
+      "cacheReadTokens": 0,
+      "promptTokens": 125468,
+      "hitRate": 0,
+      "surface": {
+        "scope": "standard",
+        "count": 340,
+        "fingerprint": "9fcb597de77e",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": true,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_3c6c2fd4"
+    },
+    {
+      "turn": 14,
+      "firstRound": 96,
+      "lastRound": 96,
+      "rounds": 1,
+      "inputTokens": 94552,
+      "cacheReadTokens": 32000,
+      "promptTokens": 126552,
+      "hitRate": 0.2528604842278273,
+      "surface": {
+        "scope": "standard",
+        "count": 340,
+        "fingerprint": "9fcb597de77e",
+        "provenance": "ledger-scope-count"
+      },
+      "surfaceChanged": false,
+      "ledgerMatches": true,
+      "ledgerTurnId": "turn_93ecbf51"
+    }
+  ],
+  "pairs": [
+    {
+      "prevRound": 0,
+      "round": 1,
+      "crossesTurn": true,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": true,
+      "layer": "called-tools",
+      "added": [
+        "read_file"
+      ],
+      "removed": [],
+      "scopeCountChanged": true,
+      "prefixEvidence": [
+        "scope-count-changed"
+      ],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 28082,
+      "repayed": true
+    },
+    {
+      "prevRound": 1,
+      "round": 2,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "list_tree",
+        "web_search"
+      ],
+      "removed": [
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.99821950003561,
+      "providerSawBreak": false,
+      "inputTokens": 729,
+      "repayed": false
+    },
+    {
+      "prevRound": 2,
+      "round": 3,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "fetch_url",
+        "read_file"
+      ],
+      "removed": [
+        "list_tree",
+        "web_search"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9969055317965301,
+      "providerSawBreak": false,
+      "inputTokens": 1171,
+      "repayed": false
+    },
+    {
+      "prevRound": 3,
+      "round": 4,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "fetch_url"
+      ],
+      "removed": [
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9993633347853768,
+      "providerSawBreak": false,
+      "inputTokens": 2568,
+      "repayed": false
+    },
+    {
+      "prevRound": 4,
+      "round": 5,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_many_files"
+      ],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 45996,
+      "repayed": true
+    },
+    {
+      "prevRound": 5,
+      "round": 6,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "list_files",
+        "list_files",
+        "read_file"
+      ],
+      "removed": [
+        "fetch_url",
+        "fetch_url",
+        "read_many_files"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9990433950778329,
+      "providerSawBreak": false,
+      "inputTokens": 8403,
+      "repayed": true
+    },
+    {
+      "prevRound": 6,
+      "round": 7,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "count_files"
+      ],
+      "removed": [
+        "list_files",
+        "list_files"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 60297,
+      "repayed": true
+    },
+    {
+      "prevRound": 7,
+      "round": 8,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [
+        "count_files",
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9998507388427285,
+      "providerSawBreak": false,
+      "inputTokens": 3049,
+      "repayed": false
+    },
+    {
+      "prevRound": 8,
+      "round": 9,
+      "crossesTurn": true,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "glob_files",
+        "path_exists"
+      ],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.06264900453131661,
+      "providerSawBreak": true,
+      "inputTokens": 60821,
+      "repayed": true
+    },
+    {
+      "prevRound": 9,
+      "round": 10,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file",
+        "read_file"
+      ],
+      "removed": [
+        "glob_files",
+        "path_exists"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.40895831082436834,
+      "providerSawBreak": true,
+      "inputTokens": 38328,
+      "repayed": true
+    },
+    {
+      "prevRound": 10,
+      "round": 11,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "search_text",
+        "search_text"
+      ],
+      "removed": [
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 68454,
+      "repayed": true
+    },
+    {
+      "prevRound": 11,
+      "round": 12,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_lines"
+      ],
+      "removed": [
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9985099482864406,
+      "providerSawBreak": false,
+      "inputTokens": 1522,
+      "repayed": false
+    },
+    {
+      "prevRound": 12,
+      "round": 13,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "list_files"
+      ],
+      "removed": [
+        "read_lines"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 71219,
+      "repayed": true
+    },
+    {
+      "prevRound": 13,
+      "round": 14,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command"
+      ],
+      "removed": [
+        "list_files",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9992838989595473,
+      "providerSawBreak": false,
+      "inputTokens": 513,
+      "repayed": false
+    },
+    {
+      "prevRound": 14,
+      "round": 15,
+      "crossesTurn": false,
+      "toolSetChanged": false,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 71736,
+      "repayed": true
+    },
+    {
+      "prevRound": 15,
+      "round": 16,
+      "crossesTurn": false,
+      "toolSetChanged": false,
+      "toolOrderOnlyChanged": true,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9992193598750976,
+      "providerSawBreak": false,
+      "inputTokens": 2811,
+      "repayed": false
+    },
+    {
+      "prevRound": 16,
+      "round": 17,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "search_text"
+      ],
+      "removed": [
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9983487938140178,
+      "providerSawBreak": false,
+      "inputTokens": 402,
+      "repayed": false
+    },
+    {
+      "prevRound": 17,
+      "round": 18,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file",
+        "read_lines",
+        "read_lines"
+      ],
+      "removed": [
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.8662297712986492,
+      "providerSawBreak": true,
+      "inputTokens": 10013,
+      "repayed": true
+    },
+    {
+      "prevRound": 18,
+      "round": 19,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command",
+        "run_command"
+      ],
+      "removed": [
+        "read_file",
+        "read_lines",
+        "read_lines",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 81465,
+      "repayed": true
+    },
+    {
+      "prevRound": 19,
+      "round": 20,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "list_files",
+        "search_text",
+        "search_text"
+      ],
+      "removed": [
+        "run_command",
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9993003130178604,
+      "providerSawBreak": false,
+      "inputTokens": 165,
+      "repayed": false
+    },
+    {
+      "prevRound": 20,
+      "round": 21,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_lines"
+      ],
+      "removed": [
+        "list_files",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.999546418545352,
+      "providerSawBreak": false,
+      "inputTokens": 692,
+      "repayed": false
+    },
+    {
+      "prevRound": 21,
+      "round": 22,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "search_text"
+      ],
+      "removed": [
+        "read_lines"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9993676120056428,
+      "providerSawBreak": false,
+      "inputTokens": 831,
+      "repayed": false
+    },
+    {
+      "prevRound": 22,
+      "round": 23,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command"
+      ],
+      "removed": [
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9976989892418712,
+      "providerSawBreak": false,
+      "inputTokens": 201,
+      "repayed": false
+    },
+    {
+      "prevRound": 23,
+      "round": 24,
+      "crossesTurn": true,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": true,
+      "layer": "called-tools",
+      "added": [
+        "path_exists",
+        "project_status"
+      ],
+      "removed": [
+        "run_command",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [
+        "compaction-drop",
+        "message-count-not-grown",
+        "prompt-chars-not-grown"
+      ],
+      "observedReuse": 0.018502234482094027,
+      "providerSawBreak": true,
+      "inputTokens": 27577,
+      "repayed": true
+    },
+    {
+      "prevRound": 24,
+      "round": 25,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "file_info",
+        "list_files",
+        "read_file"
+      ],
+      "removed": [
+        "path_exists",
+        "project_status"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9980421117713736,
+      "providerSawBreak": false,
+      "inputTokens": 137,
+      "repayed": false
+    },
+    {
+      "prevRound": 25,
+      "round": 26,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "git_status",
+        "search_text"
+      ],
+      "removed": [
+        "file_info",
+        "list_files",
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9996917069160415,
+      "providerSawBreak": false,
+      "inputTokens": 2571,
+      "repayed": false
+    },
+    {
+      "prevRound": 26,
+      "round": 27,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "git_diff",
+        "read_lines"
+      ],
+      "removed": [
+        "git_status",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.999653597858605,
+      "providerSawBreak": false,
+      "inputTokens": 2360,
+      "repayed": false
+    },
+    {
+      "prevRound": 27,
+      "round": 28,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "path_exists",
+        "search_text"
+      ],
+      "removed": [
+        "git_diff",
+        "read_lines"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9983579638752053,
+      "providerSawBreak": false,
+      "inputTokens": 7331,
+      "repayed": true
+    },
+    {
+      "prevRound": 28,
+      "round": 29,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file",
+        "run_command"
+      ],
+      "removed": [
+        "path_exists",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9991541603228691,
+      "providerSawBreak": false,
+      "inputTokens": 2539,
+      "repayed": false
+    },
+    {
+      "prevRound": 29,
+      "round": 30,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_lines"
+      ],
+      "removed": [
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.03500216484743523,
+      "providerSawBreak": true,
+      "inputTokens": 43998,
+      "repayed": true
+    },
+    {
+      "prevRound": 30,
+      "round": 31,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command",
+        "search_text"
+      ],
+      "removed": [
+        "read_file",
+        "read_lines"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9979356085562436,
+      "providerSawBreak": false,
+      "inputTokens": 1436,
+      "repayed": false
+    },
+    {
+      "prevRound": 31,
+      "round": 32,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_lines"
+      ],
+      "removed": [
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9966720709958188,
+      "providerSawBreak": false,
+      "inputTokens": 214,
+      "repayed": false
+    },
+    {
+      "prevRound": 32,
+      "round": 33,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command",
+        "write_file"
+      ],
+      "removed": [
+        "read_lines",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9981676396642093,
+      "providerSawBreak": false,
+      "inputTokens": 1263,
+      "repayed": false
+    },
+    {
+      "prevRound": 33,
+      "round": 34,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file"
+      ],
+      "removed": [
+        "write_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.03192617073018644,
+      "providerSawBreak": true,
+      "inputTokens": 46651,
+      "repayed": true
+    },
+    {
+      "prevRound": 34,
+      "round": 35,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "path_exists",
+        "path_exists"
+      ],
+      "removed": [
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.03187581712910121,
+      "providerSawBreak": true,
+      "inputTokens": 47264,
+      "repayed": true
+    },
+    {
+      "prevRound": 35,
+      "round": 36,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file"
+      ],
+      "removed": [
+        "path_exists",
+        "path_exists"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 49080,
+      "repayed": true
+    },
+    {
+      "prevRound": 36,
+      "round": 37,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command"
+      ],
+      "removed": [
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9988590057049714,
+      "providerSawBreak": false,
+      "inputTokens": 3200,
+      "repayed": false
+    },
+    {
+      "prevRound": 37,
+      "round": 38,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 56333,
+      "repayed": true
+    },
+    {
+      "prevRound": 38,
+      "round": 39,
+      "crossesTurn": false,
+      "toolSetChanged": false,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9974970266096249,
+      "providerSawBreak": false,
+      "inputTokens": 193,
+      "repayed": false
+    },
+    {
+      "prevRound": 39,
+      "round": 40,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command"
+      ],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9988472111377139,
+      "providerSawBreak": false,
+      "inputTokens": 315,
+      "repayed": false
+    },
+    {
+      "prevRound": 40,
+      "round": 41,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "git_status",
+        "recent_files"
+      ],
+      "removed": [
+        "run_command",
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9989582413701774,
+      "providerSawBreak": false,
+      "inputTokens": 265,
+      "repayed": false
+    },
+    {
+      "prevRound": 41,
+      "round": 42,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command",
+        "search_text"
+      ],
+      "removed": [
+        "git_status",
+        "recent_files"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9953378723104801,
+      "providerSawBreak": false,
+      "inputTokens": 795,
+      "repayed": false
+    },
+    {
+      "prevRound": 42,
+      "round": 43,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "write_file"
+      ],
+      "removed": [
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9995293789545241,
+      "providerSawBreak": false,
+      "inputTokens": 304,
+      "repayed": false
+    },
+    {
+      "prevRound": 43,
+      "round": 44,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command"
+      ],
+      "removed": [
+        "write_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9991673605328892,
+      "providerSawBreak": false,
+      "inputTokens": 356,
+      "repayed": false
+    },
+    {
+      "prevRound": 44,
+      "round": 45,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file"
+      ],
+      "removed": [
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9982745531092553,
+      "providerSawBreak": false,
+      "inputTokens": 594,
+      "repayed": false
+    },
+    {
+      "prevRound": 45,
+      "round": 46,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command"
+      ],
+      "removed": [
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9985970915312232,
+      "providerSawBreak": false,
+      "inputTokens": 422,
+      "repayed": false
+    },
+    {
+      "prevRound": 46,
+      "round": 47,
+      "crossesTurn": false,
+      "toolSetChanged": false,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9993536315699949,
+      "providerSawBreak": false,
+      "inputTokens": 351,
+      "repayed": false
+    },
+    {
+      "prevRound": 47,
+      "round": 48,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "write_file"
+      ],
+      "removed": [
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9983926365835913,
+      "providerSawBreak": false,
+      "inputTokens": 364,
+      "repayed": false
+    },
+    {
+      "prevRound": 48,
+      "round": 49,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command"
+      ],
+      "removed": [
+        "write_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.998180960722226,
+      "providerSawBreak": false,
+      "inputTokens": 615,
+      "repayed": false
+    },
+    {
+      "prevRound": 49,
+      "round": 50,
+      "crossesTurn": false,
+      "toolSetChanged": false,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.02565173099083151,
+      "providerSawBreak": true,
+      "inputTokens": 58508,
+      "repayed": true
+    },
+    {
+      "prevRound": 50,
+      "round": 51,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "search_text"
+      ],
+      "removed": [
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9998001465591899,
+      "providerSawBreak": false,
+      "inputTokens": 533,
+      "repayed": false
+    },
+    {
+      "prevRound": 51,
+      "round": 52,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "write_file"
+      ],
+      "removed": [
+        "run_command",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9996532650870965,
+      "providerSawBreak": false,
+      "inputTokens": 168,
+      "repayed": false
+    },
+    {
+      "prevRound": 52,
+      "round": 53,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file",
+        "run_command"
+      ],
+      "removed": [
+        "write_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9972328370009224,
+      "providerSawBreak": false,
+      "inputTokens": 214,
+      "repayed": false
+    },
+    {
+      "prevRound": 53,
+      "round": 54,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command"
+      ],
+      "removed": [
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9985845485368182,
+      "providerSawBreak": false,
+      "inputTokens": 598,
+      "repayed": false
+    },
+    {
+      "prevRound": 54,
+      "round": 55,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [
+        "run_command",
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 61819,
+      "repayed": true
+    },
+    {
+      "prevRound": 55,
+      "round": 56,
+      "crossesTurn": true,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "fetch_url",
+        "fetch_url"
+      ],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.42653553114738185,
+      "providerSawBreak": true,
+      "inputTokens": 36022,
+      "repayed": true
+    },
+    {
+      "prevRound": 56,
+      "round": 57,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file",
+        "run_command"
+      ],
+      "removed": [
+        "fetch_url",
+        "fetch_url"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9991344766789549,
+      "providerSawBreak": false,
+      "inputTokens": 12501,
+      "repayed": true
+    },
+    {
+      "prevRound": 57,
+      "round": 58,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "extract_matches",
+        "search_text",
+        "search_text"
+      ],
+      "removed": [
+        "read_file",
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 77371,
+      "repayed": true
+    },
+    {
+      "prevRound": 58,
+      "round": 59,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "current_datetime",
+        "run_command"
+      ],
+      "removed": [
+        "extract_matches",
+        "search_text",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9992374403846402,
+      "providerSawBreak": false,
+      "inputTokens": 2400,
+      "repayed": false
+    },
+    {
+      "prevRound": 59,
+      "round": 60,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [
+        "current_datetime",
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.019269369731031716,
+      "providerSawBreak": true,
+      "inputTokens": 78245,
+      "repayed": true
+    },
+    {
+      "prevRound": 60,
+      "round": 61,
+      "crossesTurn": true,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file",
+        "read_file"
+      ],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.33371354081798926,
+      "providerSawBreak": true,
+      "inputTokens": 54237,
+      "repayed": true
+    },
+    {
+      "prevRound": 61,
+      "round": 62,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "path_exists"
+      ],
+      "removed": [
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9988498781860229,
+      "providerSawBreak": false,
+      "inputTokens": 2831,
+      "repayed": false
+    },
+    {
+      "prevRound": 62,
+      "round": 63,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command"
+      ],
+      "removed": [
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9998205720164117,
+      "providerSawBreak": false,
+      "inputTokens": 1309,
+      "repayed": false
+    },
+    {
+      "prevRound": 63,
+      "round": 64,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "search_text",
+        "write_file"
+      ],
+      "removed": [
+        "path_exists",
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 85122,
+      "repayed": true
+    },
+    {
+      "prevRound": 64,
+      "round": 65,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_lines",
+        "run_command"
+      ],
+      "removed": [
+        "search_text",
+        "write_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9969690561781913,
+      "providerSawBreak": false,
+      "inputTokens": 569,
+      "repayed": false
+    },
+    {
+      "prevRound": 65,
+      "round": 66,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file",
+        "search_text",
+        "write_file"
+      ],
+      "removed": [
+        "read_lines",
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9993328105064787,
+      "providerSawBreak": false,
+      "inputTokens": 3249,
+      "repayed": false
+    },
+    {
+      "prevRound": 66,
+      "round": 67,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_lines"
+      ],
+      "removed": [
+        "read_file",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9994471086036671,
+      "providerSawBreak": false,
+      "inputTokens": 3496,
+      "repayed": false
+    },
+    {
+      "prevRound": 67,
+      "round": 68,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "env_get"
+      ],
+      "removed": [
+        "read_lines"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9995655573898689,
+      "providerSawBreak": false,
+      "inputTokens": 717,
+      "repayed": false
+    },
+    {
+      "prevRound": 68,
+      "round": 69,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command",
+        "search_text"
+      ],
+      "removed": [
+        "env_get",
+        "write_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9991698023698369,
+      "providerSawBreak": false,
+      "inputTokens": 142,
+      "repayed": false
+    },
+    {
+      "prevRound": 69,
+      "round": 70,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file"
+      ],
+      "removed": [
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9998491606869653,
+      "providerSawBreak": false,
+      "inputTokens": 151,
+      "repayed": false
+    },
+    {
+      "prevRound": 70,
+      "round": 71,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "search_text",
+        "search_text"
+      ],
+      "removed": [
+        "read_file",
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 97374,
+      "repayed": true
+    },
+    {
+      "prevRound": 71,
+      "round": 72,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [
+        "search_text",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9990346499065459,
+      "providerSawBreak": false,
+      "inputTokens": 515,
+      "repayed": false
+    },
+    {
+      "prevRound": 72,
+      "round": 73,
+      "crossesTurn": true,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_lines",
+        "read_lines"
+      ],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 99561,
+      "repayed": true
+    },
+    {
+      "prevRound": 73,
+      "round": 74,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "search_text"
+      ],
+      "removed": [
+        "read_lines"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9989453701750686,
+      "providerSawBreak": false,
+      "inputTokens": 2130,
+      "repayed": false
+    },
+    {
+      "prevRound": 74,
+      "round": 75,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "list_files"
+      ],
+      "removed": [
+        "read_lines"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 102801,
+      "repayed": true
+    },
+    {
+      "prevRound": 75,
+      "round": 76,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file",
+        "read_file"
+      ],
+      "removed": [
+        "list_files",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.999834631958833,
+      "providerSawBreak": false,
+      "inputTokens": 544,
+      "repayed": false
+    },
+    {
+      "prevRound": 76,
+      "round": 77,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "search_text",
+        "search_text"
+      ],
+      "removed": [
+        "read_file",
+        "read_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 106455,
+      "repayed": true
+    },
+    {
+      "prevRound": 77,
+      "round": 78,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "write_file"
+      ],
+      "removed": [
+        "search_text",
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9991827532760321,
+      "providerSawBreak": false,
+      "inputTokens": 181,
+      "repayed": false
+    },
+    {
+      "prevRound": 78,
+      "round": 79,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "search_text",
+        "write_file"
+      ],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9983012510675839,
+      "providerSawBreak": false,
+      "inputTokens": 225,
+      "repayed": false
+    },
+    {
+      "prevRound": 79,
+      "round": 80,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file"
+      ],
+      "removed": [
+        "search_text",
+        "write_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9990899965288528,
+      "providerSawBreak": false,
+      "inputTokens": 232,
+      "repayed": false
+    },
+    {
+      "prevRound": 80,
+      "round": 81,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command"
+      ],
+      "removed": [
+        "write_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9990255603028259,
+      "providerSawBreak": false,
+      "inputTokens": 389,
+      "repayed": false
+    },
+    {
+      "prevRound": 81,
+      "round": 82,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "find_files",
+        "write_file"
+      ],
+      "removed": [
+        "read_file",
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9999532767046995,
+      "providerSawBreak": false,
+      "inputTokens": 585,
+      "repayed": false
+    },
+    {
+      "prevRound": 82,
+      "round": 83,
+      "crossesTurn": true,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": true,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [
+        "find_files"
+      ],
+      "scopeCountChanged": true,
+      "prefixEvidence": [
+        "scope-count-changed",
+        "prompt-chars-not-grown"
+      ],
+      "observedReuse": 0.01427602167427249,
+      "providerSawBreak": true,
+      "inputTokens": 103793,
+      "repayed": true
+    },
+    {
+      "prevRound": 83,
+      "round": 84,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [
+        "write_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9989271710545055,
+      "providerSawBreak": false,
+      "inputTokens": 160,
+      "repayed": false
+    },
+    {
+      "prevRound": 84,
+      "round": 85,
+      "crossesTurn": true,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command",
+        "search_text"
+      ],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.014576374126935925,
+      "providerSawBreak": true,
+      "inputTokens": 105028,
+      "repayed": true
+    },
+    {
+      "prevRound": 85,
+      "round": 86,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_lines"
+      ],
+      "removed": [
+        "search_text"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 1.0209826958447505,
+      "providerSawBreak": false,
+      "inputTokens": 149,
+      "repayed": false
+    },
+    {
+      "prevRound": 86,
+      "round": 87,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "search_text"
+      ],
+      "removed": [
+        "read_lines"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9998072492634168,
+      "providerSawBreak": false,
+      "inputTokens": 863,
+      "repayed": false
+    },
+    {
+      "prevRound": 87,
+      "round": 88,
+      "crossesTurn": true,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": true,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [
+        "run_command",
+        "search_text"
+      ],
+      "scopeCountChanged": true,
+      "prefixEvidence": [
+        "scope-count-changed"
+      ],
+      "observedReuse": 0.013990217777413449,
+      "providerSawBreak": true,
+      "inputTokens": 110291,
+      "repayed": true
+    },
+    {
+      "prevRound": 88,
+      "round": 89,
+      "crossesTurn": true,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "write_file"
+      ],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.01373550215958579,
+      "providerSawBreak": true,
+      "inputTokens": 110977,
+      "repayed": true
+    },
+    {
+      "prevRound": 89,
+      "round": 90,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "run_command"
+      ],
+      "removed": [
+        "write_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9977158195053016,
+      "providerSawBreak": false,
+      "inputTokens": 307,
+      "repayed": false
+    },
+    {
+      "prevRound": 90,
+      "round": 91,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 113837,
+      "repayed": true
+    },
+    {
+      "prevRound": 91,
+      "round": 92,
+      "crossesTurn": true,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "read_file",
+        "run_command"
+      ],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 114895,
+      "repayed": true
+    },
+    {
+      "prevRound": 92,
+      "round": 93,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [
+        "write_file"
+      ],
+      "removed": [
+        "read_file",
+        "run_command"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.9993124156838853,
+      "providerSawBreak": false,
+      "inputTokens": 3994,
+      "repayed": false
+    },
+    {
+      "prevRound": 93,
+      "round": 94,
+      "crossesTurn": false,
+      "toolSetChanged": true,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [
+        "write_file"
+      ],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.22193418062452655,
+      "providerSawBreak": true,
+      "inputTokens": 92489,
+      "repayed": true
+    },
+    {
+      "prevRound": 94,
+      "round": 95,
+      "crossesTurn": true,
+      "toolSetChanged": false,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": true,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [],
+      "scopeCountChanged": true,
+      "prefixEvidence": [
+        "scope-count-changed"
+      ],
+      "observedReuse": 0,
+      "providerSawBreak": true,
+      "inputTokens": 125468,
+      "repayed": true
+    },
+    {
+      "prevRound": 95,
+      "round": 96,
+      "crossesTurn": true,
+      "toolSetChanged": false,
+      "toolOrderOnlyChanged": false,
+      "prefixBytesChanged": false,
+      "layer": "called-tools",
+      "added": [],
+      "removed": [],
+      "scopeCountChanged": false,
+      "prefixEvidence": [],
+      "observedReuse": 0.2550451111040265,
+      "providerSawBreak": true,
+      "inputTokens": 94552,
+      "repayed": true
+    }
+  ],
+  "toolDiagnosis": {
+    "pairs": 96,
+    "layers": {
+      "sent-tools": 0,
+      "called-tools": 96,
+      "scope-count": 0,
+      "none": 0
+    },
+    "toolSetChanged": 89,
+    "toolOrderOnlyChanged": 1,
+    "prefixChanged": 5,
+    "prefixNoEvidence": 91,
+    "prefixUnknown": 0,
+    "unexplainedBreaks": [
+      {
+        "prevRound": 4,
+        "round": 5,
+        "observedReuse": 0,
+        "inputTokens": 45996,
+        "repayed": true
+      },
+      {
+        "prevRound": 6,
+        "round": 7,
+        "observedReuse": 0,
+        "inputTokens": 60297,
+        "repayed": true
+      },
+      {
+        "prevRound": 8,
+        "round": 9,
+        "observedReuse": 0.06264900453131661,
+        "inputTokens": 60821,
+        "repayed": true
+      },
+      {
+        "prevRound": 9,
+        "round": 10,
+        "observedReuse": 0.40895831082436834,
+        "inputTokens": 38328,
+        "repayed": true
+      },
+      {
+        "prevRound": 10,
+        "round": 11,
+        "observedReuse": 0,
+        "inputTokens": 68454,
+        "repayed": true
+      },
+      {
+        "prevRound": 12,
+        "round": 13,
+        "observedReuse": 0,
+        "inputTokens": 71219,
+        "repayed": true
+      },
+      {
+        "prevRound": 14,
+        "round": 15,
+        "observedReuse": 0,
+        "inputTokens": 71736,
+        "repayed": true
+      },
+      {
+        "prevRound": 17,
+        "round": 18,
+        "observedReuse": 0.8662297712986492,
+        "inputTokens": 10013,
+        "repayed": true
+      },
+      {
+        "prevRound": 18,
+        "round": 19,
+        "observedReuse": 0,
+        "inputTokens": 81465,
+        "repayed": true
+      },
+      {
+        "prevRound": 29,
+        "round": 30,
+        "observedReuse": 0.03500216484743523,
+        "inputTokens": 43998,
+        "repayed": true
+      },
+      {
+        "prevRound": 33,
+        "round": 34,
+        "observedReuse": 0.03192617073018644,
+        "inputTokens": 46651,
+        "repayed": true
+      },
+      {
+        "prevRound": 34,
+        "round": 35,
+        "observedReuse": 0.03187581712910121,
+        "inputTokens": 47264,
+        "repayed": true
+      },
+      {
+        "prevRound": 35,
+        "round": 36,
+        "observedReuse": 0,
+        "inputTokens": 49080,
+        "repayed": true
+      },
+      {
+        "prevRound": 37,
+        "round": 38,
+        "observedReuse": 0,
+        "inputTokens": 56333,
+        "repayed": true
+      },
+      {
+        "prevRound": 49,
+        "round": 50,
+        "observedReuse": 0.02565173099083151,
+        "inputTokens": 58508,
+        "repayed": true
+      },
+      {
+        "prevRound": 54,
+        "round": 55,
+        "observedReuse": 0,
+        "inputTokens": 61819,
+        "repayed": true
+      },
+      {
+        "prevRound": 55,
+        "round": 56,
+        "observedReuse": 0.42653553114738185,
+        "inputTokens": 36022,
+        "repayed": true
+      },
+      {
+        "prevRound": 57,
+        "round": 58,
+        "observedReuse": 0,
+        "inputTokens": 77371,
+        "repayed": true
+      },
+      {
+        "prevRound": 59,
+        "round": 60,
+        "observedReuse": 0.019269369731031716,
+        "inputTokens": 78245,
+        "repayed": true
+      },
+      {
+        "prevRound": 60,
+        "round": 61,
+        "observedReuse": 0.33371354081798926,
+        "inputTokens": 54237,
+        "repayed": true
+      },
+      {
+        "prevRound": 63,
+        "round": 64,
+        "observedReuse": 0,
+        "inputTokens": 85122,
+        "repayed": true
+      },
+      {
+        "prevRound": 70,
+        "round": 71,
+        "observedReuse": 0,
+        "inputTokens": 97374,
+        "repayed": true
+      },
+      {
+        "prevRound": 72,
+        "round": 73,
+        "observedReuse": 0,
+        "inputTokens": 99561,
+        "repayed": true
+      },
+      {
+        "prevRound": 74,
+        "round": 75,
+        "observedReuse": 0,
+        "inputTokens": 102801,
+        "repayed": true
+      },
+      {
+        "prevRound": 76,
+        "round": 77,
+        "observedReuse": 0,
+        "inputTokens": 106455,
+        "repayed": true
+      },
+      {
+        "prevRound": 84,
+        "round": 85,
+        "observedReuse": 0.014576374126935925,
+        "inputTokens": 105028,
+        "repayed": true
+      },
+      {
+        "prevRound": 88,
+        "round": 89,
+        "observedReuse": 0.01373550215958579,
+        "inputTokens": 110977,
+        "repayed": true
+      },
+      {
+        "prevRound": 90,
+        "round": 91,
+        "observedReuse": 0,
+        "inputTokens": 113837,
+        "repayed": true
+      },
+      {
+        "prevRound": 91,
+        "round": 92,
+        "observedReuse": 0,
+        "inputTokens": 114895,
+        "repayed": true
+      },
+      {
+        "prevRound": 93,
+        "round": 94,
+        "observedReuse": 0.22193418062452655,
+        "inputTokens": 92489,
+        "repayed": true
+      },
+      {
+        "prevRound": 95,
+        "round": 96,
+        "observedReuse": 0.2550451111040265,
+        "inputTokens": 94552,
+        "repayed": true
+      }
+    ],
+    "orderOnlyPairs": [
+      {
+        "prevRound": 15,
+        "round": 16,
+        "layer": "called-tools"
+      }
+    ],
+    "note": "轨迹里没有记录真实发送数组（toolSetNames），三向诊断里前两项落在 called-tools 层：它回答的是\"这一轮调用了哪些工具\"，不是\"这一轮发出了哪些工具\"。因此该层上\"集合变了\"不能读成工具面变了、\"只有顺序变了\"是记录噪声而不是缓存事件；前缀诊断只用本地证据（含台账 scope/count 与历史是否纯追加），不看这一层的增删。"
+  },
+  "cache": {
+    "rounds": 97,
+    "roundsWithUsage": 97,
+    "totalInputTokens": 2747738,
+    "totalCacheReadTokens": 4480000,
+    "weightedHitRate": 0.6198343105408636,
+    "meanHitRate": 0.6322052958766803,
+    "repayedRounds": [
+      0,
+      1,
+      5,
+      6,
+      7,
+      9,
+      10,
+      11,
+      13,
+      15,
+      18,
+      19,
+      24,
+      28,
+      30,
+      34,
+      35,
+      36,
+      38,
+      50,
+      55,
+      56,
+      57,
+      58,
+      60,
+      61,
+      64,
+      71,
+      73,
+      75,
+      77,
+      83,
+      85,
+      88,
+      89,
+      91,
+      92,
+      94,
+      95,
+      96
+    ],
+    "coldStartRounds": [
+      0
+    ],
+    "steadyStateInputBaseline": 569,
+    "repayBreakdown": {
+      "turnBoundary": {
+        "rounds": 14,
+        "repayed": 14,
+        "inputTokens": 1095049,
+        "excessInputTokens": 1087083
+      },
+      "withinTurn": {
+        "rounds": 83,
+        "repayed": 26,
+        "inputTokens": 1652689,
+        "excessInputTokens": 1613282
+      }
+    }
+  },
+  "toolSurface": {
+    "provenance": "ledger-scope-count",
+    "changes": [
+      {
+        "turn": 2,
+        "round": 1,
+        "fromScope": "compact",
+        "fromCount": 238,
+        "toScope": "standard",
+        "toCount": 274,
+        "coincidedWithRepay": true
+      },
+      {
+        "turn": 8,
+        "round": 83,
+        "fromScope": "standard",
+        "fromCount": 274,
+        "toScope": "standard",
+        "toCount": 260,
+        "coincidedWithRepay": true
+      },
+      {
+        "turn": 10,
+        "round": 88,
+        "fromScope": "standard",
+        "fromCount": 260,
+        "toScope": "standard",
+        "toCount": 274,
+        "coincidedWithRepay": true
+      },
+      {
+        "turn": 13,
+        "round": 95,
+        "fromScope": "standard",
+        "fromCount": 274,
+        "toScope": "standard",
+        "toCount": 340,
+        "coincidedWithRepay": true
+      }
+    ],
+    "counts": [
+      {
+        "turn": 1,
+        "scope": "compact",
+        "count": 238
+      },
+      {
+        "turn": 2,
+        "scope": "standard",
+        "count": 274
+      },
+      {
+        "turn": 3,
+        "scope": "standard",
+        "count": 274
+      },
+      {
+        "turn": 4,
+        "scope": "standard",
+        "count": 274
+      },
+      {
+        "turn": 5,
+        "scope": "standard",
+        "count": 274
+      },
+      {
+        "turn": 6,
+        "scope": "standard",
+        "count": 274
+      },
+      {
+        "turn": 7,
+        "scope": "standard",
+        "count": 274
+      },
+      {
+        "turn": 8,
+        "scope": "standard",
+        "count": 260
+      },
+      {
+        "turn": 9,
+        "scope": "standard",
+        "count": 260
+      },
+      {
+        "turn": 10,
+        "scope": "standard",
+        "count": 274
+      },
+      {
+        "turn": 11,
+        "scope": "standard",
+        "count": 274
+      },
+      {
+        "turn": 12,
+        "scope": "standard",
+        "count": 274
+      },
+      {
+        "turn": 13,
+        "scope": "standard",
+        "count": 340
+      },
+      {
+        "turn": 14,
+        "scope": "standard",
+        "count": 340
+      }
+    ],
+    "separation": {
+      "turnBoundaryRounds": 14,
+      "turnBoundaryRepayed": 14,
+      "separable": false,
+      "note": "本会话 14 个 turn 的首轮**全部**在重付，而 4 次工具面变化也全落在 turn 首轮（resolveToolScope 每 turn 只解析一次）。所以\"工具面变了→重付\"与\"turn 边界本身→重付\"在这份数据里分不开，只能说两者同时发生。能分开的样本需要\"turn 中途工具面变化\"，而结构上不存在这种样本。"
+    },
+    "note": "指纹 = sha256(`scope=<scope>;count=<工具数>`)，来源是 usage 台账的 toolScope/toolCount。每轮请求的真实工具名列表仍未落盘（TrajectoryRecord 只记被调用的 toolNames，且是模型输出顺序），所以 count 相同的两个 turn 不保证送出的是同一个数组——本会话 274→260→274 的抖动就是scope 没变但工具数变了（插件/MCP 注册抖动）。这类变化抓得到，逐字节相同与否抓不到；逐对的三个诊断（集合/顺序/前缀字节）见 pairs 与 1b 节，它们各自标注依据的是哪一层记录。"
+  },
+  "compactions": [
+    {
+      "source": "trajectory-message-drop",
+      "beforeRound": 23,
+      "afterRound": 24,
+      "requestMessagesBefore": 54,
+      "requestMessagesAfter": 7,
+      "stubMessageIndex": 0,
+      "summaryChars": 3113,
+      "promptTokensBefore": 83017,
+      "promptTokensAfter": 29113,
+      "inputTokensAfter": 27577,
+      "steadyStateInputBaseline": 569,
+      "rePaidInputTokens": 27008,
+      "recoveredAfterRounds": 1,
+      "curve": [
+        {
+          "i": 24,
+          "hitRate": 0.05275993542403737,
+          "inputTokens": 27577
+        },
+        {
+          "i": 25,
+          "hitRate": 0.9953070941664097,
+          "inputTokens": 137
+        },
+        {
+          "i": 26,
+          "hitRate": 0.9190363722248465,
+          "inputTokens": 2571
+        },
+        {
+          "i": 27,
+          "hitRate": 0.9307999061693643,
+          "inputTokens": 2360
+        },
+        {
+          "i": 28,
+          "hitRate": 0.822832837912951,
+          "inputTokens": 7331
+        },
+        {
+          "i": 29,
+          "hitRate": 0.9421416038101315,
+          "inputTokens": 2539
+        }
+      ]
+    }
+  ],
+  "repeatReads": {
+    "readCalls": 40,
+    "distinctPaths": 27,
+    "top": [
+      {
+        "path": "src/agent/agent.ts",
+        "count": 7,
+        "tools": {
+          "read_lines": 7
+        }
+      },
+      {
+        "path": "src/agent/autoCompact.ts",
+        "count": 3,
+        "tools": {
+          "read_file": 2,
+          "read_lines": 1
+        }
+      },
+      {
+        "path": "docs/capability-matrix.md",
+        "count": 2,
+        "tools": {
+          "read_file": 2
+        }
+      },
+      {
+        "path": "package.json",
+        "count": 2,
+        "tools": {
+          "read_file": 2
+        }
+      },
+      {
+        "path": "src/agent/commandExtract/extract.ts",
+        "count": 2,
+        "tools": {
+          "read_lines": 2
+        }
+      },
+      {
+        "path": "src/agent/contextBudget.ts",
+        "count": 2,
+        "tools": {
+          "read_file": 1,
+          "read_lines": 1
+        }
+      },
+      {
+        "path": "tests/autoCompact.test.ts",
+        "count": 2,
+        "tools": {
+          "read_file": 2
+        }
+      },
+      {
+        "path": ".",
+        "count": 1,
+        "tools": {
+          "read_many_files": 1
+        }
+      },
+      {
+        "path": "C:\\Users\\34516\\ZCodeProject\\cli\\src\\memory\\global.ts",
+        "count": 1,
+        "tools": {
+          "read_file": 1
+        }
+      },
+      {
+        "path": "C:\\Users\\34516\\ZCodeProject\\cli\\src\\tools\\scope.ts",
+        "count": 1,
+        "tools": {
+          "read_file": 1
+        }
+      }
+    ]
+  },
+  "warnings": [
+    "每个 turn 的首轮都在重付（14/14），共 1087083 输入 token：说明缓存杀手在 turn 粒度上、位置在历史之前。逐 turn 变化的头部块是头号嫌疑（agent.ts 每步 unshift 的 <past-reflections> / <relevant-project-memories> / <global-memory>，turn 内恒定、turn 间不同），工具面变化只是同一批位置上的另一种可能。",
+    "台账逐 turn 的 token 与轨迹逐轮之和完全相等 —— 压缩的摘要请求本身（runAutoCompact 里直接调 provider.complete，不走主循环的 usageTotals）在两个产物里都没有计费，压缩的代价因此是隐形的：能看到的只有压缩后那一轮的重付。"
+  ]
+}
