@@ -8,6 +8,8 @@ import {
   diagnoseRoundPairs,
   findLatestSession,
   formatReport,
+  isAppendDriven,
+  observedReuseOf,
   parseArgs,
   surfaceOf,
   type RoundRow,
@@ -55,6 +57,8 @@ function round(i: number, over: Partial<RoundRow> = {}): RoundRow {
     promptTokens: inputTokens + cacheReadTokens,
     hitRate: cacheReadTokens / (inputTokens + cacheReadTokens),
     repayed: false,
+    observedReuse: null,
+    appendDriven: false,
     coldStart: i === 0,
     turnFirst: i === 0,
     surface: surfaceOf({ toolScope: 'standard', toolCount: 274 }),
@@ -178,6 +182,105 @@ test('the reuse ratio is the provider\'s answer, reported beside the three diagn
   assert.equal(pair.observedReuse, 1900 / 5000);
   assert.equal(pair.providerSawBreak, true);
   assert.equal(pair.inputTokens, 100);
+});
+
+// ---------------------------------------------------------------------------
+// REPAY 的两个子类：前缀真的重建 vs 一次性的大的追加
+// ---------------------------------------------------------------------------
+
+test('the reuse ratio is measured against the whole previous prompt', () => {
+  assert.equal(observedReuseOf(0, 500), null, 'the first round has no previous prefix to reuse');
+  assert.equal(observedReuseOf(10_000, 9_990), 0.999);
+  assert.equal(observedReuseOf(10_000, 500), 0.05);
+});
+
+test('appendDriven = repaid AND the provider still reused ≥90% of the previous prefix', () => {
+  assert.equal(isAppendDriven(true, 0.999), true, 'large one-off append: low hit rate, prefix was reused');
+  assert.equal(isAppendDriven(true, 0.05), false, 'the prefix really was rebuilt');
+  assert.equal(isAppendDriven(true, null), false, 'no previous round → cannot attribute it to an append');
+  assert.equal(isAppendDriven(false, 1), false, 'not repaid at all, so it is not a REPAY sub-case');
+  assert.equal(isAppendDriven(true, 0.9), true, 'the boundary is inclusive, same as HEALTHY_HIT_RATE');
+});
+
+function appendFixture(rows: Array<{ input: number; read: number }>): {
+  sessionPath: string;
+  usageLogPath: string;
+  cleanup: () => void;
+} {
+  const dir = mkdtempSync(join(tmpdir(), 'context-ledger-append-'));
+  mkdirSync(join(dir, 'sessions'), { recursive: true });
+  const sessionPath = join(dir, 'sessions', 'sess_append.json');
+  writeFileSync(
+    sessionPath,
+    JSON.stringify({ id: 'sess_append', provider: 'openai', model: 'm', messages: [{ role: 'user', content: 'hi' }], toolCalls: [] }),
+    'utf-8',
+  );
+  const records = rows.map((row, index) => rec({
+    step: index + 1,
+    requestMessageCount: 4 + index,
+    promptChars: 1000 * (index + 1),
+    toolNames: ['read_file'],
+    usage: { inputTokens: row.input, outputTokens: 10, cacheReadTokens: row.read },
+  }));
+  writeFileSync(
+    join(dir, 'sessions', 'sess_append.trajectory.jsonl'),
+    `${records.map((row) => JSON.stringify(row)).join('\n')}\n`,
+    'utf-8',
+  );
+  const usageLogPath = join(dir, 'usage.jsonl');
+  writeFileSync(
+    usageLogPath,
+    rows.map((row) => JSON.stringify({
+      ts: 't', sessionId: 'sess_append', provider: 'openai', model: 'm',
+      inputTokens: row.input, outputTokens: 10, cacheReadTokens: row.read,
+      toolScope: 'standard', toolCount: 274, turnId: 'turn_1',
+    })).join('\n'),
+    'utf-8',
+  );
+  return { sessionPath, usageLogPath, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+test('REPAY splits three ways: real rebuild, large append, ordinary append', async () => {
+  // 0: cold start. prompt 24,000, but input 4,000 < 5,000 so it is not a REPAY round.
+  // 1: REAL REBUILD  — input 20,000 / cacheRead 5,000 against a 24,000 prompt → reuse 0.208.
+  // 2: LARGE APPEND  — previous prompt 25,000; appends 8,000 fresh tokens; cacheRead 24,990
+  //                    → hit 75.7% (< 90%) but reuse 0.9996 (prefix reused intact).
+  // 3: ORDINARY APPEND — previous prompt 32,990; appends only 200 tokens; cacheRead 32,800
+  //                    → hit 99.4%, not a repay at all.
+  const { sessionPath, usageLogPath, cleanup } = appendFixture([
+    { input: 4_000, read: 20_000 },
+    { input: 20_000, read: 5_000 },
+    { input: 8_000, read: 24_990 },
+    { input: 200, read: 32_800 },
+  ]);
+  try {
+    const report = await buildReport({ sessionPath, usageLogPath });
+    assert.deepEqual(report.cache.repayedRounds, [1, 2], 'the headline list is unchanged in meaning');
+    assert.deepEqual(report.cache.appendDrivenRounds, [2]);
+    assert.deepEqual(
+      report.rounds.map((row) => [row.i, row.repayed, row.appendDriven]),
+      [[0, false, false], [1, true, false], [2, true, true], [3, false, false]],
+    );
+    assert.equal(report.rounds[0].observedReuse, null, 'the cold start has no previous prefix');
+    assert.equal(report.rounds[1].observedReuse, 5_000 / 24_000);
+    assert.equal(report.rounds[2].observedReuse, 24_990 / 25_000);
+    assert.equal(report.rounds[3].hitRate >= 0.9, true);
+
+    // The new fields only annotate: the headline arithmetic did not move.
+    const totalInput = 4_000 + 20_000 + 8_000 + 200;
+    const totalRead = 20_000 + 5_000 + 24_990 + 32_800;
+    assert.equal(report.cache.totalInputTokens, totalInput);
+    assert.equal(report.cache.totalCacheReadTokens, totalRead);
+    assert.equal(report.cache.weightedHitRate, totalRead / (totalInput + totalRead));
+
+    const text = formatReport(report);
+    const appendRow = text.split('\n').find((line) => /^\s+2\s+3\s+1\s/.test(line));
+    assert.ok(appendRow, 'the append round has a §2 row');
+    assert.ok(appendRow.includes('REPAY') && appendRow.includes('APPEND'), 'both flags, not either/or');
+    assert.ok(text.includes('其中大追加轮'));
+  } finally {
+    cleanup();
+  }
 });
 
 // ---------------------------------------------------------------------------

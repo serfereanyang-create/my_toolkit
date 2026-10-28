@@ -4,6 +4,7 @@ import { withModelRetry } from '../providers/retry.js';
 import { withRequestControl, ProviderRequestTimeoutError } from '../providers/requestControl.js';
 import { throwIfAborted } from '../utils/cancellation.js';
 import type { ApprovalRequest } from '../tools/types.js';
+import { isDestructiveApprovalRequest } from './policy.js';
 
 /**
  * Automatic review of a risky tool call, before the user is asked.
@@ -15,9 +16,11 @@ import type { ApprovalRequest } from '../tools/types.js';
  *
  * Where this sits matters more than what it asks. The caller consults it only
  * after `decideApproval` returned `needsPrompt: true`, which is *after* the
- * hard-deny branch. So the command blocklist (`rm -rf`), the SSRF guard, `deny`
- * mode, and `alwaysPrompt` destructive tools are all unreachable from here —
- * that is structural, not a matter of prompting the reviewer correctly.
+ * hard-deny branch. So the command blocklist (`rm -rf`), the SSRF guard and
+ * `deny` mode can never be revived here. `alwaysPrompt` destructive tools also
+ * reach this point, so they are kept out by `isReviewable` below rather than by
+ * the call order — an allow here would otherwise run `git restore` with no
+ * human ever seeing the targets.
  */
 
 export type AutoReviewDecision =
@@ -192,6 +195,7 @@ export async function reviewAction(
  */
 export function isReviewable(request: ApprovalRequest): boolean {
   if (request.risk === 'read') return false;
+  if (isDestructiveApprovalRequest(request)) return false;
   return true;
 }
 

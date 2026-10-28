@@ -14,6 +14,61 @@ export function widestScope(a: ResolvedToolScope, b: ResolvedToolScope): Resolve
   return SCOPE_RANK[a] >= SCOPE_RANK[b] ? a : b;
 }
 
+const RESOLVED_TOOL_SCOPES: ReadonlySet<string> = new Set(['compact', 'standard', 'full']);
+
+/**
+ * Plain boolean membership test. Kept separate from the type predicate below
+ * so a guard on a `ToolScope` does not narrow 'auto' out of the remaining
+ * branch — the guards here need "is this a *resolved* scope", not "is this
+ * exactly the resolved union".
+ */
+function isScopeMember(value: unknown): boolean {
+  return typeof value === 'string' && RESOLVED_TOOL_SCOPES.has(value);
+}
+
+/** Whether a runtime value is one of the three resolved scopes. */
+export function isResolvedToolScope(value: unknown): value is ResolvedToolScope {
+  return isScopeMember(value);
+}
+
+/**
+ * Raw scope values already reported. A bogus value is re-normalised every turn
+ * (the scope is resolved per prompt), so without this the warning would print
+ * once per turn. Keyed by the raw value, so two different mistakes both speak.
+ */
+const warnedScopeValues = new Set<string>();
+
+function warnUnknownScope(value: unknown): void {
+  const key = JSON.stringify(value) ?? String(value);
+  if (warnedScopeValues.has(key)) return;
+  warnedScopeValues.add(key);
+  // console.error, not a logger: this module is imported by pure callers
+  // (audit/contextLedger, subagent/tool-ceiling) that have no UI to hand. The
+  // existing convention for a pure module reporting a problem is stderr.
+  console.error(
+    `[ToolScope] Unknown tool scope ${key}; falling back to "compact". Expected one of: compact, standard, full, auto.`,
+  );
+}
+
+/**
+ * Fail closed on an unrecognised scope.
+ *
+ * `ResolvedToolScope` is a union at the type level, but runtime values reach
+ * `selectScopedTools` through casts (runtime/createRuntime.ts:97
+ * `(config.toolScope ?? 'auto') as ToolScope`) and hand-written config files.
+ * Measured on this registry, an unknown value used to take the allowlist-union
+ * branch and select 236 tools — COMPACT_ALLOW ∪ STANDARD_EXTRA_ALLOW, i.e.
+ * compact plus every write/shell tool — because every `scope === 'standard'`
+ * gate was false. That is wider than compact, so the fallback used to fail
+ * OPEN. Anything not in the union now degrades to the narrowest defined scope
+ * and says so on stderr; a silent narrowing would be just as hard to diagnose.
+ */
+export function normalizeToolScope(value: unknown): ResolvedToolScope {
+  if (isResolvedToolScope(value)) return value;
+  warnUnknownScope(value);
+  return 'compact';
+}
+
 /**
  * Tools that can start another agent, and therefore can cause a write **without
  * themselves being a write-risk tool**.
@@ -136,11 +191,25 @@ export function resolveToolScope(options: {
   // An explicit request is the user (or the desktop scope picker) speaking, so
   // it wins outright and is NOT floored — otherwise picking 紧凑 in the UI would
   // silently do nothing after any turn had widened the scope.
+  //
+  // Validated, because this is the single point every scope source funnels
+  // through: the CLI parser, AICODE_TOOL_SCOPE, the config file, the desktop
+  // bridge and expert routing. A hand-written config value (or a cast upstream)
+  // that is not one of the three resolved scopes used to pass through verbatim
+  // and widen the surface. 'auto' stays legal here (it is a ToolScope, and is
+  // interpreted below); everything else unknown falls back to compact.
+  // `isScopeMember` is consulted before the `!== 'auto'` test so that an empty
+  // string, which is falsy, is reported rather than silently read as `auto`.
+  if (options.requested !== undefined && options.requested !== 'auto' && !isScopeMember(options.requested)) {
+    return normalizeToolScope(options.requested);
+  }
   if (options.requested && options.requested !== 'auto') return options.requested;
 
   const resolved = resolveToolScopeForTurn(options);
   const previous = options.previousScope;
-  return previous ? widestScope(previous, resolved) : resolved;
+  if (previous === undefined) return resolved;
+  if (!isScopeMember(previous)) return normalizeToolScope(previous);
+  return widestScope(previous, resolved);
 }
 
 /**
@@ -153,6 +222,12 @@ export function resolveToolScopeForTurn(options: {
   prompt: string;
   shouldUseTaskBoard: boolean;
 }): ResolvedToolScope {
+  // Same validation as resolveToolScope: the raw signal may also arrive with a
+  // value the type does not admit (both scope entries above call this).
+  // 'auto' is legal — this function exists to interpret it.
+  if (options.requested !== undefined && options.requested !== 'auto' && !isScopeMember(options.requested)) {
+    return normalizeToolScope(options.requested);
+  }
   if (options.requested && options.requested !== 'auto') return options.requested;
 
   const complexity = analyzeTaskComplexity(options.prompt).complexity;
@@ -166,6 +241,13 @@ export function resolveToolScopeForTurn(options: {
 }
 
 export function selectScopedTools(registry: ToolRegistry, scope: ResolvedToolScope): ToolDefinition[] {
+  // The second gate. The union is only a type; runtime values arrive through
+  // casts and JSON config, so this entrance re-checks it even though
+  // resolveToolScope already normalises. Measured before this guard: a bogus
+  // value selected 236 tools (compact plus all 36 write/shell tools) — see
+  // normalizeToolScope. Legacy 'auto' arrives here unwidened in a few callers;
+  // it is not a resolved scope, so it takes the same documented fallback.
+  scope = normalizeToolScope(scope);
   const all = registry.list();
   if (scope === 'full') return all;
   const allow = scope === 'compact'
@@ -259,13 +341,37 @@ const HIGH_VALUE_EXTRA = new Set([
  *   0. protected tools (injected after scope selection; never trimmed)
  *   1. mutating/execution core (write, edit, run, git) — without these the agent cannot work
  *   2. read/inspection allowlist + high-value gates
- *   3. other built-in tools
- *   4. plugin_/mcp_ bridge tools (largest, most replaceable block)
+ *   3. other read-only built-ins (analysis, lint, suggestions — nothing lost
+ *      from the *capability* surface if they go, but they are the safest block
+ *      to keep: they cannot write, run, or spawn an agent)
+ *   4. other mutating/execution built-ins
+ *   5. plugin_/mcp_ bridge tools (largest, most replaceable block)
+ *
+ * Why read-only sorts ahead of the rest of rank 3-4. That block used to share
+ * one bucket, ordered alphabetically, so the cap cut whichever names happened
+ * to sort late — measured on this tree with every desktop switch on (computer
+ * + background browser/app/native, 38 injected tools), `full` reaches 399 and
+ * the cap drops 59; 49 of those were read-only analysis tools (repo_map,
+ * semantic_search, review_code, ...) while only 10 were write/shell tools. The
+ * dropped set was decided by letters, not by what the session loses. Splitting
+ * the bucket keeps the read-only tools (the cheap, safe surface) and spends
+ * the cap on the write/execution tools instead: on the same input, 28
+ * read-only + 31 write/execution dropped, and the read-only remainder is
+ * exactly the number left after every non-read-only built-in is spent.
  *
  * The delegation tools do not need a rank of their own: they are registered
  * post-scope (src/agent/agent.ts), so they always arrive as protected names and
- * land in rank 0. standard also never reaches the cap — it scopes to 332 of 340
- * — so the trim does not touch it at all; the cap only bites in `full`.
+ * land in rank 0.
+ *
+ * standard DOES reach the cap. The old note here said it scoped to 332 of 340;
+ * that is only true with the desktop switches off. Measured on this tree:
+ * standard alone is 332, but standard plus the post-scope block (33
+ * computer / background_* / computer_* tools from the desktop switches, plus
+ * spawn_subagent, review_loop, propose_plan, supervisor_status,
+ * open_pull_request) is 368, so the trim drops 28 — all of them read-only
+ * analysis tools. `full` is 363 scoped and 399 injected (rank 0/1/2/3/4 =
+ * 38/36/204/90/31), so it drops 28 read-only plus the whole 31-tool rank 4.
+ * `compact` is 200 scoped and 238 injected, and never reaches the cap.
  */
 export function limitProviderTools(
   tools: ToolDefinition[],
@@ -278,8 +384,9 @@ export function limitProviderTools(
     if (protectedNames.has(tool.name)) return 0;
     if (STANDARD_EXTRA_ALLOW.has(tool.name)) return 1;
     if (COMPACT_ALLOW.has(tool.name) || HIGH_VALUE_EXTRA.has(tool.name)) return 2;
-    if (tool.name.startsWith('plugin_') || tool.name.startsWith('mcp_')) return 4;
-    return 3;
+    if (tool.name.startsWith('plugin_') || tool.name.startsWith('mcp_')) return 5;
+    if (isReadOnlyTool(tool)) return 3;
+    return 4;
   };
   const ranked = [...tools].sort((a, b) => {
     const byRank = rank(a) - rank(b);

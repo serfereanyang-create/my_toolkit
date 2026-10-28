@@ -2,6 +2,7 @@ import type { AgentRuntime } from '../agent/agent.js';
 import { supervisorFor } from '../agent/agent.js';
 import { createProvider } from '../providers/index.js';
 import { type ResolvedTier } from '../dispatch/tierRouter.js';
+import { DESTRUCTIVE_CONFIRM_REASON, isDestructiveApprovalRequest } from '../safety/policy.js';
 import { resolveDispatchSelection } from '../dispatch/plan.js';
 import { completeWithFallback, configForTier, isFallbackWorthy, tierProvider } from '../dispatch/tierProvider.js';
 
@@ -10,7 +11,10 @@ import { completeWithFallback, configForTier, isFallbackWorthy, tierProvider } f
 // loop now that every call is routed.
 export { completeWithFallback, configForTier, isFallbackWorthy, tierProvider };
 import { allExperts, expertById } from '../experts/profiles.js';
+import type { ExpertProfile } from '../experts/types.js';
 import { ToolRegistry } from '../tools/registry.js';
+import { isResolvedToolScope, limitProviderTools, MAX_PROVIDER_TOOLS, selectScopedTools, widestScope, type ResolvedToolScope } from '../tools/scope.js';
+import type { ToolDefinition } from '../tools/types.js';
 import { TerminalUI } from '../ui/terminal.js';
 import { formatHandoff, runSubAgentWithRollover, type RolloverSegment } from './rollover.js';
 import type { SubAgentResult, SubAgentSpec } from './types.js';
@@ -39,6 +43,208 @@ export function subAgentToolCeiling(
   if (parentRuntime.resolvedToolScope) return parentRuntime.tools;
   return parentRuntime.allTools ?? parentRuntime.tools;
 }
+
+/**
+ * Core tools every working sub-agent must keep whatever its scope or expert.
+ *
+ * A sub-agent is handed a task and expected to finish it — read the code, edit
+ * it, run the project's own verification. `compact` is a conversation scope: it
+ * withholds `write_file`/`edit_lines`/`run_command`/`apply_patch` on purpose,
+ * because a small chat usually does not need them. Inheriting it unfiltered
+ * would turn every `code_edit`/`test_verify` child into an agent that can read
+ * but not do anything — the one outcome that is worse than a wider list.
+ *
+ * Deliberately NOT here: `delete_path`, `git_init` and the rest of
+ * STANDARD_EXTRA_ALLOW's git writers. They are privilege, not the ability to
+ * work, and they stay denied to a compact parent.
+ *
+ * `spawn_subagent` is here because nesting is bounded by `subAgentDepth`, not
+ * by the scope. The scope grants it at standard and the parent's resolved set
+ * usually holds it already; restoring it keeps a third level reachable for a
+ * child of a compact parent instead of silently changing the depth contract.
+ */
+export const SUBAGENT_CORE_TOOLS: ReadonlySet<string> = new Set([
+  'read_file', 'read_lines', 'read_many_files', 'list_files', 'search_text', 'find_files',
+  'write_file', 'append_file', 'edit_lines', 'apply_patch',
+  'run_command', 'poll_command',
+  'run_tests', 'typecheck', 'lint',
+  'spawn_subagent',
+]);
+
+/**
+ * Tools `runAgentTurnCore` injects only for the root agent (agent.ts:765-791).
+ *
+ * A sub-agent's own turn would not add them, but the parent's resolved set can
+ * already carry the runtime-bound instances (the base `review_loop` and
+ * `spawn_subagent` are in the default registry). Those instances close over
+ * the ROOT runtime — calling one from a child reads the root's
+ * `subAgentDepth` and spawns with it, so a depth-1 child could start
+ * grandchildren that the depth-0 gate then allows up to the limit again.
+ * Removing them from the child's registry keeps depth a single chain.
+ */
+export const ROOT_ONLY_TOOLS: ReadonlySet<string> = new Set([
+  'review_loop',
+  'propose_plan',
+  'supervisor_status',
+  'open_pull_request',
+]);
+
+/**
+ * Give up non-essential tools until the registry fits `limit`, never dropping a
+ * SUBAGENT_CORE_TOOL or anything the expert's filter rejects after all.
+ *
+ * The limit is the smaller of MAX_PROVIDER_TOOLS and the parent's own request
+ * size. The child can exceed the parent ONLY by the core tools step 4 restored
+ * for it (a compact parent holds none of the write/run tools), so the trim
+ * takes back the least useful non-core entries — exactly what the parent's own
+ * cap would have taken from a slightly larger list. If the protection set
+ * itself is over the limit, the limit wins: an oversized array is a 400 on
+ * every turn, which is worse than a child that has to ask a narrower way to
+ * work.
+ */
+function trimSubAgentTools(registry: ToolRegistry, limit: number): { registry: ToolRegistry; dropped: string[] } {
+  const stripped = withoutRootOnlyTools(registry);
+  const tools = stripped.list();
+  if (tools.length <= limit) return { registry: stripped, dropped: [] };
+  const protectedNames = new Set(
+    tools.filter((tool) => SUBAGENT_CORE_TOOLS.has(tool.name)).map((tool) => tool.name),
+  );
+  const trimmed = limitProviderTools(tools, { max: limit, protectedNames });
+  return { registry: ToolRegistry.fromTools(trimmed.tools), dropped: trimmed.dropped };
+}
+
+/** A registry without the root-only tools; the same object when none are present. */
+function withoutRootOnlyTools(registry: ToolRegistry): ToolRegistry {
+  const tools = registry.list();
+  if (!tools.some((tool) => ROOT_ONLY_TOOLS.has(tool.name))) return registry;
+  return ToolRegistry.fromTools(tools.filter((tool) => !ROOT_ONLY_TOOLS.has(tool.name)));
+}
+
+/**
+ * The scope a sub-agent runs in.
+ *
+ * Precedence: the parent's already-resolved scope, else the expert's
+ * `toolScopeOverride`, else the parent's requested scope when that is already
+ * one of the three resolved values, else `full` — the old whole-registry
+ * behaviour, reachable only by a runtime assembled without a live scope
+ * (tests, embedding callers).
+ *
+ * What the expert's `toolScopeOverride` may and may not do. It was introduced
+ * to stop a child being *narrowed* below what its role needs (`code_search`
+ * wants a small read-only list, `test_verify` needs the shell), so it is read
+ * as a floor. Above the parent's own scope it only widens *which general
+ * tools* are negotiated — the child's list is still cut from the parent's
+ * current set, so it cannot reach a tool the parent does not hold. It matters
+ * in exactly one case: a parent whose config asks for compact (`toolScope`
+ * literal, no turn resolved yet) delegating to a role that needs the shell.
+ *
+ * A resolved parent scope wins outright: it is the scope the parent's own tool
+ * array was built in this session, so a child under it cannot see further than
+ * its parent by construction — except for one bounded case handled below.
+ *
+ * An editing expert never runs below `standard`. A sub-agent that is handed a
+ * task and can only read would have to hand it back undone, and the child's OWN
+ * turn re-runs `selectScopedTools` with this scope, so restoring the core tools
+ * into the registry alone is not enough: `compact`'s allowlist would drop them
+ * again at request time. The floor is `standard` only for experts whose filter
+ * accepts `write_file`; a read-only researcher keeps the parent's compact list.
+ * What `standard` adds is then trimmed back to the parent's own request size
+ * below, with the core tools protected — so the child gains the ability to
+ * edit and run, at the cost of low-ranked utilities, and still sends no more
+ * tools than its parent.
+ */
+export function subAgentScope(
+  parentRuntime: Pick<AgentRuntime, 'resolvedToolScope' | 'toolScope'>,
+  profile: Pick<ExpertProfile, 'toolFilter' | 'toolScopeOverride'>,
+): ResolvedToolScope {
+  const parentScope = isResolvedToolScope(parentRuntime.resolvedToolScope)
+    ? parentRuntime.resolvedToolScope
+    : isResolvedToolScope(profile.toolScopeOverride)
+      ? profile.toolScopeOverride
+      : isResolvedToolScope(parentRuntime.toolScope)
+        ? parentRuntime.toolScope
+        : 'full';
+  const canEdit = profile.toolFilter({ name: 'write_file', risk: 'write', description: '' });
+  return canEdit ? widestScope(parentScope, 'standard') : parentScope;
+}
+
+/**
+ * The exact tool list a sub-agent segment is allowed to draw from, with the
+ * provider cap applied. A pure function of the runtime the child was delegated
+ * FROM plus the expert and scope: the direct callers (`runCodeReview` from the
+ * REPL, the workflow subAgentRunner) are not inside a parent turn, and their
+ * child still has to be bounded.
+ *
+ * Ordered narrow → narrow → cap:
+ *   1. ceiling   — when the parent has resolved a turn, its CURRENT set
+ *                  (`parentRuntime.tools`); otherwise the whole registry with
+ *                  the parent's runtime `toolFilter` applied. The second arm is
+ *                  the one the direct callers use: a task-board hand-off sets
+ *                  `toolFilter`, which is invisible in the (pre-filter) registry.
+ *   2. profile   — the expert's toolFilter.
+ *   3. scope     — `selectScopedTools` in the sub-agent's own scope. Without
+ *                  this step the child of a `compact` parent received `full`'s
+ *                  surface: measured on this tree, 238 tools against 205.
+ *   4. core      — SUBAGENT_CORE_TOOLS the expert accepts, restored from the
+ *                  parent's full registry. A compact parent's resolved set
+ *                  holds none of the write/run tools, so without this step a
+ *                  delegated `code_edit`/`test_verify` child could only read.
+ *                  The parent's filter still applies, so a hand-off cannot
+ *                  regain a tool it excluded.
+ *   5. cap       — `limitProviderTools` at `min(MAX_PROVIDER_TOOLS, the
+ *                  parent's delegated-from size)`. Two properties at once: the
+ *                  child never exceeds the provider ceiling (the per-turn 400)
+ *                  and never sends more tools than its parent. The core set
+ *                  restored in step 4 is protected, so the trim takes back
+ *                  low-ranked utilities rather than the ability to work.
+ *
+ * Root-only tools that survive into the result are removed by the segment
+ * builder (they close over the root runtime; see ROOT_ONLY_TOOLS).
+ */
+export function buildSubAgentTools(options: {
+  parentRuntime: Pick<AgentRuntime, 'tools' | 'allTools' | 'resolvedToolScope' | 'toolFilter'>;
+  profile: Pick<ExpertProfile, 'toolFilter'>;
+  scope: ResolvedToolScope;
+}): { registry: ToolRegistry; dropped: string[] } {
+  const { parentRuntime, profile, scope } = options;
+
+  // The delegated-from surface. `resolvedToolScope` is written on every turn,
+  // so when it is set `parentRuntime.tools` is exactly what the parent may call
+  // right now. When it is not, this runtime has not run a turn (direct review /
+  // workflow calls) and the whole registry — minus the task-board filter — is
+  // the honest ceiling.
+  const ceilingTools: ToolDefinition[] = isResolvedToolScope(parentRuntime.resolvedToolScope)
+    ? parentRuntime.tools.list()
+    : (parentRuntime.allTools ?? parentRuntime.tools).list()
+      .filter((tool) => parentRuntime.toolFilter?.(tool) ?? true);
+  const ceilingRegistry = ToolRegistry.fromTools(ceilingTools);
+  const scoped = selectScopedTools(ceilingRegistry, scope);
+
+  const accepted = new Map<string, ToolDefinition>();
+  for (const tool of scoped) {
+    if (profile.toolFilter({ name: tool.name, risk: tool.risk, description: tool.description })) {
+      accepted.set(tool.name, tool);
+    }
+  }
+  // Restore only the work core, and only from the parent's full registry: a
+  // fixed list, never a scope, so the child may regain the ability to edit and
+  // run but not an arbitrary corner of the registry.
+  for (const tool of (parentRuntime.allTools ?? ceilingRegistry).list()) {
+    if (accepted.has(tool.name) || !SUBAGENT_CORE_TOOLS.has(tool.name)) continue;
+    if (!(parentRuntime.toolFilter?.(tool) ?? true)) continue;
+    if (!profile.toolFilter({ name: tool.name, risk: tool.risk, description: tool.description })) continue;
+    accepted.set(tool.name, tool);
+  }
+
+  const tools = [...accepted.values()];
+  const parentBound = Math.min(MAX_PROVIDER_TOOLS, ceilingTools.length);
+  const protectedNames = new Set(
+    tools.filter((tool) => SUBAGENT_CORE_TOOLS.has(tool.name)).map((tool) => tool.name),
+  );
+  const limited = limitProviderTools(tools, { max: Math.min(MAX_PROVIDER_TOOLS, parentBound), protectedNames });
+  return { registry: ToolRegistry.fromTools(limited.tools), dropped: limited.dropped };
+}
+
 
 /**
  * Swap the sub-runtime onto another dispatch tier's provider.
@@ -108,6 +314,36 @@ export const DEFAULT_SUBAGENT_SEGMENT_STEPS = 40;
 export function expertIdForSubAgentRequest(options?: { readonly?: boolean }): string {
   return options?.readonly ? 'code_search' : 'code_edit';
 }
+
+/**
+ * 子 agent（无头）的确认回调：常规确认自动放行，破坏性确认一律拒绝。
+ * `policy.ts` 对 `alwaysPrompt` 工具无条件返回 needsPrompt（注释写的是
+ * 「任何模式下都不静默批准」），而 `registry.ts` 只在 `context.confirm` 缺失
+ * 时才拒绝。子 runtime 过去注入 `() => Promise.resolve(true)`，于是
+ * `git_restore`（不带 --staged，丢弃未提交改动）和 `computer_close` 在子
+ * agent 里被静默放行——父 agent 在 ask 模式下会被拒绝的操作，交给子 agent
+ * 就能执行。
+ *
+ * 修法：子 agent 的普通自动确认（write 类工具）保持不动，只对 alwaysPrompt
+ * 这一类拒绝。registry 把 policy 的 `reason` 原样放进 `ApprovalRequest`，
+ * `alwaysPrompt` 分支的 reason 是固定字符串，据此区分。拒绝时向子 UI 说明
+ * 原因，模型收到的是 registry 的标准取消结果（不是静默成功）。
+ */
+export function createSubAgentConfirm(
+  onDestructiveRefusal?: (tool: string) => void,
+): NonNullable<AgentRuntime['confirm']> {
+  return async (_message, request) => {
+    // registry 从不传 request 给 git-safety 等非工具路径；没有 request 就不是
+    // 工具审批，按常规放行，保持 headless 子 agent 的既有行为。
+    if (request && isDestructiveApprovalRequest(request)) {
+      onDestructiveRefusal?.(request.tool);
+      return false;
+    }
+    return true;
+  };
+}
+
+export { DESTRUCTIVE_CONFIRM_REASON, isDestructiveApprovalRequest };
 
 /**
  * 运行单个子智能体。
@@ -225,14 +461,33 @@ export async function runSubAgent(
     // ── 3. 构建受限工具集 ──────────────────────────────────────────────────────
     //
     // The child's ceiling is the parent's CURRENT set, not the whole registry —
-    // see subAgentToolCeiling for why that is a security property and not a
-    // tidy-up. The expert profile narrows it further.
-    const sourceTools = subAgentToolCeiling(parentRuntime);
-    const filteredTools = ToolRegistry.fromTools(
-      sourceTools.list().filter((tool) =>
-        profile.toolFilter({ name: tool.name, risk: tool.risk, description: tool.description }),
-      ),
-    );
+    // see subAgentToolCeiling. On top of the ceiling the child is re-scoped
+    // (selectScopedTools in its own scope), keeps the expert's filter and the
+    // parent's runtime toolFilter, gets SUBAGENT_CORE_TOOLS back where the
+    // scope withholds them, and is finally capped at the smaller of
+    // MAX_PROVIDER_TOOLS and the parent's own request size. Before this, a
+    // compact parent handed its child `full`'s 238 tools and nothing in
+    // runSubAgent capped the list at all.
+    const childScope = subAgentScope(parentRuntime, profile);
+    const builtTools = buildSubAgentTools({ parentRuntime, profile, scope: childScope });
+    // The depth-0 pass in the parent's turn dropped its own root-only tools via
+    // the runtime toolFilter: strip the same out of the parent's accepted set
+    // so the child's bound is measured against the same surface the parent
+    // actually sends.
+    const parentRequestTools = subAgentToolCeiling(parentRuntime).list()
+      .filter((tool) => !ROOT_ONLY_TOOLS.has(tool.name))
+      .filter((tool) => profile.toolFilter({ name: tool.name, risk: tool.risk, description: tool.description }))
+      .filter((tool) => parentRuntime.toolFilter?.(tool) ?? true);
+    const childTools = trimSubAgentTools(
+      builtTools.registry,
+      Math.min(MAX_PROVIDER_TOOLS, parentRequestTools.length),
+    ).registry;
+    // The child's runtime is a fresh construct, not a copy: every mutable
+    // control field is pinned to a child scope. `sessionToolScopeFloor` in
+    // particular must not be inherited — runAgentTurnCore writes it back on
+    // every turn, so sharing it would let a child widen (or be dragged down
+    // by) the parent's floor. Depth, toolScope and the tool filter are the
+    // child's own for the same reason.
 
     // ── 4. 组装轻量子运行时（继承 provider/config/sessions，覆盖 session/tools）──
     const subUI = new TerminalUI({ quiet: true });
@@ -260,9 +515,22 @@ export async function runSubAgent(
       // 保存也必须走子会话库：展开父 runtime 会把 sessions 一并继承过来，
       // 那样每轮的 appendMessage 仍写回父会话文件，隔离就只做了一半。
       sessions: subStore,
-      tools: filteredTools,
-      allTools: filteredTools,
+      tools: childTools,
+      allTools: childTools,
+      // Same value as the filter already applied in buildSubAgentTools. It is
+      // still set so the child's own turn re-applies the parent's filter to
+      // whatever it resolves later in the segment.
       toolFilter: tool => profile.toolFilter(tool) && (parentRuntime.toolFilter?.(tool) ?? true),
+      // Fresh floor, current child scope. Inheriting the parent's would share
+      // one mutable field across both runtimes: the child's turn would raise
+      // the parent's floor (a widening) and a parent turn could raise the
+      // child's (the child then sees a scope it was never granted).
+      sessionToolScopeFloor: childScope,
+      // Pinned to the scope the tool list above was selected in, so the child's
+      // first turn resolves to the same scope instead of re-deriving it from
+      // its own short prompt.
+      toolScope: childScope,
+      resolvedToolScope: childScope,
       ui: subUI,
       // 子 agent 不继承 git safety 单元（避免嵌套 unit 污染父 session）
       gitSafety: undefined,
@@ -272,18 +540,26 @@ export async function runSubAgent(
       gitRepository: undefined,
       // 推理档位覆盖
       reasoningEffort: spec.reasoningEffort ?? parentRuntime.reasoningEffort,
-      // 专家的工具作用域覆盖必须显式传下去：runAgentTurn 会用 toolScope 重新解析，
-      // 子 agent 的小 prompt 会被判成 compact，把 run_command/write_file 这类
-      // 关键工具裁掉（test_verify 就整个失效）。任务板路径一直有这层覆盖，子
-      // agent 路径漏了。
-      toolScope: profile.toolScopeOverride ?? parentRuntime.toolScope,
+      // Root-only tools: `review_loop`, `propose_plan`, `supervisor_status` and
+      // `open_pull_request` are injected by runAgentTurnCore only at depth 0
+      // (agent.ts:765-791). A child is not offered them, but the parent's
+      // resolved set may already contain live instances — those close over the
+      // root runtime, so executing one from a child would re-enter the root
+      // (and spawn grandchildren at depth 1, under the depth-0 gate). Drop them
+      // for that reason; everything else the parent can call, the child may.
+      // (childTools above is already the filtered registry.)
       // 每段一个步数预算：用尽即换新段续跑，而不是让整轮失败。必须基于上面已
       // 合入档位的 config 再覆盖 maxSteps —— 写成 parentRuntime.config 会把档位的
       // provider/model/apiKey 一起丢掉，等于档位没生效。
       config: { ...(tierConfig ?? parentRuntime.config), maxSteps: segmentSteps },
-      // 子 agent 使用简单的自动批准确认（headless 模式）
-      confirm: () => Promise.resolve(true),
-      toolConfirm: () => Promise.resolve(true),
+      // 子 agent 使用简单的自动批准确认（headless 模式）——但只对「常规确认」。
+      // `alwaysPrompt` 的破坏性确认必须拒绝，见 createSubAgentConfirm。
+      confirm: createSubAgentConfirm((tool) => subUI.info(
+        `子 agent 无法执行破坏性操作 ${tool}：需要主会话用户确认`,
+      )),
+      toolConfirm: createSubAgentConfirm((tool) => subUI.info(
+        `子 agent 无法执行破坏性操作 ${tool}：需要主会话用户确认`,
+      )),
       // 深度递增：子 agent 再派生时 spawn_subagent 会检查该值（root=0，子=+1）
       subAgentDepth: (parentRuntime.subAgentDepth ?? 0) + 1,
       // Stamp the tier so the turn's usage block can write the dispatch ledger.

@@ -24,6 +24,21 @@ import { CommandJobManager } from '../safety/commandJobs.js';
 import { flushBackgroundWrites } from '../agent/agent.js';
 import type { AgentRuntime } from '../agent/agent.js';
 
+/**
+ * Config-supplied tool scope, validated at the trust boundary.
+ *
+ * `normalizeToolScope` cannot be used here: it maps anything outside the three
+ * *resolved* scopes — `'auto'` included — to `'compact'`, which would silently
+ * turn every default runtime into a compact one. Config is hand-editable JSON
+ * and a stale desktop preference file can carry anything, so an unknown value
+ * falls back to the documented default rather than travelling on a cast.
+ */
+export function scopeOrAuto(value: unknown): ToolScope {
+  return value === 'auto' || value === 'compact' || value === 'standard' || value === 'full'
+    ? value
+    : 'auto';
+}
+
 export async function createAgentRuntime(config: AppConfig) {
   const provider = createProvider(config);
   const allTools = createDefaultToolRegistry({ excelAutomation: config.excelAutomation === true });
@@ -94,7 +109,13 @@ export async function createAgentRuntime(config: AppConfig) {
     ui,
     hooks,
     commandJobs,
-    toolScope: (config.toolScope ?? 'auto') as ToolScope,
+    // The `as ToolScope` this used to carry was a lie when config came from a
+    // hand-edited file or a stale desktop preference: the value reached the
+    // resolver unvalidated. This is the last entrance, so it gets the same
+    // four-value whitelist args/env/config/bridge already apply — and unlike
+    // `normalizeToolScope`, `'auto'` stays `'auto'`, because that is a legal
+    // user choice the per-turn resolver is supposed to interpret.
+    toolScope: scopeOrAuto(config.toolScope),
     gitSafety,
     gitRollback,
     gitPublisher,

@@ -41,6 +41,22 @@ export type ApprovalDecision = {
 };
 
 /**
+ * The `reason` a destructive (`alwaysPrompt`) call carries all the way to the
+ * approval request. Exported because more than one consumer has to recognise
+ * this specific prompt and refuse to answer it on the user's behalf: the
+ * sub-agent confirm (there is no human to ask) and the auto-reviewer (a model
+ * must not stand in for the last human check). Matching on the string keeps
+ * those consumers from needing a new field threaded through the approval path;
+ * `tests/subagent-destructive-guard.test.ts` pins it.
+ */
+export const DESTRUCTIVE_CONFIRM_REASON = 'destructive tool requires explicit confirmation';
+
+/** True for an approval request that only a human may answer. */
+export function isDestructiveApprovalRequest(request: { reason: string }): boolean {
+  return request.reason === DESTRUCTIVE_CONFIRM_REASON;
+}
+
+/**
  * Legacy pattern list. `rm -rf` / `del /s` / `rmdir /s` used to live here and were
  * refused unconditionally — including `rm -rf ./dist`, which the agent needs to
  * clean build output. Those now go through `analyzeCommand`, which judges the
@@ -362,7 +378,7 @@ export function decideApproval(options: {
   // are never approved silently, in ANY mode: the user must see the exact
   // targets before the work is destroyed. The registry turns `needsPrompt`
   // without a confirmation handler into a refusal rather than a silent run.
-  if (options.alwaysPrompt) return { allowed: true, needsPrompt: true, reason: 'destructive tool requires explicit confirmation' };
+  if (options.alwaysPrompt) return { allowed: true, needsPrompt: true, reason: DESTRUCTIVE_CONFIRM_REASON };
 
   if (options.computerUse && options.risk === 'shell' && !options.command) {
     if (options.mode === 'auto') {

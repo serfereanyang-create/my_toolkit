@@ -1,4 +1,5 @@
 import type { ApprovalDecision, ApprovalRequest } from '../tools/types.js';
+import { isDestructiveApprovalRequest } from '../safety/policy.js';
 
 export type PendingApproval = {
   request: ApprovalRequest;
@@ -52,6 +53,19 @@ export class DesktopApprovalBroker {
     return dir ? `${request.risk}:${request.tool}:${dir}` : `${request.risk}:${request.tool}`;
   }
 
+  /**
+   * Destructive calls are exempt from the session cache in both directions: an
+   * earlier "allow for this session" must not answer one, and answering one
+   * must not create an entry. The key alone could not carry that safety — it is
+   * `risk:tool:dir`, `git_restore`'s targets live in `input.paths` rather than
+   * `input.path` (so the dir is always empty and one grant covers the whole
+   * workspace), and "the user must see the exact targets before the work is
+   * destroyed" is not a promise a cached yes can keep.
+   */
+  private cacheable(request: ApprovalRequest): boolean {
+    return request.risk === 'write' && !isDestructiveApprovalRequest(request);
+  }
+
   async confirm(message: string, request?: ApprovalRequest): Promise<ApprovalDecision> {
     const approval: ApprovalRequest = request ?? {
       tool: 'unknown',
@@ -61,7 +75,7 @@ export class DesktopApprovalBroker {
       message,
     };
     const allowKey = this.allowKey(approval);
-    if (approval.risk === 'write' && this.sessionAllows.has(allowKey)) return true;
+    if (this.cacheable(approval) && this.sessionAllows.has(allowKey)) return true;
 
     this.sequence += 1;
     const requestId = `approval_${Date.now()}_${this.sequence}`;
@@ -100,7 +114,7 @@ export class DesktopApprovalBroker {
         timer,
         resolve: (decision) => {
           if (timer) clearTimeout(timer);
-          if (decision === 'allow_session' && approval.risk === 'write') this.sessionAllows.add(allowKey);
+          if (decision === 'allow_session' && this.cacheable(approval)) this.sessionAllows.add(allowKey);
           resolve(decision);
         },
       });

@@ -58,17 +58,35 @@ export type TrajectoryRecord = {
    * Names of the tools **sent** with this request, in the order sent.
    *
    * This is the array that sits inside the cached prompt prefix, so its order is
-   * load-bearing for the cache in a way `toolNames` order is not. It is declared
-   * (and consumed by src/audit/contextLedger.ts) but not yet written by the
-   * agent loop: `recordTrajectory`'s call site in src/agent/agent.ts would have
-   * to pass `stepTools.list().map(tool => tool.name)`. Until it does, the ledger
-   * falls back to `toolNames` and says so per pair instead of pretending.
+   * load-bearing for the cache in a way `toolNames` order is not. Written by the
+   * agent loop at the point of sending: the call site takes
+   * `stepTools.list().map(tool => tool.name)` — the very array that is
+   * serialised into the request — so this field is evidence of what the provider
+   * received, not of what the model called. It is what decides a planning turn's
+   * last step, where `stepTools` narrows to `[propose_plan]`.
+   *
+   * Rows written before the writer existed (and hand-written fixtures) lack it;
+   * readers fall back to `toolNames` via `recordedToolSurface` and label the
+   * result `called-tools` rather than pretending.
    */
   toolSetNames?: string[];
-  /** Canonical (sorted) form of `toolSetNames` — comparison only, never sent. */
+  /** Canonical (sorted, duplicates kept) form of `toolSetNames` — comparison only, never sent. */
   toolSetCanonical?: string[];
-  /** sha256 of `toolSetCanonical`. Equal hashes ⇒ byte-identical tool array. */
+  /** sha256 of `toolSetCanonical`: the multiset's identity, order-free. */
   toolSetHash?: string;
+  /**
+   * Order-sensitive sha256 of the raw `toolSetNames` sequence.
+   *
+   * `toolSetHash` deliberately ignores order, so it cannot answer the question
+   * the prefix actually turns on: providers hash the tool array in the order
+   * given, so `[a, b]` and `[b, a]` are two different prefixes. This is the
+   * byte-equivalence witness — equal values ⇒ the same names in the same order.
+   *
+   * Same construction as `toolNamesOrderHash`; the two fields are separate
+   * because they describe different things (a sent array vs a call log) and
+   * should not be conflated even though the algorithm is shared.
+   */
+  toolSetOrderHash?: string;
   promptChars: number;
   usage?: { inputTokens?: number; outputTokens?: number };
   streamMetrics?: StreamMetrics;
@@ -226,7 +244,12 @@ export function withCanonicalToolNames<T extends TrajectoryRecord>(row: T): T {
   }
   if (Array.isArray(row.toolSetNames)) {
     next.toolSetCanonical = canonicalToolNames(row.toolSetNames) ?? [];
+    // Two identities, deliberately different questions: `toolSetHash` is the
+    // multiset (order-free), `toolSetOrderHash` the actual byte order. A reader
+    // asking "did the prefix change?" needs the second; one asking "was it the
+    // same set of tools?" needs the first.
     next.toolSetHash = toolNamesHash(row.toolSetNames) ?? undefined;
+    next.toolSetOrderHash = toolNamesOrderHash(row.toolSetNames) ?? undefined;
   }
   return next;
 }
@@ -243,12 +266,20 @@ export function recordedToolSurface(row: TrajectoryRecord): {
   layer: 'sent-tools' | 'called-tools' | 'none';
   raw: string[] | null;
   canonical: string[] | null;
+  /**
+   * Order-sensitive hash of the sent array — the prefix-equivalence witness.
+   * Only the `sent-tools` layer has one: a called-tools list is recorded in
+   * model emission order, which never reaches the provider, so hashing it would
+   * invent an order that has no cache meaning.
+   */
+  orderHash: string | null;
 } {
   if (Array.isArray(row.toolSetNames)) {
     return {
       layer: 'sent-tools',
       raw: row.toolSetNames.map((name) => String(name)),
       canonical: row.toolSetCanonical ?? canonicalToolNames(row.toolSetNames),
+      orderHash: row.toolSetOrderHash ?? toolNamesOrderHash(row.toolSetNames),
     };
   }
   if (Array.isArray(row.toolNames)) {
@@ -256,9 +287,10 @@ export function recordedToolSurface(row: TrajectoryRecord): {
       layer: 'called-tools',
       raw: row.toolNames.map((name) => String(name)),
       canonical: row.toolNamesCanonical ?? canonicalToolNames(row.toolNames),
+      orderHash: null,
     };
   }
-  return { layer: 'none', raw: null, canonical: null };
+  return { layer: 'none', raw: null, canonical: null, orderHash: null };
 }
 
 export function trajectoryPathFor(sessionPath: string): string {

@@ -9,13 +9,14 @@ import type { GitUnitContext, GitUnitOutcome, GitUnitResult } from '../git-safet
 import { askForApproval } from '../safety/policy.js';
 import type { AgentAction, Provider } from '../providers/types.js';
 import { withModelRetry } from '../providers/retry.js';
-import { maybeAutoCompact, maybeMidTurnCompact } from './autoCompact.js';
+import { maybeAutoCompact, maybeMidTurnCompact, type CompactUsageSink } from './autoCompact.js';
 import type { HookRegistry } from '../hooks/hooks.js';
 import type { CheckpointStore } from '../session/checkpoint.js';
 import type { SessionRecord, SessionStore } from '../session/store.js';
 import type { McpManager } from '../mcp/manager.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { limitProviderTools, resolveToolScope, selectScopedTools, type ToolScope, type ResolvedToolScope } from '../tools/scope.js';
+import { classifyToolScopeReason, type ToolScopeReason } from '../tools/scopeReason.js';
 import type { TerminalUI } from '../ui/terminal.js';
 import { executeCommandPlan, extractCommand, formatCommandStrategy, planCommand } from './commandExtract/index.js';
 import { formatProjectContext, readProjectContext } from './context.js';
@@ -153,6 +154,22 @@ export type AgentRuntime = {
    */
   sessionToolScopeFloor?: ResolvedToolScope;
   /**
+   * Called with the scope every agent turn actually ran with, right after the
+   * resolver records it.
+   *
+   * `resolvedToolScope` alone cannot be observed after the fact: it is
+   * overwritten when expert routing runs a turn of its own. `sessionToolScopeFloor`
+   * is the session truth but carries no reason, and the desktop picker needs
+   * both — the value AND which signal produced it, since "an earlier turn
+   * widened this" reads very differently from "this task is large".
+   *
+   * The desktop bridge installs this hook. Turns the bridge itself started
+   * (desktop user messages) are reported by the bridge's own post-turn path, so
+   * the hook exists for the entries the bridge cannot see: task-board actions,
+   * automation runs and sub-agents.
+   */
+  toolScopeResolvedHook?: (scope: ResolvedToolScope, prompt: string, reason: ToolScopeReason) => void;
+  /**
    * True for the current turn when the computer-control tools are live:
    * either the session armed them via `/computer use`, or full access
    * (approval 'auto') + desktop "任意应用" lets the agent self-wake.
@@ -285,6 +302,19 @@ export type AgentRuntime = {
    */
   lastTurnSteps?: number;
   /**
+   * How many tools the provider was actually sent on the LAST round-trip of
+   * the most recent turn.
+   *
+   * `usage.jsonl` records `runtime.tools.list().length` because that is all it
+   * could see, but that is the whole registry — before the scope filter, the
+   * post-scope injections and the `limitProviderTools` cap. It reads 363 on a
+   * turn that sent 246, and it reads the same number for `compact` and `full`,
+   * which is exactly the field a cache diagnosis needs to tell apart. Written
+   * by the loop next to `lastTurnSteps` for the same reason: eight return
+   * paths, one writer.
+   */
+  lastTurnSentToolCount?: number;
+  /**
    * Denial-streak state for the auto-reviewer.
    *
    * On the runtime rather than a local, because the reviewer is consulted from
@@ -400,6 +430,13 @@ async function runControlledAgentTurn(runtime: AgentRuntime, prompt: string, opt
   // succeeds or fails, so genuine usage is never lost.
   const usageTotals: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number; localCachePredictedRate?: number } = { inputTokens: 0, outputTokens: 0 };
   /**
+   * Spend from automatic context compaction, which runs outside the step loop
+   * (it calls `provider.complete` directly for the summary) and therefore never
+   * lands in `usageTotals`. Kept separately so the ledger can report it instead
+   * of silently omitting a full-history summarization the provider billed for.
+   */
+  const compactUsage: CompactUsageSink = { calls: 0, inputTokens: 0, outputTokens: 0, outcome: 'failed' };
+  /**
    * The same totals, split by dispatch tier.
    *
    * A turn is no longer on one tier from start to finish — the plan/final-answer
@@ -434,7 +471,7 @@ async function runControlledAgentTurn(runtime: AgentRuntime, prompt: string, opt
   const transcript = { partial: '' };
   let thrown: unknown;
   try {
-    coreResult = await runAgentTurnCore(runtime, prompt, options, usageTotals, transcript, tierUsage, dispatchPlan);
+    coreResult = await runAgentTurnCore(runtime, prompt, options, usageTotals, transcript, tierUsage, dispatchPlan, compactUsage);
   } catch (error) {
     thrown = error;
     if (error instanceof CancelledError || runtime.cancelRequested?.() || runtime.requestSignal?.aborted) {
@@ -499,7 +536,9 @@ async function runControlledAgentTurn(runtime: AgentRuntime, prompt: string, opt
     });
   } catch { /* status persistence is best-effort */ }
 
-  if (usageTotals.inputTokens > 0 || usageTotals.outputTokens > 0) {
+  // A turn whose only spend was an auto-compaction summary has zero main-loop
+  // tokens; the ledger still has to record it, so the guard covers both.
+  if (usageTotals.inputTokens > 0 || usageTotals.outputTokens > 0 || compactUsage.calls > 0) {
     const newToolCalls = runtime.session.toolCalls.slice(toolCallsBefore);
     const toolsUsed = [...new Set(newToolCalls.map((call) => call.tool))].slice(0, 12);
     await appendUsage(resolveUsageLogPath(runtime.config.usageLog), {
@@ -527,11 +566,17 @@ async function runControlledAgentTurn(runtime: AgentRuntime, prompt: string, opt
       // Which tool surface this turn actually sent. The tool array sits inside
       // the cached prompt prefix, so this is the field that explains a bad hit
       // rate: a changing toolCount between turns means the cache died at byte 0.
+      //
+      // toolCount is the number the provider received (`lastTurnSentToolCount`),
+      // not the registry size. `runtime.tools` is the whole registry — before
+      // the scope filter, the injections and the 340 cap — so it reported the
+      // same 363 for a 246-tool compact turn and a 340-tool full one.
       ...(runtime.resolvedToolScope ? { toolScope: runtime.resolvedToolScope } : {}),
-      ...(runtime.tools ? { toolCount: runtime.tools.list().length } : {}),
+      ...(runtime.lastTurnSentToolCount !== undefined ? { toolCount: runtime.lastTurnSentToolCount } : {}),
       ...(options.gitSafetyUnit?.request.kind === 'task'
         ? { boardId: options.gitSafetyUnit.request.boardId, taskId: options.gitSafetyUnit.request.taskId }
         : {}),
+      ...(compactUsage.calls > 0 ? { autoCompact: { ...compactUsage } } : {}),
       durationMs: Date.now() - turnStartedAt,
     });
     // 省钱分级台账：这是唯一能拿到真实 token 数的地方。一次 turn 现在可能同时
@@ -627,10 +672,11 @@ async function runAgentTurnCore(
   transcript = { partial: '' },
   tierUsage?: Map<DispatchTier, { inputTokens: number; outputTokens: number; calls: number }>,
   dispatchPlan?: DispatchPlan | null,
+  compactUsage?: CompactUsageSink,
 ): Promise<AgentTurnResult> {
   // codex turn.rs:1231-1260 — pre-turn auto-compact fires BEFORE the new user
   // input enters history, when the conversation nears the context window.
-  await maybeAutoCompact(runtime);
+  await maybeAutoCompact(runtime, compactUsage);
   const recentTools = recentToolResultsFromSession(runtime.session);
   const locale = resolveSessionLocale({
     text: options.displayText ?? prompt,
@@ -722,11 +768,39 @@ async function runAgentTurnCore(
     // prefix — stable across turns. See resolveToolScope for why that matters.
     previousScope: runtime.sessionToolScopeFloor,
   });
+  // Whether an EARLIER turn is what put this scope in force, decided before the
+  // floor is overwritten. A widened scope must be explained as the session's
+  // floor, never as this prompt's difficulty.
+  const floored = runtime.sessionToolScopeFloor !== undefined
+    && resolvedToolScope !== resolveToolScope({
+      requested: runtime.toolScope ?? runtime.config.toolScope,
+      reasoningEffort: effectiveEffort,
+      prompt,
+      shouldUseTaskBoard: taskBoard,
+    });
   runtime.sessionToolScopeFloor = resolvedToolScope;
   const scopedTools = selectScopedTools(runtime.allTools ?? runtime.tools, resolvedToolScope);
   const activeTools = ToolRegistry.fromTools(scopedTools);
   runtime.tools = activeTools;
   runtime.resolvedToolScope = resolvedToolScope;
+
+  // Report the scope this turn ran with, together with the signal that decided
+  // it, to whichever UI installed the hook (the desktop bridge). Derived from
+  // the ANSWER here rather than recomputed from the inputs there, so the cause
+  // can never describe a scope the turn did not use. Sub-agents and task-board
+  // turns reach this line too — the reason the hook lives here and not in the
+  // bridge's post-turn path.
+  const requestedScope = runtime.toolScope ?? runtime.config.toolScope;
+  const scopeReason = requestedScope !== undefined && requestedScope !== 'auto'
+    ? 'explicit' as const
+    : classifyToolScopeReason({
+      effective: resolvedToolScope,
+      taskBoard,
+      effort: effectiveEffort,
+      complexity: taskComplexity.complexity,
+      floored,
+    });
+  runtime.toolScopeResolvedHook?.(resolvedToolScope, prompt, scopeReason);
 
   // Tools registered below are injected AFTER scope selection, so they are not
   // in the scoped set. Record their names to keep them off the trim list.
@@ -930,7 +1004,7 @@ async function runAgentTurnCore(
     // follow-up and the limit is reached; step 0 is skipped because the pre-turn
     // pass just ran.
     if (step > 0) {
-      await maybeMidTurnCompact(runtime);
+      await maybeMidTurnCompact(runtime, compactUsage);
     }
     // Last budgeted step, still nothing proposed: withdraw everything except
     // propose_plan so the only way forward is to write the plan.
@@ -1086,6 +1160,20 @@ async function runAgentTurnCore(
       // and re-issue the whole request; 429/4xx and user cancels propagate.
       // Once text or thinking has reached the UI, replaying the whole request
       // could duplicate the partial answer, so that request becomes terminal.
+      // Recorded HERE, at the last point before the request is built, from the
+      // same registry whose `specs()` is sent below: `ToolRegistry.list()` is
+      // the array the provider hashes into its cached prefix (alphabetical,
+      // localeCompare order), so this is evidence of what was SENT, unlike
+      // `toolNames` (what the model then called). Taking it after the
+      // `stepTools` selection also captures the planning turn's last step,
+      // where the registry narrows to `[propose_plan]` — a real mid-turn change
+      // of tool surface that the ledger would otherwise have to guess at.
+      const sentToolNames = stepTools.list().map((tool) => tool.name);
+      // Same registry, same scope filter, same cap — this is the number the
+      // provider received. The ledger used to record `runtime.tools.list()
+      // .length` (the unfiltered registry), which is why a 246-tool turn and a
+      // 363-tool turn looked identical there.
+      runtime.lastTurnSentToolCount = sentToolNames.length;
       let streamedOutput = false;
       response = await withRequestControl({
           signal: runtime.requestSignal,
@@ -1150,6 +1238,11 @@ async function runAgentTurnCore(
         })),
         responseText,
         toolNames: response.actions.filter((action) => action.type === 'tool').map((action) => action.tool ?? ''),
+        // The tool ARRAY the request carried (order included), captured above
+        // from the same registry `specs()` was sent from. This is what the
+        // ledger's `sent-tools` layer reads; `toolNames` above stays the
+        // activity record and is never confused with it.
+        toolSetNames: sentToolNames,
         promptChars,
         usage: response.usage
           ? {

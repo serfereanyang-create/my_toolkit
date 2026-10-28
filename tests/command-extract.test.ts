@@ -125,6 +125,36 @@ test('reading rules do not swallow a prompt that merely contains a trigger', () 
   }
 });
 
+test('a time-scoped activity request is the recent-activity reading', () => {
+  // "最近 + 时间量词 + 疑问/活动词 + 活动名词" names the reading itself: the user
+  // asked what happened lately, which is exactly what the recent_activity tool
+  // reports. Before this rule the bridge (有什么 / 都做了) broke the
+  // whole-sentence anchor, so "最近几天有什么活动" fell through to unknown and the
+  // model had to guess what "活动" meant. Both halves (time scope AND activity
+  // noun) are required, which is what keeps the cases below out.
+  for (const prompt of ['最近几天有什么活动', '最近有什么活动', '最近一周都有哪些会话']) {
+    const extraction = extractCommand(prompt);
+    assert.equal(
+      extraction.intent,
+      'recent_activity',
+      `${prompt} carries a recent-time scope and an activity noun, so it is the recent-activity reading`,
+    );
+    assert.equal(planCommand(extraction).mode, 'execute', `${prompt} should execute the reading`);
+  }
+  // Widening the rule must not re-hijack prompts that merely contain one half of
+  // the pair: they want a diagnosis, not a session table, so the diagnosis guard
+  // must still send them to the model.
+  for (const prompt of ['最近 CI 老是失败，帮我看看配置', '最近为什么构建这么慢']) {
+    const extraction = extractCommand(prompt);
+    assert.notEqual(
+      extraction.intent,
+      'recent_activity',
+      `${prompt} names no activity noun (CI failure / build slowness is the subject), so a recent-activity table would not answer it`,
+    );
+    assert.equal(planCommand(extraction).mode, 'strategy', `${prompt} asks why, so it must reach the model`);
+  }
+});
+
 test('a deliberative edit verb does not lift the answer guard', () => {
   // 优化 / 重构 after 要不要 / 该不该 / 如何 weigh the edit instead of asking for
   // it. The guard used to be lifted by the verb alone, so a question about

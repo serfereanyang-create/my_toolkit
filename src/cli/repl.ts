@@ -13,6 +13,7 @@ import { commitBoardChanges, ensureBoardBranch, previewBoardCommit } from '../gi
 import type { MessagePart } from '../providers/types.js';
 import { runCodeReview, summarizeReview } from '../review/reviewer.js';
 import { parseReviewTarget, resolveReviewTarget, type ResolvedTarget } from '../review/target.js';
+import { isDestructiveApprovalRequest } from '../safety/policy.js';
 import { recordReviewInHistory } from '../review/writeback.js';
 import { planBoardFromGoal, shouldUseTaskBoard } from '../tasks/planner.js';
 import { confirmBoard, formatBoard, runTaskBoardLoop } from '../tasks/runtime.js';
@@ -550,7 +551,11 @@ export async function runRepl(runtime: AgentRuntime) {
       runtime.ui.pauseSpinnerForPrompt();
       // approval_overlay.rs `a` option: "don't ask again" caches per
       // (risk, tool, directory) for write tools, mirroring the desktop broker.
-      if (request && request.risk === 'write') {
+      // Destructive calls are exempt both ways — see the same rule in
+      // DesktopApprovalBroker.cacheable: the key cannot express "these exact
+      // targets", and a cached yes must never replace the human check.
+      const cacheable = request !== undefined && request.risk === 'write' && !isDestructiveApprovalRequest(request);
+      if (cacheable) {
         const rawPath = request.input && typeof request.input.path === 'string' ? request.input.path : '';
         const normalized = rawPath.replace(/\\/g, '/');
         const dir = normalized.includes('/') ? normalized.slice(0, normalized.lastIndexOf('/')) : '';

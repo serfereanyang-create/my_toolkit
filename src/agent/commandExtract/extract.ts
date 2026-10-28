@@ -389,17 +389,41 @@ function isProjectStatusPrompt(prompt: string) {
 
 // 最近 / 活动 / 会话 / 历史 are ordinary words: "最近 CI 老是失败", "帮我查一下
 // git 历史里那次提交" and "用户会话超时时间太长" each carry one, and none of them
-// asks for a session-history table. Verdict: anchored, in three shapes —
+// asks for a session-history table. Verdict: anchored, in four shapes —
 //   - phrases that name the reading themselves (在干嘛 / 活动记录 / 会话历史);
 //   - a whole prompt that is nothing but the reading ("最近改了什么", "最近的会话");
-//   - a short bare dashboard ("最近", "history").
-// A trigger inside a longer sentence stays with the model.
+//   - a short bare dashboard ("最近", "history");
+//   - a recent-time scope followed by an activity noun ("最近几天有什么活动"):
+//     [lead] + time scope (最近/近来/这两天/这周, optionally + 几天/一周/一个月) +
+//     [at most one short bridge of question or activity words (有什么/都做过/哪些)]
+//     + one activity noun (活动/会话/历史/记录/改动/提交) + [question tail].
+// A trigger inside a longer sentence stays with the model: "最近 CI 老是失败" and
+// "最近为什么构建这么慢" have a time word but no activity noun, and "帮我查一下
+// git 历史里那次提交" has the noun but no recent-time scope.
+const RECENT_NUM = '(?:[几一二两三四五六七八九十半]|\\d+)';
+const RECENT_UNIT = '(?:天|日|周|星期|礼拜|月|个小时?|小时)';
+const RECENT_SCOPE =
+  `(?:(?:最近|近来)(?:(?:这)?${RECENT_NUM}个?${RECENT_UNIT})?`
+  + `|(?:这|近)(?:${RECENT_NUM}个?${RECENT_UNIT}|[天日周]))`;
+const RECENT_BRIDGE =
+  '(?:都|又|还)?(?:有|发生了|做了|做过|干了|干过|聊过|讨论了?|参加了?)?(?:什么|哪些|啥|多少)?';
+const RECENT_TAIL =
+  '(?:都|又|还|具体)?(?:有|是|包括)?(?:哪些|什么|啥|多少|几件|几条|几次)?(?:呢|吗|了)?';
+
 function isRecentActivityPrompt(prompt: string) {
   const compact = prompt.replace(/\s+/g, '');
   if (/在干嘛|活动记录|会话历史|历史记录|操作记录|改动记录|最近活动|最近的会话|最近的提交|最近的改动/.test(compact)) return true;
   if (/^(?:你|我)?(?:麻烦|请|帮我|帮忙)?(?:查一下|查看一下|查查|查看|看一下|看看|看|查|显示|检查|告诉我)?(?:最近|近来)?的?(?:活动|会话|历史|记录|改动|提交)(?:记录|列表|信息|详情|是什么|怎么样|呢|吗)?$/.test(compact)) return true;
   if (/^(?:你|我)?(?:麻烦|请|帮我|帮忙)?(?:查一下|查看一下|查查|查看|看一下|看看|看|查)?(?:最近|近来)(?:都|在|有)?[^。！？\n]{0,8}(?:改了什么|做了什么|改了啥|干了什么|在做什么|做了哪些|改过什么|改过哪些|发生了什么|有什么变化)(?:呢|吗)?$/.test(compact)) return true;
   if (/^(?:最近|近来)(?:呢|吗|怎么样|如何)?$/.test(compact)) return true;
+  // "最近几天有什么活动" / "最近有什么活动": a recent-time scope followed by one
+  // activity noun, with at most a short question/activity bridge between them.
+  // Both halves are required, which is what keeps the two ordinary-word prompts
+  // out: "最近 CI 老是失败" has a time word but no activity noun, and
+  // "帮我查一下 git 历史里那次提交" has the noun but no recent-time scope.
+  if (new RegExp(
+    `^(?:你|我)?${LEAD_VERB}(?:你|我)?${RECENT_SCOPE}的?${RECENT_BRIDGE}(?:活动|会话|历史|记录|改动|提交)${RECENT_TAIL}$`,
+  ).test(compact)) return true;
   const text = prompt.trim().toLowerCase().replace(/\s+/g, ' ');
   return /^(?:(?:show|display|list|get|check)(?: me)? )?(?:(?:the|my|recent|latest) )*(?:recent activity|recent activities|activity log|activity|activities|recent history|session history|sessions|history|what did i do(?: recently)?|what changed(?: recently)?)$/.test(text);
 }

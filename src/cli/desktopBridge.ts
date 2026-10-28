@@ -12,7 +12,11 @@ import { BACKGROUND_APP_TOOL_NAMES, createBackgroundAppTools } from '../tools/ba
 import { BACKGROUND_NATIVE_TOOL_NAMES, createBackgroundNativeTools } from '../tools/backgroundNative.js';
 import type { ToolResult } from '../tools/types.js';
 import type { ReasoningEffort } from '../providers/types.js';
-import type { ToolScope } from '../tools/scope.js';
+import { classifyToolScopeReason, type ToolScopeReason } from '../tools/scopeReason.js';
+import type { ResolvedToolScope, ToolScope } from '../tools/scope.js';
+import { SCOPE_RANK, isResolvedToolScope, resolveToolScopeForTurn } from '../tools/scope.js';
+import { analyzeTaskComplexity } from '../tasks/complexity.js';
+import { clampReasoningEffort, getReasoningCapability } from '../providers/capabilities.js';
 
 type BridgeCommand =
   | { type: 'user_message'; text: string; sessionId?: string; reasoningEffort?: ReasoningEffort; toolScope?: ToolScope; files?: Array<{ path: string; name: string; size: number }> }
@@ -108,6 +112,133 @@ export function taskBoardEventPayload(
     updatedAt: board.updatedAt,
     tasks,
   };
+}
+
+/**
+ * Wire contract for the "what actually took effect" tool-scope event.
+ *
+ * `tool_scope_set` is the user speaking (`set_tool_scope` was accepted). This
+ * event is the resolver speaking: it reports the scope the turn really ran
+ * with, plus the user's original choice. They differ whenever the request is
+ * `auto` (per-turn resolution, and a widen-only session floor) or when an
+ * explicit pick was widened by the floor.
+ *
+ * The desktop renderer reads the payload through the same shape in
+ * ide-desktop/src/lib/toolScope.ts and
+ * `ide-desktop/src/lib/toolScopeProtocol.test.ts` reads THIS file and compares
+ * `TOOL_SCOPE_EVENT_FIELDS` verbatim — rename one side and it goes red instead
+ * of silently blanking the UI.
+ */
+export const TOOL_SCOPE_RESOLVED_EVENT = 'tool_scope_resolved' as const;
+
+/**
+ * The payload's field names, in wire order. The desktop keeps a byte-identical
+ * copy (`TOOL_SCOPE_EVENT_FIELDS` in ide-desktop/src/lib/toolScope.ts) and its
+ * `toolScopeProtocol.test.ts` reads THIS file and compares the two, so renaming
+ * a field on either side fails a test instead of silently blanking the menu.
+ */
+export const TOOL_SCOPE_EVENT_FIELDS = ['type', 'sessionId', 'toolScope', 'requested', 'resolution', 'reason', 'at'] as const;
+
+/** Re-exported so the wire contract and its tests have one import site. */
+export { classifyToolScopeReason, type ToolScopeReason };
+
+/** One turn's inputs and the answer the resolver gives for them. */
+export type ToolScopeResolution = {
+  /** The scope the turn ran with. Never `auto`. */
+  effective: ResolvedToolScope;
+  /** What the user (or config) asked for, `auto` included. */
+  requested: ToolScope;
+  /** `explicit` when the request was a concrete scope; `auto` when resolved. */
+  resolution: 'explicit' | 'auto';
+  /** Which signal produced `effective`. See `ToolScopeReason`. */
+  reason: ToolScopeReason;
+};
+
+/**
+ * Recompute what `resolveToolScope` decides for a turn (agent.ts:716).
+ *
+ * The bridge normally reads the answer off `runtime.sessionToolScopeFloor`,
+ * which agent.ts sets to the resolved value. This recomputation is the
+ * fallback for a turn that never reached the resolver (cancelled during
+ * preparation) — recomputing rather than inventing a value is the price of not
+ * touching `scope.ts` (another workstream owns it). Because it mirrors
+ * `resolveToolScope`'s inputs exactly — same prompt, same clamped effort, same
+ * task-board rule, widen-only rank floor — the two agree for any real session,
+ * which `tool-scope-protocol.test.ts` asserts against the real resolver.
+ */
+export function resolveDesktopToolScope(
+  runtime: Pick<AgentRuntime, 'toolScope' | 'reasoningEffort' | 'config' | 'provider'>,
+  prompt: string,
+  previousScope?: ResolvedToolScope,
+): ToolScopeResolution {
+  const requested = (runtime.toolScope ?? runtime.config.toolScope ?? 'auto') as ToolScope;
+  if (requested !== 'auto' && isResolvedToolScope(requested)) {
+    // Mirrors scope.ts: an explicit pick wins outright and is NOT floored.
+    return { effective: requested, requested, resolution: 'explicit', reason: 'explicit' };
+  }
+  const requestedEffort = runtime.reasoningEffort ?? runtime.config.reasoningEffort ?? 'off';
+  const capability = getReasoningCapability(runtime.provider.name, runtime.provider.model);
+  const complexity = analyzeTaskComplexity(prompt).complexity;
+  const taskBoard = complexity === 'large';
+  const effort = clampReasoningEffort(requestedEffort, capability, prompt, taskBoard);
+  const turn = resolveToolScopeForTurn({
+    requested: 'auto',
+    reasoningEffort: effort,
+    prompt,
+    shouldUseTaskBoard: taskBoard,
+  });
+  // Same widen-only rule as scope.ts (`widestScope`): the floor can raise the
+  // turn's answer, never lower it. Compared by rank, not by equality, so a
+  // stale or unknown value can only ever lose to a valid one.
+  const floored = isResolvedToolScope(previousScope) && SCOPE_RANK[previousScope] > SCOPE_RANK[turn];
+  const effective = floored ? previousScope : turn;
+  // `floored` is checked first: when an earlier turn is what raised the scope,
+  // telling the user "because the task is complex" would be a false explanation
+  // for a value this turn's own signals did not ask for.
+  const reason = classifyToolScopeReason({
+    effective,
+    taskBoard,
+    effort,
+    complexity,
+    floored,
+  });
+  return { effective, requested: 'auto', resolution: 'auto', reason };
+}
+
+/** Payload for `tool_scope_resolved`. Only ever carries a resolved scope. */
+export function toolScopeResolvedPayload(sessionId: string, resolution: ToolScopeResolution, at = Date.now()) {
+  return {
+    type: TOOL_SCOPE_RESOLVED_EVENT,
+    sessionId,
+    toolScope: resolution.effective,
+    requested: resolution.requested,
+    resolution: resolution.resolution,
+    reason: resolution.reason,
+    at,
+  };
+}
+
+/** What the bridge last announced, per session. See `shouldEmitToolScopeResolved`. */
+export type ToolScopeEmissionState = { sessionId: string; effective: ResolvedToolScope } | undefined;
+
+/**
+ * Whether `tool_scope_resolved` should be sent for this value.
+ *
+ * The first value for a session always goes out — `--tool-scope` at spawn is
+ * never echoed back, so the UI has no other source. After that only a change
+ * is news: the same scope every turn would be one event per turn for a value
+ * that cannot have changed what the user sees.
+ *
+ * Exported and pure so the protocol test can drive it with a random sequence
+ * instead of through a live bridge (and so an inverted comparison fails a test
+ * rather than spamming the wire).
+ */
+export function shouldEmitToolScopeResolved(
+  last: ToolScopeEmissionState,
+  sessionId: string,
+  effective: ResolvedToolScope,
+): boolean {
+  return !(last?.sessionId === sessionId && last.effective === effective);
 }
 
 export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRunOptions = {}) {
@@ -237,6 +368,92 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
    */
   let activeTurn: Promise<void> = Promise.resolve();
 
+  /*
+   * The scope report hook. agent.ts calls it for every turn that reaches the
+   * resolver, which is the only place the value AND the cause are both known:
+   * `resolvedToolScope` is overwritten by expert routing, and
+   * `sessionToolScopeFloor` carries the value but no reason. Installed here so
+   * the emit path (and its dedupe) has exactly one owner.
+   */
+  runtime.toolScopeResolvedHook = resolveHook;
+
+
+  /**
+   * Dedupe state for `tool_scope_resolved`.
+   *
+   * The FIRST event must go out — the renderer has no other way to learn the
+   * effective scope, since `--tool-scope` at spawn never comes back as an
+   * event. After that, only a change in the effective value is news; a turn
+   * that resolves to the same scope would otherwise emit once per turn and the
+   * UI would re-render for nothing.
+   *
+   * Keyed by session id so a bridge whose session id is announced only later
+   * cannot inherit a previous value.
+   */
+  let lastResolvedScope: { sessionId: string; effective: ResolvedToolScope } | undefined;
+
+  /**
+   * Announce the scope a turn ran with, deduped per session.
+   *
+   * Two producers feed this. `agent.ts` calls it through `resolveHook` for every
+   * turn that reaches the resolver, with the reason it derived from the answer
+   * itself — so the cause can never describe a scope the turn did not use, and
+   * task-board actions, automation runs and sub-agents are covered without the
+   * bridge knowing how they started.
+   *
+   * The bridge's own post-turn path (`afterUserMessage`) covers the turns
+   * `agent.ts` never reached: a cancelled preparation, or a slash command that
+   * ran no agent turn at all. There the value is RECOMPUTED from the same
+   * inputs, which `tool-scope-protocol.test.ts` asserts equals the real
+   * resolver across random turn sequences.
+   *
+   * Only a CHANGE in the effective value is news. The reason is metadata about
+   * that value: the two are derived from the same turn, so re-announcing a
+   * value the UI already shows would be one event per turn for nothing.
+   */
+  function reportToolScopeResolved(_prompt: string, previousFloor: ResolvedToolScope | undefined) {
+    // By the time this runs, any turn that reached the resolver has already
+    // reported through the hook. What is left is a turn that never got there
+    // (cancelled during preparation, or a slash command that ran no agent
+    // turn) — and for that the only truthful statement is "the scope in force
+    // is still the session floor". Recomputing one from a prompt the turn never
+    // ran would announce a surface nothing actually had, which is the precise
+    // lie this event exists to remove. With no floor there is nothing in force
+    // yet; the next real turn reports it.
+    const floor = runtime.sessionToolScopeFloor ?? previousFloor;
+    if (!floor) return;
+    const requested = runtime.toolScope ?? runtime.config.toolScope;
+    announceToolScope({
+      effective: floor,
+      requested: requested !== undefined && TOOL_SCOPES.has(requested) ? requested as ToolScope : 'auto',
+      resolution: 'auto',
+      reason: 'floor',
+    });
+  }
+
+  /** Install the hook agent.ts calls; see `resolveHook`. */
+  function resolveHook(scope: ResolvedToolScope, _prompt: string, reason: ToolScopeReason) {
+    const requested = runtime.toolScope ?? runtime.config.toolScope ?? 'auto';
+    announceToolScope({
+      effective: scope,
+      requested: TOOL_SCOPES.has(requested) ? requested as ToolScope : 'auto',
+      resolution: requested !== 'auto' && isResolvedToolScope(requested) ? 'explicit' : 'auto',
+      reason,
+    });
+  }
+
+  /** Dedupe on the effective value and send. */
+  function announceToolScope(resolution: ToolScopeResolution) {
+    // Defence in depth: neither producer should ever yield anything else, but
+    // this is the process boundary and an unrecognised value must never reach
+    // the UI, where it would render as a made-up scope.
+    if (!isResolvedToolScope(resolution.effective)) return;
+    const sessionId = runtime.session.id;
+    if (!shouldEmitToolScopeResolved(lastResolvedScope, sessionId, resolution.effective)) return;
+    lastResolvedScope = { sessionId, effective: resolution.effective };
+    emitEvent(toolScopeResolvedPayload(sessionId, resolution));
+  }
+
   function resetTurnCancellation() {
     cancelRequested = false;
     hostBroker.resume();
@@ -259,7 +476,7 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
 
   function runUserMessage(command: Extract<BridgeCommand, { type: 'user_message' }>) {
     const filePaths = (command.files ?? []).map((file) => file.path).filter((value) => value.trim());
-    return handleUserMessage(command, runtime, filePaths, emitEvent);
+    return handleUserMessage(command, runtime, filePaths, emitEvent, reportToolScopeResolved);
   }
 
   /** One tracked promise owns the original turn AND every queued turn. */
@@ -402,9 +619,32 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
         // override the user. Clear it so an explicit pick takes effect
         // immediately instead of being widened back by the previous turns.
         runtime.sessionToolScopeFloor = undefined;
+        // An explicit pick is in force immediately (the floor was just cleared),
+        // so report it through the same dedupe: the picker must show the scope
+        // it actually got, not the one the previous turn happened to resolve.
+        //
+        // `auto` reports nothing here: its effective value is only meaningful
+        // once a turn resolves it, and announcing a guess would be the same lie
+        // this event exists to remove. The next turn reports it. The dedupe
+        // state is NOT reset: the scope in force right now is still the last
+        // reported one, and the next turn will emit if and only if it resolves
+        // to something else.
+        const picked = command.toolScope;
+        if (isResolvedToolScope(picked)) {
+          const sessionId = runtime.session.id;
+          if (shouldEmitToolScopeResolved(lastResolvedScope, sessionId, picked)) {
+            lastResolvedScope = { sessionId, effective: picked };
+            emitEvent(toolScopeResolvedPayload(sessionId, {
+              effective: picked,
+              requested: picked,
+              resolution: 'explicit',
+              reason: 'explicit',
+            }));
+          }
+        }
         emitEvent({ type: 'tool_scope_set', sessionId: runtime.session.id, toolScope: command.toolScope });
-        continue;
-      }
+    continue;
+  }
       if (command.type === 'cancel') {
         // Stop the in-flight turn at its next safe boundary, then deny pending
         // approvals so nothing is left waiting on an answer that can no longer
@@ -521,8 +761,22 @@ export async function runDesktopBridge(runtime: AgentRuntime, options: BridgeRun
  * `approvalBroker.ts` so its timeout/denyAll/session-scope behavior is unit
  * testable without a real bridge process.
  */
-async function handleUserMessage(command: Extract<BridgeCommand, { type: 'user_message' }>, runtime: AgentRuntime, filePaths: string[], emitEvent: (event: Record<string, unknown>) => void) {
+async function handleUserMessage(
+  command: Extract<BridgeCommand, { type: 'user_message' }>,
+  runtime: AgentRuntime,
+  filePaths: string[],
+  emitEvent: (event: Record<string, unknown>) => void,
+  /**
+   * Reports the turn's effective tool scope. Passed in by the bridge (it owns
+   * the dedupe state); defaults to a no-op so a caller without an event sink
+   * cannot turn a reporting detail into a turn failure.
+   */
+  reportScope: (prompt: string, previousFloor: ResolvedToolScope | undefined) => void = () => {},
+) {
   if (command.reasoningEffort) runtime.reasoningEffort = command.reasoningEffort;
+  // Captured BEFORE the explicit-pick reset below: when a turn never reaches
+  // the resolver, the recompute needs the floor that was in force on entry.
+  const previousFloor = runtime.sessionToolScopeFloor;
   if (command.toolScope) {
     runtime.toolScope = command.toolScope;
     // 只有**明确的**档位才算用户的选择，才该把会话下限清掉。
@@ -564,6 +818,11 @@ async function handleUserMessage(command: Extract<BridgeCommand, { type: 'user_m
     }
     emitEvent({ type: 'error', sessionId: runtime.session.id, message: errorMessage(error) });
     emitEvent({ type: 'turn_done', sessionId: runtime.session.id, status: 'error', reason: errorMessage(error) });
+  } finally {
+    // After the turn: `runtime.sessionToolScopeFloor` is now what the turn
+    // actually ran with (or still the pre-turn floor when no agent turn ran).
+    // Emitted last so the renderer sees the scope next to the finished turn.
+    reportScope(submission.prompt, previousFloor);
   }
 }
 

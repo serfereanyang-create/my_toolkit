@@ -38,11 +38,15 @@
  * 证明两次 count 相同的 turn 送出了逐字节相同的数组。
  *
  * 三向诊断（指标 5）在此之上把三个问题拆开，并逐对标注它依据的是哪一层：
- * `sent-tools`（若轨迹里有 toolSetNames，即真实发送数组）、`called-tools`
+ * `sent-tools`（轨迹里有 toolSetNames，即真实发送数组）、`called-tools`
  * （toolNames，只能回答"这一轮调用了什么"）、`scope-count`（只能回答"数量变没变"）。
  * 层的名字出现在每一行里，所以"called-tools 层上集合变了"不会被读成"发送数组变了"。
- * toolSetNames 目前**没有写入方**：需要 agent.ts 在 recordTrajectory 处补一行，
- * 而本任务的改动范围不含 agent.ts。它在这里被声明、被消费、被测到，就是等那一行。
+ * toolSetNames 由 agent.ts 在实际发送前写入（`stepTools.list().map(t => t.name)`，
+ * 即 `tools: stepTools.specs()` 的同一个注册表），包括规划 turn 末步撤成
+ * 单工具 `propose_plan` 的那一轮。历史行没有这个字段时按 called-tools 回退，
+ * 并在每一对上写明依据的层；在这之前产出的会话只能停在 called-tools 层。
+ * `sent-tools` 层额外带一个顺序敏感哈希（toolSetOrderHash）：提供者按数组顺序
+ * 取缓存，顺序变了就是前缀变了，而多重集合哈希看不见这一点。
  *
  * "轮"的口径：一轮 = 一次模型往返 = 轨迹里的一条记录（i 为 0 基下标）。
  * 一个 turn（一次用户输入）可以含很多轮；工具作用域每 turn 只解析一次
@@ -165,6 +169,18 @@ export type RoundRow = {
   hitRate: number;
   /** 净输入 ≥ REPAY_MIN_INPUT_TOKENS 且命中率 < HEALTHY_HIT_RATE。 */
   repayed: boolean;
+  /**
+   * 本轮 cacheRead / 上一轮 prompt —— 提供者视角的"前缀被复用了多少"。
+   * 第一轮没有上一轮，为 null。
+   */
+  observedReuse: number | null;
+  /**
+   * `repayed` 的子集：本轮重付了，但提供者仍复用了 ≥ HEALTHY_HIT_RATE 的上一轮
+   * 前缀 —— 钱花在"这一轮一次性追加了大量新内容"，不是前缀被重建。
+   * 判据（一步可复算）：`repayed && observedReuse !== null && observedReuse >= HEALTHY_HIT_RATE`。
+   * 与 `repayed` 并存而不是替换它：重付轮总数仍是 `repayed` 的 40 轮，读者用它区分原因。
+   */
+  appendDriven: boolean;
   coldStart: boolean;
   /** 本轮是所在 turn 的第一次模型往返。 */
   turnFirst: boolean;
@@ -227,6 +243,14 @@ export type RoundPairRow = {
   toolSetChanged: boolean | null;
   /** 诊断二：是否**只有**顺序变了（集合相同、序列不同）。 */
   toolOrderOnlyChanged: boolean | null;
+  /**
+   * 发送数组的顺序敏感哈希（`toolSetOrderHash`），只在 sent-tools 层有值。
+   * 两个相邻轮相等 ⇒ 送出的工具名序列逐位相同；不等 ⇒ 前缀的工具段换了。
+   * called-tools 层为 null：模型调用顺序不进入请求，哈希它等于编造一个不存在的字节序。
+   */
+  toolSetOrderHash: string | null;
+  /** 上一轮同字段，用于人工核对（sent-tools 层以外都是 null）。 */
+  prevToolSetOrderHash: string | null;
   /** 诊断三：前缀字节是否变了。false = 本地无变更证据，**不等于**没变。 */
   prefixBytesChanged: boolean | null;
   /** 上面两个"工具"诊断依据的层。 */
@@ -304,6 +328,11 @@ export type ContextLedgerReport = {
     /** 未加权（每轮命中率简单平均），只作对照。 */
     meanHitRate: number | null;
     repayedRounds: number[];
+    /**
+     * `repayedRounds` 的子集：提供者仍复用了 ≥ HEALTHY_HIT_RATE 的上一轮前缀，
+     * 低命中率来自本轮一次性的大追加，不是前缀重建。判据见 `isAppendDriven`。
+     */
+    appendDrivenRounds: number[];
     coldStartRounds: number[];
     /** 健康轮净输入的 token 中位数，作为"增量该付多少"的基线。 */
     steadyStateInputBaseline: number;
@@ -402,6 +431,29 @@ export function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? Math.round((sorted[mid - 1] + sorted[mid]) / 2) : sorted[mid];
+}
+
+/**
+ * 提供者视角的复用率：本轮 cacheRead / 上一轮 prompt。1.00 ≈ 上一轮的前缀整段被复用。
+ * 第一轮（没有上一轮）为 null。与 `hitRateOf` 不同，这个比值不受"本轮追加了多少新内容"影响，
+ * 所以它能把"一次性大追加"和"前缀被重建"分开。
+ */
+export function observedReuseOf(
+  previousPromptTokens: number,
+  cacheReadTokens: number,
+): number | null {
+  return previousPromptTokens > 0 ? cacheReadTokens / previousPromptTokens : null;
+}
+
+/**
+ * REPAY 的两个子类之一：重付了，但提供者仍复用了 ≥ HEALTHY_HIT_RATE 的上一轮前缀。
+ *
+ * 判据：`repayed && observedReuse !== null && observedReuse >= HEALTHY_HIT_RATE`。
+ * 含义：这一轮命中率低是因为**本轮一次性追加了大量新内容**（新内容本来就不在缓存里），
+ * 不是因为前缀被重建。`observedReuse` 为 null（第一轮）时无从判断，不算大追加。
+ */
+export function isAppendDriven(repayed: boolean, observedReuse: number | null): boolean {
+  return repayed && observedReuse !== null && observedReuse >= HEALTHY_HIT_RATE;
 }
 
 export function surfaceFingerprint(scope: string | null, count: number | null): string | null {
@@ -569,8 +621,8 @@ export function diagnoseRoundPairs(records: TrajectoryRecord[], rounds: RoundRow
     if (charsKnown && after.promptChars <= before.promptChars) evidence.push('prompt-chars-not-grown');
 
     const prevPrompt = prevRound?.promptTokens ?? 0;
-    const observedReuse = prevPrompt > 0 && (curRound?.promptTokens ?? 0) > 0
-      ? (curRound.cacheReadTokens ?? 0) / prevPrompt
+    const observedReuse = (curRound?.promptTokens ?? 0) > 0
+      ? observedReuseOf(prevPrompt, curRound?.cacheReadTokens ?? 0)
       : null;
 
     pairs.push({
@@ -585,6 +637,8 @@ export function diagnoseRoundPairs(records: TrajectoryRecord[], rounds: RoundRow
       removed: diff.removed,
       scopeCountChanged,
       prefixEvidence: evidence,
+      toolSetOrderHash: surfaceAfter.orderHash,
+      prevToolSetOrderHash: surfaceBefore.orderHash,
       observedReuse,
       providerSawBreak: observedReuse === null ? null : observedReuse < HEALTHY_HIT_RATE,
       inputTokens: curRound?.inputTokens ?? 0,
@@ -728,6 +782,11 @@ export async function buildReport(options: {
     const cacheReadTokens = usage.cacheReadTokens ?? 0;
     const turnIndex = turnOfRound[i];
     const turn = turnRows[turnIndex];
+    const repayed = inputTokens >= REPAY_MIN_INPUT_TOKENS && hitRateOf(inputTokens, cacheReadTokens) < HEALTHY_HIT_RATE;
+    // 与 diagnoseRoundPairs 同一口径：上一轮的 prompt 与 info，本轮的 cacheRead。
+    const previous = i > 0 ? usageOf(records[i - 1]) : null;
+    const previousPromptTokens = previous ? (previous.inputTokens ?? 0) + (previous.cacheReadTokens ?? 0) : 0;
+    const observedReuse = observedReuseOf(previousPromptTokens, cacheReadTokens);
     return {
       i,
       turn: turnIndex + 1,
@@ -739,7 +798,9 @@ export async function buildReport(options: {
       cacheReadTokens,
       promptTokens: inputTokens + cacheReadTokens,
       hitRate: hitRateOf(inputTokens, cacheReadTokens),
-      repayed: inputTokens >= REPAY_MIN_INPUT_TOKENS && hitRateOf(inputTokens, cacheReadTokens) < HEALTHY_HIT_RATE,
+      repayed,
+      observedReuse,
+      appendDriven: isAppendDriven(repayed, observedReuse),
       coldStart: i === 0,
       turnFirst: i === turn.firstRound,
       surface: surfaces[turnIndex],
@@ -879,6 +940,7 @@ export async function buildReport(options: {
         ? withUsage.reduce((sum, round) => sum + round.hitRate, 0) / withUsage.length
         : null,
       repayedRounds: rounds.filter((round) => round.repayed).map((round) => round.i),
+      appendDrivenRounds: rounds.filter((round) => round.appendDriven).map((round) => round.i),
       coldStartRounds: rounds.filter((round) => round.coldStart).map((round) => round.i),
       steadyStateInputBaseline,
       repayBreakdown,
@@ -907,10 +969,10 @@ export async function buildReport(options: {
       },
       note:
         '指纹 = sha256(`scope=<scope>;count=<工具数>`)，来源是 usage 台账的 toolScope/toolCount。'
-        + '每轮请求的真实工具名列表仍未落盘（TrajectoryRecord 只记被调用的 toolNames，且是模型输出顺序），'
-        + '所以 count 相同的两个 turn 不保证送出的是同一个数组——本会话 274→260→274 的抖动就是'
-        + 'scope 没变但工具数变了（插件/MCP 注册抖动）。这类变化抓得到，逐字节相同与否抓不到；'
-        + '逐对的三个诊断（集合/顺序/前缀字节）见 pairs 与 1b 节，它们各自标注依据的是哪一层记录。',
+        + 'turn 级指纹只回答"数量变没变"：count 相同的两个 turn 不保证送出的是同一个数组'
+        + '（本会话 274→260→274 的抖动就是 scope 没变但工具数变了）。'
+        + '逐轮的真实发送数组（toolSetNames + 顺序敏感 toolSetOrderHash）由 agent.ts 在发送前写入轨迹，'
+        + '见 pairs 与 1b 节：那些行回答的是数组本身，不是它的长度。',
     },
     compactions,
     repeatReads: {
@@ -1027,7 +1089,7 @@ export function formatReport(report: ContextLedgerReport, options: { index?: num
     const separation = report.toolSurface.separation;
     lines.push(`  可归因性：${separation.separable ? '工具面变化可以单独归因。' : '工具面变化与 turn 边界在这份数据里分不开。'}`);
     lines.push(`    ${separation.note}`);
-    lines.push('  注：每轮真实工具名列表未落盘，指纹只覆盖 scope+count；逐对的三个诊断见下面的 1b 与 JSON 的 pairs。');
+    lines.push('  注：turn 级指纹只覆盖 scope+count；逐轮的真实发送数组（toolSetNames，含顺序）见上面的 1b 与 JSON 的 pairs。');
   }
 
   // ---- 1b. 相邻轮次三向诊断 ----------------------------------------------
@@ -1046,7 +1108,7 @@ export function formatReport(report: ContextLedgerReport, options: { index?: num
       + `scope-count ${d.layers['scope-count']} 对（只有数量）· none ${d.layers.none} 对`);
     lines.push(`  ${'pair'.padEnd(8)} ${'turn'.padEnd(6)} ${'layer'.padEnd(13)} `
       + `${'set'.padStart(8)} ${'order'.padStart(8)} ${'prefix'.padStart(9)} ${'scope·n'.padStart(10)} `
-      + `${'reuse'.padStart(6)} ${'input'.padStart(8)}  evidence`);
+      + `${'toolset-hash'.padEnd(14)} ${'reuse'.padStart(6)} ${'input'.padStart(8)}  evidence`);
     for (const pair of report.pairs) {
       const flags: string[] = [];
       if (pair.repayed) flags.push('REPAY');
@@ -1055,20 +1117,30 @@ export function formatReport(report: ContextLedgerReport, options: { index?: num
       // prefixEvidence 里了；called-tools 层的增删不进这一列，避免把记录噪声
       // 写成前缀事件（层本身逐行写着）。
       const evidence = [...pair.prefixEvidence];
+      const toolSetMark = pair.toolSetOrderHash === null
+        ? '-'
+        : pair.prevToolSetOrderHash !== null && pair.prevToolSetOrderHash === pair.toolSetOrderHash
+          ? `=${pair.toolSetOrderHash}`
+          : `${pair.prevToolSetOrderHash ?? '?'}→${pair.toolSetOrderHash}`;
       lines.push(
         `  ${`${pair.prevRound}→${pair.round}`.padEnd(8)} ${(pair.crossesTurn ? 'cross' : 'in').padEnd(6)} `
         + `${pair.layer.padEnd(13)} ${tri(pair.toolSetChanged, 'CHANGED', 'same').padStart(8)} `
         + `${tri(pair.toolOrderOnlyChanged, 'REORDER', 'same').padStart(8)} `
         + `${tri(pair.prefixBytesChanged, 'CHANGED', 'no-evid').padStart(9)} `
         + `${tri(pair.scopeCountChanged, 'changed', 'same').padStart(10)} `
+        + `${toolSetMark.padEnd(14)} `
         + `${(pair.observedReuse === null ? 'n/a' : pair.observedReuse.toFixed(2)).padStart(6)} `
         + `${String(pair.inputTokens).padStart(8)}  ${[...evidence, ...flags].join(',')}`,
       );
     }
     lines.push('');
     lines.push(`  三个诊断互不替代：set=${'多重集合按规范排序比较'}，order=${'集合相同而序列不同'}，`
-      + 'prefix=本地产物里能找到的变更证据（发送数组变化 / 台账 scope·count 变化 / 消息数未增长 / '
-      + 'promptChars 未增长 / 压缩骤降）。prefix 的 no-evid **不等于**没变：system 头部块的逐 turn 变化这份产物看不见。');
+      + 'prefix=本地产物里能找到的变更证据（发送数组变化 / 台账 scope·count 变化 / '
+      + '消息数未增长 / promptChars 未增长 / 压缩骤降）。prefix 的 no-evid **不等于**没变：'
+      + 'system 头部块的逐 turn 变化这份产物看不见。');
+    lines.push('  toolset-hash = sent-tools 层的顺序敏感哈希（toolSetOrderHash，12 位）；'
+      + '`=x` 表示与上一轮逐位相同，`a→b` 表示工具数组的顺序或内容变了。这是缓存前缀字节等价性的本地证据；'
+      + 'called-tools 层为 `-`（模型调用顺序不进入请求）。');
     lines.push(`  reuse = 本轮 cacheRead / 上一轮 prompt（1.00 ≈ 整段前缀被复用），是服务端的回答，只作对照，不替代上面三项。`);
     lines.push(`  依据层说明：${d.note}`);
     if (d.orderOnlyPairs.length > 0) {
@@ -1099,6 +1171,7 @@ export function formatReport(report: ContextLedgerReport, options: { index?: num
     const flags: string[] = [];
     if (round.coldStart) flags.push('cold-start');
     if (round.repayed) flags.push('REPAY');
+    if (round.appendDriven) flags.push('APPEND');
     if (round.surfaceChanged) flags.push('surface-changed');
     lines.push(
       `  ${String(round.i).padStart(3)} ${String(round.step).padStart(3)} ${String(round.turn).padStart(4)} `
@@ -1117,6 +1190,8 @@ export function formatReport(report: ContextLedgerReport, options: { index?: num
     + `${cache.steadyStateInputBaseline} token —— 追加式历史下"该付多少"的基线`);
   lines.push(`  重付轮（净输入 ≥ ${REPAY_MIN_INPUT_TOKENS} 且命中率 < 90%）：${cache.repayedRounds.length} 轮`
     + ` → ${cache.repayedRounds.join(', ') || '无'}`);
+  lines.push(`  其中大追加轮（重付但上一轮前缀复用 ≥ 90%，低命中来自一次性新增内容而非前缀重建）：`
+    + `${cache.appendDrivenRounds.length} 轮 → ${cache.appendDrivenRounds.join(', ') || '无'}`);
   const breakdown = cache.repayBreakdown;
   const share = (tokens: number) => (cache.totalInputTokens > 0 ? `${((tokens / cache.totalInputTokens) * 100).toFixed(1)}%` : 'n/a');
   lines.push('  重付拆成两处（修法不同，不能混着说"命中率低"）：');

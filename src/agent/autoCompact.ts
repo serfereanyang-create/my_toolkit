@@ -94,6 +94,21 @@ export function buildCompactRequestMessages(messages: AgentMessage[]): AgentMess
 }
 
 /**
+ * Real provider usage from a compaction call.
+ *
+ * Compaction bypasses the agent loop, so its spend never reaches
+ * `usageTotals` and used to appear in no ledger at all: a session that crossed
+ * its window twice paid for two full-history summarizations invisibly. Callers
+ * that keep a ledger pass a sink and get the real numbers.
+ */
+export type CompactUsageSink = {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  outcome: 'completed' | 'failed';
+};
+
+/**
  * Pre-turn auto-compact (turn.rs:1231-1260 runs it before the new user input
  * enters history). Best-effort: a failed summarization never breaks the turn —
  * the per-request char-budget compaction still bounds the prompt size.
@@ -101,12 +116,12 @@ export function buildCompactRequestMessages(messages: AgentMessage[]): AgentMess
  * Returns true when the history was replaced, so callers that run it mid-turn
  * know whether the messages they were holding are still valid.
  */
-export async function maybeAutoCompact(runtime: AgentRuntime): Promise<boolean> {
+export async function maybeAutoCompact(runtime: AgentRuntime, usage?: CompactUsageSink): Promise<boolean> {
   const messages = runtime.session.messages ?? [];
   const windowTokens = resolveContextWindowTokens(runtime.provider.model);
   const estimatedTokens = sessionTokens(messages);
   if (!shouldAutoCompact(estimatedTokens, windowTokens, messages.length)) return false;
-  return await runAutoCompact(runtime, messages, estimatedTokens, windowTokens);
+  return await runAutoCompact(runtime, messages, estimatedTokens, windowTokens, usage);
 }
 
 /**
@@ -119,12 +134,12 @@ export async function maybeAutoCompact(runtime: AgentRuntime): Promise<boolean> 
  * (turn.rs:600-640, `CompactionPhase::MidTurn`) when the model asks for a
  * follow-up and the token limit has been reached.
  */
-export async function maybeMidTurnCompact(runtime: AgentRuntime): Promise<boolean> {
+export async function maybeMidTurnCompact(runtime: AgentRuntime, usage?: CompactUsageSink): Promise<boolean> {
   const messages = runtime.session.messages ?? [];
   const windowTokens = resolveContextWindowTokens(runtime.provider.model);
   const estimatedTokens = sessionTokens(messages);
   if (!shouldAutoCompact(estimatedTokens, windowTokens, messages.length)) return false;
-  return await runAutoCompact(runtime, messages, estimatedTokens, windowTokens);
+  return await runAutoCompact(runtime, messages, estimatedTokens, windowTokens, usage);
 }
 
 async function runAutoCompact(
@@ -132,6 +147,7 @@ async function runAutoCompact(
   messages: AgentMessage[],
   estimatedTokens: number,
   windowTokens: number,
+  usage?: CompactUsageSink,
 ): Promise<boolean> {
   runtime.ui.info(
     `Context ≈${estimatedTokens} tokens (≥90% of the ${windowTokens}-token window) — auto-compacting…`,
@@ -163,10 +179,19 @@ async function runAutoCompact(
       tools: [],
       workspaceRoot: runtime.config.workspaceRoot,
     };
+    // Count the attempt before it is made: a request that throws (timeout,
+    // 5xx, socket reset) may still have been billed server-side, and a turn
+    // whose only spend was that attempt must not look free. Tokens are added
+    // below when a response actually carries usage.
+    if (usage) usage.calls += 1;
     const response = await withRequestControl(request, controlled => withModelRetry(() => runtime.provider.complete(controlled), {
       signal: controlled.signal,
       onRetry: (attempt, maxRetries) => runtime.ui.info(`Reconnecting… ${attempt}/${maxRetries} (compaction)`),
     }));
+    if (usage && response.usage) {
+      usage.inputTokens += response.usage.inputTokens;
+      usage.outputTokens += response.usage.outputTokens;
+    }
     const summary = response.actions
       .filter((action): action is Extract<typeof action, { type: 'message' }> => action.type === 'message')
       .map((action) => action.content.trim())
@@ -193,8 +218,10 @@ async function runAutoCompact(
       `Auto-compact complete: ${messages.length} → ${runtime.session.messages.length} messages (summary stub + ${recentUser.length} recent user messages).`,
     );
     emitCompact?.({ phase: 'completed', auto: true, before: messages.length, after: runtime.session.messages.length });
+    if (usage) usage.outcome = 'completed';
     return true;
   } catch (error) {
+    if (usage) usage.outcome = 'failed';
     if (runtime.requestSignal?.aborted) {
       emitCompact?.({ phase: 'failed', auto: true, reason: '上下文压缩已取消' });
       throwIfAborted(runtime.requestSignal);

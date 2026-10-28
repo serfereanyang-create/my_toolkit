@@ -43,6 +43,21 @@ export type UsageLedgerEntry = {
    */
   toolScope?: string;
   toolCount?: number;
+  /**
+   * 本 turn 里"被折叠掉的"自动压缩支出（真实 token，非估算）。
+   *
+   * 自动压缩不走主循环——它直接调 `provider.complete` 拿摘要，所以它的
+   * usage 不会累进 `usageTotals`。不单独记的话，这一段就是看不见的支出：
+   * 一个大型会话每跨一次窗口就多花一次全量的输入 token，而台账里一行都
+   * 没有。存在此字段即表示该 turn 触发过至少一次自动压缩。
+   */
+  autoCompact?: {
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    /** completed = 历史已替换；failed = 摘要失败，历史原样保留，钱照样花了。 */
+    outcome: 'completed' | 'failed';
+  };
   /** 任务板关联：turn 属于某个任务板的任务时填充。 */
   boardId?: string;
   taskId?: string;
@@ -57,12 +72,20 @@ export function resolveUsageLogPath(explicit?: string, env: NodeJS.ProcessEnv = 
 }
 
 /**
- * Append one real-usage entry. Silent no-op when both token counts are zero so
+ * Append one real-usage entry. Silent no-op when there is nothing to record so
  * we never pollute the ledger with empty rows. Never throws into the agent
  * loop: a logging failure must not break a turn.
+ *
+ * "Nothing to record" used to mean "no main-loop tokens". A turn whose only
+ * spend was an auto-compaction summary has main-loop tokens of 0 and would
+ * have been dropped, which is precisely the invisible spend this field exists
+ * to surface — so a compaction block with calls > 0 also counts as content.
  */
 export async function appendUsage(logPath: string, entry: UsageLedgerEntry): Promise<void> {
-  if (!entry || (entry.inputTokens <= 0 && entry.outputTokens <= 0)) return;
+  if (!entry) return;
+  const hasTurnTokens = entry.inputTokens > 0 || entry.outputTokens > 0;
+  const hasCompactSpend = (entry.autoCompact?.calls ?? 0) > 0;
+  if (!hasTurnTokens && !hasCompactSpend) return;
   try {
     await mkdir(dirname(logPath), { recursive: true });
     await appendFile(logPath, `${JSON.stringify(entry)}\n`, 'utf8');
