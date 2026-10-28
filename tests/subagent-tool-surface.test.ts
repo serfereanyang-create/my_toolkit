@@ -19,6 +19,8 @@ import type { ToolDefinition } from '../src/tools/types.js';
 import { runSubAgent } from '../src/subagent/runner.js';
 import { buildSubAgentTools, ROOT_ONLY_TOOLS, SUBAGENT_CORE_TOOLS, subAgentScope } from '../src/subagent/runner.js';
 import { MAX_SUBAGENT_DEPTH } from '../src/subagent/tool.js';
+import { runCodeReview } from '../src/review/reviewer.js';
+import { isReadOnlyTool } from '../src/tools/scope.js';
 
 /*
  * 子 agent 的工具面。
@@ -624,5 +626,201 @@ test('a child can spawn, the chain stops at the depth limit with a refusal, not 
     // And no session recursed past the limit: every request came from the root
     // plus those three child segments.
     assert.ok(requests.length <= 1 + MAX_SUBAGENT_DEPTH * 3, `unexpected recursion: ${requests.length} requests`);
+  });
+});
+
+// ── 5. review 子会话（/review → runCodeReview → runSubAgent(code_review)）────
+//
+// 这里钉的是「审查者实际送进 provider 的工具数组」，不是 profile 函数：
+// review-readonly.test.ts 已经证明了 codeReviewExpert.toolFilter 只放行
+// isReadOnlyTool，但它没有经过 runner 的 ceiling / scope / core-restore / cap
+// 那条链。链上任何一步（例如把 core 工具无条件恢复、或把 parent 的写工具
+// 原样传下去）都会让「只读审查」变成空话，而 profile 测试仍然全绿。
+//
+// 探针实测（2026-10-29，工作树）：
+//   - 默认注册表 363：review 子会话 197 个工具，全部 risk=read；
+//   - 523 工具注册表、无父 turn：197 个，仍全部 read；
+//   - full 父 turn 之后：294 个（父 scope 的只读子集），全部 read；
+//   - spawn_subagent / review_loop / workflow_* 均缺席。
+
+async function reviewRequest(
+  created: Awaited<ReturnType<typeof createAgentRuntime>>,
+  prepare?: (runtime: AgentRuntime) => void,
+): Promise<ProviderRequest['tools']> {
+  const requests: ProviderRequest[] = [];
+  created.runtime.provider = {
+    name: 'mock',
+    model: 'mock-code-agent-v1',
+    async complete(request) {
+      requests.push(structuredClone({ ...request, onTextDelta: undefined, onThinkingDelta: undefined }));
+      return { actions: [{ type: 'message', content: '{"findings":[],"overall_correctness":"correct"}' }] };
+    },
+  };
+  prepare?.(created.runtime);
+  const result = await runCodeReview({
+    runtime: created.runtime,
+    id: 'review-probe',
+    target: { target: { kind: 'uncommitted' }, label: 'probe', diff: 'diff --git a/x b/x\n+1', files: ['x'], truncated: false },
+  });
+  assert.ok(result.ok, `the review must run so the request can be inspected: ${result.error ?? ''}`);
+  return requests.at(-1)!.tools;
+}
+
+test('review sub-session: no write/shell/delegating tool, and under the cap', async () => {
+  await withRuntime({ toolScope: 'full' }, async (created) => {
+    // 523 工具注册表：审查者的 cap 走的是它自己的 runner 链，与父会话无关。
+    const registry = paddedRegistry(160);
+    const tools = await reviewRequest(created, (runtime) => {
+      runtime.allTools = registry;
+      runtime.tools = registry;
+      runtime.resolvedToolScope = undefined;
+      runtime.sessionToolScopeFloor = undefined;
+    });
+    assert.equal(registry.list().length, 523, 'fixture: the registry really is over the cap');
+    assert.ok(tools.length <= MAX_PROVIDER_TOOLS, `review sent ${tools.length}`);
+
+    // isReadOnlyTool, not risk === 'read': spawn_subagent carries risk 'read'
+    // in some revisions and can still start a writer, so both checks are made.
+    const offenders = tools.filter((tool) => !isReadOnlyTool(tool));
+    assert.deepEqual(
+      offenders.map((tool) => `${tool.name}(${tool.risk})`),
+      [],
+      'a reviewer that can write, run or delegate is no longer a read-only review',
+    );
+    for (const name of ['write_file', 'append_file', 'edit_lines', 'apply_patch', 'run_command',
+      'spawn_subagent', 'review_loop', 'workflow_execute', 'workflow_resume', 'open_pull_request']) {
+      assert.ok(!tools.some((tool) => tool.name === name), `${name} reached the reviewer`);
+    }
+    // It must still be able to do the job.
+    for (const name of ['read_file', 'search_text', 'git_diff']) {
+      assert.ok(tools.some((tool) => tool.name === name), `the reviewer lost ${name}`);
+    }
+  });
+});
+
+test('review sub-session after a full-scope parent turn: same read-only surface', async () => {
+  await withRuntime({ toolScope: 'full' }, async (created) => {
+    const requests: ProviderRequest[] = [];
+    created.runtime.provider = {
+      name: 'mock',
+      model: 'mock-code-agent-v1',
+      async complete(request) {
+        requests.push(structuredClone({ ...request, onTextDelta: undefined, onThinkingDelta: undefined }));
+        return { actions: [{ type: 'message', content: 'leaf' }] };
+      },
+    };
+    await runAgentTurn(created.runtime, 'inspect the tree');
+    const parent = requests.at(-1)!;
+    await runCodeReview({
+      runtime: created.runtime,
+      id: 'review-after-turn',
+      target: { target: { kind: 'uncommitted' }, label: 'probe', diff: 'd', files: ['x'], truncated: false },
+    });
+    const review = requests.at(-1)!;
+    assert.equal(created.runtime.resolvedToolScope, 'full');
+    assert.ok(parent.tools.length <= MAX_PROVIDER_TOOLS);
+    assert.ok(review.tools.length <= MAX_PROVIDER_TOOLS, `review sent ${review.tools.length}`);
+    assert.deepEqual(
+      review.tools.filter((tool) => !isReadOnlyTool(tool)).map((tool) => tool.name),
+      [],
+      'the full-scope parent leaked a write/delegating tool into the reviewer',
+    );
+  });
+});
+
+// ── 6. 子 agent 的「工具使用约定」（C 的提示部分）────────────────────────────
+//
+// 旧提示只有「## 你的角色 + ## 当前任务」两段散文，模型据此把「先读再改 /
+// 改完跑测试 / 跨文件并行拆分」当作角色设定以外的事。这一块由实际工具集生成：
+// 只读角色不会被要求跑测试，也不会被告知可以 spawn。
+import { subAgentToolGuidance } from '../src/subagent/runner.js';
+
+test('tool guidance is generated from what the child actually has', () => {
+  const general = subAgentToolGuidance(
+    ['read_file', 'search_text', 'write_file', 'apply_patch', 'run_command', 'run_tests', 'spawn_subagent']
+      .map((name) => ({ name })),
+  );
+  assert.match(general, /先读再改/);
+  // Only the verifiers actually present are named: telling a child to run
+  // `lint` when it has no lint tool is the same lie as telling it to delegate
+  // without spawn_subagent, just with a longer fuse.
+  assert.match(general, /改完自检：用 run_tests 跑一遍/);
+  assert.doesNotMatch(general, /typecheck|lint/);
+  assert.match(general, /spawn_subagent/);
+  assert.match(general, /TASK_DONE/);
+
+  const reader = subAgentToolGuidance(['read_file', 'search_text', 'git_diff'].map((name) => ({ name })));
+  assert.match(reader, /本角色只读/);
+  assert.match(reader, /先读再答/, 'a read-only role is not told to edit after reading');
+  assert.doesNotMatch(reader, /run_tests \/ typecheck/);
+  assert.doesNotMatch(reader, /spawn_subagent/, 'a child without the tool must not be told to delegate');
+  // 「只读」这一行会提到「没有写文件的能力」，但不得给出改文件的指令。
+  assert.doesNotMatch(reader, /改动尽量小/);
+});
+
+test('the guidance matches how the child can actually verify its own work', () => {
+  // run_command without a test runner: the old text told it to "run the project's
+  // verification command", which in practice produced invented commands.
+  const shell = subAgentToolGuidance(
+    ['read_file', 'write_file', 'run_command'].map((name) => ({ name })),
+  );
+  assert.match(shell, /自检只能用 run_command/);
+  assert.match(shell, /不要凭空编一条命令/);
+  assert.match(shell, /不要声称跑过测试/);
+
+  // A real test runner present: name it, do not hedge.
+  const tester = subAgentToolGuidance(
+    ['read_file', 'write_file', 'run_tests', 'lint'].map((name) => ({ name })),
+  );
+  assert.match(tester, /改完自检：用 run_tests \/ lint 跑一遍/);
+  assert.doesNotMatch(tester, /不要声称跑过测试/);
+
+  // Run-only: may gather evidence, may not change files.
+  const runner = subAgentToolGuidance(['read_file', 'run_command'].map((name) => ({ name })));
+  assert.match(runner, /本角色不改文件/);
+  assert.doesNotMatch(runner, /改动尽量小/);
+
+  // Every branch ends with the same protocol line, and none of them claim a
+  // capability the surface lacks.
+  for (const names of [
+    ['read_file'],
+    ['read_file', 'write_file'],
+    ['read_file', 'run_command'],
+    ['read_file', 'write_file', 'run_command', 'spawn_subagent'],
+    ['read_file', 'write_file', 'run_tests', 'spawn_subagent'],
+  ]) {
+    const text = subAgentToolGuidance(names.map((name) => ({ name })));
+    assert.match(text, /TASK_DONE/, `missing handoff line for ${names.join(',')}`);
+    if (!names.includes('write_file')) assert.doesNotMatch(text, /改动尽量小/);
+    if (!names.includes('spawn_subagent')) assert.doesNotMatch(text, /spawn_subagent/);
+    if (!names.includes('run_command') && !names.includes('run_tests')) {
+      assert.doesNotMatch(text, /自检只能用 run_command/);
+    }
+  }
+});
+
+test('the guidance block is in the prompt between the role and the task, from the real surface', async () => {
+  await withRuntime({ toolScope: 'standard' }, async (created) => {
+    const requests: ProviderRequest[] = [];
+    created.runtime.provider = {
+      name: 'mock',
+      model: 'mock-code-agent-v1',
+      async complete(request) {
+        requests.push(structuredClone({ ...request, onTextDelta: undefined, onThinkingDelta: undefined }));
+        return { actions: [{ type: 'message', content: 'leaf' }] };
+      },
+    };
+    await runSubAgent({ id: 'guide-general', expert: 'general', goal: 'GUIDE child', maxSteps: 1 }, created.runtime, new Map());
+    const generalText = JSON.stringify(requests.at(-1)!.messages);
+    assert.ok(generalText.includes('## 工具使用约定'), 'the child prompt must carry the tool conventions');
+    assert.ok(generalText.indexOf('## 你的角色') < generalText.indexOf('## 工具使用约定'));
+    assert.ok(generalText.indexOf('## 工具使用约定') < generalText.indexOf('## 当前任务'));
+
+    await runSubAgent({ id: 'guide-reader', expert: 'code_search', goal: 'READER child', maxSteps: 1 }, created.runtime, new Map());
+    const readerText = JSON.stringify(requests.at(-1)!.messages);
+    const readerTools = requests.at(-1)!.tools.map((tool) => tool.name);
+    assert.ok(!readerTools.includes('write_file') && !readerTools.includes('run_command'));
+    assert.ok(readerText.includes('本角色只读'), 'the reader is told it cannot write');
+    assert.ok(!readerText.includes('用 spawn_subagent'), 'the reader is not told to delegate');
   });
 });

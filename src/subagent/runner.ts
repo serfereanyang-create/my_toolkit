@@ -245,6 +245,65 @@ export function buildSubAgentTools(options: {
   return { registry: ToolRegistry.fromTools(limited.tools), dropped: limited.dropped };
 }
 
+/**
+ * The "how to use the tools you have" block injected into every sub-agent task,
+ * between `## 你的角色` and `## 当前任务`.
+ *
+ * Generated from the registry the segment will actually receive, not written as
+ * a fixed paragraph. The instruction has to stay true to the surface: a
+ * read-only reviewer told to "run the tests" tries, fails, and burns a step; a
+ * child offered `spawn_subagent` but never told when to use it reads a large
+ * file set one call at a time (the serial path delegation exists to avoid).
+ * Naming only what is present also keeps the paragraph from widening the
+ * surface by suggestion.
+ *
+ * `## 你的角色` is the expert's own prose and `## 当前任务` is the caller's goal;
+ * this block is the missing third piece — the conventions for the tools in
+ * between.
+ */
+export function subAgentToolGuidance(tools: Array<{ name: string }>): string {
+  const has = (name: string) => tools.some((tool) => tool.name === name);
+  const canEdit = has('write_file') || has('apply_patch') || has('edit_lines') || has('append_file');
+  const canRun = has('run_command');
+  const verifiers = ['run_tests', 'typecheck', 'lint'].filter(has);
+  const lines = [
+    '## 工具使用约定',
+    canEdit
+      ? '- 先读再改：动手前用 read_file / search_text / find_symbol 确认上下文，不要凭猜测改文件。'
+      // "先读再改" is a contradiction for a role that cannot write; say what
+      // reading is FOR instead of reusing the editing sentence.
+      : '- 先读再答：结论要落到具体的文件与行，用 read_file / search_text / find_symbol 拿到原文，不要凭印象或常见做法推断。',
+  ];
+  if (canEdit) {
+    lines.push('- 改动尽量小且集中，做完再进入下一处；不要顺手重排无关代码。');
+  }
+  if (verifiers.length > 0) {
+    lines.push(`- 改完自检：用 ${verifiers.join(' / ')} 跑一遍；失败就修到通过再结束，并说明跑了什么。`);
+  } else if (canRun) {
+    lines.push('- 自检只能用 run_command：按项目里的脚本跑（看 package.json / Makefile / README 里怎么写的），不要凭空编一条命令；失败就修到通过再结束，并说明跑了什么。');
+    if (canEdit) lines.push('- 写完之后不要声称跑过测试——你手上没有测试工具，普通命令不等于跑过测试。');
+  } else if (canEdit) {
+    lines.push('- 本角色没有执行能力，写完后说明改了什么、应当由谁验证，不要声称已经跑过测试。');
+  }
+  if (!canEdit && !canRun) {
+    lines.push('- 本角色只读：没有写文件或执行命令的能力。发现问题写进结论，不要尝试修改。');
+  } else if (!canEdit && canRun) {
+    lines.push('- 本角色不改文件：可以跑命令收集证据，但改动只能写进结论交给调用方。');
+  }
+  if (has('spawn_subagent')) {
+    if (canEdit) {
+      lines.push('- 任务能拆成互不依赖的部分时，用 spawn_subagent 一次派出多个子任务并行处理；有先后依赖的用 dependsOn 串起来，不要为了省事把可并行的读操作串行做完。');
+    } else {
+      // A read-only or run-only child cannot hand a WRITE to a sub-agent — its
+      // own surface has no write tools — so "parallelise the work" would be
+      // advice it cannot follow. Scope the suggestion to reading.
+      lines.push('- 同一批文件要分别看完再下结论时，可以用 spawn_subagent 按文件分组并行读；有先后依赖的用 dependsOn 串起来。');
+    }
+  }
+  lines.push('- 结束时用 TASK_DONE: <结论或改动摘要> 收尾。');
+  return lines.join('\n');
+}
+
 
 /**
  * Swap the sub-runtime onto another dispatch tier's provider.
@@ -590,6 +649,13 @@ export async function runSubAgent(
     baseParts.push(`## 额外背景\n${spec.contextHint}\n`);
   }
   baseParts.push(`## 你的角色\n${profile.systemPrompt}\n`);
+  // 工具使用约定：只描述这个角色实际拿得到的工具。子 agent 的旧提示只有
+  // 「角色 + 任务」两段散文，模型于是把「改完跑测试」「跨文件时并行拆分」
+  // 当成角色设定之外的事；而只读角色拿到写类指引又会试着调用不存在的工具。
+  // 所以按实际工具集生成，缺席的能力明说缺席。
+  baseParts.push(subAgentToolGuidance(
+    buildSubAgentTools({ parentRuntime, profile, scope: subAgentScope(parentRuntime, profile) }).registry.list(),
+  ));
   baseParts.push(`## 当前任务\n${spec.goal}`);
 
   const buildGoal = (segment: number, handoff: string | undefined) =>
