@@ -27,11 +27,23 @@ import { homedir } from 'node:os';
  */
 export type DispatchTier = 'expensive' | 'standard' | 'cheap';
 
+/**
+ * The tiers a *request* can be billed to.
+ *
+ * `compact` is not a selectable tier: nobody configures a model for it. It is
+ * the row the 省钱分级 ledger gets when automatic context compaction paid for a
+ * handoff summary — that request runs on whichever model was last in use, but
+ * it is not part of that tier's ordinary calls, and folding it into a tier row
+ * would inflate that tier's per-token average with a full-history prompt.
+ */
+export type DispatchLedgerTier = DispatchTier | 'compact';
+
 /** Human-facing names, used in status lines and the settings UI. */
-export const DISPATCH_TIER_LABELS: Record<DispatchTier, string> = {
+export const DISPATCH_TIER_LABELS: Record<DispatchLedgerTier, string> = {
   expensive: '贵档',
   standard: '中档',
   cheap: '便宜档',
+  compact: '压缩',
 };
 
 /** One provider entry as stored in the v2 config file. */

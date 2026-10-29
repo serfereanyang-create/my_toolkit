@@ -29,6 +29,11 @@ export const envContractTool: ToolDefinition<{ pattern?: string }> = {
       `- 源码读取: ${report.codeKeys.length} 个键`,
       `- 本地 .env: ${report.localKeys.length > 0 ? `${report.localKeys.length} 个键` : '（无此文件）'}`,
     ];
+    if (report.dynamicReads.length > 0) {
+      // Only key families / shapes — never a value. These cannot be checked
+      // against .env.example because no concrete key name exists at scan time.
+      lines.push(`- 动态读取（无法静态核对）: ${report.dynamicReads.length} 处`);
+    }
     if (report.issues.length === 0) {
       lines.push('', '✓ 三方一致，没有契约问题。');
     } else {
@@ -46,8 +51,15 @@ export const envContractTool: ToolDefinition<{ pattern?: string }> = {
       };
       for (const [kind, items] of byKind) {
         lines.push('', `### ${label[kind] ?? kind}（${items.length}）`);
-        for (const item of items.slice(0, 20)) lines.push(`- \`${item.key}\` — ${item.detail}`);
+        for (const item of items.slice(0, 20)) {
+          const where = item.sources && item.sources.length > 0 ? `（${item.sources.slice(0, 3).join(', ')}）` : '';
+          lines.push(`- \`${item.key}\` — ${item.detail}${where}`);
+        }
       }
+    }
+    if (report.dynamicReads.length > 0) {
+      lines.push('', `### 动态读取（${report.dynamicReads.length}，只列形态）`);
+      for (const entry of report.dynamicReads.slice(0, 20)) lines.push(`- ${entry}`);
     }
     return { ok: report.ok, output: lines.join('\n'), data: report };
   },

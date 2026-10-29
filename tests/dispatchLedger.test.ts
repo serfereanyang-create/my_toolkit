@@ -70,3 +70,31 @@ test('shengqianLedgerPath points at the path the spec names', () => {
   assert.ok(p.endsWith(join('.shengqian-logs', 'usage-ledger.jsonl')));
   void readFileSync; void formatDispatchStatus;
 });
+
+test('a compaction row round-trips with its labelled block and call count', () => {
+  // A turn whose only spend was a summary has no tier to hang the spend on.
+  // Dropping it is what made a full-history summarization invisible; the row
+  // must survive a write/read cycle with the outcome intact so cost analysis can
+  // separate a cancel from a provider defect.
+  const dir = tempDir();
+  try {
+    const global = join(dir, 'global.jsonl');
+    recordDispatch({
+      ...entry,
+      tier: 'compact',
+      inputTokens: 9_000,
+      outputTokens: 300,
+      totalTokens: 9_300,
+      ok: false,
+      tierCalls: 2,
+      autoCompact: { calls: 1, inputTokens: 4_000, outputTokens: 200, outcome: 'cancelled' },
+    }, global);
+    const [row] = readDispatchHistory(global);
+    assert.equal(row.tier, 'compact');
+    assert.equal(row.totalTokens, 9_300);
+    assert.equal(row.tierCalls, 2);
+    assert.deepEqual(row.autoCompact, { calls: 1, inputTokens: 4_000, outputTokens: 200, outcome: 'cancelled' });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

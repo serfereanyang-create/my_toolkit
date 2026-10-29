@@ -5,6 +5,8 @@
  * 用于生成重复性代码结构
  */
 
+import * as ts from 'typescript';
+
 export interface TemplateContext {
   [key: string]: any;
 }
@@ -33,22 +35,33 @@ export class TemplateEngine {
   
   /**
    * 渲染模板
+   *
+   * 变量值用占位符暂存、最后一次性还原：旧实现把值直接拼进模板字符串后继续
+   * 解析，值里出现 `{% ... %}` / `{{ ... }}` 就会被当成模板语法二次求值
+   * （实测 `{{ name }}` 的值写成 `{{ secret }}` 会泄漏出上下文里的 secret）。
+   * 循环体每次迭代仍用各自的上下文求值，只是求值结果不再参与解析。
    */
   render(template: string, context: TemplateContext): string {
-    let result = template;
-    
-    // 1. 处理表达式（条件、循环）
-    result = this.processExpressions(result, context);
-    
-    // 2. 替换变量
-    result = this.replaceVariables(result, context);
-    
-    // 3. 处理空白
+    // 值缓冲区跨迭代共享，占位符序号全局唯一。空白清理发生在「还原值」之前：
+    // 模板自身的空行归一化照做，但值（多行文件内容等）内部的空行不能被压掉。
+    const { text, values } = this.renderSegment(template, context, []);
+
+    let result = text;
     if (!this.options.preserveWhitespace) {
       result = this.trimWhitespace(result);
     }
-    
+    result = result.replace(/\u0000(\d+)\u0000/g, (_, index: string) => values[Number(index)] ?? '');
+
     return result;
+  }
+
+  /** 渲染一段模板，返回「含占位符的文本」与全局值缓冲区。 */
+  private renderSegment(template: string, context: TemplateContext, values: string[]): { text: string; values: string[] } {
+    // 1. 处理表达式（条件、循环）
+    const text = this.processExpressions(template, context, values);
+
+    // 2. 替换变量（结果为占位符，不参与后续解析）
+    return { text: this.replaceVariables(text, context, values), values };
   }
   
   /**
@@ -58,7 +71,7 @@ export class TemplateEngine {
    * （含 else 分支）替换为渲染结果后跳过整段，避免块体原文残留或
    * 嵌套块被二次求值。
    */
-  private processExpressions(template: string, context: TemplateContext): string {
+  private processExpressions(template: string, context: TemplateContext, values: string[]): string {
     let result = '';
     let pos = 0;
 
@@ -82,9 +95,9 @@ export class TemplateEngine {
 
         let replacement: string;
         if (blockType === 'if') {
-          replacement = this.renderIfBlock(expr, template, tagEnd, elsePos, endPos, context);
+          replacement = this.renderIfBlock(expr, template, tagEnd, elsePos, endPos, context, values);
         } else {
-          replacement = this.renderForBlock(expr, template.substring(tagEnd, endPos), context);
+          replacement = this.renderForBlock(expr, template.substring(tagEnd, endPos), context, values);
         }
 
         result += template.substring(pos, start) + replacement;
@@ -112,18 +125,19 @@ export class TemplateEngine {
     bodyStart: number,
     elsePos: number,
     endPos: number,
-    context: TemplateContext
+    context: TemplateContext,
+    values: string[],
   ): string {
     const condition = expr.substring(3).trim();
     const conditionValue = this.evaluate(condition, context);
 
     if (conditionValue) {
       const ifBlock = template.substring(bodyStart, elsePos !== -1 ? elsePos : endPos);
-      return this.render(ifBlock, context);
+      return this.renderSegment(ifBlock, context, values).text;
     }
     if (elsePos !== -1) {
       const elseBlock = template.substring(elsePos, endPos);
-      return this.render(elseBlock, context);
+      return this.renderSegment(elseBlock, context, values).text;
     }
     return '';
   }
@@ -131,7 +145,7 @@ export class TemplateEngine {
   /**
    * 渲染 for 块体：对集合每一项以循环上下文递归渲染
    */
-  private renderForBlock(expr: string, body: string, context: TemplateContext): string {
+  private renderForBlock(expr: string, body: string, context: TemplateContext, values: string[]): string {
     const match = expr.match(/^for\s+(\w+)(?:\s*,\s*(\w+))?\s+in\s+(.+)$/);
     if (!match) {
       throw new Error(`Invalid for syntax: ${expr}`);
@@ -155,7 +169,7 @@ export class TemplateEngine {
             length: collection.length,
           },
         };
-        return this.render(body, loopContext);
+        return this.renderLeaf(body, loopContext, values);
       }).join('');
     }
 
@@ -175,11 +189,20 @@ export class TemplateEngine {
             length: entries.length,
           },
         };
-        return this.render(body, loopContext);
+        return this.renderLeaf(body, loopContext, values);
       }).join('');
     }
 
     return '';
+  }
+
+  /**
+   * 叶子片段：先解析其中的 if/for，再替换变量。
+   * 值只进缓冲区、以占位符留在文本里，不再参与后续解析 —— 因此这里
+   * 不再调用 renderSegment 的第二步于同一个 context 上重复扫描。
+   */
+  private renderLeaf(template: string, context: TemplateContext, values: string[]): string {
+    return this.renderSegment(template, context, values).text;
   }
 
   /**
@@ -227,32 +250,95 @@ export class TemplateEngine {
   /**
    * 替换变量 - 使用固定定界符 {{ }}
    */
-  private replaceVariables(template: string, context: TemplateContext): string {
+  private replaceVariables(template: string, context: TemplateContext, values: string[]): string {
     let result = template;
     let pos = 0;
     
     while (pos < result.length) {
       const start = result.indexOf('{{', pos);
       if (start === -1) break;
-      
+
       const end = result.indexOf('}}', start + 2);
       if (end === -1) break;
-      
+
       const expr = result.substring(start + 2, end).trim();
-      
+
       try {
         const value = this.evaluate(expr, context);
-        const replacement = value === undefined || value === null ? '' : String(value);
-        result = result.substring(0, start) + replacement + result.substring(end + 2);
-        pos = start + replacement.length;
+        // 值存进缓冲区，模板里只留占位符：值里的 {{ }} / {% %} 不再被解析。
+        // NUL 是占位符定界符，值里出现会伪造占位符，直接剔除。
+        const text = value === undefined || value === null ? '' : String(value).replace(/\u0000/g, '');
+        const index = values.push(text) - 1;
+        const placeholder = `\u0000${index}\u0000`;
+        result = result.substring(0, start) + placeholder + result.substring(end + 2);
+        pos = start + placeholder.length;
       } catch (e) {
         pos = end + 2;
       }
     }
-    
+
     return result;
   }
   
+  /**
+   * 应用管道 helper：支持 `helper` 与 `helper(arg, ...)` 两种写法。
+   * 带参数时参数按模板表达式求值；helper 的实参顺序是 (value, ...args)。
+   */
+  private applyHelper(helperExpr: string, value: any, context: TemplateContext): any {
+    const match = helperExpr.match(/^([A-Za-z_$][\w$]*)\s*(?:\((.*)\))?$/);
+    if (!match) return value;
+    const name = match[1]!;
+    const helper = this.options.helpers[name]
+      || (builtinHelpers as Record<string, (...args: any[]) => any>)[name]
+      || context[name];
+    if (typeof helper !== 'function') return value;
+
+    if (!match[2]?.trim()) return helper(value);
+    // 参数按顶层逗号切分（忽略引号内逗号），逐个求值。
+    const args: any[] = [];
+    let current = '';
+    let quote: string | null = null;
+    for (const char of match[2]) {
+      if (quote) {
+        current += char;
+        if (char === quote) quote = null;
+      } else if (char === '"' || char === "'") {
+        quote = char;
+        current += char;
+      } else if (char === ',') {
+        args.push(this.evaluate(current.trim(), context));
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    if (current.trim()) args.push(this.evaluate(current.trim(), context));
+    return helper(value, ...args);
+  }
+
+  /** 按顶层 `|` 切分（跳过引号内的竖线）：模板管道的分隔符。 */
+  private splitTopLevelPipes(expr: string): string[] {
+    const parts: string[] = [];
+    let current = '';
+    let quote: string | null = null;
+    for (const char of expr) {
+      if (quote) {
+        current += char;
+        if (char === quote) quote = null;
+      } else if (char === '"' || char === "'") {
+        quote = char;
+        current += char;
+      } else if (char === '|') {
+        parts.push(current);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    parts.push(current);
+    return parts;
+  }
+
   /**
    * 计算表达式的值
    */
@@ -285,15 +371,19 @@ export class TemplateEngine {
     }
 
     // 管道：value | helper1 | helper2（模板中 {{ name | kebabCase }} 语法）
+    //
+    // 旧实现只把 value 传给 helper，`{{ version | default('1.0.0') }}` 这种
+    // 内置模板里到处使用的写法会把 helper 名当成 `default('1.0.0')`，查不到
+    // helper 就原样返回 undefined —— 实测所有 default(...) 都渲染成空串，
+    // package-json / tsconfig 的默认值全部丢失且不报错。
     if (expr.includes('|')) {
-      const parts = expr.split('|').map(p => p.trim());
-      const base = this.evaluate(parts[0], context);
-      return parts.slice(1).reduce((value, helperName) => {
-        const helper = this.options.helpers[helperName]
-          || (builtinHelpers as Record<string, (...args: any[]) => any>)[helperName]
-          || context[helperName];
-        return typeof helper === 'function' ? helper(value) : value;
-      }, base);
+      // 顶层竖线才算管道：`join("|")` 里的竖线属于 helper 参数，
+      // 旧实现按字符 split 会把它当成管道符，把参数切碎。
+      const parts = this.splitTopLevelPipes(expr).map(p => p.trim());
+      if (parts.length > 1) {
+        const base = this.evaluate(parts[0], context);
+        return parts.slice(1).reduce((value, helperExpr) => this.applyHelper(helperExpr, value, context), base);
+      }
     }
     
     // 比较运算符
@@ -402,6 +492,9 @@ export function renderTemplate(
 /**
  * 内置辅助函数
  */
+/** 反斜杠字符（避免在源码里写出难读的转义序列）。 */
+const JS_BACKSLASH = String.fromCharCode(92);
+
 export const builtinHelpers = {
   capitalize: (str: string) => str.charAt(0).toUpperCase() + str.slice(1),
   upper: (str: string) => str.toUpperCase(),
@@ -438,6 +531,64 @@ export const builtinHelpers = {
       .replace('ss', String(d.getSeconds()).padStart(2, '0'));
   },
   json: (obj: any, indent: number = 2) => JSON.stringify(obj, null, indent),
+  /**
+   * 把值转成可安全放进 JSON 字符串字面量里的内容（不含两端引号）。
+   * 模板拼接 JSON 时漏了它，一个 `"` 就能让 package.json 失效。
+   */
+  escapeJson: (value: any) => {
+    if (value === undefined || value === null) return '';
+    return JSON.stringify(String(value)).slice(1, -1);
+  },
+  /**
+   * JS/TS 字符串字面量内部转义（值两侧的引号由模板自己加）。
+   * 单引号、双引号、反引号、反斜杠、换行与 U+2028/29 都会打破字面量，
+   * 必须全部转义 —— 只转双引号挡不住 router.get('...') 的单引号注入。
+   */
+  escapeJs: (value: any) => {
+    if (value === undefined || value === null) return '';
+    return JSON.stringify(String(value)).slice(1, -1)
+      .replace(/`/g, JS_BACKSLASH + '`')
+      .replace(/'/g, JS_BACKSLASH + "'")
+      .replace(/[\u2028\u2029]/g, (char) => JS_BACKSLASH + 'u' + char.charCodeAt(0).toString(16));
+  },
+  /**
+   * 标识符位置的值：合法标识符原样返回，否则把不合法字符换成下划线。
+   * 名字插进 interface X / foo.bar 这类位置时不能用字符串转义，只能清洗
+   * （`a: any;` + 换行 + `}` 的注入靠的就是这里）。
+   */
+  identifier: (value: any) => {
+    const raw = value === undefined || value === null ? '' : String(value);
+    if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(raw)) return raw;
+    const cleaned = raw.replace(/[^A-Za-z0-9_$]/g, '_');
+    return /^[A-Za-z_$]/.test(cleaned) ? cleaned : `_${cleaned}`;
+  },
+  /**
+   * 类型表达式位置的值：去掉能提前结束语句/类型块的字符（分号、换行），
+   * 括号不成对时退化为 unknown，避免 `Foo; }` 之类的截断。
+   */
+  typeExpr: (value: any) => {
+    const raw = value === undefined || value === null ? '' : String(value).replace(/[;\r\n]/g, ' ').trim();
+    if (!raw) return 'unknown';
+    // 只靠括号配平挡不住 `foo: {a}` 这类“配平但非法”的类型：交给 TS 解析器，
+    // 能解析成单个类型别名且消费者覆盖到末尾才原样放行，否则退化为 unknown。
+    const prefix = 'type __T = ';
+    const sourceFile = ts.createSourceFile(
+      'type-expr.ts',
+      `${prefix}${raw};`,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const diagnostics = (sourceFile as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics;
+    if (Array.isArray(diagnostics) && diagnostics.length > 0) return 'unknown';
+    const statement = sourceFile.statements[0];
+    if (!statement || !ts.isTypeAliasDeclaration(statement)) return 'unknown';
+    return statement.type.end === prefix.length + raw.length ? raw : 'unknown';
+  },
+  /** 注释内容：注释结束符会提前闭合块注释，换行会破坏单行注释，一律中和。 */
+  escapeComment: (value: any) => {
+    if (value === undefined || value === null) return '';
+    return String(value).replace(/\*\//g, '*' + JS_BACKSLASH + '/').replace(/[\r\n]+/g, ' ');
+  },
   join: (arr: any[], sep: string = ', ') => arr.join(sep),
   default: (value: any, defaultValue: any) => value ?? defaultValue,
 };

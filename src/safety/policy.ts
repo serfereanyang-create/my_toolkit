@@ -3,7 +3,7 @@ import { stdin as input, stdout as output } from 'node:process';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { ApprovalMode } from '../providers/types.js';
-import { analyzeCommand, isCredentialPath } from './commandAnalysis.js';
+import { analyzeCommand, isCredentialPath, splitCommandSegments, tokenizeCommand } from './commandAnalysis.js';
 import { evaluateNetworkTarget } from './network.js';
 
 export type ToolRisk = 'read' | 'write' | 'shell' | 'network';
@@ -241,8 +241,8 @@ function isPathInside(root: string, target: string) {
 export function isBlockedCommand(command: string, workspaceRoot?: string) {
   const trimmed = command.trim();
   if (blockedCommandPatterns.some((pattern) => pattern.test(trimmed))) return true;
-  if (isDestructiveGitCommand(trimmed)) return true;
-  return analyzeCommand(trimmed, { workspaceRoot }).verdict === 'blocked';
+  if (containsDestructiveGit(trimmed)) return true;
+  return analyzeCommand(trimmed, { workspaceRoot, destructiveGit: isDestructiveGitInvocation }).verdict === 'blocked';
 }
 
 export function isAutoAllowedCommand(command: string) {
@@ -283,16 +283,92 @@ export function isAllowedAppCommand(command: string, apps?: string[]): boolean {
   });
 }
 
-function isDestructiveGitCommand(command: string) {
-  const match = command.match(/^git(?:\.exe)?\s+((?:(?:-[a-zA-Z]|--[a-zA-Z0-9][a-zA-Z0-9-]*)(?:\s+[^\s]+)?\s+)*)([a-zA-Z0-9][\w-]*)\b(.*)$/i);
-  if (!match) return false;
-  const subcommand = (match[2] ?? '').toLowerCase();
-  const rest = match[3] ?? '';
+/**
+ * Position-independent destructive git detection for `decideApproval`'s shell
+ * branch.
+ *
+ * The old head-only regex only ever saw the FIRST command in a string, so
+ * `npm test && git rm -r src`, `cmd /c "git clean -fdx"` and `git push -f`
+ * (short form) all walked past it. Segmenting the string with the same
+ * quote-aware splitter the analyser uses, then resolving the real subcommand
+ * per segment, closes the chain and the interpreter wrapper. Nested wrappers
+ * (`cmd /c "…"`) are still covered by `analyzeCommand`'s own recursion.
+ */
+function containsDestructiveGit(command: string): boolean {
+  for (const segment of splitCommandSegments(command)) {
+    const tokens = tokenizeCommand(segment.text);
+    if (!tokens.length) continue;
+    const program = tokens[0]!.trim().replace(/^["']|["']$/g, '').split(/[/\\]/).pop()?.toLowerCase() ?? '';
+    if (!/^git(?:\.exe)?$/.test(program)) continue;
+    // Skip global options and their values (`git -C dir push -f`), then judge
+    // the subcommand with the same rule set the analyser uses.
+    let index = 1;
+    while (index < tokens.length && tokens[index]!.startsWith('-')) {
+      index += /^(?:-C|--git-dir|--work-tree|-c|--namespace|--exec-path)$/i.test(tokens[index]!) ? 2 : 1;
+    }
+    const subcommand = tokens[index];
+    if (subcommand && isDestructiveGitInvocation(subcommand.toLowerCase(), tokens.slice(index + 1).join(' '))) return true;
+  }
+  return false;
+}
+
+/**
+ * The git rule set, exported so `analyzeCommand` can apply it inside segments.
+ *
+ * `policy` imports `commandAnalysis`, so the rule lives here and is INJECTED
+ * into the analyser rather than imported back. One copy matters: `git rm`,
+ * `stash clear`, `update-ref -d` and short `push -f` all used to exist in
+ * exactly one of the two places, and the shell path was the one missing them.
+ */
+export function isDestructiveGitInvocation(subcommand: string, rest: string): boolean {
   if (subcommand === 'reset' && /(?:^|\s)--hard(?:\s|$)/i.test(rest)) return true;
-  if (subcommand === 'clean' && /(?:^|\s)-(?:f|fd|fdx|fx|dff|dfx|x)+/i.test(rest)) return true;
+  if (subcommand === 'clean' && /(?:^|\s)-(?:d*[a-z]*f[a-z]*)(?:\s|$)/i.test(rest)) return true;
   if ((subcommand === 'checkout' || subcommand === 'restore') && /(?:^|\s)(?:-f|--force)(?:\s|$)/i.test(rest)) return true;
-  if (subcommand === 'push' && /(?:^|\s)--force(?:-with-lease)?(?:\s|$)/i.test(rest)) return true;
-  if (subcommand === 'branch' && /(?:^|\s)(?:-[dD]|--delete)(?:\s|$)/i.test(rest)) return true;
+  // `git push -f` was not covered by the long-form-only rule, so a short-form
+  // force push passed and — in auto mode with 任意应用 — ran with no prompt.
+  if (subcommand === 'push' && /(?:^|\s)(?:--force(?:-with-lease)?|-f)(?:\s|$)/i.test(rest)) return true;
+  // `-D`/`-d` branch delete has a dedicated tool; a bare shell invocation of it
+  // is not recoverable from the shell.
+  if (subcommand === 'branch' && /(?:^|\s)(?:-d|-D|--delete)(?:\s|$)/i.test(rest)) return true;
+  // Every other `git rm` is a working-tree delete git will not hand back from
+  // the index; `--cached` is the recoverable unstage.
+  if (subcommand === 'rm' && !/(?:^|\s)--cached(?:\s|$)/i.test(rest)) return true;
+  if (subcommand === 'stash' && /^\s*(?:clear|drop)\b/i.test(rest)) return true;
+  if (subcommand === 'tag' && /(?:^|\s)(?:-d|--delete)(?:\s|$)/i.test(rest)) return true;
+  if (subcommand === 'update-ref' && /(?:^|\s)(?:-d|--delete)(?:\s|$)/i.test(rest)) return true;
+  // History pruning: unreachable commits become garbage immediately.
+  if (subcommand === 'reflog' && /^\s*expire\b/i.test(rest) && /(?:--all|--expire=now)(?:\s|$)/i.test(rest)) return true;
+  if (subcommand === 'gc' && /(?:^|\s)--prune=now(?:\s|$)/i.test(rest)) return true;
+  return false;
+}
+
+/**
+ * True when a shell command contains a git working-tree discard — anywhere in
+ * the string, including inside `cmd /c "…"`.
+ *
+ * `git restore <paths>` drops uncommitted edits (recoverable only from an
+ * editor's history). `git restore --staged` only unstages, and `git checkout
+ * <branch>` only switches, so neither is destructive here. The analyser already
+ * hard-blocks `-f/--force` and `reset --hard`; this is about the "safe-looking"
+ * restore form that still destroys work.
+ */
+function isDestructiveShellGit(command: string): boolean {
+  const lowered = command.toLowerCase().replace(/\\/g, '/');
+  for (const match of lowered.matchAll(/git(?:\.exe)?\s+restore\b([^&|;\n]*)/g)) {
+    if (!/(?:^|\s)--staged(?:\s|$)/.test(match[1] ?? '')) return true;
+  }
+  for (const match of lowered.matchAll(/git(?:\.exe)?\s+checkout\b([^&|;\n]*)/g)) {
+    const rest = (match[1] ?? '').trim();
+    // `git checkout -- <paths>` and `git checkout .` overwrite working-tree
+    // files; `git checkout main` / `-b x` just switch or create a branch.
+    //
+    // `git checkout <commit-ish> -- <paths>` is the same discard with the
+    // restore point named: `git checkout HEAD~1 -- src/app.ts` writes the old
+    // blob over uncommitted edits. Only a BARE `--` is the path separator —
+    // `--detach`/`--ours` are options — so the token needs space around it.
+    if (rest === '--' || rest.startsWith('-- ') || rest.startsWith('- -') || rest.startsWith('.')) return true;
+    if (/(?:^|\s)--(?:\s|$)/.test(rest)) return true;
+  }
   return false;
 }
 
@@ -337,6 +413,39 @@ export function isAutoAllowedWrite(
 }
 
 /**
+ * The verdicts that no mode may lift: SSRF/private targets, blocked network
+ * hosts, and destructive command structure. Extracted from the shell/network
+ * branches so the top of `decideApproval` can apply them before `plan` or
+ * `alwaysPrompt` get a chance to turn "blocked" into "ask".
+ *
+ * Returns the refusal reason, or null when nothing hard-denies.
+ */
+function hardDenyReason(options: {
+  risk: ToolRisk;
+  command?: string;
+  url?: string;
+  networkAllowlist?: string[];
+  workspaceRoot: string;
+}): string | null {
+  if (options.risk === 'network') {
+    const verdict = evaluateNetworkTarget(options.url ?? '', options.networkAllowlist ?? []);
+    return verdict.ok ? null : verdict.reason;
+  }
+  if (options.risk !== 'shell') return null;
+  const command = options.command ?? '';
+  const analysis = analyzeCommand(command, {
+    workspaceRoot: options.workspaceRoot,
+    readRoots: readableRootsFor(options.workspaceRoot),
+    networkAllowlist: options.networkAllowlist,
+    destructiveGit: isDestructiveGitInvocation,
+  });
+  if (analysis.verdict === 'blocked') return `blocked destructive command pattern: ${analysis.reason}`;
+  if (blockedCommandPatterns.some((pattern) => pattern.test(command.trim()))) return 'blocked destructive command pattern';
+  if (containsDestructiveGit(command.trim())) return 'blocked destructive command pattern';
+  return null;
+}
+
+/**
  * Network verdicts live in `./network.ts` (the shell analyser shares them) and
  * are re-exported here so existing imports keep working.
  */
@@ -371,14 +480,40 @@ export function decideApproval(options: {
   workspaceRoot: string;
 }): ApprovalDecision {
   if (options.risk === 'read') return { allowed: true, needsPrompt: false, reason: 'read-only tool' };
+  // HARD DENY is decided FIRST, before any mode branch. `plan` and `alwaysPrompt`
+  // both answer "prompt" for anything they see, so while `plan` sat above the
+  // shell branch a blocked command (`rm -rf /`, cloud-metadata curl) came back
+  // as `allowed: true, needsPrompt: true` — one human or auto-reviewer yes away
+  // from executing what every mode is supposed to refuse. The user still gets a
+  // plan-mode prompt for whatever is NOT hard-denied, below.
+  if (options.mode !== 'deny') {
+    const hardDeny = hardDenyReason(options);
+    if (hardDeny) return { allowed: false, needsPrompt: false, reason: hardDeny };
+  }
   if (options.mode === 'deny') return { allowed: false, needsPrompt: false, reason: 'approval mode denies write, shell, and network tools' };
-  // plan mode: allow reads freely, prompt before every write/shell/network action
-  if (options.mode === 'plan') return { allowed: true, needsPrompt: true, reason: 'plan mode requires confirmation before every change' };
   // Irreversible tools (e.g. `git restore`, which discards uncommitted edits)
   // are never approved silently, in ANY mode: the user must see the exact
   // targets before the work is destroyed. The registry turns `needsPrompt`
   // without a confirmation handler into a refusal rather than a silent run.
+  //
+  // This branch sits ABOVE the plan-mode branch on purpose. It used to sit
+  // below it, so plan mode answered first with its generic reason and the
+  // destructive marker was lost: the broker then cached an `allow_session` from
+  // an ordinary plan-mode write under `write:git_restore`, and the next
+  // destructive `git restore` was answered from that cache without a word.
   if (options.alwaysPrompt) return { allowed: true, needsPrompt: true, reason: DESTRUCTIVE_CONFIRM_REASON };
+  // plan mode: allow reads freely, prompt before every write/shell/network action
+  if (options.mode === 'plan') {
+    // A shell working-tree discard keeps its destructive marker in plan mode
+    // too: otherwise the same `git restore .` that is non-reviewable in ask
+    // mode becomes reviewable here, and a model reviewer can answer it.
+    const destructiveShell = options.risk === 'shell' && isDestructiveShellGit(options.command ?? '');
+    return {
+      allowed: true,
+      needsPrompt: true,
+      reason: destructiveShell ? DESTRUCTIVE_CONFIRM_REASON : 'plan mode requires confirmation before every change',
+    };
+  }
 
   if (options.computerUse && options.risk === 'shell' && !options.command) {
     if (options.mode === 'auto') {
@@ -407,13 +542,16 @@ export function decideApproval(options: {
       // 因为换了层就绕过去。
       readRoots: readableRootsFor(options.workspaceRoot),
       networkAllowlist: options.networkAllowlist,
+      // 同一份 git 破坏性规则也用在分段里：`cmd /c "git clean -fdx"` 的第一段
+      // 是 cmd，policy 的整串判断看不到里面的 git。
+      destructiveGit: isDestructiveGitInvocation,
     });
     // Destructive commands are ALWAYS blocked — anyApp/allowedApps never lift
     // this. The structured verdict comes first so the refusal names the real
     // reason (which target, which program) instead of a generic pattern hit.
     const legacyBlocked =
       analysis.verdict !== 'blocked' &&
-      (blockedCommandPatterns.some((pattern) => pattern.test(command.trim())) || isDestructiveGitCommand(command.trim()));
+      (blockedCommandPatterns.some((pattern) => pattern.test(command.trim())) || containsDestructiveGit(command.trim()));
     if (analysis.verdict === 'blocked' || legacyBlocked) {
       return {
         allowed: false,
@@ -432,8 +570,29 @@ export function decideApproval(options: {
     // recursive delete, a script host, an undecodable -EncodedCommand — must be
     // seen by a human even in auto mode. 完全访问 means "don't ask about the
     // ordinary", not "don't ask about this".
+    //
+    // The prompt reason must NAME the destructive structural verdict it is
+    // asking about. `git restore .` (the shell form — always a working-tree
+    // discard) reaches this branch and used to carry the generic `confirmation
+    // required: …` reason, which every destructive-aware consumer keys on: the
+    // broker cached an `allow_session` for it, the auto-reviewer was allowed to
+    // answer it, and in plan mode a cached yes could then answer the next one.
+    // Carrying DESTRUCTIVE_CONFIRM_REASON is what makes the existing exemptions
+    // apply to shell git discards without threading a new field.
     if (analysis.verdict === 'prompt') {
-      return { allowed: true, needsPrompt: true, reason: `confirmation required: ${analysis.reason}` };
+      return {
+        allowed: true,
+        needsPrompt: true,
+        reason: isDestructiveShellGit(command) ? DESTRUCTIVE_CONFIRM_REASON : `confirmation required: ${analysis.reason}`,
+      };
+    }
+    // A shell working-tree discard (`git restore .`) is destructive even
+    // though the analyser has no `blocked` vote for it: it must be asked about
+    // in auto/任意应用 too, and its reason must be the marker the broker and
+    // the reviewer key on — otherwise "allow this session" from an ordinary
+    // command would answer the next discard silently.
+    if (isDestructiveShellGit(command)) {
+      return { allowed: true, needsPrompt: true, reason: DESTRUCTIVE_CONFIRM_REASON };
     }
     // "任意应用": auto mode may run any non-destructive command.
     if (options.mode === 'auto' && options.computerAnyApp) {

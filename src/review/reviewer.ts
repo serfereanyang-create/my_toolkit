@@ -40,6 +40,12 @@ export type ReviewRunResult = {
   steps: number;
   /** Set when the review did not complete — the reason, never a silent empty report. */
   error?: string;
+  /**
+   * Set when the reviewer did not receive the whole change. The review is still
+   * a real review of what it saw, but a "no findings" verdict does not cover the
+   * unseen part, and every rendering of the result must say so.
+   */
+  warning?: string;
 };
 
 /**
@@ -48,14 +54,38 @@ export type ReviewRunResult = {
  * The reviewer has read tools and can fetch more, so a large change is not a
  * failure; but an unbounded prompt would blow the context before the review
  * starts. `resolveReviewTarget` reports truncation in the prompt so the
- * reviewer knows to go read the rest.
+ * reviewer knows to go read the rest — and `assessTruncation` makes sure the
+ * *user* is told too, which the prompt alone never did.
  */
 export const REVIEW_DIFF_CHARS_IN_PROMPT = 120_000;
 
+/**
+ * The sentence the user must see when the reviewer was not given everything.
+ *
+ * Two cuts can happen and either one leaves a review that cannot be read as
+ * "looked at the whole change": `resolveReviewTarget` caps the diff at
+ * `maxChars` (200k by default), and `buildReviewPrompt` caps what is pasted into
+ * the prompt at `REVIEW_DIFF_CHARS_IN_PROMPT` (120k). Only the resolved target
+ * was ever reported (inside the prompt, to the reviewer); the prompt cut and the
+ * user-facing consequence were silent.
+ */
+export function assessTruncation(target: ResolvedTarget): string | undefined {
+  const promptCut = target.diff.length > REVIEW_DIFF_CHARS_IN_PROMPT;
+  if (!target.truncated && !promptCut) return undefined;
+  const shown = promptCut ? REVIEW_DIFF_CHARS_IN_PROMPT : target.diff.length;
+  const total = target.truncated ? (target.fullLength ?? target.diff.length) : target.diff.length;
+  return `本次审查只看到了改动的前 ${shown} 个字符（完整 ${total} 个），其余部分没有被审查。`
+    + '「未发现问题」只对已看过的部分成立。可以缩小范围（/review --staged、/review commit <sha>、/review base <分支>），'
+    + '或让审查者用 git_diff / read_file 自行查看其余部分后重新评审。';
+}
+
 /** Build the reviewer's task prompt: what to look at, plus the diff. */
 export function buildReviewPrompt(target: ResolvedTarget): string {
-  const diff = target.diff.length > REVIEW_DIFF_CHARS_IN_PROMPT
-    ? `${target.diff.slice(0, REVIEW_DIFF_CHARS_IN_PROMPT)}\n\n[diff 过长，已截断。请用 git_diff / read_file 自行查看其余部分。]`
+  const promptCut = target.diff.length > REVIEW_DIFF_CHARS_IN_PROMPT;
+  const diff = promptCut
+    ? `${target.diff.slice(0, REVIEW_DIFF_CHARS_IN_PROMPT)}\n\n[diff 过长，已在这里截断：只贴出了前 ${REVIEW_DIFF_CHARS_IN_PROMPT} 个字符，`
+      + `本次目标是 ${target.truncated ? `完整 ${target.fullLength ?? '未知'} 字符中的前 ${target.diff.length}` : `全长 ${target.diff.length}`} 字符。`
+      + '请用 git_diff / read_file 自行查看其余部分。]'
     : target.diff;
 
   const sections = [
@@ -71,8 +101,14 @@ export function buildReviewPrompt(target: ResolvedTarget): string {
   if (target.truncated) {
     sections.push(
       '',
-      `注意：下面的 diff 已被截断（完整长度 ${target.fullLength ?? '未知'} 字符）。`,
+      `注意：下面的 diff 已被截断（完整长度 ${target.fullLength ?? '未知'} 字符，实际收到 ${target.diff.length} 字符）。`,
       '不要对未看到的部分下结论；需要时用工具自行查看。',
+    );
+  }
+  if (promptCut) {
+    sections.push(
+      '',
+      `注意：即使如此，这里只贴出了前 ${REVIEW_DIFF_CHARS_IN_PROMPT} 个字符。不要对未看到的部分下结论；需要时用工具自行查看。`,
     );
   }
 
@@ -105,6 +141,7 @@ export async function runCodeReview(options: {
   const { runtime, target } = options;
   const t0 = Date.now();
   const id = options.id ?? `review_${randomUUID().slice(0, 8)}`;
+  const warning = assessTruncation(target);
 
   let result;
   try {
@@ -140,6 +177,7 @@ export async function runCodeReview(options: {
       durationMs: Date.now() - t0,
       steps: 0,
       error: `审查未能运行：${message}`,
+      ...(warning ? { warning } : {}),
     };
   }
 
@@ -152,6 +190,7 @@ export async function runCodeReview(options: {
       durationMs: result.durationMs,
       steps: result.steps,
       error: result.answer || '审查未能运行，但没有返回原因。',
+      ...(warning ? { warning } : {}),
     };
   }
 
@@ -162,11 +201,18 @@ export async function runCodeReview(options: {
     sessionId: result.sessionId,
     durationMs: result.durationMs,
     steps: result.steps,
+    ...(warning ? { warning } : {}),
   };
 }
 
 /** One-line summary for the terminal and the desktop notification. */
 export function summarizeReview(result: ReviewRunResult): string {
+  const base = summarizeReviewCore(result);
+  return result.warning ? `${base}
+注意：${result.warning}` : base;
+}
+
+function summarizeReviewCore(result: ReviewRunResult): string {
   if (!result.ok) return result.error ?? '审查未能运行。';
   const { report } = result;
   if (report.unparsed) {

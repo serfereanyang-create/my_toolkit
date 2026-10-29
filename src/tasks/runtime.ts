@@ -40,7 +40,7 @@ export function startTask(board: TaskBoard, taskId: string, nowIso: string) {
     throw new Error(`Task ${taskId} cannot start from status ${task.status}`);
   }
   for (const item of board.tasks) {
-    if (item.status === 'in_progress') item.status = 'pending';
+    if (item && item.status === 'in_progress') item.status = 'pending';
   }
   task.status = 'in_progress';
   task.startedAt = nowIso;
@@ -476,6 +476,19 @@ async function runControlledTaskBoardLoop(options: TaskBoardLoopOptions): Promis
         options.runtime.sessionToolScopeFloor = previousFloor;
         options.runtime.resolvedToolScope = savedScope;
       }
+      // Every exit from the turn — done, blocked, or thrown — must settle the
+      // running unit. A task whose turn returns without `TASK_DONE` and then
+      // throws used to leave `task:<id>` stuck at `running` in the supervisor
+      // snapshot for the rest of the session. `finish` is idempotent once the
+      // unit is settled; only a still-running one is closed here.
+      if (options.runtime && task.status !== 'in_progress') {
+        const supervisor = supervisorFor(options.runtime);
+        const unit = supervisor.snapshot().units
+          .find((candidate) => candidate.kind === 'task' && candidate.id === task.id);
+        if (unit?.status === 'running') {
+          supervisor.finish('task', task.id, task.status === 'done' ? 'done' : task.status === 'blocked' ? 'failed' : 'cancelled');
+        }
+      }
     }
   }
 
@@ -552,6 +565,11 @@ async function completeWithVerification(options: {
   verifyEnabled?: boolean;
 }) {
   const task = requireTask(options.board, options.taskId);
+  // A builder/persistence gap (e.g. a renamed task) must not turn into an
+  // unhandled rejection: `completeWithVerification` runs inside a `try` whose
+  // own failure path calls `markTaskBlocked`, which would `requireTask` the same
+  // missing id and loop. Fail the task board cleanly instead.
+  if (!task) return { ok: false as const, reason: `Unknown task: ${options.taskId}` };
   const env = options.verifyEnabled === false
     ? { ...process.env, AICODE_VERIFY_TASKS: '0' }
     : process.env;

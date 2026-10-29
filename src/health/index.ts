@@ -2,8 +2,8 @@
  * health/index.ts — 项目健康度模块导出
  */
 
-export { HealthCollector, computeScores } from './collector.js';
-export { HealthStore } from './store.js';
+export { HealthCollector, computeScores, type HealthCollectOptions } from './collector.js';
+export { HealthStore, type HealthHistoryRead, type HealthStoreOptions } from './store.js';
 export { healthTools } from './tools.js';
 export {
   METRIC_DIRECTION,

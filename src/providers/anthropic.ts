@@ -1,4 +1,4 @@
-import type { AgentAction, AgentMessage, Provider, ProviderRequest, ProviderResponse } from './types.js';
+import type { AgentAction, Provider, ProviderRequest, ProviderResponse } from './types.js';
 import { controlledProvider } from './requestControl.js';
 import { anthropicThinking, openaiReasoningEffort } from './reasoning.js';
 import {
@@ -7,6 +7,8 @@ import {
   iterateSseDataLines,
   parseAnthropicContentBlocks,
   parseToolActions,
+  readProviderJson,
+  resolveProviderBodyKind,
   toAnthropicAwareMessages,
   toAnthropicTools,
 } from './protocol.js';
@@ -33,6 +35,16 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
         desktopBridge: request.desktopBridge,
         delegation: request.delegation,
       });
+      // Caller-supplied system messages are session-stable instructions. They
+      // used to be folded into a user message by toAnthropicAwareMessages (and
+      // Gemini dropped them entirely), so a custom deployment that passes a
+      // system message silently lost the weight the role carries.
+      const callerSystem = request.messages
+        .filter((message) => message.role === 'system')
+        .map((message) => (typeof message.content === 'string' ? message.content.trim() : ''))
+        .filter(Boolean)
+        .join('\n\n');
+      const systemText = [callerSystem, systemParts.stable].filter((part) => part && part.trim()).join('\n\n');
       const buildBody = (thinking: ReturnType<typeof anthropicThinking>): Record<string, unknown> => {
         // When extended thinking is enabled, Anthropic requires temperature=1 and
         // max_tokens > budget_tokens. Otherwise keep the tight defaults.
@@ -53,7 +65,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
           // It now rides on the last message (see `trailingStrategy`), which is
           // new input every request anyway.
           system: [
-            { type: 'text', text: systemParts.stable, cache_control: cacheControl() },
+            { type: 'text', text: systemText, cache_control: cacheControl() },
           ],
           // Sliding message breakpoint: cache the entire conversation prefix so
           // each turn only pays for the newest messages (Claude Code-style 97%+
@@ -112,10 +124,10 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
         if (usage.cacheCreationTokens !== undefined) cacheCreationTokens = usage.cacheCreationTokens;
       };
 
-      const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
-      if (contentType.includes('application/json')) {
+      const bodyKind = await resolveProviderBodyKind(response);
+      if (bodyKind !== 'sse') {
         const metrics = createStreamMetrics('json');
-        const json = await response.json() as Record<string, unknown>;
+        const json = await readProviderJson(response, 'Anthropic') as Record<string, unknown>;
         metrics.event();
         events.push(json);
         applyUsage(json.usage ?? (json.message as Record<string, unknown> | undefined)?.usage);
@@ -130,7 +142,6 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Prov
         const usage = buildProviderUsage(inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens);
         return { actions, thinking: thinkingParts.join('') || undefined, usage, streamMetrics: metrics.finish(), raw: { response: json, text: textParts.join('') } };
       }
-
       const metrics = requestMetrics;
       for await (const data of iterateSseDataLines(response, undefined, request.signal, (data) => { if (data && data !== '[DONE]') metrics.event(); })) {
         if (data === '[DONE]') break;

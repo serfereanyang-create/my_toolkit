@@ -93,13 +93,20 @@ function detectNestedLoops(
       
       const currentDepth = depth + 1;
       
-      // 检查循环体内是否有嵌套循环
-      const body = 'statement' in node ? node.statement : (node as any).statement;
+      // 检查循环体内是否有嵌套循环。
+      // `ts.forEachChild(body, …)` 只访问 body 的 *子节点*：无花括号的
+      // `for (…) for (…) …` 里，内层循环节点本身永远不会被 analyzeLoop 看到，
+      // 二重循环因此漏报（实测旧版对无括号二重循环零告警）。这里区分 Block
+      // 与单语句：Block 逐条语句递归，单语句直接作为循环体递归。
+      const body = (node as ts.Node & { statement?: ts.Node }).statement;
       if (body) {
-        ts.forEachChild(body, child => {
-          const childDepth = analyzeLoop(child, currentDepth);
-          maxDepth = Math.max(maxDepth, childDepth);
-        });
+        if (ts.isBlock(body)) {
+          for (const statement of body.statements) {
+            maxDepth = Math.max(maxDepth, analyzeLoop(statement, currentDepth));
+          }
+        } else {
+          maxDepth = Math.max(maxDepth, analyzeLoop(body, currentDepth));
+        }
       }
       
       // 嵌套深度 >= 2 时报告
@@ -138,11 +145,24 @@ function detectNestedLoops(
 }
 
 /**
+ * 被调用表达式的最后一段标识符：`fs.readFileSync` → `readFileSync`，
+ * `fs.promises.readFileSync` → `readFileSync`。
+ *
+ * 旧代码用 `text.includes(api)` 做子串判断，于是 `path.relativeSync` 会被
+ * 当成 `readSync`、`mySetIntervalHelper` 会被当成 `setInterval` —— 误报把
+ * 评分拉低，用户按报告修了一堆并不存在的问题。
+ */
+function calleeName(text: string): string {
+  const last = text.split('.').pop() ?? text;
+  return last.replace(/[^A-Za-z0-9_$].*$/, '');
+}
+
+/**
  * 检测同步 I/O 操作
  */
 function detectSyncIO(sourceFile: ts.SourceFile): PerformanceIssue[] {
   const issues: PerformanceIssue[] = [];
-  
+
   const syncAPIs = [
     'readFileSync',
     'writeFileSync',
@@ -154,15 +174,16 @@ function detectSyncIO(sourceFile: ts.SourceFile): PerformanceIssue[] {
     'mkdirSync',
     'rmdirSync',
   ];
-  
+
   function visit(node: ts.Node) {
     if (ts.isCallExpression(node)) {
       const text = node.expression.getText(sourceFile);
-      
+      const name = calleeName(text);
+
       for (const api of syncAPIs) {
-        if (text.includes(api)) {
+        if (name === api) {
           const pos = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-          
+
           issues.push({
             category: 'io',
             severity: 'critical',
@@ -177,10 +198,10 @@ function detectSyncIO(sourceFile: ts.SourceFile): PerformanceIssue[] {
         }
       }
     }
-    
+
     ts.forEachChild(node, visit);
   }
-  
+
   visit(sourceFile);
   return issues;
 }
@@ -194,13 +215,17 @@ function detectArrayPerformanceIssues(sourceFile: ts.SourceFile): PerformanceIss
   function visit(node: ts.Node) {
     // 检测循环内的 array.push
     if (ts.isCallExpression(node)) {
-      const text = node.expression.getText(sourceFile);
-      
+      // 方法名在 PropertyAccess 的 name 上，不在 `node.expression.getText()`
+      // 里（那是 `result` / `array2`），旧的 `.endsWith('.concat')` 永远为假。
+      const methodName = ts.isPropertyAccessExpression(node.expression)
+        ? node.expression.name.text
+        : '';
+
       // 检测是否在循环内
       let inLoop = false;
       let current: ts.Node | undefined = node.parent;
       while (current) {
-        if (ts.isForStatement(current) || 
+        if (ts.isForStatement(current) ||
             ts.isWhileStatement(current) ||
             ts.isForOfStatement(current)) {
           inLoop = true;
@@ -208,9 +233,9 @@ function detectArrayPerformanceIssues(sourceFile: ts.SourceFile): PerformanceIss
         }
         current = current.parent;
       }
-      
+
       // array.concat 在循环内
-      if (inLoop && text.endsWith('.concat')) {
+      if (inLoop && methodName === 'concat') {
         const pos = sourceFile.getLineAndCharacterOfPosition(node.getStart());
         
         issues.push({
@@ -227,7 +252,7 @@ function detectArrayPerformanceIssues(sourceFile: ts.SourceFile): PerformanceIss
       }
       
       // 检测 indexOf/includes 在循环内（应该用 Set）
-      if (inLoop && (text.endsWith('.indexOf') || text.endsWith('.includes'))) {
+      if (inLoop && (methodName === 'indexOf' || methodName === 'includes')) {
         const pos = sourceFile.getLineAndCharacterOfPosition(node.getStart());
         
         issues.push({
@@ -252,34 +277,42 @@ function detectArrayPerformanceIssues(sourceFile: ts.SourceFile): PerformanceIss
 }
 
 /**
+ * 定时器/监听器是否被清理。
+ *
+ * 只向上找祖先函数文本是不够的：`start()` 里 setInterval、`stop()` 里
+ * clearInterval 是常见写法（本仓库的 TerminalUI spinner 就是这样），清理
+ * 代码永远不是定时器节点的祖先，于是每个正确实现在报告里都是"泄漏"。
+ * 先扫祖先函数，再扫最近的 class / 外层函数整体文本。
+ */
+function hasCleanup(node: ts.Node, sourceFile: ts.SourceFile, cleanupName: string): boolean {
+  let current: ts.Node | undefined = node.parent;
+  while (current && !ts.isSourceFile(current)) {
+    // 走到 class 节点时 getText() 覆盖整个类体，因此 start()/stop() 分开写
+    // 的清理代码也能被看到。
+    if (current.getText(sourceFile).includes(cleanupName)) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+/**
  * 检测内存泄漏风险
  */
 function detectMemoryLeakRisks(
   sourceFile: ts.SourceFile
 ): PerformanceAnalysisResult['memoryLeakRisks'] {
   const risks: PerformanceAnalysisResult['memoryLeakRisks'] = [];
-  
+
   function visit(node: ts.Node) {
     if (ts.isCallExpression(node)) {
       const text = node.expression.getText(sourceFile);
-      
+      const name = calleeName(text);
+
       // setInterval 未清理
-      if (text.includes('setInterval')) {
+      if (name === 'setInterval') {
         const pos = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-        
-        // 检查是否有 clearInterval
-        let hasCleanup = false;
-        let current: ts.Node | undefined = node.parent;
-        while (current && !ts.isSourceFile(current)) {
-          const functionText = current.getText(sourceFile);
-          if (functionText.includes('clearInterval')) {
-            hasCleanup = true;
-            break;
-          }
-          current = current.parent;
-        }
-        
-        if (!hasCleanup) {
+
+        if (!hasCleanup(node, sourceFile, 'clearInterval')) {
           risks.push({
             line: pos.line + 1,
             type: 'timer',
@@ -287,23 +320,12 @@ function detectMemoryLeakRisks(
           });
         }
       }
-      
+
       // addEventListener 未移除
-      if (text.includes('addEventListener')) {
+      if (name === 'addEventListener') {
         const pos = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-        
-        let hasCleanup = false;
-        let current: ts.Node | undefined = node.parent;
-        while (current && !ts.isSourceFile(current)) {
-          const functionText = current.getText(sourceFile);
-          if (functionText.includes('removeEventListener')) {
-            hasCleanup = true;
-            break;
-          }
-          current = current.parent;
-        }
-        
-        if (!hasCleanup) {
+
+        if (!hasCleanup(node, sourceFile, 'removeEventListener')) {
           risks.push({
             line: pos.line + 1,
             type: 'event-listener',
@@ -403,12 +425,22 @@ function detectExpensiveRegex(sourceFile: ts.SourceFile): PerformanceIssue[] {
   
   function visit(node: ts.Node) {
     if (ts.isRegularExpressionLiteral(node)) {
-      const pattern = node.text;
-      
+      // `node.text` 在 TypeScript 里是完整的字面量文本（含两侧斜杠与 flags），
+      // 旧代码把它当"模式本身"去 includes('.*.*')，于是一个正常写法的
+      // /a.*b/ 永远匹配不到，而 `.includes('.+')` 又会把 `.+` 误判成嵌套量词。
+      // 这里拆出 pattern 与 flags，只在"同一原子后接量词、再叠加量词"时告警。
+      const literal = node.text;
+      const parsed = /^\/([\s\S]*)\/([a-z]*)$/.exec(literal);
+      const pattern = parsed ? parsed[1]! : literal;
+      const flags = parsed ? parsed[2]! : '';
+      const nestedQuantifier = /\([^()]*[+*]\)[+*]/.test(pattern)
+        || /[^\\][+*][+*]/.test(pattern)
+        || /\(\?:[^()]*[+*]\)[+*]/.test(pattern);
+
       // 检测灾难性回溯风险（简化版）
-      if (pattern.includes('.*.*') || pattern.includes('.+.+') || pattern.includes('(.+)+')) {
+      if (nestedQuantifier) {
         const pos = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-        
+
         issues.push({
           category: 'computation',
           severity: 'critical',
@@ -421,21 +453,24 @@ function detectExpensiveRegex(sourceFile: ts.SourceFile): PerformanceIssue[] {
           example: `// 危险\n/(.*)*/.test(input);\n\n// 安全\n/[a-zA-Z0-9]*/.test(input);`,
         });
       }
-      
-      // 检测全局正则在循环内创建
+
+      // 检测全局正则在循环内创建（flags 里的 g，而不是 pattern 里的字母 g）
       let inLoop = false;
       let current: ts.Node | undefined = node.parent;
       while (current) {
-        if (ts.isForStatement(current) || ts.isWhileStatement(current)) {
+        // for..of / for..in / do..while 以前漏掉了：最常见写法反而没报。
+        if (ts.isForStatement(current) || ts.isWhileStatement(current)
+          || ts.isForOfStatement(current) || ts.isForInStatement(current)
+          || ts.isDoStatement(current)) {
           inLoop = true;
           break;
         }
         current = current.parent;
       }
-      
-      if (inLoop && pattern.includes('g')) {
+
+      if (inLoop && flags.includes('g')) {
         const pos = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-        
+
         issues.push({
           category: 'computation',
           severity: 'minor',
@@ -448,7 +483,7 @@ function detectExpensiveRegex(sourceFile: ts.SourceFile): PerformanceIssue[] {
         });
       }
     }
-    
+
     ts.forEachChild(node, visit);
   }
   

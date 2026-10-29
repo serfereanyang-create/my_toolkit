@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentRuntime } from '../agent/agent.js';
 import { AutomationExecutor } from './executor.js';
-import { FileWatchManager } from './file-watcher.js';
+import { FileWatchManager, validateWatchPatterns } from './file-watcher.js';
 import { GitEventManager } from './git-event.js';
 import { AutomationScheduler, type AutomationSchedulerOptions } from './scheduler.js';
-import { AutomationStore } from './store.js';
+import { AutomationStore, triggerInvalidReason } from './store.js';
+import { validateCronExpression } from './cron.js';
 import { performTaskRun } from './helpers.js';
 import type { AutomationTask, ExecutionResult } from './types.js';
 
@@ -45,6 +46,7 @@ export class AutomationManager {
     const goal = params.goal.trim();
     if (!name) throw new Error('Automation task name cannot be empty');
     if (!goal) throw new Error('Automation task goal cannot be empty');
+    assertValidTrigger(params.trigger);
     const now = new Date().toISOString();
     const task: AutomationTask = {
       id: 'auto_' + randomUUID().slice(0, 8),
@@ -153,7 +155,10 @@ export class AutomationManager {
       task.name = name;
     }
     if (updates.description !== undefined) task.description = updates.description;
-    if (updates.trigger) task.trigger = updates.trigger;
+    if (updates.trigger) {
+      assertValidTrigger(updates.trigger);
+      task.trigger = updates.trigger;
+    }
     if (updates.action) task.action = { ...task.action, ...updates.action };
     task.updatedAt = new Date().toISOString();
     task.enabled = false;
@@ -232,7 +237,7 @@ export class AutomationManager {
     return false;
   }
 
-  private listenerOptions(task: AutomationTask) {
+  private listenerOptions(_task: AutomationTask) {
     return {
       workspaceRoot: this.workspaceRoot,
       runtime: this.runtime!,
@@ -246,5 +251,25 @@ export class AutomationManager {
 
   private assertOpen(): void {
     if (this.closed) throw new Error('Automation manager is closed');
+  }
+}
+
+/**
+ * Reject a trigger the trigger managers cannot honour, at create/update time.
+ *
+ * Starting a task with an empty pattern list or an invalid cron expression
+ * used to fail (or, for cron, succeed and never fire) only at `startTask`.
+ * Failing the create instead keeps an unusable definition out of tasks.json.
+ */
+function assertValidTrigger(trigger: AutomationTask['trigger']): void {
+  const reason = triggerInvalidReason(trigger);
+  if (reason) throw new Error(`Invalid automation trigger: ${reason}`);
+  if (trigger.type === 'cron') {
+    const cronReason = validateCronExpression(trigger.expression);
+    if (cronReason) throw new Error(`Invalid automation trigger: ${cronReason}`);
+  }
+  if (trigger.type === 'file_watch') {
+    const patternReason = validateWatchPatterns(trigger.patterns);
+    if (patternReason) throw new Error(`Invalid automation trigger: ${patternReason}`);
   }
 }

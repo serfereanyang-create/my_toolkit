@@ -65,7 +65,22 @@ export class GraphQueryEngine {
   }
 
   /**
+   * 按名称查找节点，返回字符串 ID 以便调用方区分歧义。
+   *
+   * 精确匹配（大小写不敏感）优先；只有精确匹配为空时才退到部分匹配，
+   * 并在返回里标明 `partial: true`，调用方可据此提示"可能不是你要的符号"。
+   */
+  resolveNodeIds(name: string): { ids: GraphNode[]; partial: boolean } {
+    const exact = this.findNodesByExactName(name);
+    if (exact.length > 0) return { ids: exact, partial: false };
+    return { ids: this.findNodesByName(name), partial: true };
+  }
+
+  /**
    * 查找调用图：谁调用了这个函数（callers）或这个函数调用了谁（callees）
+   *
+   * `target` 可以是符号名，也可以是 `file.ts::name` 形式的节点 ID —— 当同名
+   * 符号有多个时，用 ID 才能精确指定。
    *
    * @param target 目标符号名称（如 "verifyToken"）
    * @param direction 查询方向
@@ -80,28 +95,33 @@ export class GraphQueryEngine {
     maxResults: number = 50,
     edgeTypes: EdgeType[] = ['call'],
   ): GraphQueryResult {
-    // 1. 查找目标节点
-    const targetNodes = this.findNodesByName(target);
+    // 1. 查找目标节点：节点 ID 优先（同名解歧用），否则精确/部分名称匹配。
+    const byId = this.graph.nodes[target];
+    const resolved = byId ? { ids: [byId], partial: false } : this.resolveNodeIds(target);
+    const targetNodes = resolved.ids;
     if (targetNodes.length === 0) {
       return {
         target,
         direction,
         nodes: [],
         totalCount: 0,
+        startNodes: [],
       };
     }
 
-    // 如果有多个同名节点，选择 exported 的或第一个
-    const startNode = targetNodes.find(n => n.exported) || targetNodes[0]!;
+    // 同名符号是常态（每个模块都有自己的 handler）。旧实现只挑一个
+    // （exported 优先），其余同名的调用者永远查不到，而输出看起来像完整答案。
+    // 现在所有同名节点都是起点，结果里标 ambiguous 让调用方知道名字有歧义。
+    const startNodes = targetNodes;
+    const startIds = new Set(startNodes.map((node) => node.id));
 
-    // 2. BFS 遍历
+    // 2. 多源 BFS 遍历
     const visited = new Set<string>();
-    const queue: Array<{ nodeId: string; distance: number; path: string[] }> = [
-      { nodeId: startNode.id, distance: 0, path: [startNode.id] },
-    ];
+    const queue: Array<{ nodeId: string; distance: number; path: string[] }> =
+      startNodes.map((node) => ({ nodeId: node.id, distance: 0, path: [node.id] }));
     const results: GraphQueryResult['nodes'] = [];
 
-    visited.add(startNode.id);
+    for (const id of startIds) visited.add(id);
 
     let cursor = 0;
     while (cursor < queue.length && results.length < maxResults) {
@@ -144,6 +164,9 @@ export class GraphQueryEngine {
       totalCount: results.length,
       // 队列里还有未展开的节点 = 结果被 maxResults 截断
       ...(cursor < queue.length ? { truncated: true } : {}),
+      ...(startNodes.length > 1 ? { ambiguous: startNodes } : {}),
+      ...(resolved.partial ? { partialMatch: true } : {}),
+      startNodes: [...startIds],
     };
   }
 
@@ -183,6 +206,11 @@ export class GraphQueryEngine {
 
   /**
    * 根据名称查找节点（支持部分匹配）
+   *
+   * 三种匹配口径要能分开：`findNodesByName` 的「部分匹配」只是候选发现，
+   * 不能当成"就是它"。`analyzeImpact` 等需要精确集合时用
+   * `findNodesByExactName`：大小写精确优先，退一步才做大小写不敏感全等，
+   * 绝不把 `HandleRequest` 当成查询 `handle` 的答案。
    */
   findNodesByName(name: string): GraphNode[] {
     const lowerName = name.toLowerCase();
@@ -196,11 +224,20 @@ export class GraphQueryEngine {
     return results;
   }
 
+  /** 精确名称查找：大小写完全一致 > 大小写不敏感全等 > 空。 */
+  findNodesByExactName(name: string): GraphNode[] {
+    const all = Array.from(Object.values(this.graph.nodes));
+    const exact = all.filter((node) => node.name === name);
+    if (exact.length > 0) return exact;
+    const lower = name.toLowerCase();
+    return all.filter((node) => node.name.toLowerCase() === lower);
+  }
+
   /**
    * 影响范围分析：修改这个符号会影响哪些地方
    */
   analyzeImpact(target: string, maxDepth: number = 3): ImpactAnalysisResult {
-    const targetNodes = this.findNodesByName(target);
+    const targetNodes = this.findNodesByExactName(target);
     if (targetNodes.length === 0) {
       return {
         symbol: target,
@@ -211,16 +248,21 @@ export class GraphQueryEngine {
       };
     }
 
-    const startNode = targetNodes.find(n => n.exported) || targetNodes[0]!;
+    // 同名节点全部纳入：只分析一个会让「影响面」少报，而少报的影响面比
+    // 多报更危险（用户据此以为改动是安全的）。matchedNodes 说明匹配了几个。
+    const startIds = targetNodes.map((node) => node.id);
 
     // 查找所有调用者（深度优先遍历）
-    const directCallers = this.getNeighbors(startNode.id, 'callers', ['call']);
-    const directImpact = directCallers
+    const directCallers = new Set<string>();
+    for (const id of startIds) {
+      for (const caller of this.getNeighbors(id, 'callers', ['call'])) directCallers.add(caller);
+    }
+    const directImpact = [...directCallers]
       .map(id => this.graph.nodes[id])
       .filter(Boolean) as GraphNode[];
 
     // 递归查找间接调用者
-    const visited = new Set([startNode.id, ...directCallers]);
+    const visited = new Set([...startIds, ...directCallers]);
     const indirectImpact: GraphNode[] = [];
     const queue: string[] = [...directCallers];
     let cursor = 0;
@@ -267,6 +309,8 @@ export class GraphQueryEngine {
       indirectImpact,
       affectedFiles: Array.from(affectedFiles),
       risk,
+      matchedNodes: targetNodes,
+      startNodes: startIds,
     };
   }
 
@@ -274,7 +318,7 @@ export class GraphQueryEngine {
    * 查询类型关系：接口的实现、类的继承
    */
   queryTypeRelations(typeName: string): TypeRelationsResult {
-    const targetNodes = this.findNodesByName(typeName);
+    const targetNodes = this.findNodesByExactName(typeName);
     if (targetNodes.length === 0) {
       return { type: typeName };
     }
@@ -334,8 +378,8 @@ export class GraphQueryEngine {
    * 查找最短路径（两个节点之间）
    */
   findShortestPath(fromName: string, toName: string): string[] | null {
-    const fromNodes = this.findNodesByName(fromName);
-    const toNodes = this.findNodesByName(toName);
+    const fromNodes = this.findNodesByExactName(fromName);
+    const toNodes = this.findNodesByExactName(toName);
 
     if (fromNodes.length === 0 || toNodes.length === 0) {
       return null;

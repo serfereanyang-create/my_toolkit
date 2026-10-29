@@ -19,6 +19,8 @@ export interface UsageLedgerEntry {
   cacheCreationTokens?: number;
   toolCalls?: number;
   durationMs?: number;
+  /** Turn-level auto-compaction spend, folded into the totals below. */
+  autoCompact?: { calls: number; inputTokens: number; outputTokens: number; outcome?: string };
 }
 
 export interface SessionToolCall {
@@ -62,18 +64,31 @@ export function parseUsageLines(text: string): UsageLedgerEntry[] {
       const raw = JSON.parse(line) as Record<string, unknown>;
       const input = typeof raw.inputTokens === 'number' ? raw.inputTokens : 0;
       const output = typeof raw.outputTokens === 'number' ? raw.outputTokens : 0;
-      if (input + output <= 0) continue;
+      // Compaction runs outside the turn loop and is recorded in its own block.
+      // A turn whose only spend was a summary arrives with input/output both 0;
+      // dropping it (and not folding the block in) hid the largest single
+      // request in the ledger. Same rule the desktop usage store applies.
+      const compactRaw = typeof raw.autoCompact === 'object' && raw.autoCompact !== null
+        ? raw.autoCompact as Record<string, unknown>
+        : undefined;
+      const compactInput = typeof compactRaw?.inputTokens === 'number' && compactRaw.inputTokens > 0 ? compactRaw.inputTokens : 0;
+      const compactOutput = typeof compactRaw?.outputTokens === 'number' && compactRaw.outputTokens > 0 ? compactRaw.outputTokens : 0;
+      const compactCalls = typeof compactRaw?.calls === 'number' && compactRaw.calls > 0 ? compactRaw.calls : 0;
+      if (input + output + compactInput + compactOutput <= 0 && compactCalls <= 0) continue;
       entries.push({
         ts: typeof raw.ts === 'string' ? raw.ts : undefined,
         sessionId: typeof raw.sessionId === 'string' ? raw.sessionId : undefined,
         provider: typeof raw.provider === 'string' ? raw.provider : undefined,
         model: typeof raw.model === 'string' ? raw.model : undefined,
-        inputTokens: input,
-        outputTokens: output,
+        inputTokens: input + compactInput,
+        outputTokens: output + compactOutput,
         cacheReadTokens: typeof raw.cacheReadTokens === 'number' ? raw.cacheReadTokens : undefined,
         cacheCreationTokens: typeof raw.cacheCreationTokens === 'number' ? raw.cacheCreationTokens : undefined,
         toolCalls: typeof raw.toolCalls === 'number' ? raw.toolCalls : undefined,
         durationMs: typeof raw.durationMs === 'number' ? raw.durationMs : undefined,
+        ...(compactCalls > 0
+          ? { autoCompact: { calls: compactCalls, inputTokens: compactInput, outputTokens: compactOutput, outcome: typeof compactRaw?.outcome === 'string' ? compactRaw.outcome : undefined } }
+          : {}),
       });
     } catch {
       // 跳过损坏行

@@ -26,15 +26,20 @@ import {
  * once on stderr. This file pins: the three legal scopes are unchanged (count
  * + byte digest), unknown values equal compact, and the warning fires.
  *
+ * "Unchanged" means unchanged BY THE NORMALISATION. The standard row moved
+ * 332→333 on 2026-10-29 when the tool-surface audit added run_script to
+ * STANDARD_EXTRA_ALLOW; compact and full still match their 2026-10-28 digests,
+ * which is the evidence that the fail-closed work left them alone.
+ *
  * The warning dedupes per distinct raw value for the life of the process, so
  * every bad value below is used in exactly one test; a value reused across
  * tests would be silently quiet the second time.
  */
 
-/** Measured on 2026-10-28 before src/tools/scope.ts was touched. */
+/** Measured on 2026-10-28 before src/tools/scope.ts was touched; standard re-measured 2026-10-29. */
 const BASELINE: Record<ResolvedToolScope, { count: number; digest: string }> = {
   compact: { count: 200, digest: '7b7aa8a85b961cc20ba91f5826ed960d20c8d6886e91fa0c459c7d8731beead7' },
-  standard: { count: 332, digest: 'abc3f80a16b2b5c2469519015ed3ef23700e5337829bf24b4dae1eef55ea0898' },
+  standard: { count: 333, digest: 'e32a658cc471c82754f1d56de437e7008fdd3b97bf48d35f5e59b41a167779e8' },
   full: { count: 363, digest: '400eea088fbe89c31f6b29c34a0b4c7014a1626c751ebc3f9df72dc787848c43' },
 };
 

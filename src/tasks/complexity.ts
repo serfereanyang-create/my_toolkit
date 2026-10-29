@@ -52,26 +52,44 @@ export function analyzeTaskComplexity(
 
   const hasReadIntent = hasAnyChinese(text, READ_TERMS) || hasAnyEnglishWord(text, READ_ENGLISH_TERMS);
   const hasWriteIntent = hasAnyChinese(text, WRITE_TERMS) || hasAnyEnglishWord(text, WRITE_ENGLISH_TERMS);
+  // Environment and runtime inspection ("还有多少磁盘空间", "process list") is a
+  // read in intent but not in tooling: compact scope has no run_command, so
+  // classifying it `small` hands the agent a toolset that cannot answer the
+  // question it just accepted. It stays out of the `large` bucket (one look
+  // around is not a project); it just cannot be compact.
+  const hasExecutionIntent = hasAnyChinese(text, EXECUTION_TERMS)
+    || hasAnyChinese(text, RESOURCE_TERMS)
+    || hasAnyEnglishWord(text, EXECUTION_ENGLISH_TERMS)
+    || hasAnyEnglishWord(text, RESOURCE_ENGLISH_TERMS);
   const actionCount = countActionGroups(text);
   const hasLargeMarker = hasAnyChinese(text, LARGE_CHINESE_TERMS)
-    || hasAnyEnglishPhrase(text, LARGE_ENGLISH_PHRASES)
+    // "and tests" / "with tests" describe a *large change* only when something
+    // is being changed: "read the README and tests folder" is one read.
+    || (hasWriteIntent && hasAnyEnglishPhrase(text, LARGE_ENGLISH_PHRASES))
     || hasNumberedSteps(text)
     || hasLongAttachmentList(metadata);
 
-  if (hasLargeMarker || actionCount >= 3) {
+  // "解释一下项目架构" names a large-sounding subject, but it asks for prose, not
+  // for work: one read action, no mutation. Measured before this guard, pure
+  // explanation questions mentioning 架构/architecture were drafted as four-task
+  // boards on every turn.
+  const isExplanationAsk = EXPLANATION_OPENERS.test(text) && !hasWriteIntent && actionCount <= 1;
+
+  if ((hasLargeMarker && !isExplanationAsk) || actionCount >= 3) {
     return { complexity: 'large', hasReadIntent, hasWriteIntent, isPlanCommand, actionCount };
   }
 
-  // A read-only request paired with verification or another distinct action
-  // needs the standard scope, even when it has no mutation.  This keeps a
-  // genuine two-step request out of the compact read-only path.
-  if (actionCount >= 2 || hasWriteIntent) {
+  // A write request is never `small`: "small" resolves to compact scope, which
+  // has no write tools at all, so the agent would be given a toolset that
+  // cannot perform the change it was just asked to make. Pure write work is
+  // `standard`; two action groups raise it to the same place.
+  if (hasWriteIntent || actionCount >= 2) {
     return { complexity: 'standard', hasReadIntent, hasWriteIntent, isPlanCommand, actionCount };
   }
 
   // Direct inspection, lookup, and small-talk requests are compact. Unknown
   // requests stay standard so the agent has enough tools to clarify safely.
-  if (hasReadIntent || isSmallTalk(text)) {
+  if ((hasReadIntent && !hasExecutionIntent) || isSmallTalk(text)) {
     return { complexity: 'small', hasReadIntent, hasWriteIntent, isPlanCommand, actionCount };
   }
 
@@ -81,10 +99,16 @@ export function analyzeTaskComplexity(
 /** Compatibility-friendly alias for callers that describe this as a getter. */
 export const getTaskComplexity = classifyTaskComplexity;
 
+const RESOURCE_TERMS = ['磁盘', '硬盘', '内存', '剩余空间', '进程', '进程列表'];
+const RESOURCE_ENGLISH_TERMS = ['disk', 'free space', 'memory', 'process'];
+
+/** Requests for prose. They can name a large subject without doing large work. */
+const EXPLANATION_OPENERS = /^(?:解释|说明|介绍|讲一下|讲讲|总结|概括|describe|explain|summari[sz]e|introduce|walk me through)/i;
+
 const PLAN_COMMAND_PATTERN = /(?:^|\s)\/plan(?:\s|$)/i;
 
 const READ_TERMS = [
-  '读取', '读一下', '打开', '查看', '看看', '查找', '搜索', '查询', '检索', '定位', '解释', '说明',
+  '读取', '读一下', '打开', '查看', '看看', '查找', '搜索', '查询', '检索', '定位', '解释', '说明', '介绍',
   '总结', '概况', '状态', '列出', '有哪些', '剩余空间', '磁盘', '硬盘', '内存', '环境', '进程',
   '阅读', '审阅', '检查', '分析', '预览', '只读', '只查看',
 ];
@@ -92,6 +116,17 @@ const READ_TERMS = [
 const WRITE_TERMS = [
   '实现', '开发', '新增', '添加', '创建', '生成', '编写', '写入', '写', '修改', '修复', '重构',
   '优化', '删除', '移除', '改成', '改为', '更新', '构建', '发布', '迁移', '接入', '补充', '增加',
+  '改正', '纠正', '替换', '替换为', '调整', '重命名', '移动', '格式化', '整理', '清理', '修正',
+];
+
+/**
+ * Commands that only exist at `standard` scope or above.
+ *
+ * Used solely to keep a read-shaped request ("磁盘还剩多少") out of `compact`;
+ * it does not count as a write and does not make a prompt `large`.
+ */
+const EXECUTION_TERMS = [
+  '运行', '执行', '命令', '进程', '环境', '安装', '构建', '编译', '部署', '重启', '启停',
 ];
 
 const LARGE_CHINESE_TERMS = [
@@ -101,14 +136,19 @@ const LARGE_CHINESE_TERMS = [
 ];
 
 const READ_ENGLISH_TERMS = [
-  'read', 'open', 'show', 'view', 'inspect', 'search', 'find', 'look at', 'look for', 'explain', 'summarize',
+  'read', 'open', 'show', 'view', 'inspect', 'search', 'find', 'look at', 'look for', 'explain', 'summarize', 'describe',
   'review', 'check', 'list', 'query', 'what is', 'disk', 'free space', 'memory', 'process', 'environment',
   'status', 'overview', 'read-only', 'readonly',
+];
+
+const EXECUTION_ENGLISH_TERMS = [
+  'run', 'execute', 'command', 'process', 'environment', 'install', 'build', 'compile', 'deploy', 'restart',
 ];
 
 const WRITE_ENGLISH_TERMS = [
   'implement', 'develop', 'add', 'create', 'build', 'write', 'modify', 'edit', 'fix', 'refactor', 'optimize',
   'delete', 'remove', 'update', 'generate', 'change', 'migrate', 'publish',
+  'adjust', 'bump', 'rename', 'replace', 'correct', 'tweak', 'move', 'reformat', 'clean up', 'cleanup',
 ];
 
 const LARGE_ENGLISH_PHRASES = [
@@ -176,8 +216,13 @@ function englishWordPattern(term: string) {
 }
 
 function hasNumberedSteps(value: string) {
-  const numbered = value.match(/(?:^|\s)(?:\d+[.)]|[-*])\s+/g);
-  return (numbered?.length ?? 0) >= 3;
+  // An enumerated *list* is not a multi-step *task*. Bullets are excluded: a
+  // request to summarize three feedback items ("以下是反馈：\n- 慢\n- 卡\n- 崩")
+  // used to become a four-task board because its input happened to be a list.
+  // Only ordered steps ("1. inspect 2. fix 3. test") count, and only when the
+  // input is a request for work rather than a body of text to read.
+  const ordered = value.match(/(?:^|\s)\d+[.)]\s+/g);
+  return (ordered?.length ?? 0) >= 3 && !/^(?:总(?:结|体)|概括|汇总|summari[sz]e\b|tl;?dr\b)/i.test(value);
 }
 
 function isSmallTalk(value: string) {

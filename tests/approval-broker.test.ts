@@ -30,21 +30,24 @@ test('resolve() delivers the user decision to a pending confirm', async () => {
   assert.equal(await pending, true);
 });
 
-test('allow_session caches per directory: same dir auto-allows, other dir re-prompts', async () => {
+test('allow_session caches the same write, not the whole directory', async () => {
   const { broker, events } = makeBroker();
   const first = broker.confirm('allow?', writeRequest('src/a.ts'));
   broker.resolve(broker.lastRequestId(), 'allow_session');
   assert.equal(await first, 'allow_session');
 
-  // Same directory: no new approval_needed, resolves true immediately.
-  const second = broker.confirm('allow?', writeRequest('src/b.ts'));
+  // Identical request (same path, same bytes): no new approval_needed.
+  const second = broker.confirm('allow?', writeRequest('src/a.ts'));
   assert.equal(await second, true);
   assert.equal(events.filter((e) => e.type === 'approval_needed').length, 1);
 
-  // Different directory: must prompt again.
-  const third = broker.confirm('allow?', writeRequest('docs/c.md'));
+  // A different FILE in the same directory used to ride on the same key
+  // (`risk:tool:dir`), so one "don't ask again" for `src/a.ts` silently covered
+  // `src/config.ts` too. The key now carries the basename (and the payload size
+  // when the request has one), so this must prompt again.
+  const third = broker.confirm('allow?', writeRequest('src/b.ts'));
   const approvalsBefore = events.filter((e) => e.type === 'approval_needed').length;
-  assert.equal(approvalsBefore, 2, 'cross-directory write must raise a new approval');
+  assert.equal(approvalsBefore, 2, 'a sibling file must raise a new approval');
   broker.resolve(broker.lastRequestId(), 'deny');
   assert.equal(await third, false);
 });

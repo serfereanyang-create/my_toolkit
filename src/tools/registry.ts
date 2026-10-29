@@ -3,6 +3,7 @@ import { decideApproval, pathScopeFor, resolveWorkspacePath } from '../safety/po
 import { formatApprovalOutcome, formatApprovalPrompt } from '../i18n/messages.js';
 import { toolToProviderSpec, type ApprovalRequest, type ToolContext, type ToolDefinition, type ToolResult } from './types.js';
 import { throwIfAborted } from '../utils/cancellation.js';
+import { compareToolNames } from '../session/modelTrajectory.js';
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
@@ -22,8 +23,29 @@ export class ToolRegistry {
     return this.tools.delete(name);
   }
 
+  /**
+   * The registry as one deterministically ordered array.
+   *
+   * The order is load-bearing: `specs()` maps this array straight into the
+   * provider payload, so any unstable position re-serialises the whole tool
+   * block and kills the cached prefix from byte 0.
+   *
+   * The sort used to be `localeCompare`, which is neither total nor
+   * machine-stable:
+   *   - it reports 0 for distinct strings (ICU ignores an invisible SOFT
+   *     HYPHEN, and treats NFC/NFD forms of "café" as equal), so ties fell
+   *     through to Array.prototype.sort, i.e. to Map insertion order;
+   *   - it orders non-ASCII by locale (ICU 78.3 on this machine: "z" sorts
+   *     before "ä" in sv, after it in en/zh), so the same names could
+   *     serialise in two orders on two machines.
+   * For the 363 built-in names — all `[a-z][a-z0-9_]*` — the two comparators
+   * agree except for the base64 block (localeCompare puts `base_convert`
+   * first, code units put `base64_*` first). The sent order is explicitly a
+   * byte order now. `localeCompare` stays appropriate for human-facing lists
+   * (file names, session titles) and is not used here.
+   */
   list() {
-    return Array.from(this.tools.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return Array.from(this.tools.values()).sort((a, b) => compareToolNames(a.name, b.name));
   }
 
   static fromTools(tools: ToolDefinition[]) {

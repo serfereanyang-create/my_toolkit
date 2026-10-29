@@ -1,4 +1,5 @@
 import type { Locale } from '../i18n/locale.js';
+import { truncateToWidth } from './width.js';
 
 type DiskRow = {
   name?: string;
@@ -61,7 +62,10 @@ export function summarizeToolLine(options: {
 function formatDiskCard(data: unknown, output: string, locale: Locale) {
   const disk = firstDisk(data) ?? parseDiskFromOutput(output);
   if (!disk) return undefined;
-  const name = disk.name || disk.path || 'disk';
+  // Tool data is arbitrary text (a volume label, a process image name). One long
+  // value used to push the whole conclusion line past the terminal edge; clip by
+  // display columns, not `.length` (CJK names are twice as wide).
+  const name = truncateToWidth(disk.name || disk.path || 'disk', 80, '…');
   const free = num(disk.freeGb);
   const total = num(disk.totalGb);
   const used = num(disk.usedGb);
@@ -84,7 +88,7 @@ function formatProcessCard(data: unknown, output: string, locale: Locale) {
   const rows = processRows(data) ?? parseProcessFromOutput(output);
   if (!rows.length) return undefined;
   const top = rows.slice(0, 5);
-  const lines = top.map((row, index) => `${index + 1}. ${row.name ?? '?'} (pid ${row.pid ?? '?'}) ${fmt(row.memoryMb)} MB`);
+  const lines = top.map((row, index) => `${index + 1}. ${truncateToWidth(row.name ?? '?', 80, '…')} (pid ${row.pid ?? '?'}) ${fmt(row.memoryMb)} MB`);
   if (locale === 'zh') {
     return [
       '结论：当前内存占用较高的进程如下。',
@@ -153,14 +157,16 @@ function oneLineHint(tool: string, ok: boolean, output: string | undefined, data
   }
   if (tool === 'process_memory') {
     const rows = processRows(data) ?? parseProcessFromOutput(output ?? '');
-    if (rows[0]) return `${rows[0].name} ${fmt(rows[0].memoryMb)}MB`;
+    if (rows[0]) return `${truncateToWidth(String(rows[0].name ?? '?'), 60, '…')} ${fmt(rows[0].memoryMb)}MB`;
   }
   if (tool === 'cache_probe' && isRecord(data) && typeof data.averageHitRatePercent === 'string') {
     return data.averageHitRatePercent;
   }
   const first = (output ?? '').split(/\r?\n/).find((line) => line.trim() && !line.includes('\tpath\t') && !/^name\t/.test(line));
   if (!first) return undefined;
-  return first.length > 72 ? `${first.slice(0, 69)}...` : first;
+  // `.slice(69)` counted UTF-16 units: a 40-character CJK first line is already
+  // 80 display columns and overran the one-line summary.
+  return truncateToWidth(first.trim(), 72);
 }
 
 function firstDisk(data: unknown): DiskRow | undefined {

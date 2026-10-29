@@ -48,6 +48,14 @@ export type GitPathChange = {
   baseline: GitPathState;
   result: GitPathState;
   resultIndex: GitIndexEntry[];
+  /**
+   * Object ids that may describe the recorded RESULT state. The canonical
+   * {@link GitPathState.oid} is the blob hash Git stored; a CRLF worktree
+   * hashes to a different id than its clean-filtered blob, so the raw worktree
+   * hash is carried here too. A worktree whose hash equals ANY candidate is
+   * "unchanged since the unit ran".
+   */
+  resultOids?: string[];
 };
 
 export type GitSnapshot = {

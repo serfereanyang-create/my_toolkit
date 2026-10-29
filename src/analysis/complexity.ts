@@ -94,15 +94,38 @@ export const DEFAULT_THRESHOLDS: ComplexityThresholds = {
 };
 
 /**
+ * 是否为函数式节点。复杂度统计遇到嵌套函数体时必须停下：
+ * 内层 if/for 属于内层函数，外层函数自己的条目不应再计一次。
+ */
+function isFunctionLikeNode(node: ts.Node): boolean {
+  return ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node);
+}
+
+/**
  * 圈复杂度计算器
- * 
+ *
  * 基于 McCabe 定义：复杂度 = 决策点数量 + 1
  * 决策点包括：if, for, while, case, catch, &&, ||, ?:
  */
 class CyclomaticComplexityVisitor {
   complexity = 1; // 基础路径
+  private root: ts.Node | undefined;
 
-  visit(node: ts.Node) {
+  visit(node: ts.Node, root?: ts.Node) {
+    if (root !== undefined) {
+      this.root = root;
+      node = root;
+    } else if (node !== this.root && isFunctionLikeNode(node)) {
+      // 嵌套函数有自己的条目，其决策点不再计入外层。
+      return;
+    }
+
     switch (node.kind) {
       case ts.SyntaxKind.IfStatement:
       case ts.SyntaxKind.ForStatement:
@@ -144,12 +167,20 @@ class CognitiveComplexityVisitor {
   complexity = 0;
   private nestingLevel = 0;
   private functionName: string;
+  private root: ts.Node | undefined;
 
   constructor(functionName: string) {
     this.functionName = functionName;
   }
 
-  visit(node: ts.Node) {
+  visit(node: ts.Node, root?: ts.Node) {
+    if (root !== undefined) {
+      this.root = root;
+      node = root;
+    } else if (node !== this.root && isFunctionLikeNode(node)) {
+      // 嵌套函数单独计分（analyzeFileComplexity 会为它建自己的分析）。
+      return;
+    }
 
     // 增加基础复杂度和嵌套惩罚
     switch (node.kind) {
@@ -209,9 +240,17 @@ class CognitiveComplexityVisitor {
 class NestingDepthVisitor {
   maxDepth = 0;
   private currentDepth = 0;
+  private root: ts.Node | undefined;
 
-  visit(node: ts.Node) {
-    const isNestingNode = 
+  visit(node: ts.Node, root?: ts.Node) {
+    if (root !== undefined) {
+      this.root = root;
+      node = root;
+    } else if (node !== this.root && isFunctionLikeNode(node)) {
+      return; // 嵌套函数的嵌套深度属于它自己
+    }
+
+    const isNestingNode =
       node.kind === ts.SyntaxKind.IfStatement ||
       node.kind === ts.SyntaxKind.ForStatement ||
       node.kind === ts.SyntaxKind.ForInStatement ||
@@ -324,20 +363,20 @@ export function analyzeFunctionComplexity(
 ): FunctionComplexity {
   const name = getFunctionName(node);
   
-  // 计算圈复杂度
+  // 计算圈复杂度（root 传入函数节点，内层函数体不再重复计分）
   const cyclomaticVisitor = new CyclomaticComplexityVisitor();
-  cyclomaticVisitor.visit(node);
-  
+  cyclomaticVisitor.visit(node, node);
+
   // 计算认知复杂度
   const cognitiveVisitor = new CognitiveComplexityVisitor(name);
   if (node.body) {
-    cognitiveVisitor.visit(node.body);
+    cognitiveVisitor.visit(node.body, node.body);
   }
-  
+
   // 计算嵌套深度
   const nestingVisitor = new NestingDepthVisitor();
   if (node.body) {
-    nestingVisitor.visit(node.body);
+    nestingVisitor.visit(node.body, node.body);
   }
   
   const metrics: ComplexityMetrics = {

@@ -2,19 +2,36 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { DISPATCH_TIER_LABELS } from './tierRouter.js';
-import type { DispatchTier } from './tierRouter.js';
+import type { DispatchLedgerTier, DispatchTier } from './tierRouter.js';
 
 export type DispatchLedgerEntry = {
   ts: string;
   task: string;
   stage: string;
-  tier: DispatchTier;
+  /** The tier the request ran on, or `compact` for a context-compaction row. */
+  tier: DispatchLedgerTier;
   provider: string;
   model: string;
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  /** Whether the request succeeded. For a `compact` row: the summary was used. */
   ok: boolean;
+  /**
+   * Per-row extras. `tierCalls` is the number of round-trips this row stands
+   * for (a tier normally has one per step, so this is how many provider calls
+   * the row's average is over); absent means 1, the historical shape.
+   *
+   * The compaction spend attached to a row is reported in `autoCompact` so a
+   * reader can separate it from the tier's own calls — the same reason the
+   * per-turn usage ledger keeps its own `autoCompact` block.
+   *
+   * `outcome` is `cancelled` when the user stopped the turn while the summary
+   * request was already on the wire: the tokens are real but this is not a
+   * provider defect, and the two must not be lumped together in cost analysis.
+   */
+  tierCalls?: number;
+  autoCompact?: { calls: number; inputTokens: number; outputTokens: number; outcome: 'completed' | 'failed' | 'cancelled' };
   note?: string;
 };
 

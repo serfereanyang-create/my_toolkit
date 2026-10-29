@@ -79,19 +79,47 @@ export function formatApprovalOutcome(options: {
   }
 }
 
+/**
+ * policy 层的英文 reason → 中文。
+ *
+ * 这些字符串来自 `safety/policy.ts`、`safety/network.ts`、`safety/commandAnalysis.ts`，
+ * 由 `formatApprovalOutcome` 拼进「工具 X 已拦截：…」。旧表只覆盖 7 条，
+ * 且 `approval mode denies write and shell tools` 这条早已改成
+ * `… write, shell, and network tools`——中文模式下最常见的 deny 模式提示
+ * 因此一直是英文原样。表里按「先具体后笼统」排列，参数化文案单独放行。
+ */
+const REASON_RULES: Array<[RegExp, string | ((match: RegExpExecArray) => string)]> = [
+  [/^blocked destructive command pattern(?::\s*(.+))?$/i, (match) => `匹配到危险命令模式${match[1] ? `：${match[1]}` : ''}`],
+  [/^approval mode denies write, shell, and network tools$/i, '当前审批模式禁止写入、命令与联网工具'],
+  // 旧文案，历史会话/日志里仍然会出现。
+  [/^approval mode denies write and shell tools$/i, '当前审批模式禁止写入与命令工具'],
+  [/^plan mode requires confirmation before every change$/i, '计划模式：每次改动前都需要确认'],
+  [/^destructive tool requires explicit confirmation$/i, '破坏性工具需要明确确认'],
+  [/^command is not in auto approval allowlist$/i, '命令不在自动批准白名单'],
+  [/^write target is not in auto approval allowlist$/i, '写入目标不在自动批准白名单'],
+  [/^interactive approval required for network request$/i, '联网请求需要交互确认'],
+  [/^interactive approval required$/i, '需要交互确认'],
+  [/^auto approval allowlist$/i, '已在自动批准白名单'],
+  [/^command runs an always-allowed app$/i, '命令属于始终允许的应用'],
+  [/^computerAnyApp allows non-destructive commands in auto mode$/i, '“任意应用”允许在自动模式下执行非破坏性命令'],
+  [/^confirmation required:\s*(.+)$/i, (match) => `需要确认：${match[1]}`],
+  [/^read-only tool$/i, '只读工具'],
+  [/^invalid URL$/i, 'URL 无效'],
+  [/^unsupported protocol\s+(.+)$/i, (match) => `不支持的协议 ${match[1]}`],
+  [/^target resolves to a private or loopback address \(SSRF blocked\)$/i, '目标是私有或回环地址（已阻止 SSRF）'],
+  [
+    /^(.+?) is not in the network allowlist \(the request was blocked before it left the machine\)[\s\S]*$/i,
+    (match) => `${match[1]} 不在联网白名单（请求未离开本机就被拦下）；可加入 .aicode/config.json 的 network.allowlist，或设置 AICODE_NETWORK_ALLOWLIST`,
+  ],
+  [/^host is in the network allowlist$/i, '主机已在联网白名单'],
+];
+
 export function localizeReason(reason: string, locale: Locale): string {
   if (locale !== 'zh') return reason;
-  const map: Array<[RegExp, string]> = [
-    [/^read-only tool$/i, '只读工具'],
-    [/^approval mode denies write and shell tools$/i, '当前审批模式禁止写入与命令工具'],
-    [/^blocked destructive command pattern$/i, '匹配到危险命令模式'],
-    [/^command is not in auto approval allowlist$/i, '命令不在自动批准白名单'],
-    [/^write target is not in auto approval allowlist$/i, '写入目标不在自动批准白名单'],
-    [/^interactive approval required$/i, '需要交互确认'],
-    [/^auto approval allowlist$/i, '已在自动批准白名单'],
-  ];
-  for (const [pattern, zh] of map) {
-    if (pattern.test(reason)) return zh;
+  // 已经是中文的 reason（commandAnalysis 产出的就是中文）原样返回。
+  for (const [pattern, zh] of REASON_RULES) {
+    const match = pattern.exec(reason);
+    if (match) return typeof zh === 'string' ? zh : zh(match);
   }
   return reason;
 }
@@ -130,6 +158,14 @@ export const STABLE = {
   cancelled: 'cancelled by user',
   blocked: 'blocked:',
   pathEscapes: 'Path escapes workspace',
+  /**
+   * tools 内联的硬拒绝（`后台浏览器…被策略拒绝：…`，见 backgroundBrowser.ts）。
+   * 它和 registry 的「已拦截」是同一种判定——策略说不行，重试没有意义——
+   * 但绕过 registry 直接返回，所以检测表必须显式覆盖，否则那个工具的拒绝
+   * 会被当成普通失败交给模型重试。只匹配「被策略拒绝」，不匹配
+   * 「自动审核拒绝」：后者是可换路重试的审核判定。
+   */
+  policyRefused: '被策略拒绝',
 } as const;
 
 export function isCancelledOutput(output: string) {
@@ -153,5 +189,5 @@ export function isPathEscapeOutput(output: string) {
 }
 
 export function isBlockedOutput(output: string) {
-  return output.includes(STABLE.blocked) || output.includes('已拦截');
+  return output.includes(STABLE.blocked) || output.includes('已拦截') || output.includes(STABLE.policyRefused);
 }

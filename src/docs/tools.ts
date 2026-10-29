@@ -6,8 +6,8 @@
 
 import { defineTool } from '../tools/define.js';
 import type { ToolResult } from '../tools/types.js';
-import { writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, relative, isAbsolute, resolve } from 'node:path';
 import { globSync } from 'glob';
 import {
   extractAPIFromFile,
@@ -88,8 +88,7 @@ export const generateAPIDocTool = defineTool({
       const doc = generateAPIDocumentation(exportedAPIs);
       
       if (writeToFile) {
-        const outputPath = resolve(context.cwd, outputFile);
-        await writeFile(outputPath, doc, 'utf-8');
+        await writeDocFile(context.cwd, outputFile, doc);
         
         return {
           ok: true,
@@ -149,8 +148,7 @@ export const generateArchitectureDocTool = defineTool({
       const doc = generateArchitectureDoc(arch);
       
       if (writeToFile) {
-        const outputPath = resolve(context.cwd, outputFile);
-        await writeFile(outputPath, doc, 'utf-8');
+        await writeDocFile(context.cwd, outputFile, doc);
         
         return {
           ok: true,
@@ -213,8 +211,7 @@ export const generateChangelogTool = defineTool({
       const changelog = generateChangelog(versions);
       
       if (writeToFile) {
-        const outputPath = resolve(context.cwd, outputFile);
-        await writeFile(outputPath, changelog, 'utf-8');
+        await writeDocFile(context.cwd, outputFile, changelog);
         
         const totalCommits = versions.reduce((sum, v) => sum + v.commits.length, 0);
         
@@ -361,8 +358,7 @@ export const generateReleaseNotesTool = defineTool({
       const notes = generateReleaseNotes(version, commits);
       
       if (outputFile) {
-        const outputPath = resolve(context.cwd, outputFile);
-        await writeFile(outputPath, notes, 'utf-8');
+        await writeDocFile(context.cwd, outputFile, notes);
         
         return {
           ok: true,
@@ -449,8 +445,7 @@ export const generateREADMETool = defineTool({
         architecture,
       });
       
-      const outputPath = resolve(context.cwd, outputFile);
-      await writeFile(outputPath, readme, 'utf-8');
+      await writeDocFile(context.cwd, outputFile, readme);
       
       return {
         ok: true,
@@ -474,3 +469,26 @@ export const docTools = [
   generateReleaseNotesTool,
   generateREADMETool,
 ];
+
+/**
+ * Write a generated document inside the workspace.
+ *
+ * These tools report `risk: 'write'` but their input field is `outputFile`,
+ * and the approval layer only sees `path`/`to`/`from` as a target. So in
+ * `auto` mode `generate_readme` was decided from "no target path" and wrote
+ * wherever `outputFile` said — the probe wrote `../../pwn-escape.md` outside
+ * the workspace with no prompt. The containment check belongs here because
+ * this is the only layer that knows which field is the target.
+ */
+export async function writeDocFile(cwd: string, outputFile: string, content: string): Promise<string> {
+  const outputPath = resolve(cwd, outputFile);
+  const rel = relative(cwd, outputPath);
+  // Windows paths are case-insensitive; a plain `startsWith('..')` on the
+  // relative path is the portable form (cross-drive relative() is absolute).
+  if (rel !== '' && (rel.startsWith('..') || isAbsolute(rel))) {
+    throw new Error(`拒绝写入工作区之外: ${outputFile}`);
+  }
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, content, 'utf-8');
+  return outputPath;
+}

@@ -64,3 +64,23 @@ test('/config slash command shows redacted effective config', async () => {
 
   await rm(workspace, { recursive: true, force: true });
 });
+
+test('gemini reads its documented environment variables', async () => {
+  // Before: apiKeyFromEnv fell through to MOCK_API_KEY, so the provider threw
+  // "GEMINI_API_KEY is required" on every call and requireProviderAuth agreed.
+  const config = await loadConfig(
+    { provider: 'gemini' },
+    { GEMINI_API_KEY: 'gemini-test-key-123', GEMINI_MODEL: 'gemini-test-model', GEMINI_BASE_URL: 'http://localhost:9/v1beta' },
+  );
+  assert.equal(config.apiKey, 'gemini-test-key-123');
+  assert.equal(config.model, 'gemini-test-model');
+  assert.equal(config.baseUrl, 'http://localhost:9/v1beta');
+  assert.doesNotThrow(() => requireProviderAuth(config));
+  // safeConfig still redacts it.
+  assert.equal(safeConfig(config).apiKey, 'gemi...-123');
+});
+
+test('a configured gemini key does not leak into an unconfigured provider', async () => {
+  const config = await loadConfig({ provider: 'mock' }, { GEMINI_API_KEY: 'gemini-test-key-123' });
+  assert.notEqual(config.apiKey, 'gemini-test-key-123');
+});

@@ -1,5 +1,6 @@
 import type { AppConfig } from '../config/types.js';
 import type { Provider } from '../providers/types.js';
+import { displayTokens, displayWidth, stripAnsi, truncateToWidth } from './width.js';
 
 const c = {
   reset: '\u001b[0m',
@@ -10,7 +11,12 @@ const c = {
   gray: '\u001b[90m',
 };
 
-/** Wide wordmark (OpenCode-like). */
+/**
+ * Wide and compact wordmarks. The compact one is 46 columns, still wider than
+ * the minimum layout width (60 - 4 = 56 fits; a 40-column window does not), so
+ * a fourth stop exists: no wordmark at all rather than horizontally scrolling
+ * log lines. Framed card rows have fixed widths; their inner text is clipped.
+ */
 const LOGO_WIDE = [
   '               █████╗ ██╗ ██████╗ ██████╗ ██████╗ ███████╗',
   '              ██╔══██╗██║██╔════╝██╔═══██╗██╔══██╗██╔════╝',
@@ -50,9 +56,16 @@ export function renderHomeScreen(
   options: HomeScreenOptions = {},
 ): string {
   const color = (name: keyof typeof c) => (options.noColor ? '' : c[name]);
-  const cols = Math.max(process.stdout.columns || 100, 60);
-  const rows = Math.max(process.stdout.rows || 28, 20);
-  const logo = displayWidth(LOGO_WIDE[0] ?? '') + 4 <= cols ? LOGO_WIDE : LOGO_COMPACT;
+  // Do not clamp the terminal width up to 60: in a 20- or 40-column window that
+  // produced a 52-column logo and a 56-column card, i.e. guaranteed wrapping.
+  // (Tests pin columns explicitly; `|| 100` only covers non-TTY output.)
+  const cols = Math.max(process.stdout.columns || 100, 1);
+  const rows = Math.max(process.stdout.rows || 28, 1);
+  const wideWidth = displayWidth(LOGO_WIDE[0] ?? '');
+  const compactWidth = displayWidth(LOGO_COMPACT[0] ?? '');
+  const logo = wideWidth + 4 <= cols ? LOGO_WIDE
+    : compactWidth + 2 <= cols ? LOGO_COMPACT
+    : [];
   const logoOnly = options.logoOnly !== false;
 
   const pad = (line: string) => {
@@ -72,19 +85,30 @@ export function renderHomeScreen(
 
   if (!logoOnly) {
     // Legacy full home (non-interactive previews / tests that want the static card).
-    const boxWidth = Math.min(72, Math.max(48, cols - 8));
+    // The framed rows are fixed-width chrome: shrink the card to the window and
+    // clip the inner text, so a 20-column terminal gets a (tight) card instead
+    // of rows spilling 30+ columns past the edge.
+    const boxWidth = Math.min(72, Math.max(Math.min(48, cols), cols - 8));
     const agent = 'Build';
     const modelLabel = shortenModel(provider.model);
     const providerLabel = provider.name === 'openai' ? shortHost(config.baseUrl) : provider.name;
-    const statusPlain = `${agent} · ${modelLabel}${providerLabel ? `  ${providerLabel}` : ''}`;
     const statusLine = `${color('blue')}${color('bold')}${agent}${color('reset')} ${color('dim')}·${color('reset')} ${color('white')}${modelLabel}${color('reset')}${providerLabel ? ` ${color('dim')}${providerLabel}${color('reset')}` : ''}`;
     const innerAsk = 'Ask anything...  "Fix broken tests"';
-    const askPad = Math.max(0, boxWidth - 4 - displayWidth(innerAsk));
-    const statusPad = Math.max(0, boxWidth - 4 - displayWidth(statusPlain));
-    const accentTop = `${color('blue')}┌${color('gray')}${'─'.repeat(boxWidth - 2)}┐${color('reset')}`;
-    const askRow = `${color('blue')}│${color('reset')} ${color('gray')}${innerAsk}${' '.repeat(askPad)}${color('reset')}`;
-    const statusRow = `${color('blue')}│${color('reset')} ${statusLine}${' '.repeat(statusPad)}`;
-    const accentBot = `${color('blue')}└${color('gray')}${'─'.repeat(boxWidth - 2)}┘${color('reset')}`;
+    // Chrome is `│ ` + text + ` │`: the row used to end in a single `│` with no
+    // space before it, so every inner row was two columns narrower than the
+    // top/bottom rules and the right edge never lined up with `┐`/`┘`.
+    const innerWidth = Math.max(1, boxWidth - 4);
+    // `innerAsk` is plain ASCII, so everything inside the 4-column chrome now
+    // fits exactly. Clipping it as well keeps the `│` on the last row from
+    // sitting 2 columns outside the frame when the box narrows below it.
+    const askText = truncateToWidth(takeLeft(innerAsk, innerWidth), innerWidth);
+    const askPad = Math.max(0, innerWidth - displayWidth(askText));
+    const statusText = takeLeft(statusLine, innerWidth);
+    const statusPad = Math.max(0, innerWidth - displayWidth(stripAnsi(statusText)));
+    const accentTop = `${color('blue')}┌${color('gray')}${'─'.repeat(Math.max(0, boxWidth - 2))}┐${color('reset')}`;
+    const askRow = `${color('blue')}│${color('reset')} ${color('gray')}${askText}${' '.repeat(askPad)} ${color('gray')}│${color('reset')}`;
+    const statusRow = `${color('blue')}│${color('reset')} ${statusText}${' '.repeat(statusPad)} ${color('gray')}│${color('reset')}`;
+    const accentBot = `${color('blue')}└${color('gray')}${'─'.repeat(Math.max(0, boxWidth - 2))}┘${color('reset')}`;
     lines.push('');
     lines.push(pad(accentTop));
     lines.push(pad(askRow));
@@ -93,7 +117,7 @@ export function renderHomeScreen(
   }
 
   lines.push('');
-  lines.push(pad(`${color('dim')}/help commands   enter submit${color('reset')}`));
+  lines.push(pad(`${color('dim')}${takeLeft('/help commands   enter submit', cols)}${color('reset')}`));
   if (options.version) {
     lines.push('');
     lines.push(`${' '.repeat(Math.max(0, cols - displayWidth(options.version) - 2))}${color('dim')}${options.version}${color('reset')}`);
@@ -118,27 +142,47 @@ export function chatPromptLabel(options: { noColor?: boolean } = {}) {
 function shortenModel(model: string) {
   if (!model) return 'model';
   const bare = model.includes('/') ? model.split('/').pop()! : model;
-  return bare.length > 18 ? `${bare.slice(0, 16)}…` : bare;
+  return displayWidth(bare) > 18 ? `${takeLeftPlain(bare, 16)}…` : bare;
+}
+
+/**
+ * Keep the leftmost `max` columns of a styled row, preserving the escape
+ * sequences that were opened (a trailing reset is appended when one was cut),
+ * so a clipped row never leaks its colour into the next line.
+ */
+function takeLeft(row: string, max: number): string {
+  if (displayWidth(stripAnsi(row)) <= max) return row;
+  let out = '';
+  let width = 0;
+  for (const token of displayTokens(row)) {
+    if (!token.ansi) {
+      if (width + token.width > max) break;
+      width += token.width;
+    }
+    out += token.text;
+  }
+  return `${out}\u001b[0m`;
+}
+
+function takeLeftPlain(value: string, max: number): string {
+  let out = '';
+  let width = 0;
+  for (const char of value) {
+    const charWidth = displayWidth(char);
+    if (width + charWidth > max) break;
+    out += char;
+    width += charWidth;
+  }
+  return out;
 }
 
 function shortHost(baseUrl: string | undefined) {
   if (!baseUrl) return '';
   try {
     const host = new URL(baseUrl).host;
-    return host.length > 22 ? `${host.slice(0, 20)}…` : host;
+    return displayWidth(host) > 22 ? `${takeLeftPlain(host, 20)}…` : host;
   } catch {
     return '';
   }
 }
 
-function stripAnsi(value: string) {
-  return value.replace(/\u001b\[[0-9;]*m/g, '');
-}
-
-function displayWidth(value: string) {
-  let width = 0;
-  for (const char of value) {
-    width += /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff00-\uff60\uffe0-\uffe6]/.test(char) ? 2 : 1;
-  }
-  return width;
-}

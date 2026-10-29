@@ -63,10 +63,20 @@ export const openapiTsTool: ToolDefinition<{
       return { ok: false, output: `spec 不是合法 JSON: ${err instanceof Error ? err.message : String(err)}` };
     }
 
-    const generated = generateTypes(spec);
+    // Hand-written specs hit null entries, array entries, non-string $ref and
+    // name collisions; the generator now degrades those to `unknown` instead of
+    // throwing, but a future shape can still surprise it — report, don't crash
+    // the tool call.
+    let generated;
+    try {
+      generated = generateTypes(spec);
+    } catch (err) {
+      return { ok: false, output: `spec 结构无法解析: ${err instanceof Error ? err.message : String(err)}` };
+    }
     if (!generated.ok && generated.typeCount === 0) {
       return { ok: false, output: generated.errors.join('\n') };
     }
+    const warning = generated.errors.length > 0 ? `\n\n⚠ ${generated.errors.join('\n⚠ ')}` : '';
 
     if (!input.writeToFile) {
       const lines = [
@@ -78,7 +88,7 @@ export const openapiTsTool: ToolDefinition<{
         '',
         '传 writeToFile: true 可写入 ' + input.outputFile,
       ];
-      return { ok: true, output: lines.join('\n'), data: { typeCount: generated.typeCount, source: generated.source } };
+      return { ok: true, output: lines.join('\n') + warning, data: { typeCount: generated.typeCount, source: generated.source } };
     }
 
     const outAbs = resolve(context.workspaceRoot, input.outputFile!);
@@ -92,7 +102,7 @@ export const openapiTsTool: ToolDefinition<{
     await writeFile(outAbs, generated.source, 'utf-8');
     return {
       ok: true,
-      output: `已生成 ${generated.typeCount} 个类型 → ${input.outputFile}`,
+      output: `已生成 ${generated.typeCount} 个类型 → ${input.outputFile}${warning}`,
       data: { typeCount: generated.typeCount, path: input.outputFile },
     };
   },

@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { renameWithRetry, serializeWrites as serialize, writeFileAtomic } from '../utils/atomic.js';
+import { withFileLock, type LockOptions } from '../utils/lockfile.js';
 import { formatReflections, type ReflectionEntry, type ReflectionKind } from './types.js';
 
 const MAX_ENTRIES = 200;
@@ -56,13 +57,23 @@ function normalizeStoredEntry(value: unknown): ReflectionEntry | undefined {
   };
 }
 
+export type ReflectionStoreDeps = {
+  /** 测试注入：Windows 上「文件被占用导致 rename EPERM」没法按需制造。 */
+  rename?: (from: string, to: string) => Promise<void>;
+  lock?: LockOptions;
+};
+
 export class ReflectionStore {
   private readonly filePath: string;
+  private readonly lockOptions: LockOptions;
+  private readonly renameFile: (from: string, to: string) => Promise<void>;
   /** 损坏的副本最多挪走一次。 */
   private quarantined = false;
 
-  constructor(workspaceRoot: string) {
+  constructor(workspaceRoot: string, deps: ReflectionStoreDeps = {}) {
     this.filePath = join(workspaceRoot, '.aicode', 'reflections.json');
+    this.lockOptions = deps.lock ?? {};
+    this.renameFile = deps.rename ?? renameWithRetry;
   }
 
   async list(): Promise<ReflectionEntry[]> {
@@ -158,14 +169,17 @@ export class ReflectionStore {
    * 因为同一进程里同时存在多个 ReflectionStore 实例（见文件头注释）。
    */
   private enqueue(mutate: (entries: ReflectionEntry[]) => void | ReflectionEntry[]): Promise<void> {
-    return serialize(this.filePath, async () => {
+    // 队列只挡同一进程；反射库和记忆库一样会被「桌面会话 + 定时任务」两个
+    // 进程同时写，读—改—写必须整段在跨进程文件锁里，否则两边各读一份旧内容，
+    // 后落盘的那份把另一份新增的教训抹掉。
+    return serialize(this.filePath, () => withFileLock(`${this.filePath}.lock`, async () => {
       const { entries, writable } = await this.readEntries();
       const result = mutate(entries);
       // 读不到原文件内容时宁可丢掉这次新增，也不要把整份教训覆盖掉。
       if (!writable) return;
       const next = Array.isArray(result) ? result : entries;
       await this.persist(next);
-    });
+    }, this.lockOptions));
   }
 
   /** 读回条目数组（兼容 {version, entries} 信封与裸数组两种落盘形态）。 */
@@ -201,15 +215,28 @@ export class ReflectionStore {
     return { entries, writable: true };
   }
 
-  /** 把损坏的文件挪到 *.corrupt-*.json；返回 true 表示原路径已经空出来了。 */
+  /**
+   * 把损坏的文件挪到 *.corrupt-*.json；返回 true 表示原路径已经空出来了。
+   *
+   * 只有「确实挪开」或「本来就不在」才算处理完。之前的实现先把 `quarantined`
+   * 置位再尝试 rename：一次 EPERM（Windows 上另一个进程正读着这个文件）会
+   * 让下一次读直接返回 true，接着就把损坏文件所在的路径覆盖掉——正是内存库
+   * 用 `quarantine()` 修掉的那个「暂时占用变成永久丢数据」。
+   */
   private async quarantine(): Promise<boolean> {
     if (this.quarantined) return true;
-    this.quarantined = true;
     const target = `${this.filePath}.corrupt-${new Date().toISOString().replace(/[-:.TZ]/g, '')}.json`;
-    return await renameWithRetry(this.filePath, target).then(
-      () => true,
-      (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
-    );
+    try {
+      await this.renameFile(this.filePath, target);
+      this.quarantined = true;
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.quarantined = true;
+        return true;
+      }
+      return false;
+    }
   }
 
   private async persist(entries: ReflectionEntry[]): Promise<void> {

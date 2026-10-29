@@ -56,7 +56,24 @@ export class ProjectMemoryStore {
     }
     try {
       const parsed = JSON.parse(raw) as ProjectMemoryFile;
-      if (parsed && parsed.version === 1 && Array.isArray(parsed.entries)) return parsed;
+      if (parsed && parsed.version === 1 && Array.isArray(parsed.entries)) {
+        // Same rule as the reflection store: an entry a reader cannot use must
+        // not reach it. `list()` sorts by `updatedAt.localeCompare` and
+        // `rankMemories` does `entry.keywords.reduce` and `memoryTokens(entry.summary)`;
+        // one number, null or missing keyword array from a hand-edited file
+        // throws inside every reader, and every caller treats that as "memory is
+        // empty" — the store goes silent with no error anywhere.
+        const entries = parsed.entries
+          .map(normalizeStoredEntry)
+          .filter((entry): entry is ProjectMemoryEntry => entry !== undefined);
+        // The whole file was unusable (truncated objects, a foreign format):
+        // keep a copy before the next write replaces it.
+        if (parsed.entries.length > 0 && entries.length === 0) {
+          await this.protectUnreadable();
+          return emptyFile(new Date().toISOString());
+        }
+        return { ...parsed, entries };
+      }
     } catch {
       // fall through: the file is corrupt
     }
@@ -224,4 +241,44 @@ export function uniqueKeywords(values: string[]) {
 
 function emptyFile(nowIso: string): ProjectMemoryFile {
   return { version: 1, updatedAt: nowIso, entries: [] };
+}
+
+const MEMORY_KINDS = new Set(['convention', 'decision', 'pitfall', 'note']);
+const MEMORY_SOURCES = new Set(['task', 'user', 'system']);
+
+/**
+ * Coerce one stored entry into something every reader can use, or drop it.
+ *
+ * Mirrors `reflection/store.ts#normalizeStoredEntry`: unknown fields are
+ * ignored, a missing id/keywords/date is repaired, and an entry with no usable
+ * summary is not an entry.
+ */
+function normalizeStoredEntry(value: unknown): ProjectMemoryEntry | undefined {
+  if (!isRecord(value)) return undefined;
+  if (typeof value.summary !== 'string' || !value.summary.trim()) return undefined;
+  const updatedAt = typeof value.updatedAt === 'string' && !Number.isNaN(Date.parse(value.updatedAt))
+    ? value.updatedAt
+    : new Date(0).toISOString();
+  const createdAt = typeof value.createdAt === 'string' && !Number.isNaN(Date.parse(value.createdAt))
+    ? value.createdAt
+    : updatedAt;
+  const source = isRecord(value.source) && typeof value.source.type === 'string' && MEMORY_SOURCES.has(value.source.type)
+    ? value.source as ProjectMemoryEntry['source']
+    : { type: 'system' as const };
+  return {
+    id: typeof value.id === 'string' && value.id ? value.id : `mem_${randomUUID()}`,
+    kind: MEMORY_KINDS.has(value.kind as string) ? value.kind as ProjectMemoryEntry['kind'] : 'note',
+    summary: value.summary,
+    keywords: Array.isArray(value.keywords)
+      ? value.keywords.filter((keyword): keyword is string => typeof keyword === 'string')
+      : [],
+    source: source as ProjectMemoryEntry['source'],
+    createdAt,
+    updatedAt,
+    active: value.active !== false,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

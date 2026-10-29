@@ -307,7 +307,13 @@ export function toAnthropicAwareMessages(
     trailingStrategy?: string;
   },
 ) {
-  const converted: Array<{ role: 'user' | 'assistant'; content: unknown }> = messages.map((message) => {
+  const converted: Array<{ role: 'user' | 'assistant'; content: unknown }> = messages
+    // System instructions travel in `body.system`, which only this provider can
+    // populate (the caller's own system messages are hoisted there first). Left
+    // in the array they would be downgraded to role 'user' below — a system
+    // instruction the model reads as something the user typed.
+    .filter((message) => message.role !== 'system')
+    .map((message) => {
     const role = message.role === 'assistant' ? 'assistant' : 'user';
     if ((message.role === 'user' || message.role === 'tool') && message.parts && message.parts.some((part) => part.type === 'image')) {
       const content: Array<Record<string, unknown>> = [];
@@ -515,6 +521,66 @@ export async function fetchWithRetry(url: string, init: Parameters<typeof fetch>
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
   } finally { control.dispose(); }
+}
+
+export type ProviderBodyKind = 'sse' | 'json' | 'text';
+
+/** A gateway may prepend a byte-order mark before the first `data:` line. */
+const BOM_PREFIX = new RegExp('^﻿');
+
+/**
+ * Decide how to read a 2xx provider body.
+ *
+ * Every provider used to hard-dispatch on the Content-Type header alone
+ * (`includes('application/json')` for the Anthropic non-stream path, a
+ * point-blank `!includes('text/event-stream')` for Responses, nothing at all
+ * for chat/gemini). Relays routinely answer a `stream: true` request with a
+ * plain JSON completion and a wildcard or missing content type (probed: the
+ * chat and Gemini providers then yielded `(empty)`/`(empty response)` and dropped
+ * the real answer AND its usage). Sniffing a short prefix when the header does
+ * not settle it costs one `clone()` read and keeps real SSE streaming
+ * incremental — the original body is never buffered.
+ */
+export async function resolveProviderBodyKind(response: Response): Promise<ProviderBodyKind> {
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+  if (contentType.includes('text/event-stream')) return 'sse';
+  if (contentType.includes('json')) return 'json';
+  if (!response.body) return 'text';
+  const decoder = new TextDecoder();
+  const reader = response.clone().body!.getReader();
+  let prefix = '';
+  try {
+    while (prefix.trimStart().length < 16) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      prefix += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    // NOT awaited: cancelling a tee branch (which is what clone() creates) can
+    // leave the promise pending forever in Node when the other branch is never
+    // consumed — awaited here, every sniffed response hung for 30s until the
+    // test runner killed it. The bytes read are a few already-buffered ones.
+    try { void reader.cancel().catch(() => undefined); } catch { /* already released */ }
+    try { reader.releaseLock(); } catch { /* outstanding read op: the reader is dropped anyway */ }
+  }
+  const head = prefix.replace(BOM_PREFIX, '').trimStart();
+  if (head.startsWith('data:') || head.startsWith(':') || head.startsWith('event:')) return 'sse';
+  if (head.startsWith('{') || head.startsWith('[')) return 'json';
+  return 'text';
+}
+
+/**
+ * Parse a body that {@link resolveProviderBodyKind} called 'json' or 'text'.
+ * Throws a descriptive error instead of letting a plain-text gateway page be
+ * mistaken for a completion.
+ */
+export async function readProviderJson(response: Response, label: string): Promise<unknown> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error(`${label}: expected JSON but the endpoint returned ${text.slice(0, 200) || '(empty body)'}`);
+  }
 }
 
 export async function* iterateSseDataLines(response: Response, idleTimeoutMs = 90_000, signal?: AbortSignal, onData?: (data: string) => void): AsyncGenerator<string> {

@@ -211,6 +211,24 @@ export class WorkflowEngine {
         if (blocked.length > 0) {
           throw new WorkflowFailureError(`Workflow blocked: ${blocked.join(', ')}`);
         }
+        // Nothing runnable and nothing with a terminal dependency: the graph is
+        // unsatisfiable (self-dependency, dangling reference, an unreachable
+        // node). Reporting `completed` here would present a partial run as a
+        // success, so the leftovers are blocked explicitly.
+        const stuck = this.workflow.nodes.filter(node =>
+          node.status !== 'done'
+          && node.status !== 'skipped'
+          && !this.execution.completedNodes.includes(node.id)
+          && !this.execution.failedNodes.includes(node.id)
+          && !this.execution.blockedNodes?.includes(node.id));
+        if (stuck.length > 0) {
+          for (const node of stuck) {
+            node.status = 'blocked';
+            node.finishedAt = new Date().toISOString();
+            (this.execution.blockedNodes ??= []).push(node.id);
+          }
+          throw new WorkflowFailureError(`Workflow blocked: ${stuck.map(node => `${node.id}（${node.title}；依赖无法满足）`).join(', ')}`);
+        }
         break;
       }
 
@@ -638,11 +656,23 @@ export class WorkflowEngine {
           || this.execution.blockedNodes?.includes(depId)
           || this.execution.skippedNodes?.includes(depId),
         );
-        if (hasTerminalDependency || (!this.isReservedParallelChild(node.id) && this.execution.status === 'running')) {
+        // Only nodes whose dependencies already reached a terminal state are
+        // blocked. When nothing is runnable but the run is still `running`,
+        // every unfinished node *looks* unrunnable — including independent
+        // nodes that are merely waiting behind a reserved parallel child. The
+        // old `|| running` branch marked all of them blocked, so one exhausted
+        // parallel wave failed the whole workflow instead of just its children.
+        if (hasTerminalDependency) {
           node.status = 'blocked';
           node.finishedAt = new Date().toISOString();
           (this.execution.blockedNodes ??= []).push(node.id);
-          blocked.push(node.id);
+          // The id alone ("Workflow blocked: task_3") tells the caller nothing
+          // about what was skipped; the title is what makes the failure
+          // actionable without opening the definition.
+          const rerun = node.dependsOn
+            .filter(depId => this.execution.failedNodes.includes(depId) || this.execution.skippedNodes?.includes(depId))
+            .join('、');
+          blocked.push(rerun ? `${node.id}（${node.title}；上游 ${rerun} 未完成）` : `${node.id}（${node.title}）`);
           changed = true;
         }
       }

@@ -53,7 +53,7 @@ const EVENT_FIELDS = new Set([
 ]);
 const SNAPSHOT_FIELDS = new Set(['id', 'unitId', 'phase', 'ref', 'commit', 'tree', 'createdAt', 'repository']);
 const REPOSITORY_FIELDS = new Set(['root', 'workspaceRoot', 'workspacePathspec', 'head', 'branch']);
-const CHANGE_FIELDS = new Set(['kind', 'path', 'sourcePath', 'baseline', 'result', 'resultIndex']);
+const CHANGE_FIELDS = new Set(['kind', 'path', 'sourcePath', 'baseline', 'result', 'resultIndex', 'resultOids']);
 const PATH_STATE_FIELDS = new Set(['path', 'oid', 'mode']);
 const INDEX_ENTRY_FIELDS = new Set(['path', 'mode', 'oid', 'stage']);
 
@@ -321,6 +321,10 @@ function reconstructChange(value: unknown): GitPathChange {
     resultIndex: arrayValues(source.resultIndex, 'change.resultIndex', 4).map(reconstructIndexEntry),
   };
   if (source.sourcePath !== undefined) result.sourcePath = clean(assertRelativePath(stringValue(source.sourcePath, 'change.sourcePath', 4_096)));
+  if (source.resultOids !== undefined) {
+    result.resultOids = arrayValues(source.resultOids, 'change.resultOids', 8)
+      .map((item) => assertObjectId(stringValue(item, 'change.resultOids')));
+  }
   return result;
 }
 

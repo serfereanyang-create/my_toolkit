@@ -100,11 +100,21 @@ export async function acquireFileLock(lockPath: string, options: LockOptions = {
     await mkdir(dirname(lockPath), { recursive: true }).catch(() => undefined);
     try {
       const handle = await open(lockPath, 'wx');
+      /**
+       * 拿到文件之后、写 token 之前，这个锁还是「无名」的：释放者读不出
+       * token 就无从确认它是不是自己的。所以写入失败时必须在同一个原子窗口
+       * 里收尾——close 之后立刻 unlink，绝不能不声不响地把一把无名锁留在
+       * 盘上，也不能让它一直挂到 staleMs。写入成功之后我们已经有归属
+       * （release 按 token 认），这条路径才算安全。
+       */
       try {
         await handle.writeFile(`${JSON.stringify(payload)}\n`, 'utf8');
-      } finally {
-        await handle.close();
+      } catch (writeError) {
+        await handle.close().catch(() => undefined);
+        await unlink(lockPath).catch(() => undefined);
+        throw writeError;
       }
+      await handle.close().catch(() => undefined);
       let released = false;
       return {
         token: payload.token,
@@ -172,6 +182,16 @@ async function breakStaleLock(lockPath: string, options: { staleMs: number; now:
   const holder = await readLock(lockPath);
   // 同一台机器上还活着 = 只是慢，继续等。换机器/pid 已死 = 抛下的锁。
   if (holder && holder.host === hostname() && processAlive(holder.pid)) return false;
+  /**
+   * 摘锁前再认一次。
+   *
+   * 两个进程可以同时判定同一把旧锁 stale：第一个 unlink 之后，B 可能已经
+   * 用 `wx` 建好了新锁，第二个进程再 unlink 就删掉了活人的锁——双方同时
+   * 进临界区。这里在 unlink 之前重读一次，token 变了（新锁）就放弃，
+   * 回到下一轮重新判断；原本就读不出内容的坏锁仍然允许回收。
+   */
+  const again = await readLock(lockPath);
+  if ((holder?.token ?? null) !== (again?.token ?? null)) return false;
   try {
     await unlink(lockPath);
     return true;
@@ -185,9 +205,22 @@ async function breakStaleLock(lockPath: string, options: { staleMs: number; now:
 }
 
 async function releaseLock(lockPath: string, token: string) {
+  /**
+   * 只删「确定是自己的」锁。
+   *
+   * 旧实现是「读不出 token 就直接 unlink」，把三种情况混成了一种：
+   *   - 文件已经不在了：close 到 unlink 之间的正常窗口，删不删都无所谓；
+   *   - 文件在、但内容读不出/坏了/还没写完：这不是我们的锁——抢占交错里
+   *     B 刚用 `wx` 建好、还没写 payload 的那一瞬就是空的，旧实现会把它
+   *     删掉，C 随即拿到锁，B 和 C 同时进临界区；
+   *   - Windows 上 readFile 撞到短暂的 EBUSY/EPERM：锁是活着的，删了就
+   *     等于双持有。
+   *
+   * 因此这里只认一个结论：读到的 token 与自己的相同才 unlink。其余一律
+   * 不动，留给 stale 逻辑按持有者存活情况回收。
+   */
   const holder = await readLock(lockPath);
-  // 锁已经被判死并摘掉、新持有者又建了一个：那不是我们的锁，不能删。
-  if (holder && holder.token !== token) return;
+  if (!holder || holder.token !== token) return;
   try {
     await unlink(lockPath);
   } catch {

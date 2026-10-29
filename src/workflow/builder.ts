@@ -15,7 +15,7 @@ import { WORKFLOW_TEMPLATES } from './types.js';
 export class WorkflowBuilder {
   private workflow: Partial<WorkflowDefinition>;
   private nodes: WorkflowNode[] = [];
-  private nodeIdCounter = 1;
+  private nodeIdCounter = 0;
   
   constructor(name: string, description: string = '') {
     this.workflow = {
@@ -32,22 +32,24 @@ export class WorkflowBuilder {
   
   static fromTemplate(templateName: keyof typeof WORKFLOW_TEMPLATES): WorkflowBuilder {
     const template = WORKFLOW_TEMPLATES[templateName];
+    // `WORKFLOW_TEMPLATES` is a plain Record, so a name from JSON input reaches
+    // here as a string cast; without this guard `template.nodes` is a TypeError.
+    if (!template) throw new Error(`Unknown workflow template: ${String(templateName)}`);
     const builder = new WorkflowBuilder(template.name, template.description);
-    const aliases = new Map<string, string>();
-    const typeOrdinals = new Map<string, number>();
-    const generated: Array<{ template: typeof template.nodes[number]; id: string }> = [];
 
-    // Template references are logical aliases (task_0 means the first task,
-    // checkpoint_1 means the second checkpoint), not the generated IDs. Keep
-    // that distinction here so interleaving node types cannot create dangling
-    // dependencies.
-    template.nodes.forEach((nodeTemplate) => {
-      const ordinal = typeOrdinals.get(nodeTemplate.type) ?? 0;
-      typeOrdinals.set(nodeTemplate.type, ordinal + 1);
-      const newId = `${nodeTemplate.type}_${builder.nodeIdCounter}`;
-      aliases.set(`${nodeTemplate.type}_${ordinal}`, newId);
-      aliases.set(`${nodeTemplate.type}_${ordinal + 1}`, newId);
-      generated.push({ template: nodeTemplate, id: newId });
+    // Node ids are `${type}_${index + 1}` (the node's position in the template),
+    // and template `dependsOn` / branch references spell those ids directly.
+    //
+    // The old translation table mapped *per-type* ordinals ("task_1" = the
+    // second task, "checkpoint_0" = the first checkpoint) onto generated ids.
+    // That is ambiguous by construction: once a second node of a type existed,
+    // "task_3" could mean either a generated id or an ordinal, and the same
+    // dict mapped both `type_n` and `type_{n+1}` to one node. The result was
+    // self-dependencies and skipped nodes (`task_3 → task_5` chains), which the
+    // engine then reported as "blocked" at runtime. Direct ids make a template's
+    // graph exactly what it reads like.
+    template.nodes.forEach((nodeTemplate, index) => {
+      const newId = `${nodeTemplate.type}_${index + 1}`;
       builder.addNode({
         ...nodeTemplate,
         id: newId,
@@ -57,18 +59,6 @@ export class WorkflowBuilder {
         parallelNodes: nodeTemplate.parallelNodes ? [...nodeTemplate.parallelNodes] : undefined,
         status: 'pending',
       } as WorkflowNode);
-    });
-
-    const resolveAlias = (id: string) => aliases.get(id) ?? id;
-    generated.forEach(({ id }) => {
-      const node = builder.nodes.find(candidate => candidate.id === id)!;
-      node.dependsOn = node.dependsOn.map(resolveAlias);
-      node.parallelNodes = node.parallelNodes?.map(resolveAlias);
-      node.branches = node.branches?.map(branch => ({
-        ...branch,
-        nextNodes: branch.nextNodes.map(resolveAlias),
-      }));
-      node.defaultNext = node.defaultNext?.map(resolveAlias);
     });
 
     return builder;
@@ -81,7 +71,7 @@ export class WorkflowBuilder {
     gates?: QualityGate[];
     maxRetries?: number;
   } = {}): WorkflowBuilder {
-    const id = `task_${this.nodeIdCounter++}`;
+    const id = `task_${++this.nodeIdCounter}`;
     
     this.nodes.push({
       id,
@@ -104,7 +94,7 @@ export class WorkflowBuilder {
     onFalse?: string[];
     dependsOn?: string[];
   }): WorkflowBuilder {
-    const id = `condition_${this.nodeIdCounter++}`;
+    const id = `condition_${++this.nodeIdCounter}`;
     
     this.nodes.push({
       id,
@@ -129,7 +119,7 @@ export class WorkflowBuilder {
     waitForAll?: boolean;
     dependsOn?: string[];
   }): WorkflowBuilder {
-    const id = `parallel_${this.nodeIdCounter++}`;
+    const id = `parallel_${++this.nodeIdCounter}`;
     
     this.nodes.push({
       id,
@@ -148,7 +138,7 @@ export class WorkflowBuilder {
     message: string;
     dependsOn?: string[];
   }): WorkflowBuilder {
-    const id = `checkpoint_${this.nodeIdCounter++}`;
+    const id = `checkpoint_${++this.nodeIdCounter}`;
     
     this.nodes.push({
       id,
@@ -169,7 +159,7 @@ export class WorkflowBuilder {
     gates: QualityGate[];
     dependsOn?: string[];
   }): WorkflowBuilder {
-    const id = `gate_${this.nodeIdCounter++}`;
+    const id = `gate_${++this.nodeIdCounter}`;
     
     this.nodes.push({
       id,
@@ -185,7 +175,11 @@ export class WorkflowBuilder {
   
   private addNode(node: WorkflowNode): WorkflowBuilder {
     this.nodes.push(node);
-    this.nodeIdCounter = Math.max(this.nodeIdCounter, this.nodes.length + 1);
+    // Only move the counter *past* the node's own ordinal; never bump it for
+    // nodes that were not allocated from it. Bumping to `nodes.length + 1` on
+    // every insert skipped ids ("task_1", "task_2", "task_4"), and a skipped
+    // number is exactly what an author means by `dependsOn: ['task_3']`.
+    if (node.id.startsWith('task_')) this.nodeIdCounter = Math.max(this.nodeIdCounter, Number(node.id.slice(5)) || 0);
     return this;
   }
   
@@ -338,12 +332,12 @@ export function createFeatureWorkflow(featureName: string): WorkflowDefinition {
     })
     .addTask('Implement feature', {
       acceptance: 'Feature fully implemented with error handling',
-      dependsOn: ['checkpoint_1'],
+      dependsOn: ['checkpoint_2'],
       gates: [QualityGates.complexity(15)],
     })
     .addTask('Write tests', {
       acceptance: 'Tests cover main and edge cases',
-      dependsOn: ['task_2'],
+      dependsOn: ['task_3'],
       gates: [QualityGates.coverage(80, true)],
     })
     .addParallel('Quality checks', {
@@ -361,17 +355,21 @@ export function createFeatureWorkflow(featureName: string): WorkflowDefinition {
     })
     .addCondition('Quality gate decision', {
       condition: Conditions.testPassed(),
-      onTrue: ['task_8'],
+      // 测试通过 → 直接终验（task_10）；失败 → 先修复（task_9）。
+      // 引擎的语义是"未选中的分支被 skip"，所以失败路径以修复收尾，不再回跳
+      // 终验 —— 引擎没有 loop-back，写一个被 skip 依赖的终验只会 blocked。
+      onTrue: ['task_10'],
       onFalse: ['task_9'],
       dependsOn: ['parallel_5'],
     })
     .addTask('Fix issues', {
       acceptance: 'All quality issues resolved',
       maxRetries: 2,
+      dependsOn: ['condition_8'],
     })
     .addTask('Final verification', {
       acceptance: 'All checks pass, feature ready',
-      dependsOn: ['condition_7'],
+      dependsOn: ['condition_8'],
     })
     .enableAutoCheckpoint()
     .enableRollbackOnFailure()
@@ -403,14 +401,14 @@ export function createBugfixWorkflow(bugDescription: string): WorkflowDefinition
     })
     .addTask('Add regression test', {
       acceptance: 'Test fails on old code, passes on fixed code',
-      dependsOn: ['task_3'],
+      dependsOn: ['task_4'],
     })
     .addGate('Verify no regressions', {
       gates: [
         QualityGates.coverage(0, true),
         QualityGates.lint(0, false, true),
       ],
-      dependsOn: ['task_4'],
+      dependsOn: ['task_5'],
     })
     .enableRollbackOnFailure()
     .addTags('bugfix')
@@ -431,27 +429,27 @@ export function createRefactorWorkflow(targetCode: string): WorkflowDefinition {
     })
     .addTask('Add characterization tests', {
       acceptance: 'Current behavior covered by tests',
-      dependsOn: ['checkpoint_1'],
+      dependsOn: ['checkpoint_2'],
     })
     .addTask('Refactor code', {
       acceptance: 'Code refactored with improved structure',
-      dependsOn: ['task_2'],
+      dependsOn: ['task_3'],
       gates: [QualityGates.complexity(15, false)],
     })
     .addCondition('Test status check', {
       condition: Conditions.testPassed(),
       onTrue: ['task_6'],
       onFalse: ['task_7'],
-      dependsOn: ['task_5'],
+      dependsOn: ['task_4'],
     })
     .addTask('Verify improved metrics', {
       acceptance: 'Metrics improved, no performance regression',
-      dependsOn: ['condition_6'],
+      dependsOn: ['condition_5'],
     })
     .addTask('Rollback and retry', {
       acceptance: 'Rolled back to baseline',
       maxRetries: 1,
-      dependsOn: ['condition_6'],
+      dependsOn: ['condition_5'],
     })
     .enableAutoCheckpoint()
     .enableRollbackOnFailure()

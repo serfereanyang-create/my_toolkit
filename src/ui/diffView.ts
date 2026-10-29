@@ -18,6 +18,8 @@ export type DiffLineOp = {
   beforeLine?: number;
   /** 1-based line number in the after file (context/add). */
   afterLine?: number;
+  /** Render-only marker row (e.g. "\ No newline at end of file"). */
+  note?: boolean;
 };
 
 export type DiffRenderOptions = {
@@ -47,12 +49,25 @@ const palette = {
 const ADD_BG = '\u001b[48;2;33;58;43m';
 const DEL_BG = '\u001b[48;2;74;34;29m';
 
-function splitLines(value: string): string[] {
-  const lines = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-  // A trailing newline yields a final empty string; keep it out so counts match editors.
-  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
-  return lines;
+/**
+ * Split into lines, keeping "file ends with a newline" information.
+ *
+ * The old version popped the final empty string so "a\nb\n" and "a\nb" compared
+ * equal — but in a unified diff the missing newline *is* a change (upstream
+ * prints "\ No newline at end of file"). Adding a trailing newline to a file
+ * therefore rendered as "no changes". The trailing empty entry is kept here and
+ * tagged so the renderer can surface it explicitly.
+ */
+function splitLines(value: string): { lines: string[]; trailingNewline: boolean } {
+  const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
+  const trailingNewline = normalized.endsWith('\n');
+  if (trailingNewline) lines.pop();
+  return { lines, trailingNewline };
 }
+
+/** Pseudo line for "the previous line has no trailing newline". */
+export const NO_NEWLINE_MARKER = '\\ No newline at end of file';
 
 /** LCS cell budget for the quadratic middle diff; larger inputs fall back to block replace. */
 const MAX_LCS_CELLS = 640_000;
@@ -63,8 +78,8 @@ const MAX_LCS_CELLS = 640_000;
  * single delete+insert block (Codex's TUI applies the same safety valve).
  */
 export function diffLineOps(beforeRaw: string, afterRaw: string): DiffLineOp[] {
-  const before = splitLines(beforeRaw);
-  const after = splitLines(afterRaw);
+  const { lines: before, trailingNewline: beforeEol } = splitLines(beforeRaw);
+  const { lines: after, trailingNewline: afterEol } = splitLines(afterRaw);
 
   let prefix = 0;
   while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) {
@@ -142,6 +157,18 @@ export function diffLineOps(beforeRaw: string, afterRaw: string): DiffLineOp[] {
       beforeLine: tailStart + k + 1,
       afterLine: tailAfterStart + k + 1,
     });
+  }
+
+  // Trailing-newline change. Identical content + different EOL is a real edit
+  // (linters and prettier do exactly this); surface it as -last/+last the way
+  // unified diff does instead of reporting "no changes".
+  if (beforeEol !== afterEol && before.length > 0) {
+    if (before.length === after.length && ops.length > 0 && ops[ops.length - 1]!.kind === 'context') {
+      const last = ops.pop()!;
+      ops.push({ kind: 'del', text: last.text, beforeLine: last.beforeLine });
+      ops.push({ kind: 'add', text: last.text, afterLine: last.afterLine });
+    }
+    ops.push({ kind: 'context', text: NO_NEWLINE_MARKER, note: true });
   }
   return ops;
 }
@@ -238,6 +265,8 @@ export function renderApprovalDiff(
       // Delete rows keep the OLD file line number.
       const row = `${bg(DEL_BG)}${c('red')}${gutter(op.beforeLine)} -${body}${c('reset')}`;
       lines.push(row);
+    } else if (op.note) {
+      lines.push(`${c('dim')} ${' '.repeat(gutterWidth)} ${body}${c('reset')}`);
     } else if (op.beforeLine === undefined) {
       // Fold marker between separated runs (upstream renders a dim "⋮" spacer;
       // we keep a count because the approval view folds for size).

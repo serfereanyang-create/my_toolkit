@@ -162,7 +162,9 @@ export const VENDOR_PROFILES: Record<VendorId, VendorProfile> = {
     defaultModel: 'glm-5.3',
     reasoningMode: 'glm-thinking-toggle',
     reasoningBodyParam(effort, model) {
-      // GLM-5.3 推理常开：接受 reasoning_effort 档位，同时保持 thinking 开启
+      // GLM-5.3 推理常开：接受 reasoning_effort 档位，同时保持 thinking 开启。
+      // off 不能发 disabled（厂商不接受关闭），所以 wire 上仍是 enabled；
+      // 这正是 capabilities 里 maxTier=high 的同一事实，UI 侧需要知晓这一限制。
       if (isGlm53(model)) {
         const mapped = grokReasoningEffort(effort); // 同样的 low/high 压缩规则
         return { thinking: { type: 'enabled' }, ...(mapped ? { reasoning_effort: mapped } : {}) };

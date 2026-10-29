@@ -148,17 +148,21 @@ test('limitProviderTools keeps the working core instead of cutting alphabeticall
 
 test('limitProviderTools omits bridge tools before built-ins', () => {
   // The default registry has no plugin_/mcp_ tools, so synthesize a registry
-  // where the bridge block is what pushes the count over the ceiling.
-  const base = createDefaultToolRegistry().list();
-  const bridge = Array.from({ length: 40 }, (_, index) => ({
+  // where the bridge block is what pushes the count over the ceiling. The base
+  // is cut to 300 real tools so that only the bridge block can exceed the cap —
+  // `max` can never be raised to make room for the base (it is clamped to
+  // MAX_PROVIDER_TOOLS since the 2026-10-29 tool-surface audit).
+  const base = createDefaultToolRegistry().list().slice(0, 300);
+  const bridge = Array.from({ length: 60 }, (_, index) => ({
     ...base[0]!,
     name: `plugin_extra_${String(index).padStart(2, '0')}`,
   }));
-  const result = limitProviderTools([...base, ...bridge], { max: base.length + 5 });
-  assert.equal(result.tools.length, base.length + 5);
+  const requested = MAX_PROVIDER_TOOLS;
+  const result = limitProviderTools([...base, ...bridge], { max: requested });
+  assert.equal(result.tools.length, requested);
   const droppedBridge = result.dropped.filter((name) => name.startsWith('plugin_') || name.startsWith('mcp_'));
   assert.equal(droppedBridge.length, result.dropped.length, 'every omitted tool should be a bridge tool');
-  assert.equal(droppedBridge.length, bridge.length - 5);
+  assert.equal(droppedBridge.length, base.length + bridge.length - requested);
 });
 
 test('limitProviderTools never trims a protected tool', () => {
@@ -268,17 +272,19 @@ test('standard refuses direct writes, but exposes the two delegation tools', () 
   }
 });
 
-test('the tools HIGH_VALUE_EXTRA lists are actually selectable in standard', () => {
-  // They were declared for the provider cap's ranking and never read by scope
-  // selection, so `run_tests` was `full`-only while `run_command` — which the
-  // agent then used to hand-write the same thing — was already present.
+test('standard exposes the structured test/script gates, not only their hand-written shell equivalents', () => {
+  // HIGH_VALUE_EXTRA was declared for the provider cap's ranking and never read
+  // by scope selection, so `run_tests` was `full`-only while `run_command` —
+  // which the agent then used to hand-write the same thing — was already
+  // present. `run_script` had the same shape (shell risk, so the read-only rule
+  // cannot reach it) and was added to STANDARD_EXTRA_ALLOW on 2026-10-29.
   const standard = names('standard');
-  for (const tool of ['run_tests', 'lint', 'typecheck']) {
+  for (const tool of ['run_tests', 'lint', 'typecheck', 'run_script', 'test_fix', 'generate_function_test']) {
     assert.ok(standard.includes(tool), `expected standard to expose ${tool}`);
   }
   // compact stays a read-only scope: running tests is not a read.
   const compact = names('compact');
-  for (const tool of ['run_tests', 'lint', 'typecheck']) {
+  for (const tool of ['run_tests', 'lint', 'typecheck', 'run_script']) {
     assert.ok(!compact.includes(tool), `compact must not expose ${tool}`);
   }
 });
@@ -286,8 +292,9 @@ test('the tools HIGH_VALUE_EXTRA lists are actually selectable in standard', () 
 test('widening read-only into standard leaves the tool array under the provider cap', () => {
   const counts = ['compact', 'standard', 'full'].map((scope) => names(scope as 'compact' | 'standard' | 'full').length);
   // 236 before the read-only widening, 330 after it, 332 once the two delegation
-  // tools were admitted. The floor tracks the delegation decision, not a target.
-  assert.ok(counts[1] >= 332, `standard should be at least 332 (236 → 330 read-only → 332 with delegation); saw ${counts[1]}`);
+  // tools were admitted, 333 after run_script (2026-10-29 tool-surface audit).
+  // The floor tracks those decisions, not a target.
+  assert.ok(counts[1] >= 333, `standard should be at least 333 (236 → 330 read-only → 332 delegation → 333 run_script); saw ${counts[1]}`);
   assert.ok(counts[1] < counts[2], `standard must stay smaller than full: ${counts.join(' / ')}`);
   assert.ok(counts[1] <= MAX_PROVIDER_TOOLS, `standard (${counts[1]}) must fit under the cap of ${MAX_PROVIDER_TOOLS}`);
   // The cap runs AFTER the post-scope injections, so the headroom has to cover

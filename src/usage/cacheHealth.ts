@@ -80,6 +80,11 @@ export type CacheHealthReport = {
 export function classifyTurn(entry: UsageLedgerEntry, isFirstOfSession: boolean): TurnPattern {
   const cacheRead = entry.cacheReadTokens ?? 0;
   const cacheCreation = entry.cacheCreationTokens ?? 0;
+  // A turn whose only spend was automatic compaction has no main-loop prompt of
+  // its own: its input is either 0 or a full-history summary request that is
+  // not part of the conversation's prefix chain. Classifying it "healthy" or
+  // "unstable-prefix" describes a prompt that does not exist.
+  if ((entry.autoCompact?.calls ?? 0) > 0 && entry.inputTokens <= 0) return 'no-cache-data';
 
   if (cacheRead === 0 && cacheCreation === 0) {
     return entry.inputTokens > 0 ? 'no-cache-data' : 'no-cache-data';

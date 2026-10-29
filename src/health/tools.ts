@@ -38,6 +38,11 @@ export const healthSnapshotTool = defineTool({
         '质量: 平均复杂度 ' + snapshot.metrics.avgComplexity + ', 风险函数 ' + snapshot.metrics.riskyFunctions +
           ', 安全问题 ' + snapshot.metrics.securityIssues + ', 异味 ' + snapshot.metrics.codeSmells,
       ];
+      // 采集不全时分数只是下界。放在同一段输出里，agent 与用户都不会把它当满分。
+      if (snapshot.warnings && snapshot.warnings.length > 0) {
+        lines.push('', '采集不完整（分数只代表已看到的部分）:');
+        for (const warning of snapshot.warnings) lines.push('  - ' + warning);
+      }
 
       return { ok: true, output: lines.join('\n'), data: { snapshot } };
     } catch (error) {

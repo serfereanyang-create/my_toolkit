@@ -33,6 +33,13 @@ export const USER_ACTION_CLOSE = '</user_action>';
  */
 export function renderFindingsBlock(result: ReviewRunResult): string {
   const { report } = result;
+  // A review that never ran has no findings — but it is not a review that found
+  // nothing. Without this branch the failure reason (result.error) was dropped on
+  // the floor and the recorded user message read "No findings.", i.e. the next
+  // turn was told the change was clean because the provider timed out.
+  if (!result.ok) {
+    return `Review did not run: ${result.error ?? 'no reason was returned.'}`;
+  }
   if (report.unparsed) {
     return `Review did not return the structured result the rubric asks for. Raw output:\n\n${report.raw ?? ''}`;
   }
@@ -68,11 +75,18 @@ export function renderFindingsBlock(result: ReviewRunResult): string {
  */
 export function renderReviewUserMessage(result: ReviewRunResult): string {
   const explanation = result.report.explanation?.trim() ?? '';
-  const parts = [explanation, renderFindingsBlock(result)].filter(Boolean);
+  const parts = [
+    result.ok ? explanation : '',
+    renderFindingsBlock(result),
+    result.warning ? `Review was partial: ${result.warning}` : '',
+  ].filter(Boolean);
   const results = parts.join('\n');
+  const context = result.ok
+    ? '  <context>User initiated a code review. Here is the full review output from the reviewer model. The user may act on one or more of these comments; do not start fixing anything unless they ask.</context>'
+    : '  <context>User initiated a code review, but it could not be run. The review below is an error report, not findings — there is nothing to fix from it.</context>';
   return [
     USER_ACTION_OPEN,
-    '  <context>User initiated a code review. Here is the full review output from the reviewer model. The user may act on one or more of these comments; do not start fixing anything unless they ask.</context>',
+    context,
     '  <action>review</action>',
     `  <scope>${result.label}</scope>`,
     '  <results>',
@@ -95,6 +109,9 @@ export function renderReviewAssistantMessage(result: ReviewRunResult): string {
   } else {
     sections.push('未发现问题。');
   }
+  // "No findings" is a claim about what the reviewer saw. If it did not see the
+  // whole change, that claim has to be qualified in the message the user reads.
+  if (result.warning) sections.push(`注意：${result.warning}`);
   const verdict = result.report.outcome === 'correct'
     ? '补丁正确'
     : result.report.outcome === 'incorrect'

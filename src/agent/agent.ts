@@ -35,6 +35,7 @@ import { resolveSessionLocale, type Locale } from '../i18n/locale.js';
 import { isBlockedOutput } from '../i18n/messages.js';
 import { formatResultCard, isMetaTranslatedDone } from '../ui/resultCard.js';
 import { appendUsage, resolveUsageLogPath } from '../usage/ledger.js';
+import { buildDispatchRows, foldCompactionOutcome, turnHasSpend, type TierBucket, type TierUsage } from '../usage/turnAccounting.js';
 import { recordDispatch } from '../dispatch/dispatchLedger.js';
 import { createDispatchPlan, type DispatchPlan } from '../dispatch/plan.js';
 import { pickStepTier } from '../dispatch/stepRouter.js';
@@ -437,15 +438,24 @@ async function runControlledAgentTurn(runtime: AgentRuntime, prompt: string, opt
    */
   const compactUsage: CompactUsageSink = { calls: 0, inputTokens: 0, outputTokens: 0, outcome: 'failed' };
   /**
+   * The provider/model that ran the compaction, snapshotted immediately before
+   * each compaction call (see `runAgentTurnCore`). The main loop swaps
+   * `runtime.provider` per step, so by turn end the runtime may hold a
+   * different tier than the one that answered the summary.
+   */
+  const compactIdentity = { provider: runtime.provider.name, model: runtime.provider.model };
+  /**
    * The same totals, split by dispatch tier.
    *
    * A turn is no longer on one tier from start to finish — the plan/final-answer
    * calls run on the expensive model and the mechanical follow-through on the
    * cheap one — so a single ledger row stamped with the tier of whichever call
    * happened to be last would misreport both halves. One row per tier that
-   * actually answered.
+   * actually answered. Each bucket also remembers which provider answered it:
+   * at turn end `runtime.provider` only holds the LAST tier's model, so stamping
+   * the rows from it named the cheap model on the expensive row too.
    */
-  const tierUsage = new Map<DispatchTier, { inputTokens: number; outputTokens: number; calls: number }>();
+  const tierUsage: TierUsage = new Map<DispatchTier, TierBucket>();
   /**
    * Per-turn dispatch plan (see dispatch/plan.ts): which tiers exist this turn
    * and one provider per tier. Built once per turn — resolving reads a config
@@ -471,7 +481,7 @@ async function runControlledAgentTurn(runtime: AgentRuntime, prompt: string, opt
   const transcript = { partial: '' };
   let thrown: unknown;
   try {
-    coreResult = await runAgentTurnCore(runtime, prompt, options, usageTotals, transcript, tierUsage, dispatchPlan, compactUsage);
+    coreResult = await runAgentTurnCore(runtime, prompt, options, usageTotals, transcript, tierUsage, dispatchPlan, compactUsage, compactIdentity);
   } catch (error) {
     thrown = error;
     if (error instanceof CancelledError || runtime.cancelRequested?.() || runtime.requestSignal?.aborted) {
@@ -492,6 +502,9 @@ async function runControlledAgentTurn(runtime: AgentRuntime, prompt: string, opt
         hadTerminalFailure: false,
         finalAnswer: stoppedReply,
       };
+      // NOTE: a compaction killed mid-flight is folded to `cancelled` where the
+      // ledger is written (see `ledgerCompact` below), not here: the sink's
+      // type only knows completed/failed and mutating it would be unsound.
     } else {
       coreResult = {
         ok: false,
@@ -536,9 +549,17 @@ async function runControlledAgentTurn(runtime: AgentRuntime, prompt: string, opt
     });
   } catch { /* status persistence is best-effort */ }
 
+  // `autoCompact.ts` reports both a broken provider and a mid-flight user
+  // cancel as `failed` — it cannot tell them apart, it only sees the throw. The
+  // turn loop does know (`coreResult.outcome`). Fold it once here and use the
+  // folded value for BOTH ledgers, so the usage row and the dispatch row can
+  // never disagree about what happened. Folding is a no-op unless the turn was
+  // cancelled AND a summary call actually went out.
+  const ledgerCompact = foldCompactionOutcome(compactUsage, coreResult.outcome === 'cancelled');
+
   // A turn whose only spend was an auto-compaction summary has zero main-loop
   // tokens; the ledger still has to record it, so the guard covers both.
-  if (usageTotals.inputTokens > 0 || usageTotals.outputTokens > 0 || compactUsage.calls > 0) {
+  if (turnHasSpend(usageTotals, ledgerCompact)) {
     const newToolCalls = runtime.session.toolCalls.slice(toolCallsBefore);
     const toolsUsed = [...new Set(newToolCalls.map((call) => call.tool))].slice(0, 12);
     await appendUsage(resolveUsageLogPath(runtime.config.usageLog), {
@@ -576,34 +597,33 @@ async function runControlledAgentTurn(runtime: AgentRuntime, prompt: string, opt
       ...(options.gitSafetyUnit?.request.kind === 'task'
         ? { boardId: options.gitSafetyUnit.request.boardId, taskId: options.gitSafetyUnit.request.taskId }
         : {}),
-      ...(compactUsage.calls > 0 ? { autoCompact: { ...compactUsage } } : {}),
+      ...(ledgerCompact.calls > 0 ? { autoCompact: { ...ledgerCompact } } : {}),
       durationMs: Date.now() - turnStartedAt,
     });
     // 省钱分级台账：这是唯一能拿到真实 token 数的地方。一次 turn 现在可能同时
     // 跑过贵/中/便宜三档（规划用贵、跟进用便宜），所以按档位各写一行——只写
     // "最后一个调用所在的档位"会把两半的花费都算错。
-    const rows = tierUsage && tierUsage.size > 0
-      ? [...tierUsage.entries()]
-      : runtime.dispatchTier
-        ? [[runtime.dispatchTier, { inputTokens: usageTotals.inputTokens, outputTokens: usageTotals.outputTokens, calls: 1 }] as [DispatchTier, { inputTokens: number; outputTokens: number; calls: number }]]
-        : [];
-    for (const [tier, bucket] of rows) {
-      recordDispatch(
-        {
-          ts: new Date().toISOString(),
-          task: runtime.session.goal ?? runtime.session.id,
-          stage: runtime.subAgentDepth ? 'subagent' : 'main',
-          tier,
-          provider: runtime.provider.name,
-          model: runtime.provider.model,
-          inputTokens: bucket.inputTokens,
-          outputTokens: bucket.outputTokens,
-          totalTokens: bucket.inputTokens + bucket.outputTokens,
-          ok: coreResult.ok,
-        },
-        undefined,
-        runtime.config.workspaceRoot,
-      );
+    //
+    // 自动压缩的支出也在这里落地（src/usage/turnAccounting.ts）：它绕过了主循环，
+    // 花的是真实 token，而跨窗口压缩的输入是整段历史，往往就是单次最大的一笔。
+    // 有档位行时并入最后一行并打上 `autoCompact` 标签；整轮只有压缩时单独写一行
+    // `tier: 'compact'`。两种形状下 Σ totalTokens 都等于台账里该 turn 的全部
+    // provider 调用之和，同一次调用的 token 只出现在一行里。
+    const now = new Date().toISOString();
+    const rows = buildDispatchRows({
+      task: runtime.session.goal ?? runtime.session.id,
+      stage: runtime.subAgentDepth ? 'subagent' : 'main',
+      ok: coreResult.ok,
+      totals: usageTotals,
+      tiers: tierUsage ?? new Map(),
+      compact: ledgerCompact,
+      compactIdentity,
+      ...(runtime.dispatchTier && !(tierUsage && tierUsage.size > 0)
+        ? { fallback: { tier: runtime.dispatchTier, provider: runtime.provider.name, model: runtime.provider.model } }
+        : {}),
+    });
+    for (const row of rows) {
+      recordDispatch({ ts: now, ...row }, undefined, runtime.config.workspaceRoot);
     }
   }
 
@@ -670,12 +690,21 @@ async function runAgentTurnCore(
   options: AgentTurnOptions = {},
   usageTotals?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number; localCachePredictedRate?: number },
   transcript = { partial: '' },
-  tierUsage?: Map<DispatchTier, { inputTokens: number; outputTokens: number; calls: number }>,
+  tierUsage?: TierUsage,
   dispatchPlan?: DispatchPlan | null,
   compactUsage?: CompactUsageSink,
+  compactIdentity?: { provider: string; model: string },
 ): Promise<AgentTurnResult> {
   // codex turn.rs:1231-1260 — pre-turn auto-compact fires BEFORE the new user
   // input enters history, when the conversation nears the context window.
+  //
+  // The identity is snapshotted BEFORE the call: dispatch may swap the provider
+  // inside this very turn, and the ledger's `compact` row has to name the model
+  // that answered the summary, not the one that ran the last step.
+  if (compactIdentity) {
+    compactIdentity.provider = runtime.provider.name;
+    compactIdentity.model = runtime.provider.model;
+  }
   await maybeAutoCompact(runtime, compactUsage);
   const recentTools = recentToolResultsFromSession(runtime.session);
   const locale = resolveSessionLocale({
@@ -1004,6 +1033,10 @@ async function runAgentTurnCore(
     // follow-up and the limit is reached; step 0 is skipped because the pre-turn
     // pass just ran.
     if (step > 0) {
+      if (compactIdentity) {
+        compactIdentity.provider = runtime.provider.name;
+        compactIdentity.model = runtime.provider.model;
+      }
       await maybeMidTurnCompact(runtime, compactUsage);
     }
     // Last budgeted step, still nothing proposed: withdraw everything except
@@ -1277,10 +1310,15 @@ async function runAgentTurnCore(
         }
         const tier = runtime.dispatchTier;
         if (tierUsage && tier) {
-          const bucket = tierUsage.get(tier) ?? { inputTokens: 0, outputTokens: 0, calls: 0 };
+          const bucket = tierUsage.get(tier) ?? { inputTokens: 0, outputTokens: 0, calls: 0, provider: runtime.provider.name, model: runtime.provider.model };
           bucket.inputTokens += response.usage.inputTokens;
           bucket.outputTokens += response.usage.outputTokens;
           bucket.calls += 1;
+          // The tier's chain may have failed over inside `tierProvider`; the
+          // runtime identity follows whoever actually answered, so the last
+          // write is the model that served this tier this time.
+          bucket.provider = runtime.provider.name;
+          bucket.model = runtime.provider.model;
           tierUsage.set(tier, bucket);
         }
       }

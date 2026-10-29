@@ -64,7 +64,10 @@ test('MCP config normalizes server map and rejects bad names', async () => {
 
 test('MCP tool name and risk mapping', () => {
   assert.equal(mcpToolName('demo', 'echo-text'), 'mcp_demo_echo_text');
-  assert.equal(riskForTool({ name: 'a', annotations: { readOnlyHint: true } }), 'read');
+  // A server's own annotations are claims, never a capability check: `read`
+  // would skip approval in every mode (deny included), so the best a
+  // read-only hint can earn is the `write` tier.
+  assert.equal(riskForTool({ name: 'a', annotations: { readOnlyHint: true } }), 'write');
   assert.equal(riskForTool({ name: 'b', annotations: { destructiveHint: true } }), 'write');
   assert.equal(riskForTool({ name: 'c' }), 'shell');
 });
@@ -90,10 +93,17 @@ test('MCP manager connects stdio echo server and executes bridged tools', async 
     const registry = createDefaultToolRegistry();
     for (const tool of manager.tools) registry.register(tool);
 
-    const ok = await registry.execute('mcp_echo_echo', { text: 'hi' }, { workspaceRoot: workspace, approval: 'auto' });
+    // `echo` carries a readOnly hint, which now maps to `write`: an external
+    // annotation cannot skip approval. Auto mode refuses a write with no path
+    // target; ask mode with an explicit confirm is the real approval path.
+    const autoEcho = await registry.execute('mcp_echo_echo', { text: 'hi' }, { workspaceRoot: workspace, approval: 'auto' });
+    assert.equal(autoEcho.ok, false);
+    const ok = await registry.execute('mcp_echo_echo', { text: 'hi' }, { workspaceRoot: workspace, approval: 'ask', confirm: async () => true });
     assert.equal(ok.ok, true);
     assert.match(ok.output, /echo:hi/);
-    assert.equal(registry.get('mcp_echo_echo')?.risk, 'read');
+    assert.equal(registry.get('mcp_echo_echo')?.risk, 'write');
+    assert.equal(registry.get('mcp_echo_echo')?.autoApprove, undefined);
+    assert.equal(registry.get('mcp_echo_fail')?.alwaysPrompt, true);
     assert.equal(registry.get('mcp_echo_fail')?.risk, 'write');
 
     // Destructive MCP tools stay gated under approval policy; use ask+confirm for a real call.

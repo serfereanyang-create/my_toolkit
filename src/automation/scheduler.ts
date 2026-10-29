@@ -1,3 +1,4 @@
+import { validateCronExpression } from './cron.js';
 import type { AutomationTask, CronTrigger } from './types.js';
 
 /**
@@ -35,9 +36,22 @@ export class AutomationScheduler {
     if (existing) return existing;
 
     const trigger = task.trigger as CronTrigger;
+    // `trigger.expression` is typed as a string but arrives from hand-editable
+    // tasks.json (the probe fed it `12345`), so the type check is real: without
+    // it, `.trim()` threw `expression.trim is not a function`.
+    if (typeof trigger.expression !== 'string') {
+      throw new Error(`Cannot start cron task ${task.id}: cron expression must be a string, got ${typeof trigger.expression}`);
+    }
     const expression = trigger.expression.trim();
     if (!expression) {
       throw new Error(`Cannot start cron task ${task.id}: cron expression is empty`);
+    }
+    // Validate before the host call: an expression the host cannot fire used to
+    // be registered and persisted as enabled, so the task looked live and never
+    // ran.
+    const invalid = validateCronExpression(expression);
+    if (invalid) {
+      throw new Error(`Cannot start cron task ${task.id}: invalid cron expression "${expression}" — ${invalid}`);
     }
     if (!this.cronProvider) {
       throw new Error(

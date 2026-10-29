@@ -28,8 +28,11 @@ export function resolveSessionLocale(options: {
   const trimmed = text.trim();
   // Keep sticky language for short follow-ups.
   if (trimmed.length > 0 && trimmed.length <= 12) return options.previous;
-  // Pure ASCII longer prompts may switch to en.
-  if (trimmed.length >= 24 && detected === 'en') return 'en';
+  // `detectLocale` samples the first 4000 chars; a Chinese sentence buried after
+  // a long pasted log must still count. Check the whole prompt before deciding.
+  if (CJK_RE.test(trimmed)) return 'zh';
+  // A long prompt with no CJK at all switches to en.
+  if (trimmed.length >= 24) return 'en';
   return options.previous;
 }
 

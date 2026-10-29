@@ -74,6 +74,28 @@ export function openaiReasoningEffort(effort: ReasoningEffort | undefined): 'low
   }
 }
 
+/** Gemini thinking budget for each tier; undefined = send no thinkingConfig. */
+export function geminiThinkingBudget(effort: ReasoningEffort | undefined): number | undefined {
+  switch (effort) {
+    case 'low':
+      return 2_048;
+    case 'medium':
+      return 8_192;
+    case 'high':
+      return 16_384;
+    case 'max':
+      return 24_576;
+    case 'auto':
+      // A `auto` reaching a provider means the caller never clamped; the
+      // provider cannot know the task complexity, so it picks the middle.
+      return 8_192;
+    case 'off':
+    case undefined:
+    default:
+      return undefined;
+  }
+}
+
 /**
  * Detect whether an API error body is complaining specifically about the
  * thinking/reasoning parameter, so the provider can retry once without it

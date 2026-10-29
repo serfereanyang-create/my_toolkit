@@ -175,7 +175,7 @@ export const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       {
         type: 'checkpoint',
         title: 'Pre-implementation checkpoint',
-        dependsOn: ['task_0'],
+        dependsOn: ['task_1'],
         checkpoint: {
           createCommit: true,
           message: 'chore: checkpoint before feature implementation',
@@ -184,13 +184,13 @@ export const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       {
         type: 'task',
         title: 'Implement core feature logic',
-        dependsOn: ['task_1'],
+        dependsOn: ['checkpoint_2'],
         acceptance: 'Feature implemented with proper error handling',
       },
       {
         type: 'task',
         title: 'Write comprehensive tests',
-        dependsOn: ['task_2'],
+        dependsOn: ['task_3'],
         acceptance: 'Unit and integration tests cover main paths',
         gates: [
           {
@@ -218,13 +218,13 @@ export const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       {
         type: 'task',
         title: 'Root cause analysis',
-        dependsOn: ['task_0'],
+        dependsOn: ['task_1'],
         acceptance: 'Root cause identified and fix strategy determined',
       },
       {
         type: 'checkpoint',
         title: 'Pre-fix checkpoint',
-        dependsOn: ['task_1'],
+        dependsOn: ['task_2'],
         checkpoint: {
           createCommit: true,
           message: 'chore: checkpoint before bug fix',
@@ -233,20 +233,20 @@ export const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       {
         type: 'task',
         title: 'Implement fix',
-        dependsOn: ['checkpoint_0'],
+        dependsOn: ['checkpoint_3'],
         acceptance: 'Fix applied and bug no longer reproduces',
         maxRetries: 2,
       },
       {
         type: 'task',
         title: 'Add regression test',
-        dependsOn: ['task_3'],
+        dependsOn: ['task_4'],
         acceptance: 'Test fails on old code, passes on fixed code',
       },
       {
         type: 'task' as WorkflowNodeType,
         title: 'Verify no new regressions',
-        dependsOn: ['task_4'],
+        dependsOn: ['task_5'],
         gates: [
           {
             name: 'Full test suite',
@@ -273,7 +273,7 @@ export const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       {
         type: 'checkpoint',
         title: 'Baseline checkpoint',
-        dependsOn: ['task_0'],
+        dependsOn: ['task_1'],
         checkpoint: {
           createCommit: true,
           message: 'chore: baseline before refactor',
@@ -282,13 +282,13 @@ export const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       {
         type: 'task',
         title: 'Add characterization tests if missing',
-        dependsOn: ['checkpoint_0'],
+        dependsOn: ['checkpoint_2'],
         acceptance: 'Current behavior covered by tests',
       },
       {
         type: 'task',
         title: 'Refactor implementation',
-        dependsOn: ['task_2'],
+        dependsOn: ['task_3'],
         acceptance: 'Code refactored with improved structure',
         gates: [
           {
@@ -302,19 +302,27 @@ export const WORKFLOW_TEMPLATES: Record<string, WorkflowTemplate> = {
       {
         type: 'condition',
         title: 'Check test status',
-        dependsOn: ['task_3'],
+        dependsOn: ['task_4'],
         branches: [
           {
             condition: { type: 'test_passed' },
-            nextNodes: ['verify_metrics'],
+            // Tests pass → verify metrics (task_7); they fail → roll back (task_6).
+            nextNodes: ['task_7'],
           },
         ],
-        defaultNext: ['rollback_and_fix'],
+        defaultNext: ['task_6'],
+      },
+      {
+        type: 'task',
+        title: 'Rollback and retry',
+        dependsOn: ['condition_5'],
+        acceptance: 'Rolled back to baseline',
+        maxRetries: 1,
       },
       {
         type: 'task',
         title: 'Verify improved metrics',
-        dependsOn: ['condition_1'],
+        dependsOn: ['condition_5'],
         acceptance: 'Complexity reduced, no performance regression',
       },
     ],

@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { stdin as input, stdout as output } from 'node:process';
 import { emitKeypressEvents } from 'node:readline';
+import { displayTokens, displayWidth, truncateToWidth } from './width.js';
 
 export type OverlayItem = {
   id: string;
@@ -177,20 +178,25 @@ export function renderOverlayFrame(options: {
   selected: number;
   color: boolean;
 }): string {
-  const cols = Math.max(output.columns || 72, 48);
-  const width = Math.min(64, cols - 4);
+  // Never assume at least 48 columns: a 30-column window (tmux split, narrow
+  // Windows Terminal) got rows 40+ columns wide and the panel wrapped apart.
+  const cols = Math.max(output.columns || 72, 1);
+  const width = Math.max(4, Math.min(64, cols - 2));
   const paint = (code: string, text: string) => (options.color ? `${code}${text}${c.reset}` : text);
 
   const lines: string[] = [];
   // Floating card top padding
   lines.push('');
-  lines.push(`  ${paint(c.white + c.bold, options.title)}${' '.repeat(Math.max(1, width - options.title.length - 6))}${paint(c.gray, 'esc')}`);
+  const titleText = truncateToWidth(options.title, Math.max(1, width - 8), '…');
+  const titleGap = Math.max(1, width - displayWidth(titleText) - 6);
+  lines.push(`  ${paint(c.white + c.bold, titleText)}${' '.repeat(titleGap)}${paint(c.gray, 'esc')}`);
   lines.push('');
   // Composer-style prompt row: bold `›` caret, dim italic placeholder (upstream
   // popups filter inline from the composer rather than owning a search box).
   const searchLabel = options.query.length > 0 ? options.query : 'Search';
   const caret = paint(c.bold, '›');
-  const labelText = options.query.length > 0 ? paint(c.white, ` ${searchLabel}`) : paint(c.dim + c.italic, ` ${searchLabel}`);
+  const fitSearch = truncateToWidth(searchLabel, Math.max(1, width - 3), '…');
+  const labelText = options.query.length > 0 ? paint(c.white, ` ${fitSearch}`) : paint(c.dim + c.italic, ` ${fitSearch}`);
   lines.push(`  ${caret}${labelText}`);
   lines.push('');
 
@@ -215,25 +221,53 @@ export function renderOverlayFrame(options: {
   }
 
   lines.push('');
-  lines.push(`  ${paint(c.dim, '↑/↓ move   enter select   type to filter   esc close')}`);
+  lines.push(`  ${paint(c.dim, truncateToWidth('↑/↓ move   enter select   type to filter   esc close', Math.max(1, width - 2), '…'))}`);
   lines.push('');
   return lines.join('\n');
 }
 
+/** Plain row fitted to `maxWidth` display columns (CJK/emoji aware). */
 function formatActionRow(item: OverlayItem, maxWidth: number) {
   const text = `${item.keyword} ${item.detail}`.trim();
-  return text.length > maxWidth ? `${text.slice(0, Math.max(0, maxWidth - 1))}…` : text;
+  return truncateToWidth(text, Math.max(1, maxWidth), '…');
 }
 
+/**
+ * Coloured row fitted to `maxWidth` columns. The keyword keeps its white
+ * style; the dim detail absorbs the truncation so an ANSI reset is never cut
+ * mid-sequence. Widths are display columns, not `.length` — `/compact [N]` and
+ * CJK detail text used to overflow the row.
+ */
 function formatActionRowColored(item: OverlayItem, color: boolean, maxWidth: number) {
   if (!color) return formatActionRow(item, maxWidth);
-  const keyword = `${c.white}${item.keyword}${c.reset}`;
-  const detail = `${c.dim}${item.detail}${c.reset}`;
   const plain = `${item.keyword} ${item.detail}`.trim();
-  if (plain.length > maxWidth) {
-    return `${keyword} ${c.dim}${item.detail.slice(0, Math.max(0, maxWidth - item.keyword.length - 2))}…${c.reset}`;
+  if (displayWidth(plain) <= maxWidth) {
+    const keyword = `${c.white}${item.keyword}${c.reset}`;
+    const detail = `${c.dim}${item.detail}${c.reset}`;
+    return `${keyword} ${detail}`;
   }
-  return `${keyword} ${detail}`;
+  const keywordBudget = Math.max(1, Math.min(displayWidth(item.keyword), maxWidth - 2));
+  const keywordText = truncateToWidth(item.keyword, keywordBudget, '…');
+  const rest = maxWidth - displayWidth(keywordText) - 1; // 1 for the space
+  if (rest < 2) return `${c.white}${keywordText}${c.reset}`;
+  const detailText = truncateToWidth(item.detail, rest, '…');
+  const styled = `${c.white}${keywordText}${c.reset} ${c.dim}${detailText}${c.reset}`;
+  return fitStyled(styled, maxWidth);
+}
+
+/** Hard clamp on styled output: whole tokens only, always ends with a reset. */
+function fitStyled(styled: string, maxWidth: number) {
+  if (displayWidth(styled) <= maxWidth) return styled;
+  let out = '';
+  let width = 0;
+  for (const token of displayTokens(styled)) {
+    if (!token.ansi) {
+      if (width + token.width > maxWidth) break;
+      width += token.width;
+    }
+    out += token.text;
+  }
+  return `${out}${c.reset}`;
 }
 
 function filterItems(items: OverlayItem[], query: string) {

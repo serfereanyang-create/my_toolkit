@@ -44,7 +44,27 @@ export async function createAgentRuntime(config: AppConfig) {
   const allTools = createDefaultToolRegistry({ excelAutomation: config.excelAutomation === true });
   for (const tool of await loadPluginTools(config.workspaceRoot)) allTools.register(tool);
   const existingNames = new Set(allTools.list().map((tool) => tool.name));
-  let mcp = await loadMcpManager({ workspaceRoot: config.workspaceRoot, existingNames });
+  // This spawns MCP server processes before anything else can fail. `close()`
+  // only knows about resources that made it into the returned object, so a
+  // throw between here and the `return` used to leave those child processes
+  // running until the whole process exited (and, in tests, all the way into
+  // the next case).
+  const mcp = await loadMcpManager({ workspaceRoot: config.workspaceRoot, existingNames });
+  try {
+    return await buildRuntime(config, provider, allTools, mcp);
+  } catch (error) {
+    await mcp.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function buildRuntime(
+  config: AppConfig,
+  provider: ReturnType<typeof createProvider>,
+  allTools: ReturnType<typeof createDefaultToolRegistry>,
+  initialMcp: Awaited<ReturnType<typeof loadMcpManager>>,
+) {
+  let mcp = initialMcp;
   for (const tool of mcp.tools) {
     try {
       allTools.register(tool);
@@ -81,6 +101,22 @@ export async function createAgentRuntime(config: AppConfig) {
     // starts, spawned children, test harnesses); the first turn creates the file.
     : await sessions.create({ provider: provider.name, model: provider.model, workspaceRoot: config.workspaceRoot, persist: false });
   if (config.resumeSessionId && session.lastTurn?.status === 'running') session.providerContinuation = undefined;
+  // Only the Responses API accepts a `previous_response_id`. A record written
+  // while the session ran on that provider, resumed on any other one (the
+  // model/provider flags are not persisted), would send a continuation the new
+  // provider silently ignores — or rejects. The saved message history is the
+  // only resume state every provider understands, so drop the chain here.
+  if (session.providerContinuation && provider.name !== 'openai-responses') session.providerContinuation = undefined;
+  // A resume builds the provider from THIS process's flags, never from the
+  // record, so the record's provider/model described a runtime that no longer
+  // exists. `/list`, `recent_activity` and the audit ledger all present those
+  // fields as "what this conversation runs on"; stamp the live identity so a
+  // session resumed under a different provider/model does not keep claiming the
+  // old one. The per-turn usage ledger still holds the historical provider.
+  if (config.resumeSessionId) {
+    session.provider = provider.name;
+    session.model = provider.model;
+  }
 
   const hooks = createNoopHooks();
   const commandJobs = new CommandJobManager();

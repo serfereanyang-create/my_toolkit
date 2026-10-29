@@ -15,6 +15,7 @@
  *   blocked 直接拒绝，任何模式都不执行
  */
 
+import { homedir } from 'node:os';
 import { evaluateNetworkTarget } from './network.js';
 
 export type CommandVerdict = 'ok' | 'prompt' | 'blocked';
@@ -284,7 +285,8 @@ function isInsideWorkspaceTarget(target: string, workspaceRoot?: string): boolea
 /** 参数里的旗标（/s、-rf），不是路径：单独一个 `/` 仍然是路径。 */
 function isFlagToken(arg: string): boolean {
   if (arg.startsWith('-')) return true;
-  return /^\/[a-z]{1,3}$/i.test(arg);
+  // `/s`、`/q`、`/C:"text"`、`/out:path` 都是开关；`/tmp/x` 不是。
+  return /^\/[a-z]{1,3}(?::|$)/i.test(arg);
 }
 
 /** 看起来是路径而不是开关/URL 的参数。 */
@@ -294,6 +296,12 @@ function isPathLike(arg: string): boolean {
   if (/^(?:https?|ftp):\/\//i.test(cleaned)) return false;
   // 绝对路径、`~`、`./`、`../` 开头，或带路径分隔符 —— 单独的文件名按工作区解析即可。
   return /^(?:[a-z]:|[\\/~]|\.\.?[\\/])/i.test(cleaned) || /[\\/]/.test(cleaned);
+}
+
+/** 是否是绝对目标（盘符、UNC、POSIX 根或 `~`），不看它落在哪个系统目录。 */
+function isAbsoluteTarget(arg: string): boolean {
+  const cleaned = arg.replace(/^["']|["']$/g, '');
+  return /^(?:[a-z]:|[\\/]|~)/i.test(cleaned) || /^\.\.?[\\/]/.test(cleaned);
 }
 
 function normalizeForCompare(path: string): string {
@@ -307,6 +315,17 @@ function underAnyRoot(resolved: string, roots: string[]): boolean {
     return target === base || target.startsWith(`${base}/`);
   });
 }
+
+/**
+ * 没有 workspaceRoot 信息时的读根：用户自己的目录、临时目录，以及所有盘符根
+ * 之外的常见用户位置。系统目录（C:/Windows、/etc…）不在其中，所以「没给
+ * 白名单」不再等于「随便读」。用 homedir 而不是字面量 `~`，才能和
+ * resolveTarget 展开后的值对上。
+ */
+const DEFAULT_READ_ROOTS = (() => {
+  const home = homedir().replace(/\\/g, '/');
+  return [home, 'c:/users', 'd:/users', '/home', '/users', '/tmp', '/var/tmp'];
+})();
 
 /**
  * 一条命令里所有要出网的目标。URL 原样取；`ssh user@host` 这类只有 host 的，
@@ -399,6 +418,10 @@ export function redirectTargets(segment: string): string[] {
 /** 递归/强制标志：命中任一就要按危险删除处理。 */
 function hasRecursiveFlag(program: string, args: string[]): boolean {
   const lowered = args.map((arg) => arg.toLowerCase());
+  // 长写法 `rm --recursive --force` 在 GNU coreutils 与 BusyBox 里是同一条命令，
+  // 但原来只认 `-r`/`-rf`，于是 `/` 或盘符根只被判成「需要确认」——再经
+  // 「任意应用」就直接执行了。
+  const longRecursive = lowered.some((arg) => arg === '--recursive' || arg === '--force' || arg.startsWith('--recursive=') || arg.startsWith('--force='));
   if (program === 'del' || program === 'erase') {
     return lowered.some((arg) => arg === '/s' || arg === '/f' || arg === '/q' || /^\/[sfq]{2,}$/.test(arg));
   }
@@ -406,9 +429,33 @@ function hasRecursiveFlag(program: string, args: string[]): boolean {
     return lowered.some((arg) => arg === '/s' || /^\/[sq]{2,}$/.test(arg));
   }
   if (program === 'remove-item' || program === 'ri' || program === 'rni' || program === 'rm') {
-    return lowered.some((arg) => /^-(r|re|rec|recursive|rf|fr|force|fo)$/.test(arg) || /^-\w*r\w*$/.test(arg));
+    return longRecursive || lowered.some((arg) => /^-(r|re|rec|recursive|rf|fr|force|fo)$/.test(arg) || /^-\w*r\w*$/.test(arg));
   }
   return lowered.length > 0;
+}
+
+/**
+ * `git` 子命令级的破坏性判断。由 policy 注入：policy 已经 import 本模块，
+ * 反过来 import 会形成循环，而两份规则各写一遍又会漂移（shell 路径认得
+ * `git rm`，工具路径不认）。
+ */
+export type DestructiveGitPredicate = (subcommand: string, rest: string) => boolean;
+
+/** 从一段 token 里认出 git 真正的子命令（跳过 `-C dir` 这类全局开关的值）。 */
+function gitInvocation(detailed: Array<{ text: string }>): { subcommand: string; rest: string } | null {
+  const tokens = detailed.map((token) => token.text);
+  const program = baseName(tokens[0] ?? '');
+  if (program !== 'git') return null;
+  let index = 1;
+  while (index < tokens.length) {
+    const token = tokens[index] as string;
+    if (/^(?:-C|--git-dir|--work-tree|-c|--namespace|--exec-path)$/.test(token)) { index += 2; continue; }
+    if (token.startsWith('-')) { index += 1; continue; }
+    break;
+  }
+  const subcommand = tokens[index];
+  if (!subcommand) return null;
+  return { subcommand: subcommand.toLowerCase(), rest: tokens.slice(index + 1).join(' ') };
 }
 
 type AnalyzeOptions = {
@@ -419,6 +466,8 @@ type AnalyzeOptions = {
   readRoots?: string[];
   /** 网络白名单；给了就按它判 curl/ssh 之类。 */
   networkAllowlist?: string[];
+  /** git 子命令级破坏性判断（policy 注入）。 */
+  destructiveGit?: DestructiveGitPredicate;
 };
 
 function analyzeTokens(
@@ -434,6 +483,21 @@ function analyzeTokens(
     return { verdict: 'blocked', reason: '命令会执行动态拼接的字符串（Invoke-Expression / iex）', segments };
   }
 
+  // `git` 子命令级的破坏性动作（reset --hard / clean -f / rm / stash clear …）。
+  // 必须在分段内判：policy 层的同一个判断只看得到第一段，`cmd /c "git clean -fdx"`
+  // 因此曾经整条放行。与 policy 的硬拒绝同一档：`git rm` / `git clean -f` 丢掉的
+  // 工作区内容没有任何一条审批可以恢复，所以是 blocked 而不是 prompt。
+  if (program === 'git' && options.destructiveGit) {
+    const invocation = gitInvocation(detailed);
+    if (invocation && options.destructiveGit(invocation.subcommand, invocation.rest)) {
+      return {
+        verdict: 'blocked',
+        reason: `git ${invocation.subcommand} 会丢弃未提交的改动或删除引用，任何模式下都不自动执行`,
+        segments,
+      };
+    }
+  }
+
   if (BLOCKED_PROGRAMS.has(program)) {
     return { verdict: 'blocked', reason: `${program} 是磁盘/引导/电源级操作，不允许由智能体执行`, segments };
   }
@@ -443,14 +507,22 @@ function analyzeTokens(
   }
 
   if (READ_PROGRAMS.has(program)) {
+    // 不给 readRoots 不等于「不判」：先前这里只挡凭据目录，于是 `findstr /C:"x"
+    // C:\Windows\win.ini` 这类整条命令里的绝对路径读参在 auto 模式（任意应用）
+    // 下直接执行。fh 与 mkfs 那类无关；拿字面量根目录兜底，不需要调用方知道
+    // 工作区在哪也能挡住系统路径。
+    const explicitRoots = Boolean(options.readRoots && options.readRoots.length > 0);
+    const roots = explicitRoots ? options.readRoots! : DEFAULT_READ_ROOTS;
     for (const arg of args.filter((item) => !isFlagToken(item))) {
       const resolved = resolveTarget(arg, options.workspaceRoot);
       if (isCredentialPath(resolved)) {
         return { verdict: 'blocked', reason: `${program} 在读凭据目录 ${arg}`, segments };
       }
       // 读工具的围栏不覆盖 `cat`：工作区 + 用户文档目录之外一律拒绝。
-      // 相对路径已按工作区解析，所以这项只会命中真正的绝对路径。
-      if (options.readRoots && options.readRoots.length > 0 && isPathLike(arg) && !underAnyRoot(resolved, options.readRoots)) {
+      // 有显式白名单时相对路径也一起判（它会按工作区解析）；只有兜底根时只判
+      // 绝对路径 —— 相对路径落点未知，不能拿字面量根目录去误伤。
+      const judged = explicitRoots ? isPathLike(arg) : isAbsoluteTarget(arg);
+      if (judged && !underAnyRoot(resolved, roots)) {
         return { verdict: 'blocked', reason: `${program} 在读允许范围之外的路径 ${arg}`, segments };
       }
     }
@@ -513,15 +585,17 @@ function analyzeTokens(
   if (DESTRUCTIVE_PROGRAMS.has(program)) {
     const targets = args.filter((arg) => !isFlagToken(arg));
     const recursive = hasRecursiveFlag(program, args);
+    // 系统路径先判、且与递归无关：`del C:\Windows\*.*`（不带 /s）原来只被
+    // 判成「需要确认」，再经「任意应用」就直接执行了。系统目录不是工作内容。
+    for (const target of targets) {
+      if (looksLikeSystemPath(resolveTarget(target, options.workspaceRoot))) {
+        return { verdict: 'blocked', reason: `${program} 的删除目标落在系统路径 ${target}`, segments };
+      }
+    }
     if (!recursive) return { verdict: 'prompt', reason: `${program} 删除文件，需要确认`, segments };
     // 只有旗标没有目标（`del /s`）：范围等于「当前目录下的一切」，不给放行余地。
     if (targets.length === 0) {
       return { verdict: 'blocked', reason: `${program} 递归删除没有指定目标，范围不可控`, segments };
-    }
-    for (const target of targets) {
-      if (looksLikeSystemPath(resolveTarget(target, options.workspaceRoot))) {
-        return { verdict: 'blocked', reason: `${program} 的递归删除目标落在系统路径 ${target}`, segments };
-      }
     }
     const outside = targets.some((target) => !isInsideWorkspaceTarget(target, options.workspaceRoot));
     if (outside) {
@@ -597,10 +671,12 @@ export function analyzeCommand(
   options: {
     workspaceRoot?: string;
     depth?: number;
-    /** 允许读取的根目录（policy 层给；不给就只挡凭据目录）。 */
+    /** 允许读取的根目录（policy 层给；不给就用 DEFAULT_READ_ROOTS 兜底）。 */
     readRoots?: string[];
     /** 网络白名单（policy 层给；不给就不判出网）。 */
     networkAllowlist?: string[];
+    /** git 子命令级破坏性判断（policy 层给；不给就不做该判断）。 */
+    destructiveGit?: DestructiveGitPredicate;
   } = {},
 ): CommandAnalysis {
   const depth = options.depth ?? 0;
@@ -618,6 +694,7 @@ export function analyzeCommand(
       piped: segment.piped,
       readRoots: options.readRoots,
       networkAllowlist: options.networkAllowlist,
+      destructiveGit: options.destructiveGit,
     });
     collected.push(...analysis.segments);
     if (rank[analysis.verdict] > rank[worst.verdict]) worst = { ...analysis, segments: collected };
@@ -628,8 +705,10 @@ export function analyzeCommand(
       if (isCredentialPath(resolved)) {
         return { verdict: 'blocked', reason: `重定向写入凭据目录 ${target}`, segments: [...collected, segment.text] };
       }
-      // 只有知道工作区在哪时才判断「外面」；不知道就只挡系统路径和凭据目录。
-      if (looksLikeSystemPath(resolved)) {
+      // 只有知道工作区在哪时才判断「外面」；不知道就挡系统路径、根目录和
+      // 盘符根。之前没有 workspaceRoot 时 `>` 是直接放行的（`echo hi >
+      // C:\x.txt` 走 `/run` 路径时无人问），这跟「写路径必须可判」相矛盾。
+      if (looksLikeSystemPath(resolved) || (!options.workspaceRoot && isAbsoluteTarget(target))) {
         return { verdict: 'blocked', reason: `重定向写入系统路径 ${target}`, segments: [...collected, segment.text] };
       }
       if (options.workspaceRoot && !isInsideWorkspaceTarget(target, options.workspaceRoot)) {

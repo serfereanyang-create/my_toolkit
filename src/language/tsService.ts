@@ -60,7 +60,14 @@ function fileVersion(entry: FileEntry): string {
 
 function loadEntry(absolutePath: string): FileEntry {
   const stat = statSync(absolutePath);
-  return { text: readFileSync(absolutePath, 'utf8'), mtimeMs: stat.mtimeMs };
+  const raw = readFileSync(absolutePath, 'utf8');
+  // A UTF-8 BOM is a real character in the string. The compiler accepts it, but
+  // every API position here is derived from character offsets, so line 1 would
+  // sit one column to the right of what the editor shows and every hover on the
+  // first line resolved to nothing. Strip it at the boundary and keep offsets
+  // aligned with the visible text.
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  return { text, mtimeMs: stat.mtimeMs };
 }
 
 function statSyncSafe(path: string): { mtimeMs: number } | undefined {
@@ -152,14 +159,33 @@ function fileText(entry: ServiceEntry, absolutePath: string): string {
   return file.text;
 }
 
+function normalizePosition(line: number, column: number): { line: number; column: number } {
+  // The bridge forwards whatever the editor sends. A 0/negative line used to
+  // index `split('\n')[line - 1]` as undefined and throw
+  // "Cannot read properties of undefined (reading 'length')" out of a long-lived
+  // child process; clamping to line 1 / column 1 is what an editor means by a
+  // position before the first character.
+  return {
+    line: Number.isFinite(line) ? Math.max(1, Math.trunc(line)) : 1,
+    column: Number.isFinite(column) ? Math.max(1, Math.trunc(column)) : 1,
+  };
+}
+
 /** 1-based line/column -> absolute character offset, CRLF-correct. */
 function offsetAt(entry: ServiceEntry, absolutePath: string, line: number, column: number): number {
+  const { line: safeLine, column: safeColumn } = normalizePosition(line, column);
   const text = fileText(entry, absolutePath);
   const rawLines = text.split('\n');
-  const lineText = (rawLines[line - 1] ?? '').replace(/\r$/, '');
+  const lastLine = rawLines.length;
+  if (safeLine > lastLine) {
+    // Past the end of the file = end of file (editors do this after a trailing
+    // newline); returning an offset into a non-existent buffer is not useful.
+    return text.length;
+  }
+  const lineText = (rawLines[safeLine - 1] ?? '').replace(/\r$/, '');
   let offset = 0;
-  for (let i = 0; i < line - 1; i += 1) offset += rawLines[i].length + 1; // +1 for the \n
-  return offset + Math.min(Math.max(column - 1, 0), lineText.length);
+  for (let i = 0; i < safeLine - 1; i += 1) offset += rawLines[i].length + 1; // +1 for the \n
+  return offset + Math.min(Math.max(safeColumn - 1, 0), lineText.length);
 }
 
 /** Character span -> 1-based range, CRLF-correct (split on raw \n). */

@@ -167,7 +167,7 @@ export const testFixTool: ToolDefinition<{
     };
   },
 
-  async execute(input, context) {
+  async execute(input, _context) {
     const failures = parseTestFailures(input.output);
     if (failures.length === 0) {
       return {

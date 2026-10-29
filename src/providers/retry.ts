@@ -18,6 +18,15 @@ import { abortable, abortableDelay, throwIfAborted } from '../utils/cancellation
 
 export const DEFAULT_REQUEST_RETRIES = 4;
 export const REQUEST_RETRY_BASE_DELAY_MS = 200;
+/**
+ * Upper bound for one backoff wait. Upstream codex has no cap, but upstream
+ * also always stops at 4 retries; this wrapper accepts AICODE_REQUEST_RETRIES
+ * up to 100, where the uncapped exponential reached 2**99 ms (>10^22 years)
+ * and a single hung retry could keep a turn alive forever. 30s is far above
+ * any real server recovery window and still lets the 5-call default reach its
+ * natural 1.6s ceiling without ever touching the cap.
+ */
+export const REQUEST_RETRY_MAX_DELAY_MS = 30_000;
 const MAX_REQUEST_RETRIES = 100; // model-provider-info/lib.rs upper bound
 
 /** Classification error: wrap provider failures so retry policy is explicit. */
@@ -88,7 +97,7 @@ export function backoffDelayMs(attempt: number, baseMs = REQUEST_RETRY_BASE_DELA
   const exponent = Math.max(0, attempt - 1);
   const raw = baseMs * 2 ** exponent;
   const jitter = 0.9 + Math.random() * 0.2;
-  return Math.round(raw * jitter);
+  return Math.round(Math.min(REQUEST_RETRY_MAX_DELAY_MS, raw * jitter));
 }
 
 export type ModelRetryOptions = {
@@ -99,6 +108,13 @@ export type ModelRetryOptions = {
   onRetry?: (attempt: number, maxRetries: number, delayMs: number, error: unknown) => void;
   /** Optional guard for retries that would replay unsafe or duplicate output. */
   canRetry?: (error: unknown, attempt: number) => boolean;
+  /**
+   * Sleep hook, injectable so tests never wait real backoff. Must reject with
+   * the signal's reason when `signal` aborts during the wait; the default
+   * (abortableDelay) does exactly that, so a fake that ignores the signal is
+   * only honest for tests that never abort mid-wait.
+   */
+  sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
 };
 
 export async function withModelRetry<T>(
@@ -107,6 +123,7 @@ export async function withModelRetry<T>(
 ): Promise<T> {
   const maxRetries = options.maxRetries ?? resolveRequestRetries();
   const baseDelayMs = options.baseDelayMs ?? REQUEST_RETRY_BASE_DELAY_MS;
+  const sleep = options.sleep ?? abortableDelay;
   let attempt = 0;
   for (;;) {
     throwIfAborted(options.signal);
@@ -119,7 +136,7 @@ export async function withModelRetry<T>(
       if (!isRetryableModelError(error) || attempt >= maxRetries || options.canRetry?.(error, attempt) === false) throw error;
       const delayMs = backoffDelayMs(attempt + 1, baseDelayMs);
       options.onRetry?.(attempt + 1, maxRetries, delayMs, error);
-      await abortableDelay(delayMs, options.signal);
+      await sleep(delayMs, options.signal);
       attempt += 1;
     }
   }

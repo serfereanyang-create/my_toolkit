@@ -13,6 +13,7 @@ function pluginToolDefinition(tool: PluginToolManifest): ToolDefinition<{ comman
     description: `[plugin] ${tool.description}`,
     inputHint: '{ "timeoutMs": 30000 }',
     // Manifest may declare a risk tier; default to the safest gate ('shell').
+    // 'read' never reaches here (the manifest normalizer downgrades it).
     risk: tool.risk ?? 'shell',
     // A workspace owner can opt this command into auto-mode without matching the
     // built-in shell allowlist. Destructive patterns are still hard-blocked.
@@ -30,6 +31,11 @@ function pluginToolDefinition(tool: PluginToolManifest): ToolDefinition<{ comman
           cwd: context.workspaceRoot,
           timeoutMs: input.timeoutMs,
           maxBuffer: 1024 * 1024,
+          // A plugin command is workspace code, not a built-in. Never inherit
+          // the CLI's credentials: on Windows the resource-limit supervisor used
+          // to drop the scrubbed env and hand the raw `process.env` (API keys
+          // included) to whatever the manifest declared.
+          scrubSecrets: true,
         });
         const formatted = formatSandboxResult(result, input.command);
         return {

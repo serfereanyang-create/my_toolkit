@@ -6,7 +6,7 @@ export type ReasoningSupport = 'supported' | 'unsupported' | 'unknown';
 
 export type ReasoningCapability = {
   support: ReasoningSupport;
-  nativeMode: 'anthropic-thinking' | 'openai-reasoning-effort' | 'glm-thinking-toggle' | 'reasoning-content' | 'none';
+  nativeMode: 'anthropic-thinking' | 'openai-reasoning-effort' | 'glm-thinking-toggle' | 'gemini-thinking-budget' | 'reasoning-content' | 'none';
   maxTier: ReasoningEffort;
   maxBudgetTokens?: number;
   fallbackAllowed: boolean;
@@ -54,6 +54,19 @@ export function getReasoningCapability(provider: ProviderName | string, model: s
 
   // ---- 厂商一等公民：grok / glm / kimi / deepseek ----
 
+  // Gemini 的 thinking 不走 effort 参数，而是 thinkingConfig.thinkingBudget
+  // （low 2048 / medium 8192 / high 16384 / max 24576，映射在 gemini.ts）。
+  // 缺这个分支时它落到兜底 OFF，用户选的档位被静默剥成 off，而 gemini.ts
+  // 只看请求值，于是"界面上是 off、实际发的是 low 预算"，两头对不上。
+  if (provider === 'gemini') {
+    if (/gemini-2\.5/.test(id) || /gemini-3/.test(id)) {
+      return { support: 'supported', nativeMode: 'gemini-thinking-budget', maxTier: 'max', fallbackAllowed: true };
+    }
+    // gemini 2.0 / 1.5 不接受 thinkingConfig
+    if (/gemini-[12]\./.test(id) || /gemini-(pro|flash|flash-lite)/.test(id)) return OFF;
+    return { support: 'unknown', nativeMode: 'gemini-thinking-budget', maxTier: 'max', fallbackAllowed: true };
+  }
+
   if (provider === 'grok') {
     // grok-4 系固定推理，不接受 effort 参数；grok-3 系接受 low|high
     if (/grok[-_]?4/.test(id)) return FIXED_REASONING;
@@ -65,11 +78,13 @@ export function getReasoningCapability(provider: ProviderName | string, model: s
 
   if (provider === 'glm') {
     if (isGlm53(id)) {
-      // GLM-5.3 推理常开，接受 reasoning_effort 档位
-      return { support: 'supported', nativeMode: 'openai-reasoning-effort', maxTier: 'max', fallbackAllowed: true };
+      // GLM-5.3 推理常开，接受 reasoning_effort 档位（厂商档案把 low/high 两档
+      // 映射成 xAI 风格 low|high，所以这里的天花板就是 high，不是 max）。
+      return { support: 'supported', nativeMode: 'openai-reasoning-effort', maxTier: 'high', fallbackAllowed: true };
     }
     if (/glm[-_]?[456]/.test(id)) {
-      // GLM-4.5+/5 系走 thinking 开关：开或关，无档位
+      // GLM-4.5+/5 系走 thinking 开关：开或关，无档位。用户选 low/medium/high
+      // 落到同一个"开"，选 off 必须显式发 disabled（厂商默认开）。
       return { support: 'supported', nativeMode: 'glm-thinking-toggle', maxTier: 'high', fallbackAllowed: true };
     }
     return { support: 'unknown', nativeMode: 'glm-thinking-toggle', maxTier: 'high', fallbackAllowed: true };

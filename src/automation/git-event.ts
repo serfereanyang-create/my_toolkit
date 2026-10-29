@@ -23,6 +23,8 @@ export class GitEventManager {
   private runningTasks = new Set<string>();
   private lastCommitHashes = new Map<string, string>();
   private lastRemoteHashes = new Map<string, string>();
+  /** Stored from the task that started the monitor, not from the closure. */
+  private tasks = new Map<string, AutomationTask>();
   private readonly pollIntervalMs: number;
 
   constructor(pollIntervalMs = 30_000) {
@@ -60,9 +62,10 @@ export class GitEventManager {
     }
 
     const interval = setInterval(() => {
-      void this.poll(task, options);
+      void this.poll(task.id, options);
     }, this.pollIntervalMs);
     this.pollingIntervals.set(task.id, interval);
+    this.tasks.set(task.id, task);
     console.log(`[GitEvent] Started monitoring for task ${task.id}: ${trigger.events.join(', ')}`);
   }
 
@@ -76,6 +79,7 @@ export class GitEventManager {
     }
     this.lastCommitHashes.delete(taskId);
     this.lastRemoteHashes.delete(taskId);
+    this.tasks.delete(taskId);
   }
 
   async stopAll(): Promise<void> {
@@ -86,15 +90,21 @@ export class GitEventManager {
     return [...this.pollingIntervals.keys()];
   }
 
-  private async poll(task: AutomationTask, options: GitMonitorOptions): Promise<void> {
-    if (!this.pollingIntervals.has(task.id) || this.pollingInFlight.has(task.id) || !task.enabled) return;
-    this.pollingInFlight.add(task.id);
+  private async poll(taskId: string, options: GitMonitorOptions): Promise<void> {
+    if (!this.pollingIntervals.has(taskId) || this.pollingInFlight.has(taskId)) return;
+    // Read the stored task each tick: the interval closure used to capture the
+    // object passed to start(), while a manual run persists through a *copy*
+    // loaded by the store, so "another process/command has this task open"
+    // could only be seen via a stale copy here.
+    const task = this.tasks.get(taskId);
+    if (!task || !task.enabled) return;
+    this.pollingInFlight.add(taskId);
     try {
       await this.checkForChanges(task, options);
     } catch (error) {
       console.error(`[GitEvent] Error checking for changes in task ${task.id}:`, error);
     } finally {
-      this.pollingInFlight.delete(task.id);
+      this.pollingInFlight.delete(taskId);
     }
   }
 

@@ -1,6 +1,6 @@
 import type { AgentAction, Provider, ProviderRequest, ProviderResponse } from './types.js';
 import { controlledProvider } from './requestControl.js';
-import { fetchWithRetry, iterateSseDataLines, toOpenAIResponsesTools, buildToolSystemPromptParts } from './protocol.js';
+import { fetchWithRetry, iterateSseDataLines, readProviderJson, resolveProviderBodyKind, toOpenAIResponsesTools, buildToolSystemPromptParts } from './protocol.js';
 import { isReasoningParamRejection, openaiReasoningEffort } from './reasoning.js';
 import { createStreamMetrics } from './streamMetrics.js';
 import { parseToolArguments } from './toolArguments.js';
@@ -105,7 +105,16 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
       if (systemParts.dynamic && systemParts.dynamic.trim()) {
         input.push({ role: 'system', content: systemParts.dynamic });
       }
-      const body: Record<string, unknown> = { model: options.model, input, tools: toOpenAIResponsesTools(request.tools), tool_choice: 'auto' };
+      const body: Record<string, unknown> = {
+        model: options.model,
+        input,
+        tools: toOpenAIResponsesTools(request.tools),
+        tool_choice: 'auto',
+      };
+      // Same contract as chat/completions: the shared system prompt asks for
+      // one tool call per turn, and only this field makes that true on the wire.
+      // Only sent when there are tools, so a strict gateway sees no stray field.
+      if (request.tools.length > 0) body.parallel_tool_calls = false;
       if (useServerContinuation) body.previous_response_id = request.continuation!.responseId;
       // Caller-supplied system messages are session-stable instructions: keep
       // them at the head of the stable prefix instead of silently dropping
@@ -137,9 +146,9 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
       }
 
       const contentType = response.headers.get('content-type') ?? '';
-      if (!contentType.includes('text/event-stream')) {
+      if (!contentType.includes('text/event-stream') && await resolveProviderBodyKind(response) !== 'sse') {
         const metrics = createStreamMetrics('json');
-        const json = await response.json() as Record<string, unknown>;
+        const json = await readProviderJson(response, 'OpenAI Responses') as Record<string, unknown>;
         metrics.event();
         const toolActions = parseResponseActions(json.output);
         const text = typeof json.output_text === 'string' ? json.output_text : collectText(json.output);
@@ -151,7 +160,33 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
 
       const textParts: string[] = [];
       const thinkingParts: string[] = [];
-      const calls = new Map<string, { name: string; args: string; complete: boolean }>();
+      // Keyed by the function-call item's `call_id` when known, otherwise by its
+      // `item_id`. The delta events carry `item_id` (not `call_id`) and used to
+      // be looked up by `call_id`, so no delta ever landed: every tool call whose
+      // arguments streamed in was dropped and the turn ended on "(empty
+      // response)". A final `arguments` payload from *.done is authoritative.
+      const calls = new Map<string, { callId?: string; name: string; args: string; complete: boolean }>();
+      const itemKeys = new Map<string, string>();
+      const attribute = (event: Record<string, unknown>): { callId?: string; name: string; args: string; complete: boolean } | undefined => {
+        const itemId = typeof event.item_id === 'string' ? event.item_id : '';
+        if (itemId && itemKeys.has(itemId)) return calls.get(itemKeys.get(itemId)!);
+        if (typeof event.call_id === 'string' && calls.has(event.call_id)) return calls.get(event.call_id);
+        if (itemId && calls.has(itemId)) return calls.get(itemId);
+        return undefined;
+      };
+      const recordItem = (item: Record<string, unknown>, complete: boolean) => {
+        if (item.type !== 'function_call' || typeof item.name !== 'string') return;
+        const key = typeof item.call_id === 'string' && item.call_id ? item.call_id
+          : typeof item.id === 'string' && item.id ? item.id : '';
+        if (!key) return;
+        const entry = calls.get(key) ?? { name: '', args: '', complete: false };
+        entry.name = item.name;
+        if (typeof item.call_id === 'string' && item.call_id) entry.callId = item.call_id;
+        if (typeof item.arguments === 'string' && item.arguments) entry.args = item.arguments;
+        entry.complete = entry.complete || complete;
+        calls.set(key, entry);
+        if (typeof item.id === 'string' && item.id) itemKeys.set(item.id, key);
+      };
       const events: unknown[] = [];
       let responseId: string | undefined;
       let usage: ProviderResponse['usage'];
@@ -174,15 +209,28 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
           }
         } else if (type === 'response.output_item.added' || type === 'response.output_item.done') {
           const item = event.item && typeof event.item === 'object' ? event.item as Record<string, unknown> : {};
-          if (item.type === 'function_call' && typeof item.call_id === 'string' && typeof item.name === 'string') {
-            calls.set(item.call_id, { name: item.name, args: typeof item.arguments === 'string' ? item.arguments : '', complete: type.endsWith('done') });
-          }
+          if (item.type === 'function_call') recordItem(item, type.endsWith('done'));
         } else if (type === 'response.function_call_arguments.delta') {
-          const callId = typeof event.call_id === 'string' ? event.call_id : '';
-          if (callId) { const current = calls.get(callId) ?? { name: '', args: '', complete: false }; const delta = typeof event.delta === 'string' ? event.delta : ''; current.args += delta; metrics.output(delta); calls.set(callId, current); }
+          const delta = typeof event.delta === 'string' ? event.delta : '';
+          let current = attribute(event);
+          if (!current) {
+            // Some relays announce deltas before (or without) output_item.added.
+            const key = typeof event.item_id === 'string' ? event.item_id : typeof event.call_id === 'string' ? event.call_id : '';
+            if (!key) continue;
+            current = { name: '', args: '', complete: false };
+            calls.set(key, current);
+            if (typeof event.item_id === 'string') itemKeys.set(event.item_id, key);
+          }
+          current.args += delta;
+          if (delta) metrics.output(delta);
         } else if (type === 'response.function_call_arguments.done') {
-          const callId = typeof event.call_id === 'string' ? event.call_id : '';
-          if (callId && calls.has(callId)) calls.get(callId)!.complete = true;
+          const current = attribute(event);
+          // The done payload repeats the complete argument string; take it
+          // verbatim so a dropped delta cannot leave truncated JSON behind.
+          if (current) {
+            if (typeof event.arguments === 'string') current.args = event.arguments;
+            current.complete = true;
+          }
         } else if (type === 'response.completed') {
           const result = event.response && typeof event.response === 'object' ? event.response as Record<string, unknown> : {};
           if (typeof result.id === 'string') responseId = result.id;
@@ -192,10 +240,10 @@ export function createOpenAIResponsesProvider(options: OpenAIResponsesProviderOp
         }
       }
       const toolActions: AgentAction[] = [];
-      for (const [callId, call] of calls) {
+      for (const [key, call] of calls) {
         if (!call.complete || !call.name) continue;
         const input = parseToolArguments(call.args || '{}').input;
-        toolActions.push({ type: 'tool', tool: call.name, input, callId });
+        toolActions.push({ type: 'tool', tool: call.name, input, callId: call.callId ?? key });
       }
       const text = textParts.join('');
       const continuation = responseId && toolActions.length > 0 ? { responseId, pendingCalls: toolActions.filter((a): a is Extract<AgentAction, { type: 'tool' }> => a.type === 'tool').map((a) => ({ callId: a.callId!, name: a.tool })), status: 'pending' as const, updatedAt: new Date().toISOString() } : undefined;

@@ -124,6 +124,8 @@ type LedgerRow = {
   cacheEfficiency?: number;
   toolScope?: string;
   toolCount?: number;
+  /** 本 turn 的自动压缩支出（真实 token）；有它表示该 turn 触发过压缩。 */
+  autoCompact?: { calls?: number; outcome?: 'completed' | 'failed' | 'cancelled' };
 };
 
 // ---------------------------------------------------------------------------
@@ -171,9 +173,19 @@ export type RoundRow = {
   repayed: boolean;
   /**
    * 本轮 cacheRead / 上一轮 prompt —— 提供者视角的"前缀被复用了多少"。
-   * 第一轮没有上一轮，为 null。
+   * 上一轮没有 prompt、或任一轮没有 provider usage 时为 null（不是"复用 0%"）。
+   * 比值上限为 1：见 `reuseCapped`。
    */
   observedReuse: number | null;
+  /**
+   * provider 报回的 cacheRead 大于上一轮整个 prompt。复用比例不可能超过 1 ——
+   * 上一轮没算进 prompt 的字节（system/工具段的差异、预算裁剪、或中转自身的
+   * 计数口径）被算成了"命中"。此时 `observedReuse` 记 1，这里记 true，异常可见
+   * 而不是被一个 >1 的比值悄悄带进 APPEND 判据。
+   */
+  reuseCapped?: boolean;
+  /** 本轮的轨迹记录是否带 provider usage；false 时 promptTokens=0 不代表空 prompt。 */
+  usageRecorded?: boolean;
   /**
    * `repayed` 的子集：本轮重付了，但提供者仍复用了 ≥ HEALTHY_HIT_RATE 的上一轮
    * 前缀 —— 钱花在"这一轮一次性追加了大量新内容"，不是前缀被重建。
@@ -268,6 +280,8 @@ export type RoundPairRow = {
   prefixEvidence: string[];
   /** 提供者自己的回答：本轮 cacheRead / 上一轮 prompt。1 ≈ 整段前缀被复用。 */
   observedReuse: number | null;
+  /** 比值被上限截到 1（provider 报的 cacheRead 大于上一轮 prompt）。 */
+  reuseCapped?: boolean;
   /** 提供者否认复用（observedReuse < HEALTHY_HIT_RATE）。 */
   providerSawBreak: boolean | null;
   inputTokens: number;
@@ -334,6 +348,10 @@ export type ContextLedgerReport = {
      */
     appendDrivenRounds: number[];
     coldStartRounds: number[];
+    /** 没有 provider usage 记录的轮次：它们的 prompt 是"未知"，不是 0。 */
+    roundsMissingUsage: number[];
+    /** provider 报回的 cacheRead 大于上一轮 prompt、复用比被截到 1 的轮次。 */
+    reuseCappedRounds: number[];
     /** 健康轮净输入的 token 中位数，作为"增量该付多少"的基线。 */
     steadyStateInputBaseline: number;
     /**
@@ -417,6 +435,21 @@ function usageOf(record: TrajectoryRecord): RawUsage {
   return usage ?? {};
 }
 
+/**
+ * Whether this round's record carries provider usage at all.
+ *
+ * A round with `usage: undefined` is missing data (the mock provider, a trace
+ * failure, an older writer). Its `promptTokens` sums to 0, and a consumer that
+ * reads that as "the previous prompt was empty" draws a different conclusion
+ * than one that reads it as "unknown": the reuse ratio, `providerSawBreak` and
+ * the cold-start diagnosis all hinge on the difference.
+ */
+function hasUsage(record: TrajectoryRecord): boolean {
+  const usage = (record as unknown as { usage?: RawUsage }).usage;
+  if (!usage) return false;
+  return usage.inputTokens !== undefined || usage.cacheReadTokens !== undefined;
+}
+
 // ---------------------------------------------------------------------------
 // 纯计算（导出以便单独验证）
 // ---------------------------------------------------------------------------
@@ -437,12 +470,32 @@ export function median(values: number[]): number {
  * 提供者视角的复用率：本轮 cacheRead / 上一轮 prompt。1.00 ≈ 上一轮的前缀整段被复用。
  * 第一轮（没有上一轮）为 null。与 `hitRateOf` 不同，这个比值不受"本轮追加了多少新内容"影响，
  * 所以它能把"一次性大追加"和"前缀被重建"分开。
+ *
+ * 两个边界：
+ *  - 上一轮 prompt 为 0 时返回 null。0 在轨迹里既可能是"真的没有历史"，也可能是
+ *    "这一轮的记录没带 usage"；前者无从比较，后者是没有数据。把两者都记成 0%
+ *    会让 `providerSawBreak` 误报一次前缀重建。
+ *  - 比值封顶 1。见 `reuseCapped`。
  */
 export function observedReuseOf(
   previousPromptTokens: number,
   cacheReadTokens: number,
 ): number | null {
-  return previousPromptTokens > 0 ? cacheReadTokens / previousPromptTokens : null;
+  if (!(previousPromptTokens > 0)) return null;
+  if (!(cacheReadTokens > 0)) return 0;
+  return Math.min(1, cacheReadTokens / previousPromptTokens);
+}
+
+/**
+ * provider 报回的 cacheRead 是否超过了上一轮整个 prompt。
+ *
+ * 真实数据里出现过一次（`sess_20261026115924_c6ffef29` 第 86 轮：cacheRead
+ * 108,800 对上一轮 prompt 106,564，比值 1.021）。复用不可能超过上一轮发出去
+ * 的内容，超出的部分只能来自没被算进 prompt 的字节（工具段/system 差异、
+ * 预算裁剪、中转计数口径）。留一个显式标记，读数的人知道比值被截过。
+ */
+export function reuseCapped(previousPromptTokens: number, cacheReadTokens: number): boolean {
+  return previousPromptTokens > 0 && cacheReadTokens > previousPromptTokens;
 }
 
 /**
@@ -621,7 +674,17 @@ export function diagnoseRoundPairs(records: TrajectoryRecord[], rounds: RoundRow
     if (charsKnown && after.promptChars <= before.promptChars) evidence.push('prompt-chars-not-grown');
 
     const prevPrompt = prevRound?.promptTokens ?? 0;
-    const observedReuse = (curRound?.promptTokens ?? 0) > 0
+    // Same presence rule as the per-round loop: a round whose record carries no
+    // provider usage is missing data, not a 0-token prompt. Requiring the
+    // CURRENT round's usage (the old code tested `promptTokens > 0`) would have
+    // produced a 0 here — indistinguishable from "the provider reused nothing".
+    //
+    // `prevRound` is required too: it is the row this pair is compared against,
+    // and when round `i-1` fell outside the analysed window there is no previous
+    // prefix to measure even if its raw record happens to be on disk.
+    const curHasUsage = hasUsage(after);
+    const prevHasUsage = hasUsage(records[i - 1]);
+    const observedReuse = prevRound && curHasUsage && prevHasUsage
       ? observedReuseOf(prevPrompt, curRound?.cacheReadTokens ?? 0)
       : null;
 
@@ -640,6 +703,7 @@ export function diagnoseRoundPairs(records: TrajectoryRecord[], rounds: RoundRow
       toolSetOrderHash: surfaceAfter.orderHash,
       prevToolSetOrderHash: surfaceBefore.orderHash,
       observedReuse,
+      ...(reuseCapped(prevPrompt, curRound?.cacheReadTokens ?? 0) ? { reuseCapped: true } : {}),
       providerSawBreak: observedReuse === null ? null : observedReuse < HEALTHY_HIT_RATE,
       inputTokens: curRound?.inputTokens ?? 0,
       repayed: curRound?.repayed ?? false,
@@ -782,11 +846,21 @@ export async function buildReport(options: {
     const cacheReadTokens = usage.cacheReadTokens ?? 0;
     const turnIndex = turnOfRound[i];
     const turn = turnRows[turnIndex];
-    const repayed = inputTokens >= REPAY_MIN_INPUT_TOKENS && hitRateOf(inputTokens, cacheReadTokens) < HEALTHY_HIT_RATE;
+    // A round with no recorded usage cannot be classified as "repaid": its
+    // input is unknown, and the REPAY floor (≥5,000 net input) is a claim about
+    // real input. It also must not read as a healthy 0% — `usageRecorded`
+    // says which one it is.
+    const usageRecorded = hasUsage(record);
+    const repayed = usageRecorded && inputTokens >= REPAY_MIN_INPUT_TOKENS && hitRateOf(inputTokens, cacheReadTokens) < HEALTHY_HIT_RATE;
     // 与 diagnoseRoundPairs 同一口径：上一轮的 prompt 与 info，本轮的 cacheRead。
-    const previous = i > 0 ? usageOf(records[i - 1]) : null;
-    const previousPromptTokens = previous ? (previous.inputTokens ?? 0) + (previous.cacheReadTokens ?? 0) : 0;
-    const observedReuse = observedReuseOf(previousPromptTokens, cacheReadTokens);
+    // Both sides must have usage: a missing previous record is "unknown", not an
+    // empty prefix, and an empty prefix would turn the first measured round
+    // after it into an APPEND.
+    const previous = i > 0 ? records[i - 1] : null;
+    const previousPromptTokens = previous ? (usageOf(previous).inputTokens ?? 0) + (usageOf(previous).cacheReadTokens ?? 0) : 0;
+    const observedReuse = usageRecorded && previous && hasUsage(previous)
+      ? observedReuseOf(previousPromptTokens, cacheReadTokens)
+      : null;
     return {
       i,
       turn: turnIndex + 1,
@@ -800,6 +874,8 @@ export async function buildReport(options: {
       hitRate: hitRateOf(inputTokens, cacheReadTokens),
       repayed,
       observedReuse,
+      ...(reuseCapped(previousPromptTokens, cacheReadTokens) ? { reuseCapped: true } : {}),
+      usageRecorded,
       appendDriven: isAppendDriven(repayed, observedReuse),
       coldStart: i === 0,
       turnFirst: i === turn.firstRound,
@@ -813,7 +889,11 @@ export async function buildReport(options: {
   const toolDiagnosis = summarizePairs(pairs);
 
   // ---- 命中率汇总 ---------------------------------------------------------
-  const withUsage = rounds.filter((round) => round.promptTokens > 0);
+  // A round is in the cache statistics when its usage was recorded, even if the
+  // prompt was empty — `promptTokens > 0` silently dropped the legacy mock
+  // rounds (2,713 of 2,928 in the local corpus) and made `roundsWithUsage` mean
+  // something other than its name.
+  const withUsage = rounds.filter((round) => round.usageRecorded !== false);
   const totalInput = withUsage.reduce((sum, round) => sum + round.inputTokens, 0);
   const totalRead = withUsage.reduce((sum, round) => sum + round.cacheReadTokens, 0);
   const steadyStateInputBaseline = median(
@@ -906,11 +986,20 @@ export async function buildReport(options: {
   const allTurnsMatchLedger = turnRows.length > 0
     && ledgerRows.length > 0
     && turnRows.every((turn) => turn.ledgerMatches === true);
+  const compactBilledRounds = turnRows
+    .filter((turn) => ((turnLedger[turn.turn - 1] as LedgerRow | null)?.autoCompact?.calls ?? 0) > 0)
+    .map((turn) => turn.turn);
   if (allTurnsMatchLedger && drops.length > 0) {
     warnings.push(
       '台账逐 turn 的 token 与轨迹逐轮之和完全相等 —— 压缩的摘要请求本身'
-      + '（runAutoCompact 里直接调 provider.complete，不走主循环的 usageTotals）在两个产物里都没有计费，'
-      + '压缩的代价因此是隐形的：能看到的只有压缩后那一轮的重付。',
+      + '（runAutoCompact 里直接调 provider.complete，不走主循环的 usageTotals）只在台账的 `autoCompact` 块里计费，'
+      + '轨迹看不到它，而压缩后那一轮的重付是另一笔：两处都会被算进总花费，不要把它们当成同一笔。',
+    );
+  }
+  if (compactBilledRounds.length > 0) {
+    warnings.push(
+      `台账里有 ${compactBilledRounds.length} 个 turn 记录了压缩支出（turn ${compactBilledRounds.join(', ')}）：`
+      + '这部分是真实的 provider 计费，但不在轨迹的逐轮 usage 里，所以本报告的命中率与"超稳态多付"都不含它。',
     );
   }
 
@@ -942,6 +1031,8 @@ export async function buildReport(options: {
       repayedRounds: rounds.filter((round) => round.repayed).map((round) => round.i),
       appendDrivenRounds: rounds.filter((round) => round.appendDriven).map((round) => round.i),
       coldStartRounds: rounds.filter((round) => round.coldStart).map((round) => round.i),
+      roundsMissingUsage: rounds.filter((round) => round.usageRecorded === false).map((round) => round.i),
+      reuseCappedRounds: rounds.filter((round) => round.reuseCapped === true).map((round) => round.i),
       steadyStateInputBaseline,
       repayBreakdown,
     },
@@ -1169,9 +1260,11 @@ export function formatReport(report: ContextLedgerReport, options: { index?: num
     + `${'n'.padStart(4)} ${'fp'.padEnd(13)} flag`);
   for (const round of report.rounds) {
     const flags: string[] = [];
+    if (round.usageRecorded === false) flags.push('no-usage');
     if (round.coldStart) flags.push('cold-start');
     if (round.repayed) flags.push('REPAY');
     if (round.appendDriven) flags.push('APPEND');
+    if (round.reuseCapped) flags.push('reuse>1');
     if (round.surfaceChanged) flags.push('surface-changed');
     lines.push(
       `  ${String(round.i).padStart(3)} ${String(round.step).padStart(3)} ${String(round.turn).padStart(4)} `
@@ -1192,6 +1285,12 @@ export function formatReport(report: ContextLedgerReport, options: { index?: num
     + ` → ${cache.repayedRounds.join(', ') || '无'}`);
   lines.push(`  其中大追加轮（重付但上一轮前缀复用 ≥ 90%，低命中来自一次性新增内容而非前缀重建）：`
     + `${cache.appendDrivenRounds.length} 轮 → ${cache.appendDrivenRounds.join(', ') || '无'}`);
+  lines.push(`  无 usage 记录的轮次（prompt 未知，不是 0）：${cache.roundsMissingUsage.length} 轮`
+    + ` → ${cache.roundsMissingUsage.join(', ') || '无'}`);
+  if (cache.reuseCappedRounds.length > 0) {
+    lines.push(`  provider 报回 cacheRead > 上一轮 prompt、复用比已截到 1：${cache.reuseCappedRounds.length} 轮`
+      + ` → ${cache.reuseCappedRounds.join(', ')}（超出的部分不在上一轮 prompt 的计数里，不要按 >1 的比值解读）`);
+  }
   const breakdown = cache.repayBreakdown;
   const share = (tokens: number) => (cache.totalInputTokens > 0 ? `${((tokens / cache.totalInputTokens) * 100).toFixed(1)}%` : 'n/a');
   lines.push('  重付拆成两处（修法不同，不能混着说"命中率低"）：');

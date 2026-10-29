@@ -14,12 +14,44 @@ import { suggestReviewers } from './reviewers.js';
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Reject a ref before git sees it.
+ *
+ * `execFile` prevents shell injection but NOT option injection: argv goes to git
+ * verbatim, and git treats a leading `-` as an option. `base: "--output=src/x.ts"`
+ * made `git diff` write the patch over a source file (verified), and
+ * `--ext-diff` runs an external diff driver — i.e. an arbitrary program — so a
+ * model-chosen `base` was a write/execute primitive inside a `risk: 'read'` tool.
+ *
+ * Revision syntax (`main..x`, `HEAD~3`, `v1.0^{commit}`) is still allowed: those
+ * are arguments to `git diff`, not options. What is refused is anything a shell
+ * or argument parser would re-read: a leading `-`, whitespace, control bytes.
+ */
+function hasWhitespaceOrControl(value: string): boolean {
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code <= 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function assertRef(value: string, field: string): string {
+  if (!value || value.startsWith('-') || hasWhitespaceOrControl(value)) {
+    throw new Error(`非法的 ${field} 引用：${value}（不能为空、不能以 - 开头，不能含空白或控制字符）`);
+  }
+  return value;
+}
+
 async function collectDiffText(workspaceRoot: string, base?: string, head?: string): Promise<string> {
   const args = ['diff'];
   if (base && head) {
-    args.push(`${base}...${head}`);
+    args.push(`${assertRef(base, 'base')}...${assertRef(head, 'head')}`);
   } else if (base) {
-    args.push(base);
+    args.push(assertRef(base, 'base'));
+  } else if (head) {
+    // A `head` without `base` used to be dropped on the floor: the tool reviewed
+    // the working tree and said nothing about the ref it was given.
+    args.push(assertRef(head, 'head'));
   }
   args.push('--');
   const { stdout } = await execFileAsync('git', args, {
@@ -42,9 +74,12 @@ export const reviewPrTool: ToolDefinition<{
   validate(input) {
     if (typeof input !== 'object' || input === null) throw new Error('expected an object');
     const record = input as Record<string, unknown>;
+    // Validate here as well as in collectDiffText: a bad ref must be refused even
+    // when a `diff` string is supplied alongside it, so the user is not told the
+    // tool accepted arguments it would silently ignore.
     return {
-      base: typeof record.base === 'string' ? record.base : undefined,
-      head: typeof record.head === 'string' ? record.head : undefined,
+      base: typeof record.base === 'string' ? assertRef(record.base, 'base') : undefined,
+      head: typeof record.head === 'string' ? assertRef(record.head, 'head') : undefined,
       diff: typeof record.diff === 'string' ? record.diff : undefined,
     };
   },
@@ -90,8 +125,8 @@ export const suggestReviewersTool: ToolDefinition<{
     if (typeof input !== 'object' || input === null) throw new Error('expected an object');
     const record = input as Record<string, unknown>;
     return {
-      base: typeof record.base === 'string' ? record.base : undefined,
-      head: typeof record.head === 'string' ? record.head : undefined,
+      base: typeof record.base === 'string' ? assertRef(record.base, 'base') : undefined,
+      head: typeof record.head === 'string' ? assertRef(record.head, 'head') : undefined,
       diff: typeof record.diff === 'string' ? record.diff : undefined,
       max: typeof record.max === 'number' && record.max > 0 ? Math.floor(record.max) : 5,
     };

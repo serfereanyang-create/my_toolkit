@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { appendFile, chmod, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { resolve, basename, join } from 'node:path';
 import { test } from 'node:test';
 import { GitAuditLog } from '../src/git-safety/audit.js';
-import { GitSnapshotDiff } from '../src/git-safety/diff.js';
+import { GitSnapshotDiff, ensureInsideWorkspace } from '../src/git-safety/diff.js';
 import {
   GitCommandError,
   GitProcess,
@@ -959,6 +959,31 @@ test('GitSafetyService finishes a unit at most once', async () => {
     const finishedEvents = (await audit.read()).events.filter((event) => event.type === 'unit_finished');
     assert.equal(finishedEvents.length, 1);
   } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('ensureInsideWorkspace rejects a sibling directory whose NAME starts with the workspace name', async () => {
+  /*
+   * A string-prefix check (`path.startsWith(workspace)`) accepts `work-evil`
+   * as inside `work`. Segment-wise containment is the only correct test.
+   */
+  const fixture = await makeTempWorkspace('inside-workspace');
+  const workspace = fixture.root;
+  const sibling = join(workspace, '..', `${basename(workspace)}-evil`);
+  try {
+    await mkdir(sibling, { recursive: true });
+    const insideFile = join(workspace, 'ok.txt');
+    await assert.doesNotReject(() => ensureInsideWorkspace(workspace, insideFile));
+    await assert.rejects(
+      () => ensureInsideWorkspace(workspace, join(sibling, 'secret.txt')),
+      /escapes workspace/,
+      'a sibling named <workspace>-evil must not count as inside the workspace',
+    );
+    // The workspace root itself is inside.
+    await assert.doesNotReject(() => ensureInsideWorkspace(workspace, workspace));
+  } finally {
+    await rm(sibling, { recursive: true, force: true });
     await fixture.cleanup();
   }
 });

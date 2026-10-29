@@ -38,6 +38,8 @@ export async function readPackageVersion(startUrl: string): Promise<string> {
   // The version is cosmetic; a missing manifest must not break startup.
   if (!root) return '0.0.0';
 
-  const parsed = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8')) as { version?: string };
-  return parsed.version ?? '0.0.0';
+  // The manifest is hand-editable; `version: 2` or a missing field must not
+  // travel on as a "string" into the banner and the JSON events.
+  const parsed = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8')) as { version?: unknown };
+  return typeof parsed.version === 'string' && parsed.version ? parsed.version : '0.0.0';
 }

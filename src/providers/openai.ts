@@ -1,10 +1,12 @@
-import type { AgentAction, Provider, ProviderRequest, ProviderResponse, ReasoningEffort } from './types.js';
+import type { AgentAction, Provider, ProviderRequest, ProviderResponse } from './types.js';
 import { openaiReasoningEffort } from './reasoning.js';
 import {
   fetchWithRetry,
   iterateSseDataLines,
   parseOpenAIToolCalls,
   parseToolActions,
+  readProviderJson,
+  resolveProviderBodyKind,
   toOpenAITools,
   toToolAwareMessages,
 } from './protocol.js';
@@ -134,6 +136,12 @@ async function completeStreaming(options: {
     if (options.tools.length > 0) {
       body.tools = options.tools;
       body.tool_choice = 'auto';
+      // Every wire format's system prompt asks for exactly one tool call per
+      // turn; without this field the chat/completions and Responses formats let
+      // the model batch several calls while the Anthropic format (no such knob)
+      // could only ever return a sequence. The prompt was enforceable on one
+      // wire and advisory on the others.
+      body.parallel_tool_calls = false;
     }
     if (withExtras && options.reasoningEffort) body.reasoning_effort = options.reasoningEffort;
     if (withExtras && options.vendorExtra) Object.assign(body, options.vendorExtra);
@@ -160,6 +168,13 @@ async function completeStreaming(options: {
     response = await post(false);
   }
   if (!response.ok) throw new Error(`OpenAI request failed: ${response.status} ${await response.text()}`);
+
+  // Some proxies answer a stream request with a plain completion and a loose
+  // content type; read those as JSON rather than yielding an empty answer.
+  if (await resolveProviderBodyKind(response) !== 'sse') {
+    const json = await readProviderJson(response, 'OpenAI') as CompletionJson;
+    return responseFromCompletionJson(json, options.vendor);
+  }
 
   const contentParts: string[] = [];
   const reasoningParts: string[] = [];
@@ -245,7 +260,6 @@ async function completeNonStreaming(options: {
   vendorExtra?: Record<string, unknown>;
   vendor?: VendorProfile;
 }): Promise<ProviderResponse> {
-  const metrics = createStreamMetrics('json');
   const buildBody = (withExtras: boolean): Record<string, unknown> => {
     const body: Record<string, unknown> = {
       model: options.model,
@@ -256,6 +270,7 @@ async function completeNonStreaming(options: {
     if (options.tools.length > 0) {
       body.tools = options.tools;
       body.tool_choice = 'auto';
+      body.parallel_tool_calls = false;
     }
     if (withExtras && options.reasoningEffort) body.reasoning_effort = options.reasoningEffort;
     if (withExtras && options.vendorExtra) Object.assign(body, options.vendorExtra);
@@ -281,21 +296,29 @@ async function completeNonStreaming(options: {
     response = await post(false);
   }
   if (!response.ok) throw new Error(`OpenAI request failed: ${response.status} ${await response.text()}`);
-  const json = (await response.json()) as {
-    usage?: VendorOpenAIUsage;
-    choices?: Array<{
-      message?: {
-        content?: string | null;
-        reasoning_content?: string | null;
-        tool_calls?: Array<{
-          id?: string;
-          function?: { name?: string; arguments?: string };
-        }>;
-      };
-    }>;
-  };
+  const json = await readProviderJson(response, 'OpenAI') as CompletionJson;
+  return responseFromCompletionJson(json, options.vendor);
+}
+
+type CompletionJson = {
+  usage?: VendorOpenAIUsage;
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+      reasoning_content?: string | null;
+      tool_calls?: Array<{
+        id?: string;
+        function?: { name?: string; arguments?: string };
+      }>;
+    };
+  }>;
+};
+
+/** Shared by the non-streaming path and a stream request the endpoint answered in JSON. */
+function responseFromCompletionJson(json: CompletionJson, vendor?: VendorProfile): ProviderResponse {
+  const metrics = createStreamMetrics('json');
   metrics.event();
-  const usage = usageFromOpenAI(json.usage, options.vendor);
+  const usage = usageFromOpenAI(json.usage, vendor);
   const message = json.choices?.[0]?.message;
   const content = typeof message?.content === 'string' ? message.content : '';
   // 非流式下部分厂商把推理文本放在 message.reasoning_content

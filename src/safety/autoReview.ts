@@ -206,6 +206,12 @@ export function isReviewable(request: ApprovalRequest): boolean {
  * a good one; in both cases continuing to consult it wastes a model call per
  * tool and makes the agent look stalled. After the limit, stop asking and let
  * the user decide.
+ *
+ * The streak is cleared by an allow or an abstain: this is a deliberate choice
+ * (the limit is about a run of refusals), pinned by `tests/auto-review.test.ts`.
+ * It does mean three denials spread across a long turn with benign calls
+ * between them never reach the limit — noted for the owner of that file rather
+ * than changed here, because the reset is a product decision, not a defect.
  */
 export class AutoReviewGate {
   private denials = 0;
@@ -218,8 +224,6 @@ export class AutoReviewGate {
 
   record(decision: AutoReviewDecision): void {
     if (decision.decision === 'deny') this.denials += 1;
-    // An allow or an abstain clears the streak: the reviewer is functioning, so
-    // the limit is about a run of refusals, not a lifetime count.
     else this.denials = 0;
   }
 

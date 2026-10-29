@@ -78,7 +78,6 @@ export interface CodeGraph {
 export interface GraphQueryResult {
   /** 查询的起始节点 */
   target: string;
-  /** 查询方向 */
   direction: 'callers' | 'callees' | 'both';
   /** 匹配的节点列表 */
   nodes: Array<{
@@ -92,6 +91,15 @@ export interface GraphQueryResult {
   totalCount: number;
   /** true 表示命中数达到 maxResults 上限，可能还有更多未列出的节点 */
   truncated?: boolean;
+  /**
+   * 与 target 同名、但本次未被作为起点的节点。非空表示 target 有歧义：
+   * 调用方要么显示这些候选，要么改用 nodeId 精确指定。
+   */
+  ambiguous?: GraphNode[];
+  /** true 表示没有精确匹配，结果是按名称子串猜出来的候选。 */
+  partialMatch?: boolean;
+  /** 本次实际用作 BFS 起点的节点（歧义时为全部同名节点）。 */
+  startNodes?: string[];
 }
 
 /**
@@ -108,6 +116,10 @@ export interface ImpactAnalysisResult {
   affectedFiles: string[];
   /** 风险等级 */
   risk: 'low' | 'moderate' | 'high' | 'critical';
+  /** 与 symbol 同名、一起被纳入分析的节点（>1 时说明名字有歧义）。 */
+  matchedNodes?: GraphNode[];
+  /** 本次实际分析的全部起始节点 ID。 */
+  startNodes?: string[];
 }
 
 /**

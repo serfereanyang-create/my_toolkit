@@ -23,7 +23,8 @@ import { compareToolNames } from '../src/session/modelTrajectory.js';
  * number that has to be consciously updated instead of silently drifting.
  *
  * The chain (src/agent/agent.ts:716-809):
- *   registry.list()            -> sorted by localeCompare, the whole registry
+ *   registry.list()            -> sorted by compareToolNames (UTF-16 code
+ *                                 unit), the whole registry
  *   selectScopedTools()        -> filter only, order preserved
  *   [post-scope injections]    -> spawn/computer/plan/supervisor tools
  *   limitProviderTools()       -> rank + truncate at MAX_PROVIDER_TOOLS, then
@@ -39,7 +40,10 @@ const REGISTRY_READ_ONLY = 294;
 
 const MATRIX: Record<ResolvedToolScope, { all: number; readOnly: number; sent: number }> = {
   compact: { all: 200, readOnly: 197, sent: 200 },
-  standard: { all: 332, readOnly: 294, sent: 332 },
+  // 333 since run_script joined STANDARD_EXTRA_ALLOW (2026-10-29, tool-surface
+  // audit): it is shell-risk, so the standard read-only rule could never reach
+  // it, and its absence pushed the agent to hand-written `run_command`.
+  standard: { all: 333, readOnly: 294, sent: 333 },
   full: { all: 363, readOnly: 294, sent: 340 },
 };
 
@@ -65,13 +69,14 @@ test('the registry chain starts from one sorted list of 363 tools', () => {
   assert.equal(all.length, REGISTRY_SIZE);
   assert.equal(all.filter(isReadOnlyTool).length, REGISTRY_READ_ONLY);
 
-  // registry.list() sorts with localeCompare; that is the order every scope
-  // inherits, and it is NOT the UTF-16 order the ledger canonicalises with
-  // (see the next test). Pinned so "which sort is it" is never guessed again.
+  // registry.list() sorts with compareToolNames (UTF-16 code unit). It used
+  // to be localeCompare, which is neither total nor machine-stable; the
+  // registry only ever holds `[a-z][a-z0-9_]*` names today, but the sort must
+  // not start depending on ICU or on insertion order the moment it does not.
   assert.deepEqual(
     all.map((tool) => tool.name),
-    all.map((tool) => tool.name).sort((a, b) => a.localeCompare(b)),
-    'registry.list() must stay alphabetically sorted',
+    all.map((tool) => tool.name).sort(compareToolNames),
+    'registry.list() must stay deterministically sorted',
   );
 
   // The risk histogram the read-only count is derived from. `read` is 295 but
@@ -83,11 +88,13 @@ test('the registry chain starts from one sorted list of 363 tools', () => {
   assert.equal(all.filter((tool) => tool.risk === 'read').length - all.filter((tool) => isReadOnlyTool(tool)).length, 1);
 });
 
-test('registry.list() and the ledger canonical form disagree on three names', () => {
+test('the two comparators disagree on three names, which is why sent order is byte order', () => {
   // 'base_convert' sorts before 'base64_*' under localeCompare because ICU
-  // weighs '_' and digits differently; byte order puts 'base64_*' first. Only
-  // these three positions differ, so any consumer that compares the sent array
-  // against a locale-sorted expectation must expect this block to move.
+  // weighs '_' and digits differently; code-unit order puts 'base64_*' first.
+  // Until 2026-10-29 registry.list() used the locale comparator and the ledger
+  // canonicalised with the code-unit one, so the two disagreed here; the sent
+  // array is now canonical order, and this test keeps the ICU difference
+  // visible so nobody "restores" localeCompare thinking it is equivalent.
   const names = registry().list().map((tool) => tool.name);
   const locale = [...names].sort((a, b) => a.localeCompare(b));
   const codeUnit = [...names].sort(compareToolNames);
@@ -117,18 +124,18 @@ test('every scope matches the matrix: total, read-only subset, sent count', () =
   }
 });
 
-test('the sent array is alphabetical in registry.list() order for every scope', () => {
-  // The corrected invariant: every scope is sorted with the SAME comparator
-  // registry.list() uses (localeCompare), including after the cap. It is not
-  // UTF-16 code-unit order — that form is what the ledger canonicalises with,
-  // and it disagrees at the base64 block. Asserting code-unit order here would
-  // pin the wrong invariant and fail on three names.
+test('the sent array is in the canonical (byte) order for every scope', () => {
+  // Every scope is sorted with the same comparator the registry and the ledger
+  // use, including after the cap. The evidence is checked against a
+  // comparator that is total (0 only for equal strings): a locale sort would
+  // leave the base64 block in the other order, and on ties would be free to
+  // follow insertion order.
   for (const scope of ['compact', 'standard', 'full'] as const) {
     const sent = limitProviderTools(selectScopedTools(registry(), scope)).tools.map((tool) => tool.name);
-    assert.deepEqual(sent, [...sent].sort((a, b) => a.localeCompare(b)), `${scope}: sent order`);
-    // And it must genuinely differ from the canonical form, or this whole
-    // distinction is moot.
-    assert.notDeepEqual(sent, [...sent].sort(compareToolNames), `${scope}: expected the locale/code-unit split to exist`);
+    assert.deepEqual(sent, [...sent].sort(compareToolNames), `${scope}: sent order`);
+    for (let i = 1; i < sent.length; i++) {
+      assert.ok(compareToolNames(sent[i - 1]!, sent[i]!) < 0, `${scope}: ${sent[i - 1]} and ${sent[i]} are not strictly ordered`);
+    }
   }
 });
 
@@ -254,15 +261,15 @@ test('an unknown scope fails closed to compact, the defect this file used to rep
   assert.ok(!unknown.has('run_tests'), 'unknown scope is not standard either');
 });
 
-test('post-scope injections push standard to 335 outbound, still under the cap', () => {
-  // selectScopedTools counts 332 for standard, but the request carries three
+test('post-scope injections push standard to 336 outbound, still under the cap', () => {
+  // selectScopedTools counts 333 for standard, but the request carries three
   // tools it cannot see (agent.ts:777-791). The headroom the cap leaves must
-  // cover them; this is the arithmetic that keeps 335 < 340.
+  // cover them; this is the arithmetic that keeps 336 < 340.
   const standard = scopedNames('standard');
   const absent = POST_SCOPE_ONLY.filter((name) => !standard.includes(name));
   assert.deepEqual([...absent], [...POST_SCOPE_ONLY], 'these three are not pre-registered');
-  assert.equal(standard.length + absent.length, 335);
-  assert.ok(335 <= MAX_PROVIDER_TOOLS);
+  assert.equal(standard.length + absent.length, 336);
+  assert.ok(336 <= MAX_PROVIDER_TOOLS);
 });
 
 test('the ledger counts belong to an older tree, not to a scope this one produces', () => {
@@ -277,7 +284,7 @@ test('the ledger counts belong to an older tree, not to a scope this one produce
     ...['compact', 'standard', 'full'].map((scope) => scopedNames(scope as ResolvedToolScope).length),
     ...Object.values(MATRIX).map((row) => row.sent),
   ]);
-  assert.deepEqual([...reproducible].sort((a, b) => a - b), [200, 332, 340, 363]);
+  assert.deepEqual([...reproducible].sort((a, b) => a - b), [200, 333, 340, 363]);
   for (const recorded of [238, 274, 260]) {
     assert.ok(!reproducible.has(recorded), `${recorded} must not be claimed as a current scope count`);
   }
@@ -287,7 +294,7 @@ test('desktop switches explain why live counts differ from the static matrix', (
   // Static selection + the post-scope tools that are not pre-registered is the
   // live surface. On this tree, with every desktop switch on:
   //   compact  200 + 39 = 239
-  //   standard 332 + 37 = 369 -> capped to 340
+  //   standard 333 + 37 = 370 -> capped to 340
   //   full     363 + 37 = 400 -> capped to 340
   // compact is missing the two delegation tools as well (they are not in
   // COMPACT_ALLOW), which is why its post-scope delta is 39 and not 37.
@@ -319,7 +326,7 @@ test('desktop switches explain why live counts differ from the static matrix', (
 
   const live = (scope: ResolvedToolScope) => scopedNames(scope).length + delta(scope);
   assert.equal(live('compact'), 239);
-  assert.equal(live('standard'), 369);
+  assert.equal(live('standard'), 370);
   assert.equal(live('full'), 400);
 
   // The cap is what makes a desktop-loaded standard and a full both land on 340.

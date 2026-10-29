@@ -50,6 +50,8 @@ export type McpServerStatus = {
   connected: boolean;
   toolCount: number;
   error?: string;
+  /** Non-fatal load problems, e.g. tool names skipped because they collided. */
+  warning?: string;
   command: string;
 };
 

@@ -55,8 +55,14 @@ export type UsageLedgerEntry = {
     calls: number;
     inputTokens: number;
     outputTokens: number;
-    /** completed = 历史已替换；failed = 摘要失败，历史原样保留，钱照样花了。 */
-    outcome: 'completed' | 'failed';
+    /**
+     * completed = 历史已替换；failed = 摘要失败，历史原样保留，钱照样花了；
+     * cancelled = 用户在摘要请求进行中取消。取消与失败分开记，因为它们对成本
+     * 分析的含义不同：取消不是供应商故障，也不会在下一轮重演。
+     * （runAutoCompact 本身分不出这两者——它把两者都报成 failed 再抛 abort，
+     * 由 agent 的 turn 取消路径折成 cancelled。）
+     */
+    outcome: 'completed' | 'failed' | 'cancelled';
   };
   /** 任务板关联：turn 属于某个任务板的任务时填充。 */
   boardId?: string;

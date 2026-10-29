@@ -87,30 +87,44 @@ export interface RegressionResult {
 
 /**
  * 统计计算
+ *
+ * 空样本（iterations: 0，或 warmup 后立刻命中 maxTime）以前会产出
+ * `mean: NaN / min: undefined / p95: undefined`，这些值一路流到
+ * generateComparisonReport 的 `toFixed()` 上直接抛异常。现在空样本返回
+ * 全 0 统计，百分位改用 nearest-rank 且夹在 [0, n-1]。
  */
 function calculateStatistics(values: number[]): BenchmarkResult['statistics'] {
   const sorted = [...values].sort((a, b) => a - b);
   const n = sorted.length;
-  
+
+  if (n === 0) {
+    return { mean: 0, median: 0, min: 0, max: 0, stdDev: 0, variance: 0, p95: 0, p99: 0 };
+  }
+
   const mean = values.reduce((a, b) => a + b, 0) / n;
-  const median = n % 2 === 0 
-    ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2 
-    : sorted[Math.floor(n / 2)];
-  
-  const min = sorted[0];
-  const max = sorted[n - 1];
-  
+  const median = n % 2 === 0
+    ? ((sorted[n / 2 - 1] ?? 0) + (sorted[n / 2] ?? 0)) / 2
+    : sorted[Math.floor(n / 2)] ?? 0;
+
+  const min = sorted[0] ?? 0;
+  const max = sorted[n - 1] ?? 0;
+
   const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / n;
   const stdDev = Math.sqrt(variance);
-  
-  const p95 = sorted[Math.floor(n * 0.95)];
-  const p99 = sorted[Math.floor(n * 0.99)];
-  
+
+  const percentile = (p: number) => sorted[Math.max(0, Math.min(n - 1, Math.ceil(p * n) - 1))] ?? max;
+  const p95 = percentile(0.95);
+  const p99 = percentile(0.99);
+
   return { mean, median, min, max, stdDev, variance, p95, p99 };
 }
 
 /**
  * 执行基准测试
+ *
+ * minTime 以前是个死参数：循环只跑 `iterations` 次，`if (totalTime < minTime
+ * && i === iterations - 1) { // 不增加 i }` 什么也不做。现在真正按 minTime
+ * 补跑到上限（额外样本封顶，避免 1µs 级函数把 runs 数组撑爆内存）。
  */
 export async function benchmark(
   name: string,
@@ -120,57 +134,77 @@ export async function benchmark(
   const {
     warmupRuns = 5,
     iterations = 100,
-    minTime = 1000,
     maxTime = 30000,
     measureMemory = false,
   } = options;
-  
+  // minTime 只在调用方显式给出时生效（默认值以前形同虚设，补跑会让
+  // 只想要 N 次样本的调用方慢一个量级）。
+  const minTime = options.minTime;
+
   const runs: BenchmarkRun[] = [];
   let totalIterations = 0;
   let totalTime = 0;
-  
+
+  // 显式 iterations <= 0 表示"不采样"：返回全 0 的空结果，而不是被 minTime
+  // 再补跑出上千条样本（以前这条路径产出 NaN，报告层直接崩）。
+  if (iterations <= 0) {
+    return {
+      name,
+      runs,
+      statistics: calculateStatistics(runs.map((run) => run.duration)),
+      iterationsPerSecond: 0,
+      totalIterations: 0,
+      totalTime: 0,
+    };
+  }
+
   // 预热
   for (let i = 0; i < warmupRuns; i++) {
     await fn();
   }
-  
+
   // 清理垃圾
   if (global.gc) {
     global.gc();
   }
-  
+
   const startTime = performance.now();
-  
+  const maxRuns = Math.max(iterations, 1) + 1000;
+
   // 运行测试
   for (let i = 0; i < iterations; i++) {
+    await runOnce();
+  }
+  // minTime 补跑：样本封顶 maxRuns，maxTime 仍优先。
+  while (minTime !== undefined && totalTime < minTime && runs.length < maxRuns && totalTime < maxTime) {
+    await runOnce();
+  }
+
+  async function runOnce() {
     const memBefore = measureMemory ? process.memoryUsage().heapUsed : 0;
     const runStart = performance.now();
-    
-    await fn();
-    
+
+    // 以前是 `await fn()`：同步函数每一次迭代都白付一个微任务，测出来的
+    // "函数耗时" 其实是调度开销。同步路径保持直调；只有真正返回 Promise
+    // 时才等它结束（否则统计的只是 Promise 的创建开销）。
+    const value = fn();
+    if (value && typeof (value as Promise<void>).then === 'function') {
+      await (value as Promise<void>);
+    }
+    record(runStart, memBefore);
+  }
+
+  function record(runStart: number, memBefore: number) {
     const runEnd = performance.now();
     const memAfter = measureMemory ? process.memoryUsage().heapUsed : 0;
-    
     const duration = runEnd - runStart;
-    
     runs.push({
       duration,
       memoryUsed: measureMemory ? Math.max(0, memAfter - memBefore) : undefined,
       iterationsPerSecond: duration > 0 ? 1000 / duration : 0,
     });
-    
     totalIterations++;
     totalTime = runEnd - startTime;
-    
-    // 检查时间限制
-    if (totalTime >= maxTime) {
-      break;
-    }
-    
-    // 如果还没到最小时间，继续运行
-    if (totalTime < minTime && i === iterations - 1) {
-      // 不增加 i，继续循环
-    }
   }
   
   // 计算统计
@@ -181,13 +215,14 @@ export async function benchmark(
   if (measureMemory) {
     const memoryValues = runs.map(r => r.memoryUsed || 0);
     memoryStatistics = {
-      mean: memoryValues.reduce((a, b) => a + b, 0) / memoryValues.length,
-      max: Math.max(...memoryValues),
+      mean: memoryValues.length > 0 ? memoryValues.reduce((a, b) => a + b, 0) / memoryValues.length : 0,
+      max: memoryValues.length > 0 ? memoryValues.reduce((a, b) => Math.max(a, b), 0) : 0,
       peak: process.memoryUsage().heapUsed,
     };
   }
-  
-  const iterationsPerSecond = totalIterations / (totalTime / 1000);
+
+  // totalTime 为 0（空样本或首轮即 maxTime 中断）时以前是 Infinity/NaN。
+  const iterationsPerSecond = totalTime > 0 ? totalIterations / (totalTime / 1000) : 0;
   
   return {
     name,
@@ -202,6 +237,11 @@ export async function benchmark(
 
 /**
  * 对比两个基准测试
+ *
+ * baselineMean 为 0 时 percentChange 以前是 NaN/Infinity，detectRegression
+ * 会据此判出 "critical 回归"；两边都是 0（例如 iterations: 0 的空样本）
+ * 时又是 NaN。现在：两边都为 0 视为无变化；只有一侧为 0 用一个显式的
+ * 无穷大/负无穷大表示，报告层格式化成文字而不是 "Infinity%"。
  */
 export function compareBenchmarks(
   baseline: BenchmarkResult,
@@ -209,30 +249,44 @@ export function compareBenchmarks(
 ): ComparisonResult {
   const baselineMean = baseline.statistics.mean;
   const candidateMean = candidate.statistics.mean;
-  
-  const speedup = baselineMean / candidateMean;
-  const percentChange = ((candidateMean - baselineMean) / baselineMean) * 100;
-  
+
+  let speedup: number;
+  let percentChange: number;
+  if (baselineMean === 0 && candidateMean === 0) {
+    speedup = 1;
+    percentChange = 0;
+  } else if (baselineMean === 0) {
+    speedup = Number.POSITIVE_INFINITY;
+    percentChange = Number.POSITIVE_INFINITY;
+  } else {
+    speedup = baselineMean / candidateMean;
+    percentChange = ((candidateMean - baselineMean) / baselineMean) * 100;
+  }
+
   // 简单的统计显著性检验（t-test 简化版）
   const pooledStdDev = Math.sqrt(
     (baseline.statistics.variance + candidate.statistics.variance) / 2
   );
   const standardError = pooledStdDev * Math.sqrt(
-    1 / baseline.runs.length + 1 / candidate.runs.length
+    1 / Math.max(1, baseline.runs.length) + 1 / Math.max(1, candidate.runs.length)
   );
-  const tStat = Math.abs(baselineMean - candidateMean) / standardError;
-  const isSignificant = tStat > 2; // 简化，实际应查 t 分布表
-  
+  const tStat = standardError > 0
+    ? Math.abs(baselineMean - candidateMean) / standardError
+    : (baselineMean === candidateMean ? 0 : Number.POSITIVE_INFINITY);
+  const isSignificant = tStat > 2;
+
   let verdict: ComparisonResult['verdict'] = 'similar';
-  
-  if (isSignificant) {
+
+  if (isSignificant && Number.isFinite(speedup)) {
     if (speedup > 1.05) {
       verdict = 'faster';
     } else if (speedup < 0.95) {
       verdict = 'slower';
     }
+  } else if (isSignificant) {
+    verdict = 'slower'; // 基准为 0、候选非 0：只能确定"变慢了"
   }
-  
+
   return {
     baseline,
     candidate,
@@ -386,63 +440,73 @@ export function generateBenchmarkReport(results: BenchmarkResult[]): string {
 
 /**
  * 生成对比报告
+ *
+ * 数字一律经过 `fixed()`：Infinity / NaN（基准耗时为 0 等退化样本）以前会
+ * 原样进模板，产出 "Infinity%" 或直接抛异常。
  */
 export function generateComparisonReport(comparison: ComparisonResult): string {
   const lines: string[] = [];
-  
+  const fixed = (value: number, digits = 3) => (Number.isFinite(value) ? value.toFixed(digits) : 'n/a');
+  const pct = (value: number) => (Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(2)}%` : 'n/a');
+
   lines.push('# 性能对比报告\n');
-  
+
   lines.push(`**基准:** ${comparison.baseline.name}`);
   lines.push(`**候选:** ${comparison.candidate.name}\n`);
-  
+
   // 结论
-  const icon = comparison.verdict === 'faster' ? '✅' : 
+  const icon = comparison.verdict === 'faster' ? '✅' :
                comparison.verdict === 'slower' ? '❌' : 'ℹ️';
-  
+
   let conclusionText = '';
   if (comparison.verdict === 'faster') {
-    conclusionText = `候选版本更快，提升 ${((comparison.speedup - 1) * 100).toFixed(2)}%`;
+    conclusionText = Number.isFinite(comparison.speedup)
+      ? `候选版本更快，提升 ${((comparison.speedup - 1) * 100).toFixed(2)}%`
+      : '候选版本更快（基准耗时为 0，无法计算倍数）';
   } else if (comparison.verdict === 'slower') {
-    conclusionText = `候选版本更慢，下降 ${((1 - comparison.speedup) * 100).toFixed(2)}%`;
+    conclusionText = Number.isFinite(comparison.speedup)
+      ? `候选版本更慢，下降 ${((1 - comparison.speedup) * 100).toFixed(2)}%`
+      : '候选版本更慢（基准耗时为 0，候选未能保持）';
   } else {
     conclusionText = '两者性能相近，无显著差异';
   }
-  
+
   lines.push(`## ${icon} 结论\n`);
   lines.push(conclusionText);
   lines.push('');
-  
+
   // 详细数据
   lines.push('## 详细数据\n');
   lines.push('| 指标 | 基准 | 候选 | 变化 |');
   lines.push('|------|------|------|------|');
-  
+
   const metrics = [
     { name: '平均耗时', baseline: comparison.baseline.statistics.mean, candidate: comparison.candidate.statistics.mean, unit: 'ms' },
     { name: '中位数', baseline: comparison.baseline.statistics.median, candidate: comparison.candidate.statistics.median, unit: 'ms' },
     { name: 'P95', baseline: comparison.baseline.statistics.p95, candidate: comparison.candidate.statistics.p95, unit: 'ms' },
     { name: '吞吐量', baseline: comparison.baseline.iterationsPerSecond, candidate: comparison.candidate.iterationsPerSecond, unit: 'ops/s' },
   ];
-  
+
   for (const metric of metrics) {
-    const change = ((metric.candidate - metric.baseline) / metric.baseline) * 100;
-    const changeStr = change > 0 ? `+${change.toFixed(2)}%` : `${change.toFixed(2)}%`;
-    
+    const change = metric.baseline === 0
+      ? Number.NaN
+      : ((metric.candidate - metric.baseline) / metric.baseline) * 100;
+
     lines.push(
-      `| ${metric.name} | ${metric.baseline.toFixed(3)} ${metric.unit} | ` +
-      `${metric.candidate.toFixed(3)} ${metric.unit} | ${changeStr} |`
+      `| ${metric.name} | ${fixed(metric.baseline)} ${metric.unit} | ` +
+      `${fixed(metric.candidate)} ${metric.unit} | ${pct(change)} |`
     );
   }
-  
+
   lines.push('');
-  
+
   // 统计显著性
   lines.push('## 统计分析\n');
-  lines.push(`- **速度倍数:** ${comparison.speedup.toFixed(3)}x`);
-  lines.push(`- **百分比变化:** ${comparison.percentChange > 0 ? '+' : ''}${comparison.percentChange.toFixed(2)}%`);
+  lines.push(`- **速度倍数:** ${fixed(comparison.speedup)}x`);
+  lines.push(`- **百分比变化:** ${pct(comparison.percentChange)}`);
   lines.push(`- **统计显著性:** ${comparison.isSignificant ? '是' : '否'}`);
   lines.push('');
-  
+
   return lines.join('\n');
 }
 
@@ -496,10 +560,11 @@ export async function stressTest(
   const successRate = totalRuns > 0 ? (successCount / totalRuns) * 100 : 0;
   
   const totalTime = (performance.now() - startTime) / 1000; // 秒
-  const throughput = totalRuns / totalTime;
-  
+  const throughput = totalTime > 0 ? totalRuns / totalTime : 0;
+
   const latencies = results.map(r => r.latency);
-  const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+  // 零轮（duration 比一次 fn() 还短）时以前是 0/0 = NaN。
+  const avgLatency = latencies.length > 0 ? latencies.reduce((a, b) => a + b, 0) / latencies.length : 0;
   
   return {
     totalRuns,

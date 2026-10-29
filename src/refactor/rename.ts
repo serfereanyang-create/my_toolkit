@@ -235,13 +235,26 @@ function replaceInFile(
 ): string {
   // 按偏移量倒序排序，从后往前替换，避免偏移量变化
   replacements.sort((a, b) => b.offset - a.offset);
-  
+
   let result = content;
   for (const { offset, length, newText } of replacements) {
     result = result.substring(0, offset) + newText + result.substring(offset + length);
   }
-  
+
   return result;
+}
+
+/**
+ * 语法健康度：返回 ParseDiagnostics 数量。
+ *
+ * 重构是破坏性操作，写完必须校验：只要改写前能解析、改写后不能解析，
+ * 就说明这次改写把源码弄坏了。TS 的 parseDiagnostics 是内部字段，
+ * 但自 TS 1.x 起一直存在，且比 getPreEmitDiagnostics 便宜得多（不建 Program）。
+ */
+function syntaxErrorCount(text: string, fileName: string): number {
+  const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true);
+  const diagnostics = (sourceFile as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics;
+  return Array.isArray(diagnostics) ? diagnostics.length : 0;
 }
 
 /**
@@ -363,22 +376,28 @@ export async function renameSymbol(
     const replacementDetails: FileRename['replacements'] = [];
     
     // 添加符号引用替换
+    //
+    // length 必须用引用自身的区间（endColumn - column），不能固定成
+    // oldName.length：对 `obj.foo`、解构 `{ foo }` 之类，语言服务返回的区间
+    // 可能更长（含属性访问链），按旧名长度截断会把 `.foo` 的尾巴留在原地，
+    // 结果就是 `obj.value.foo` 这种坏代码。
     for (const ref of refs) {
       const lines = fileContent.split('\n');
-      const offset = lines.slice(0, ref.range.line - 1).join('\n').length + 
-                    (ref.range.line > 1 ? 1 : 0) + 
+      const offset = lines.slice(0, ref.range.line - 1).join('\n').length +
+                    (ref.range.line > 1 ? 1 : 0) +
                     ref.range.column - 1;
-      
+      const referenceLength = ref.range.endColumn - ref.range.column;
+
       replacements.push({
         offset,
-        length: oldName.length,
+        length: referenceLength > 0 ? referenceLength : oldName.length,
         newText: options.newName,
       });
-      
+
       replacementDetails.push({
         line: ref.range.line,
         column: ref.range.column,
-        oldText: oldName,
+        oldText: (lines[ref.range.line - 1] ?? '').slice(ref.range.column - 1, Math.max(ref.range.column - 1, ref.range.endColumn - 1)) || oldName,
         newText: options.newName,
       });
     }
@@ -418,18 +437,35 @@ export async function renameSymbol(
       }
     }
     
-    // 执行替换
-    const modified = replaceInFile(fileContent, replacements);
-    
+    // 执行替换：同一偏移去重，区间重叠的引用只保留先出现的一条，
+    // 避免 `obj.foo` 与 `foo` 两个区间同时改写导致二次污染。
+    const uniqueReplacements = [...new Map(replacements.map((r) => [`${r.offset}:${r.length}`, r])).values()]
+      .sort((a, b) => a.offset - b.offset)
+      .filter((r, index, list) => {
+        if (index === 0) return true;
+        const previous = list[index - 1]!;
+        return r.offset >= previous.offset + previous.length;
+      });
+    const modified = replaceInFile(fileContent, uniqueReplacements);
+
+    // 改写前能解析、改写后不能解析 → 拒绝，不把坏代码写进结果。
+    const beforeErrors = syntaxErrorCount(fileContent, filePath);
+    const afterErrors = syntaxErrorCount(modified, filePath);
+    if (afterErrors > beforeErrors) {
+      errors.push(
+        `${filePath} - 重命名会让文件产生 ${afterErrors - beforeErrors} 处语法错误，已拒绝（原文件 ${beforeErrors} 处）`,
+      );
+    }
+
     fileRenames.push({
       path: relative(workspaceRoot, absolutePath),
       original: fileContent,
       modified,
-      replacementCount: replacements.length,
-      replacements: replacementDetails,
+      replacementCount: uniqueReplacements.length,
+      replacements: replacementDetails.slice(0, uniqueReplacements.length),
     });
-    
-    totalReplacements += replacements.length;
+
+    totalReplacements += uniqueReplacements.length;
   }
   
   const isSafe = errors.length === 0 && !conflictCheck.hasConflict;
@@ -527,6 +563,12 @@ export function generateDiff(result: RenameResult): string {
 
 /**
  * 快速重命名（单文件局部变量）
+ *
+ * 旧实现对整份文件做 `\boldName\b` 正则替换：同名的内层遮蔽变量、字符串字面量、
+ * 注释、甚至别的对象上的同名属性都会被一起改掉（实测 `const s = "data"` 变成
+ * `"payload"`，块内 `const data = 1` 也被换名）。这里改为用 TS 语言服务取
+ * referencesAt 的精确引用（只含同一符号、不含字符串/注释），再按偏移量倒序替换。
+ * 严格模式下找不到引用时拒绝，不退回正则。
  */
 export async function quickRename(
   filePath: string,
@@ -534,37 +576,83 @@ export async function quickRename(
   line: number,
   column: number,
   newName: string
-): Promise<{ success: boolean; message: string; modified?: string }> {
+): Promise<{ success: boolean; message: string; modified?: string; replacements?: number }> {
   try {
+    if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(newName)) {
+      return { success: false, message: `无效的标识符名称: ${newName}` };
+    }
+
     const absolutePath = resolve(workspaceRoot, filePath);
     const content = await readFile(absolutePath, 'utf-8');
-    
+
     const sourceFile = ts.createSourceFile(
       filePath,
       content,
       ts.ScriptTarget.Latest,
       true
     );
-    
+
     const lines = content.split('\n');
-    const offset = lines.slice(0, line - 1).join('\n').length + 
-                  (line > 1 ? 1 : 0) + 
+    const offset = lines.slice(0, line - 1).join('\n').length +
+                  (line > 1 ? 1 : 0) +
                   column - 1;
-    
+
     const oldName = getSymbolName(sourceFile, offset);
-    
+
     if (!oldName) {
       return { success: false, message: '未找到符号' };
     }
-    
-    // 简单替换（仅当前文件）
-    const regex = new RegExp(`\\b${oldName}\\b`, 'g');
-    const modified = content.replace(regex, newName);
-    
+
+    if (oldName === newName) {
+      return { success: true, message: `名称未变化（${oldName}）`, modified: content, replacements: 0 };
+    }
+
+    const normalizedSelf = relative(workspaceRoot, absolutePath).replace(/\\/g, '/');
+    const references = (await referencesAt(workspaceRoot, filePath, line, column))
+      .filter((ref) => ref.path.replace(/\\/g, '/') === normalizedSelf);
+
+    if (references.length === 0) {
+      return {
+        success: false,
+        message: `语言服务未能在本文件定位符号 '${oldName}' 的引用，为避免误改已拒绝（未写入）`,
+      };
+    }
+
+    // TS 语言服务的 getReferencesAtPosition 对声明处不一定返回定义项；
+    // 声明本身也必须改，否则会留下旧的声明名。
+    const edits = references.map((ref) => ({
+      offset: lines.slice(0, ref.range.line - 1).join('\n').length + (ref.range.line > 1 ? 1 : 0) + ref.range.column - 1,
+      length: Math.max(1, ref.range.endColumn - ref.range.column),
+    }));
+    const declarationStart = sourceFile.getLineAndCharacterOfPosition(offset);
+    const declarationKey = `${declarationStart.line + 1}:${declarationStart.character + 1}`;
+    if (!references.some((ref) => `${ref.range.line}:${ref.range.column}` === declarationKey)) {
+      edits.push({ offset, length: oldName.length });
+    }
+
+    // 去重并倒序改写，避免偏移量互相污染。
+    const unique = [...new Map(edits.map((e) => [`${e.offset}:${e.length}`, e])).values()]
+      .sort((a, b) => b.offset - a.offset);
+    let modified = content;
+    for (const edit of unique) {
+      modified = modified.substring(0, edit.offset) + newName + modified.substring(edit.offset + edit.length);
+    }
+
+    // 与 renameSymbol 同一道闸：改写后若语法错误变多，直接拒绝。
+    const beforeErrors = syntaxErrorCount(content, filePath);
+    const afterErrors = syntaxErrorCount(modified, filePath);
+    if (afterErrors > beforeErrors) {
+      return {
+        success: false,
+        message: `重命名会让文件产生 ${afterErrors - beforeErrors} 处语法错误，已拒绝（未写入）`,
+      };
+    }
+
     return {
       success: true,
-      message: `已重命名 '${oldName}' → '${newName}'`,
+      message: `已重命名 '${oldName}' → '${newName}'（${unique.length} 处）`,
       modified,
+      replacements: unique.length,
     };
   } catch (error) {
     return {

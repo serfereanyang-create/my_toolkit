@@ -11,6 +11,7 @@ import {
   isAppendDriven,
   observedReuseOf,
   parseArgs,
+  reuseCapped,
   surfaceOf,
   type RoundRow,
 } from '../src/audit/contextLedger.js';
@@ -172,8 +173,13 @@ test('the same count across a turn boundary proves nothing about the names', () 
 });
 
 test('the reuse ratio is the provider\'s answer, reported beside the three diagnoses', () => {
+  // Both records must carry usage: a record without it is missing data, and the
+  // pair would then (correctly) report `null` rather than a measured 38%.
   const [pair] = diagnoseRoundPairs(
-    [rec({ step: 1 }), rec({ step: 2 })],
+    [
+      rec({ step: 1, usage: { inputTokens: 5_000, outputTokens: 10, cacheReadTokens: 0 } }),
+      rec({ step: 2, usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 1_900 } }),
+    ],
     [
       round(0, { inputTokens: 5000, cacheReadTokens: 0 }),
       round(1, { inputTokens: 100, cacheReadTokens: 1900 }),
@@ -461,4 +467,132 @@ test('--latest and --session-dir parse without a positional path', () => {
   assert.equal(options.index, 3);
   assert.equal(options.sessionPath, undefined);
   assert.throws(() => parseArgs(['--session-dir']), /需要一个目录/);
+});
+
+// ---------------------------------------------------------------------------
+// observedReuse 的边界：0 不是"空前缀"，>1 不是"用了没发出去的东西"
+// ---------------------------------------------------------------------------
+
+test('observedReuseOf never reports a ratio it cannot support', () => {
+  // Previous prompt 0 is UNKNOWN, not an empty prefix. Reporting 0 would make
+  // `providerSawBreak` fire a false "prefix rebuilt" for a round that simply
+  // followed a record with no usage block.
+  assert.equal(observedReuseOf(0, 5_000), null);
+  assert.equal(observedReuseOf(-1, 5_000), null);
+  assert.equal(observedReuseOf(0, 0), null);
+  // No reuse is a real, measured zero.
+  assert.equal(observedReuseOf(10_000, 0), 0);
+  // Reuse above the whole previous prompt is impossible; the excess comes from
+  // bytes that were never counted in the previous prompt (tool-block deltas,
+  // budget trimming, relay-side accounting). Cap it instead of exporting >1.
+  assert.equal(observedReuseOf(106_564, 108_800), 1);
+  assert.equal(reuseCapped(106_564, 108_800), true);
+  assert.equal(reuseCapped(10_000, 10_000), false, 'exactly 1.0 is not capped');
+  assert.equal(reuseCapped(0, 1), false, 'no previous prompt, nothing to cap against');
+});
+
+test('a pair after a compaction reports a capped ratio, not an impossible >1', async () => {
+  // Reproduces sess_20261026115924_c6ffef29 round 86: the provider returned
+  // 108,800 cache-read tokens while the previous round's prompt was 106,564.
+  // Before the cap this printed reuse 1.021, which a reader parses as "reused
+  // 102% of the prompt" — a claim that cannot be true.
+  const records = [
+    rec({ step: 1, usage: { inputTokens: 100_000, outputTokens: 10, cacheReadTokens: 6_564 } }),
+    rec({ step: 2, usage: { inputTokens: 1_200, outputTokens: 10, cacheReadTokens: 108_800 } }),
+  ];
+  const { sessionPath, usageLogPath, cleanup } = appendFixture([{ input: 100_000, read: 6_564 }, { input: 1_200, read: 108_800 }]);
+  // appendFixture writes its own trajectory; overwrite it with the pair above.
+  writeFileSync(
+    join(sessionPath, '..', 'sess_append.trajectory.jsonl'),
+    `${records.map((row) => JSON.stringify(row)).join('\n')}\n`,
+    'utf-8',
+  );
+  try {
+    const report = await buildReport({ sessionPath, usageLogPath });
+    assert.equal(report.rounds[1].observedReuse, 1, 'the ratio is capped at 1');
+    assert.equal(report.rounds[1].reuseCapped, true);
+    assert.deepEqual(report.cache.reuseCappedRounds, [1], 'the report names the capped round');
+    assert.ok(formatReport(report).includes('复用比已截到 1'), 'the text explains the cap');
+    const pair = report.pairs[0];
+    assert.equal(pair.observedReuse, 1);
+    assert.equal(pair.reuseCapped, true);
+    assert.equal(pair.providerSawBreak, false, 'a capped ratio is healthy, not a break');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a round after a usage-less record is unknown, not a false prefix break', async () => {
+  // The mock provider and some older writers emit records without `usage`.
+  // The old code summed that to promptTokens 0 and reported reuse 0%, which
+  // `providerSawBreak` then read as "the provider rebuilt the prefix".
+  const records = [
+    rec({ step: 1 }), // no usage at all
+    rec({ step: 2, usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 1_900 } }),
+  ];
+  const { sessionPath, usageLogPath, cleanup } = appendFixture([{ input: 0, read: 0 }, { input: 100, read: 1_900 }]);
+  writeFileSync(
+    join(sessionPath, '..', 'sess_append.trajectory.jsonl'),
+    `${records.map((row) => JSON.stringify(row)).join('\n')}\n`,
+    'utf-8',
+  );
+  try {
+    const report = await buildReport({ sessionPath, usageLogPath });
+    assert.equal(report.rounds[0].usageRecorded, false);
+    assert.deepEqual(report.cache.roundsMissingUsage, [0]);
+    assert.equal(report.rounds[1].observedReuse, null, 'no previous prompt to compare against');
+    assert.equal(report.pairs[0].observedReuse, null);
+    assert.equal(report.pairs[0].providerSawBreak, null, 'unknown must not become "break"');
+    assert.equal(report.rounds[1].appendDriven, false, 'APPEND needs a measured reuse ratio');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a round whose OWN usage is missing is unknown, not a 0% reuse', () => {
+  // The other direction: the previous round is measured and the current one is
+  // not. Computing a ratio here would read the absent cacheRead as 0 and make
+  // `providerSawBreak` fire on a round that simply was not recorded.
+  const rounds = [
+    round(0, { inputTokens: 5_000, cacheReadTokens: 0, promptTokens: 5_000 }),
+    round(1, { inputTokens: 0, cacheReadTokens: 0, promptTokens: 0, usageRecorded: false }),
+  ];
+  const [pair] = diagnoseRoundPairs(
+    [
+      rec({ step: 1, usage: { inputTokens: 5_000, outputTokens: 10, cacheReadTokens: 0 } }),
+      rec({ step: 2 }), // usage missing
+    ],
+    rounds,
+  );
+  assert.equal(pair.observedReuse, null, 'a missing current round cannot be a measured zero');
+  assert.equal(pair.providerSawBreak, null);
+});
+
+test('randomized: reuse is always null or within [0, 1], and capped iff >1 was measured', () => {
+  // Exhaustive-ish sweep over the arithmetic: the ratio feeds a diagnosis, so
+  // an out-of-range value is a wrong diagnosis, not a cosmetic bug. Failure
+  // prints the seed and the case so the exact input can be replayed.
+  let a = 0xc0de >>> 0;
+  const random = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const caseNo = (i: number, prev: number, read: number) =>
+    `seed=0xc0de case=${i} prev=${prev} read=${read}`;
+  for (let i = 0; i < 5_000; i++) {
+    const prev = Math.floor(random() * 200_000);
+    const read = Math.floor(random() * 220_000);
+    const ratio = observedReuseOf(prev, read);
+    if (prev === 0) {
+      assert.equal(ratio, null, caseNo(i, prev, read));
+      continue;
+    }
+    assert.ok(ratio !== null && ratio >= 0 && ratio <= 1, caseNo(i, prev, read));
+    // 1.0 is reached only when the provider claims at least the whole prompt.
+    assert.equal(ratio === 1, read >= prev, `${caseNo(i, prev, read)}: 1.0 iff read >= prev`);
+    assert.equal(reuseCapped(prev, read), read > prev, caseNo(i, prev, read));
+  }
 });

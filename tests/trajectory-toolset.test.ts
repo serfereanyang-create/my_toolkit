@@ -470,3 +470,61 @@ test('a session written with toolSetNames is reported on the sent-tools layer en
     cleanup();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 9. 回退链：空发送数组是事实，不能回退到 called-tools
+// ---------------------------------------------------------------------------
+
+test('an empty toolSetNames stays on sent-tools and never falls back to the call log', () => {
+  // The writer (agent.ts) records `stepTools.list().map(t => t.name)`, which is
+  // `[]` on a turn that sends no tools at all. `recordedToolSurface` must keep
+  // that on the sent layer: the array was sent, it was empty. Falling back to
+  // `toolNames` would relabel an empty sent array as "the tools the model
+  // called", i.e. invent evidence the cache diagnostic then trusts.
+  const row = baseRow({ toolNames: ['read_file', 'write_file'], toolSetNames: [] });
+  const surface = recordedToolSurface(row);
+  assert.equal(surface.layer, 'sent-tools');
+  assert.deepEqual(surface.raw, []);
+  assert.deepEqual(surface.canonical, []);
+  assert.equal(typeof surface.orderHash, 'string', 'the empty array has an order hash — it is a known sequence');
+  // ...and it differs from the call log, which would have canonicalised to
+  // ['read_file','write_file'].
+  assert.notDeepEqual(surface.canonical, canonicalToolNames(['read_file', 'write_file']));
+
+  // Recorded form and legacy form agree: a row with [] on disk reads the same.
+  const recorded = withCanonicalToolNames(row);
+  assert.deepEqual(recorded.toolSetCanonical, []);
+  assert.equal(recorded.toolSetOrderHash, surface.orderHash);
+
+  // Only an ABSENT field takes the fallback.
+  assert.equal(recordedToolSurface(baseRow({ toolNames: ['read_file'] })).layer, 'called-tools');
+});
+
+test('a corrupt cached canonical/hash is recomputed instead of trusted', () => {
+  // Trajectory files are JSONL on disk; a hand-edited or half-repaired row can
+  // carry a string where the type promises an array. `??` alone would hand that
+  // string to every reader as if it were a name list.
+  const row = baseRow({
+    toolNames: ['read_file'],
+    toolSetNames: ['write_file', 'read_file'],
+    toolSetCanonical: 'write_file,read_file',
+    toolSetOrderHash: 7,
+  });
+  const surface = recordedToolSurface(row);
+  assert.equal(surface.layer, 'sent-tools');
+  assert.deepEqual(surface.canonical, ['read_file', 'write_file'], 'recomputed canonical, never the raw string');
+  assert.equal(surface.orderHash, toolNamesOrderHash(['write_file', 'read_file']), 'recomputed order hash');
+
+  // A valid cached value IS trusted (the point of writing it).
+  const trusted = recordedToolSurface(baseRow({
+    toolSetNames: ['b', 'a'],
+    toolSetCanonical: ['a', 'b'],
+    toolSetOrderHash: 'deadbeef0000',
+  }));
+  assert.deepEqual(trusted.canonical, ['a', 'b']);
+  assert.equal(trusted.orderHash, 'deadbeef0000');
+
+  // Same guard on the called-tools layer.
+  const called = recordedToolSurface(baseRow({ toolNames: ['b', 'a'], toolNamesCanonical: { length: 2 } }));
+  assert.deepEqual(called.canonical, ['a', 'b']);
+});

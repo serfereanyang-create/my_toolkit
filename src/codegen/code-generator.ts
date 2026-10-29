@@ -62,17 +62,18 @@ import './{{ name | kebabCase }}.css';
 {% endif %}
 
 {% if hasProps %}
-interface {{ name }}Props {
+interface {{ name | identifier }}Props {
 {% for prop in props %}
-  {{ prop.name }}{% if prop.optional %}?{% endif %}: {{ prop.type }};
+  /** {{ prop.description | default(prop.name) | escapeJs }} */
+  {{ prop.name | escapeJs }}{% if prop.optional %}?{% endif %}: {{ prop.type | escapeJs }};
 {% endfor %}
 }
 {% endif %}
 
-export const {{ name }}: React.FC{% if hasProps %}<{{ name }}Props>{% endif %} = ({% if hasProps %}props{% endif %}) => {
+export const {{ name | identifier }}: React.FC{% if hasProps %}<{{ name | identifier }}Props>{% endif %} = ({% if hasProps %}props{% endif %}) => {
 {% if hasState %}
 {% for state in states %}
-  const [{{ state.name }}, set{{ state.name | pascalCase }}] = useState<{{ state.type }}>({{ state.initial }});
+  const [{{ state.name | identifier }}, set{{ state.name | pascalCase | identifier }}] = useState<{{ state.type | escapeJs }}>({{ state.initial }});
 {% endfor %}
 {% endif %}
 
@@ -103,26 +104,26 @@ import './{{ name | kebabCase }}.css';
 {% endif %}
 
 {% if hasProps %}
-interface {{ name }}Props {
+interface {{ name | identifier }}Props {
 {% for prop in props %}
-  {{ prop.name }}{% if prop.optional %}?{% endif %}: {{ prop.type }};
+  {{ prop.name | escapeJs }}{% if prop.optional %}?{% endif %}: {{ prop.type | escapeJs }};
 {% endfor %}
 }
 {% endif %}
 
 {% if hasState %}
-interface {{ name }}State {
+interface {{ name | identifier }}State {
 {% for state in states %}
-  {{ state.name }}: {{ state.type }};
+  {{ state.name | escapeJs }}: {{ state.type | escapeJs }};
 {% endfor %}
 }
 {% endif %}
 
-export class {{ name }} extends Component<{% if hasProps %}{{ name }}Props{% else %}{}{% endif %}{% if hasState %}, {{ name }}State{% endif %}> {
+export class {{ name | identifier }} extends Component<{% if hasProps %}{{ name }}Props{% else %}{}{% endif %}{% if hasState %}, {{ name }}State{% endif %}> {
 {% if hasState %}
-  state{% if hasState %}: {{ name }}State{% endif %} = {
+  state{% if hasState %}: {{ name | identifier }}State{% endif %} = {
 {% for state in states %}
-    {{ state.name }}: {{ state.initial }},
+    {{ state.name | escapeJs }}: {{ state.initial }},
 {% endfor %}
   };
 {% endif %}
@@ -159,10 +160,10 @@ import { authenticate } from '../middleware/auth';
 const router = Router();
 
 /**
- * GET {{ path }}
- * {{ description | default('获取资源列表') }}
+ * GET {{ path | escapeComment }}
+ * {{ description | default('获取资源列表') | escapeComment }}
  */
-router.get('{{ path }}', {% if hasAuth %}authenticate, {% endif %}async (req: Request, res: Response) => {
+router.get('{{ path | escapeJs }}', {% if hasAuth %}authenticate, {% endif %}async (req: Request, res: Response) => {
   try {
     // TODO: 实现业务逻辑
     const data = [];
@@ -180,10 +181,10 @@ router.get('{{ path }}', {% if hasAuth %}authenticate, {% endif %}async (req: Re
 });
 
 /**
- * GET {{ path }}/:id
- * {{ description | default('获取单个资源') }}
+ * GET {{ path | escapeComment }}/:id
+ * {{ description | default('获取单个资源') | escapeComment }}
  */
-router.get('{{ path }}/:id', {% if hasAuth %}authenticate, {% endif %}async (req: Request, res: Response) => {
+router.get('{{ path | escapeJs }}/:id', {% if hasAuth %}authenticate, {% endif %}async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     
@@ -210,15 +211,15 @@ router.get('{{ path }}/:id', {% if hasAuth %}authenticate, {% endif %}async (req
 });
 
 /**
- * POST {{ path }}
- * {{ description | default('创建新资源') }}
+ * POST {{ path | escapeComment }}
+ * {{ description | default('创建新资源') | escapeComment }}
  */
-router.post('{{ path }}',
+router.post('{{ path | escapeJs }}',
   {% if hasAuth %}authenticate,{% endif %}
   {% if hasValidation %}
   [
 {% for field in validationFields %}
-    body('{{ field.name }}'){% if field.required %}.notEmpty(){% endif %}{% if field.type == 'email' %}.isEmail(){% endif %},
+    body('{{ field.name | escapeJs }}'){% if field.required %}.notEmpty(){% endif %}{% if field.type == 'email' %}.isEmail(){% endif %},
 {% endfor %}
   ],
   {% endif %}
@@ -251,10 +252,10 @@ router.post('{{ path }}',
 );
 
 /**
- * PUT {{ path }}/:id
- * {{ description | default('更新资源') }}
+ * PUT {{ path | escapeComment }}/:id
+ * {{ description | default('更新资源') | escapeComment }}
  */
-router.put('{{ path }}/:id', {% if hasAuth %}authenticate, {% endif %}async (req: Request, res: Response) => {
+router.put('{{ path | escapeJs }}/:id', {% if hasAuth %}authenticate, {% endif %}async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     
@@ -281,10 +282,10 @@ router.put('{{ path }}/:id', {% if hasAuth %}authenticate, {% endif %}async (req
 });
 
 /**
- * DELETE {{ path }}/:id
- * {{ description | default('删除资源') }}
+ * DELETE {{ path | escapeComment }}/:id
+ * {{ description | default('删除资源') | escapeComment }}
  */
-router.delete('{{ path }}/:id', {% if hasAuth %}authenticate, {% endif %}async (req: Request, res: Response) => {
+router.delete('{{ path | escapeJs }}/:id', {% if hasAuth %}authenticate, {% endif %}async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     
@@ -305,12 +306,12 @@ export default router;
     // TypeScript 接口/类型
     this.templates.set('typescript-interface', `
 /**
- * {{ description | default(name) }}
+ * {{ description | default(name) | escapeComment }}
  */
-export interface {{ name }} {
+export interface {{ name | identifier }} {
 {% for field in fields %}
-  /** {{ field.description | default(field.name) }} */
-  {{ field.name }}{% if field.optional %}?{% endif %}: {{ field.type }};
+  /** {{ field.description | default(field.name) | escapeComment }} */
+  {{ field.name | identifier }}{% if field.optional %}?{% endif %}: {{ field.type | typeExpr }};
 {% endfor %}
 }
 `.trim());
@@ -318,27 +319,27 @@ export interface {{ name }} {
     // TypeScript 类
     this.templates.set('typescript-class', `
 /**
- * {{ description | default(name) }}
+ * {{ description | default(name) | escapeComment }}
  */
-export class {{ name }}{% if extends %} extends {{ extends }}{% endif %}{% if implements %} implements {{ implements | join(', ') }}{% endif %} {
+export class {{ name | identifier }}{% if extends %} extends {{ extends | identifier }}{% endif %}{% if implements %} implements {% for iface in implements %}{{ iface | identifier }}{% if !loop.last %}, {% endif %}{% endfor %}{% endif %} {
 {% for field in fields %}
-  {% if field.access %}{{ field.access }} {% endif %}{{ field.name }}{% if field.optional %}?{% endif %}: {{ field.type }};
+  {% if field.access %}{{ field.access | identifier }} {% endif %}{{ field.name | identifier }}{% if field.optional %}?{% endif %}: {{ field.type | typeExpr }};
 {% endfor %}
 
-  constructor({% for param in constructorParams %}{{ param.name }}{% if param.optional %}?{% endif %}: {{ param.type }}{% if !loop.last %}, {% endif %}{% endfor %}) {
+  constructor({% for param in constructorParams %}{{ param.name | identifier }}{% if param.optional %}?{% endif %}: {{ param.type | typeExpr }}{% if !loop.last %}, {% endif %}{% endfor %}) {
 {% if extends %}
     super();
 {% endif %}
 {% for param in constructorParams %}
-    this.{{ param.name }} = {{ param.name }};
+    this.{{ param.name | identifier }} = {{ param.name | identifier }};
 {% endfor %}
   }
   
 {% for method in methods %}
   /**
-   * {{ method.description | default(method.name) }}
+   * {{ method.description | default(method.name) | escapeComment }}
    */
-  {% if method.access %}{{ method.access }} {% endif %}{% if method.async %}async {% endif %}{{ method.name }}({% for param in method.params %}{{ param.name }}{% if param.optional %}?{% endif %}: {{ param.type }}{% if !loop.last %}, {% endif %}{% endfor %}){% if method.returnType %}: {{ method.returnType }}{% endif %} {
+  {% if method.access %}{{ method.access | identifier }} {% endif %}{% if method.async %}async {% endif %}{{ method.name | identifier }}({% for param in method.params %}{{ param.name | identifier }}{% if param.optional %}?{% endif %}: {{ param.type | typeExpr }}{% if !loop.last %}, {% endif %}{% endfor %}){% if method.returnType %}: {{ method.returnType | typeExpr }}{% endif %} {
     // TODO: 实现方法
 {% if method.returnType && method.returnType != 'void' %}
     throw new Error('Not implemented');
@@ -351,11 +352,11 @@ export class {{ name }}{% if extends %} extends {{ extends }}{% endif %}{% if im
 
     // Jest 测试文件
     this.templates.set('jest-test', `
-import { {{ name }} } from './{{ fileName }}';
+import { {{ name | identifier }} } from './{{ fileName | escapeJs }}';
 
-describe('{{ name }}', () => {
+describe('{{ name | escapeJs }}', () => {
 {% for test in tests %}
-  {% if test.async %}async {% endif %}test('{{ test.description }}', {% if test.async %}async {% endif %}() => {
+  {% if test.async %}async {% endif %}test('{{ test.description | escapeJs }}', {% if test.async %}async {% endif %}() => {
     // Arrange
     
     // Act
@@ -371,11 +372,11 @@ describe('{{ name }}', () => {
     // Vitest 测试文件
     this.templates.set('vitest-test', `
 import { describe, test, expect{% if hasMocks %}, vi{% endif %} } from 'vitest';
-import { {{ name }} } from './{{ fileName }}';
+import { {{ name | identifier }} } from './{{ fileName | escapeJs }}';
 
-describe('{{ name }}', () => {
+describe('{{ name | escapeJs }}', () => {
 {% for test in tests %}
-  test('{{ test.description }}', {% if test.async %}async {% endif %}() => {
+  test('{{ test.description | escapeJs }}', {% if test.async %}async {% endif %}() => {
     // Arrange
     
     // Act
@@ -389,32 +390,32 @@ describe('{{ name }}', () => {
 `.trim());
 
     // 包配置文件
+    //
+    // JSON 里的每个插值都必须 escapeJson：name/description 里一个引号就能让
+    // package.json 整个失效；dependencies 为空时也不能留下悬空逗号。
     this.templates.set('package-json', `
 {
-  "name": "{{ name }}",
-  "version": "{{ version | default('1.0.0') }}",
-  "description": "{{ description | default('') }}",
-  "main": "{{ main | default('index.js') }}",
-  "type": "{{ type | default('commonjs') }}",
+  "name": "{{ name | escapeJson }}",
+  "version": "{{ version | default('1.0.0') | escapeJson }}",
+  "description": "{{ description | default('') | escapeJson }}",
+  "main": "{{ main | default('index.js') | escapeJson }}",
+  "type": "{{ type | default('commonjs') | escapeJson }}",
   "scripts": {
 {% for script in scripts %}
-    "{{ script.name }}": "{{ script.command }}"{% if !loop.last %},{% endif %}
+    "{{ script.name | escapeJson }}": "{{ script.command | escapeJson }}"{% if !loop.last %},{% endif %}
 {% endfor %}
   },
-  "keywords": [{% for keyword in keywords %}"{{ keyword }}"{% if !loop.last %}, {% endif %}{% endfor %}],
-  "author": "{{ author | default('') }}",
-  "license": "{{ license | default('MIT') }}",
-{% if dependencies %}
-  "dependencies": {
+  "keywords": [{% for keyword in keywords %}"{{ keyword | escapeJson }}"{% if !loop.last %}, {% endif %}{% endfor %}],
+  "author": "{{ author | default('') | escapeJson }}",
+  "license": "{{ license | default('MIT') | escapeJson }}"{% if dependencies || devDependencies %},{% endif %}
+{% if dependencies %}  "dependencies": {
 {% for dep in dependencies %}
-    "{{ dep.name }}": "{{ dep.version }}"{% if !loop.last %},{% endif %}
+    "{{ dep.name | escapeJson }}": "{{ dep.version | escapeJson }}"{% if !loop.last %},{% endif %}
 {% endfor %}
-  },
-{% endif %}
-{% if devDependencies %}
-  "devDependencies": {
+  }{% if devDependencies %},{% endif %}
+{% endif %}{% if devDependencies %}  "devDependencies": {
 {% for dep in devDependencies %}
-    "{{ dep.name }}": "{{ dep.version }}"{% if !loop.last %},{% endif %}
+    "{{ dep.name | escapeJson }}": "{{ dep.version | escapeJson }}"{% if !loop.last %},{% endif %}
 {% endfor %}
   }
 {% endif %}
@@ -422,31 +423,31 @@ describe('{{ name }}', () => {
 `.trim());
 
     // tsconfig.json
+    //
+    // `lib` / `include` / `exclude` 是字符串数组：旧模板 `[{{ x | join('", "') }}]`
+    // 只在元素之间补引号、两端没有，产出 `[ES2020", "DOM]` 这种坏 JSON。改为
+    // 循环逐项加引号，并对内容做 JSON 转义。
     this.templates.set('tsconfig-json', `
 {
   "compilerOptions": {
-    "target": "{{ target | default('ES2020') }}",
-    "module": "{{ module | default('ESNext') }}",
-    "lib": [{{ libs | join('", "') }}],
-    "outDir": "{{ outDir | default('./dist') }}",
-    "rootDir": "{{ rootDir | default('./src') }}",
+    "target": "{{ target | default('ES2020') | escapeJson }}",
+    "module": "{{ module | default('ESNext') | escapeJson }}",
+    "lib": [{% for lib in libs %}"{{ lib | escapeJson }}"{% if !loop.last %}, {% endif %}{% endfor %}],
+    "outDir": "{{ outDir | default('./dist') | escapeJson }}",
+    "rootDir": "{{ rootDir | default('./src') | escapeJson }}",
     "strict": {{ strict | default('true') }},
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-{% if jsx %}
-    "jsx": "{{ jsx }}",
-{% endif %}
-{% if moduleResolution %}
-    "moduleResolution": "{{ moduleResolution }}",
-{% endif %}
-    "resolveJsonModule": true,
+{% if jsx %}    "jsx": "{{ jsx | escapeJson }}",
+{% endif %}{% if moduleResolution %}    "moduleResolution": "{{ moduleResolution | escapeJson }}",
+{% endif %}    "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": [{{ include | join('", "') }}],
-  "exclude": [{{ exclude | join('", "') }}]
+  "include": [{% for item in include %}"{{ item | escapeJson }}"{% if !loop.last %}, {% endif %}{% endfor %}],
+  "exclude": [{% for item in exclude %}"{{ item | escapeJson }}"{% if !loop.last %}, {% endif %}{% endfor %}]
 }
 `.trim());
   }

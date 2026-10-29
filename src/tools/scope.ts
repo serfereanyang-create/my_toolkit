@@ -1,5 +1,6 @@
 import type { ReasoningEffort } from '../providers/types.js';
 import { analyzeTaskComplexity } from '../tasks/complexity.js';
+import { compareToolNames } from '../session/modelTrajectory.js';
 import type { ToolRegistry } from './registry.js';
 import type { ToolDefinition } from './types.js';
 
@@ -144,7 +145,7 @@ const COMPACT_ALLOW = new Set([
   // agent could not carry out the request it had just been told was small. All
   // three still pass the network gate (evaluateNetworkTarget + decideApproval),
   // which is where the actual permission decision belongs.
-  'fetch_url', 'web_search', 'download_file', 'html_links',
+  'fetch_url', 'web_search', 'download_file',
 ]);
 
 const STANDARD_EXTRA_ALLOW = new Set([
@@ -157,6 +158,20 @@ const STANDARD_EXTRA_ALLOW = new Set([
   'git_reset', 'git_restore',
   'run_command',
   'poll_command',
+  /*
+   * `run_script` (npm run <name>) is `shell` risk, so the read-only rule in
+   * `selectScopedTools` cannot reach it, and it was in no allowlist — measured
+   * on this registry it was one of the two shell tools standard omitted. That
+   * is the exact defect HIGH_VALUE_EXTRA was created for: without it, "run the
+   * dev script" resolves to a hand-written `run_command`, which is strictly
+   * wider than the structured call. It is here, not in HIGH_VALUE_EXTRA,
+   * because that set is also read by the cap's rank-2 bucket and this belongs
+   * with its sibling `run_command` in the mutating core (rank 1).
+   * `install_deps` is deliberately NOT here: installing dependencies changes
+   * the environment in a way no other standard tool does, and it stays a
+   * full-scope action.
+   */
+  'run_script',
   'apply_patch',
 ]);
 
@@ -324,6 +339,14 @@ export function selectScopedTools(registry: ToolRegistry, scope: ResolvedToolSco
  */
 export const MAX_PROVIDER_TOOLS = 340;
 
+/** Whether `tools` is already strictly sorted by `compareToolNames`. */
+function isCanonicallyOrdered(tools: readonly ToolDefinition[]): boolean {
+  for (let index = 1; index < tools.length; index++) {
+    if (compareToolNames(tools[index - 1]!.name, tools[index]!.name) >= 0) return false;
+  }
+  return true;
+}
+
 /**
  * Built-ins a coding agent reaches for constantly that are not part of the
  * read/write allowlists (they are gates and lookups rather than file access).
@@ -377,9 +400,53 @@ export function limitProviderTools(
   tools: ToolDefinition[],
   options: { max?: number; protectedNames?: ReadonlySet<string> } = {},
 ): { tools: ToolDefinition[]; dropped: string[] } {
-  const max = options.max ?? MAX_PROVIDER_TOOLS;
+  /*
+   * Validation, not etiquette. `max` reaches here from callers as well as from
+   * MAX_PROVIDER_TOOLS, and a bad value used to corrupt the invariant this
+   * function exists to hold:
+   *
+   *   max 0 / NaN / -Infinity → `slice(0, max)` keeps 0 and `slice(max)` drops
+   *     everything, so every tool is "dropped" — the registry is emptied. For
+   *     a NaN cap that silences nothing; for 0 it sends an empty tool array.
+   *   max -1 → `tools.length <= -1` is false and `slice(0, -1)` keeps n-1, so
+   *     a negative cap is silently read as "n-1", and `slice(-1)` drops only
+   *     the last element: the result is neither "nothing" nor "capped".
+   *   max 2.5 → truthiness comparison passes it through, and slice() truncates
+   *     the fraction; harmless by accident but undefined by contract.
+   *
+   * So the value is bounded here: non-finite or non-numeric → the ceiling;
+   * anything else is floored to an integer and clamped to [0, MAX]. The upper
+   * clamp / Math.min is also what makes "nothing can exceed 340" true even if
+   * a caller passes 1e9 or Infinity. A bad value is reported, not silent — a
+   * cap nobody can explain is the failure mode this project keeps paying for.
+   */
+  const requestedMax = options.max ?? MAX_PROVIDER_TOOLS;
+  let max: number;
+  if (typeof requestedMax !== 'number' || !Number.isFinite(requestedMax)) {
+    console.error(`[ToolCap] Invalid max ${String(requestedMax)}; using ${MAX_PROVIDER_TOOLS}.`);
+    max = MAX_PROVIDER_TOOLS;
+  } else {
+    max = Math.min(MAX_PROVIDER_TOOLS, Math.max(0, Math.floor(requestedMax)));
+  }
   const protectedNames = options.protectedNames ?? new Set<string>();
-  if (tools.length <= max) return { tools, dropped: [] };
+  if (tools.length <= max) {
+    /*
+     * Under the cap, nothing is dropped — but the OUTPUT ORDER still has to be
+     * canonical, because this array is serialised into the cached prefix. The
+     * old short-circuit returned the caller's array verbatim, so its order was
+     * the caller's order: measured on random registries, the same tool set in a
+     * different insertion order produced a different payload in 217 of 600
+     * under-cap cases. Every current caller passes `registry.list()` (already
+     * sorted) or `ToolRegistry.fromTools(...)` (sorts again), so nothing on the
+     * live path changed; the contract no longer depends on that discipline.
+     * Identity is kept where it is safe: an already-sorted array is returned
+     * as-is, so the no-copy path the tests pin still exists.
+     */
+    return {
+      tools: isCanonicallyOrdered(tools) ? tools : [...tools].sort((a, b) => compareToolNames(a.name, b.name)),
+      dropped: [],
+    };
+  }
   const rank = (tool: ToolDefinition): number => {
     if (protectedNames.has(tool.name)) return 0;
     if (STANDARD_EXTRA_ALLOW.has(tool.name)) return 1;
@@ -388,13 +455,38 @@ export function limitProviderTools(
     if (isReadOnlyTool(tool)) return 3;
     return 4;
   };
+  /*
+   * Two comparators, and the order between them matters.
+   *
+   * `compareToolNames` (UTF-16 code unit) is a TOTAL order on strings: it
+   * returns 0 only when a === b. `localeCompare` is not — it reports equality
+   * for strings that differ ("a" vs "a­SOFT HYPHEN", "café" NFC vs NFD),
+   * and it orders non-ASCII differently per locale ("z" < "ä" in sv, > in en).
+   * Used alone as the tie-break, it made the sort depend on Array.prototype.sort
+   * on ties and on the machine's ICU, so the SAME registry could serialise in
+   * two orders — a tool array is cached from byte 0, so the whole prefix died.
+   *
+   * Registration order is not observable either: this list is sorted on BOTH
+   * branches (under the cap only when it is not already canonical). The
+   * registry sorts defensively, but this function's contract must not depend
+   * on its caller.
+   */
   const ranked = [...tools].sort((a, b) => {
     const byRank = rank(a) - rank(b);
-    return byRank !== 0 ? byRank : a.name.localeCompare(b.name);
+    return byRank !== 0 ? byRank : compareToolNames(a.name, b.name);
   });
   const kept = ranked.slice(0, max);
-  const dropped = ranked.slice(max).map((tool) => tool.name);
+  /*
+   * Deterministic dropped report. The old code took `ranked.slice(max)` — the
+   * array in RANK order — so `dropped` was not alphabetical even though the
+   * comment said the output order was restored. It also repeated every
+   * duplicate of a dropped name while `kept` can only contain it once, which
+   * made "dropped" and "not in tools" describe different multisets. Sorted and
+   * deduplicated, the two sides are exact complements by name:
+   *   `new Set(tools) = new Set(kept) ⊎ new Set(dropped)` for any input.
+   */
+  const dropped = [...new Set(ranked.slice(max).map((tool) => tool.name))].sort(compareToolNames);
   // Restore deterministic alphabetical order for the provider payload.
-  kept.sort((a, b) => a.name.localeCompare(b.name));
+  kept.sort((a, b) => compareToolNames(a.name, b.name));
   return { tools: kept, dropped };
 }

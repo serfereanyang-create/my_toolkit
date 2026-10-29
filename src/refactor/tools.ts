@@ -6,8 +6,10 @@
 
 import { defineTool } from '../tools/define.js';
 import type { ToolResult } from '../tools/types.js';
+import { writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import * as ts from 'typescript';
 import {
-  extractMethod,
   previewExtractMethod,
   type ExtractMethodOptions,
 } from './extract-method.js';
@@ -18,6 +20,13 @@ import {
   quickRename,
   type RenameOptions,
 } from './rename.js';
+
+/** 语法错误计数（parseDiagnostics），写入前的一致性闸门。 */
+function syntaxErrorCount(text: string, fileName: string): number {
+  const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true);
+  const diagnostics = (sourceFile as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics;
+  return Array.isArray(diagnostics) ? diagnostics.length : 0;
+}
 
 /**
  * Extract Method 工具
@@ -148,20 +157,37 @@ export const extractMethodTool = defineTool({
           data: result,
         };
       } else {
-        // 实际执行（需要实现文件写入逻辑）
-        const result = await extractMethod(file, context.cwd, options);
-        
+        // 实际执行：isSafe=false 时 extractMethod 仍会返回「看起来像成功」的
+        // 结果，旧实现只回一句 "✅ 成功提取" 却**从未写文件**，用户以为已改。
+        // 现在：先取预览（含容器内插入位置），写出前再做一次语法校验。
+        const preview = await previewExtractMethod(file, context.cwd, options);
+        const result = preview.result;
+
         if (!result.isSafe) {
           return {
             ok: false,
             output: `提取不安全，存在问题：\n${result.warnings.join('\n')}`,
           };
         }
-        
+
+        const beforeErrors = syntaxErrorCount(preview.original, file);
+        const afterErrors = syntaxErrorCount(preview.modified, file);
+        if (afterErrors > beforeErrors) {
+          return {
+            ok: false,
+            output:
+              `提取后会引入 ${afterErrors - beforeErrors} 处语法错误，已拒绝写入。` +
+              `\n- file: ${file}` +
+              `\n- 请改用 preview: true 查看生成的代码后手工调整。`,
+          };
+        }
+
+        await writeFile(resolve(context.cwd, file), preview.modified, 'utf-8');
+
         return {
           ok: true,
-          output: `✅ 成功提取方法 '${methodName}'`,
-          data: result,
+          output: `✅ 已写入 ${file}：提取方法 '${methodName}'，替换 ${endLine - startLine + 1} 行`,
+          data: { ...result, modified: preview.modified },
         };
       }
     } catch (error) {

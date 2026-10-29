@@ -37,6 +37,16 @@ export type HealthSnapshot = {
   timestamp: string;
   metrics: HealthMetrics;
   scores: HealthScores;
+  /**
+   * What the collector could not see or could not finish. Optional so snapshots
+   * written before this field existed still load.
+   *
+   * The collector used to swallow every analyzer failure and every unreadable
+   * file into a `0`, which then scored as a perfect project. A snapshot with
+   * warnings is still a snapshot, but its score is a lower bound, not a fact —
+   * `buildReport` surfaces these next to the score for exactly that reason.
+   */
+  warnings?: string[];
 };
 
 export type MetricTrend = {

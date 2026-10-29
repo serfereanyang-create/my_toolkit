@@ -10,7 +10,7 @@
  */
 
 import { readdir, stat } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { join, relative, sep, basename, extname } from 'node:path';
 import { isIgnoredDirName } from '../workspace/ignored.js';
 
@@ -126,6 +126,7 @@ async function walk(
   options: StructureAuditOptions,
   files: Array<{ path: string; rel: string; depth: number }>,
   dirs: Array<{ path: string; rel: string; depth: number; entries: number }>,
+  visitedDirs: Set<string> = new Set(),
 ): Promise<void> {
   if (files.length >= (options.maxFiles ?? 2000)) return;
   let entries: string[];
@@ -134,6 +135,17 @@ async function walk(
   } catch {
     return;
   }
+  // 符号链接 / junction 可以指回祖先目录，`stat` 跟随链接后
+  // 递归会沿 `pkg/loop/pkg/loop/pkg/...` 一路展开到 maxFiles 才停：实测
+  // 一个小仓库因一个 `pkg/loop -> root` 的 junction 被记成 128 个文件 /
+  // 128 个目录（121 个是环），结构审计报出成堆假的 deep-dir / orphan-test。
+  // 记录真实路径，同一个物理目录只走一次。
+  // 让「同一物理目录经链接再次到达」也能被识别：先看真实路径，再登记两者。
+  let real: string | undefined;
+  try { real = realpathSync(dir); } catch { /* 链接目标不可读时只按词法路径去重 */ }
+  if (visitedDirs.has(dir) || (real !== undefined && visitedDirs.has(real))) return;
+  visitedDirs.add(dir);
+  if (real !== undefined) visitedDirs.add(real);
   const visible = entries.filter((e) => !e.startsWith('.') && !isIgnoredDirName(e));
   dirs.push({ path: dir, rel: relative(root, dir).split(sep).join('/') || '.', depth, entries: visible.length });
   for (const entry of visible) {
@@ -145,7 +157,7 @@ async function walk(
       continue;
     }
     if (st.isDirectory()) {
-      await walk(root, child, depth + 1, options, files, dirs);
+      await walk(root, child, depth + 1, options, files, dirs, visitedDirs);
     } else if (CODE_EXT.has(extname(entry).toLowerCase())) {
       files.push({ path: child, rel: relative(root, child).split(sep).join('/'), depth });
     }

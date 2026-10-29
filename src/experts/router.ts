@@ -147,28 +147,62 @@ function classifyTaskIntent(text: string): ExpertIntent | 'unknown' {
   }
   
   // 代码编辑关键词（需排除只读操作）
-  const hasEditKeywords = hasAny(text, [
-    'implement', 'fix', 'refactor', 'modify', 'change', 'add feature', 'update', 'edit',
-    '实现', '修复', '重构', '修改', '添加', '更新', '编辑',
+  const hasWriteKeywords = classifyEditKeywords(text);
+  // 弱编辑词：单独出现时只是 scope 上的 hint，真正的意图要看句子里有没有读词。
+  // "检查并纠正拼写错误" 必须能写；"检查代码和测试的结构" 只是看。
+  const hasSoftEditKeywords = hasAny(text, [
+    'correct', 'adjust', 'tweak', 'fix typo', 'typo',
+    '纠正', '改正', '整理', '格式化', '清理',
   ]);
   const hasReadOnlyKeywords = hasAny(text, [
     'inspect', 'read', 'find', 'search', 'locate', 'understand', 'review',
     '调研', '查找', '搜索', '查看', '了解', '理解', '检查', '读取', '审查', '审阅', 'investigate',
   ]);
+  // 只读边界里的编辑词是"被禁止的动作"，不是待办：先剥掉否定语境再判断。
+  if (!hasImplicitWrite(text) && READ_ONLY_BOUNDARY.test(text)) return 'code_search';
 
   if (!hasReadOnlyKeywords && hasAny(text, ['frontend', 'react', 'css', '前端', '页面交互', '界面', '可访问性'])) return 'frontend';
   if (!hasReadOnlyKeywords && hasAny(text, ['backend', 'api endpoint', 'database', '后端', '接口实现', '数据库'])) return 'backend';
-  
-  if (hasEditKeywords && !hasReadOnlyKeywords) {
-    return 'code_edit';
-  }
-  
+
+  // 编辑词决定路由，即使句子里同时出现 read/inspect。
+  //
+  // "读取并实现登录接口" / "Inspect the auth module and implement the login fix"
+  // / "Review the code and update the retry policy" 只有在"先看一眼"的意义上带
+  // 读动词；任务本身必须写入才能完成。旧规则"出现读词就只读"把这类任务派给
+  // 只读专家，其 toolFilter 会滤掉全部写工具，任务必然失败。
+  if (hasWriteKeywords) return 'code_edit';
+  // 弱编辑词 + 没有读词 → 有界的小改动；弱编辑词 + 读词 → 按读处理。
+  if (hasSoftEditKeywords && !hasReadOnlyKeywords) return 'code_edit';
+
   // 代码调研关键词（只读）
   if (hasReadOnlyKeywords) {
     return 'code_search';
   }
-  
+
   return 'unknown';
+}
+
+/** 显式声明"只读"的措辞：命中且没有隐含写动作时，只读优先于同句中的编辑词。 */
+const READ_ONLY_BOUNDARY = /只读|read[-\s]?only|without (?:modifying|changing|editing)|do not (?:modify|edit|change|touch)|不要(?:修改|改动|编辑|动)/i;
+
+/**
+ * 句子里的编辑词是"真正的动作"还是"被否定的/作为选项提到的"。
+ *
+ * "只读检查代码，不要修改" → 否定语境，不算写；"只读检查，然后修复" → 算写。
+ */
+function hasImplicitWrite(text: string): boolean {
+  const stripped = text
+    .replace(/(?:不要|不需要|无需|不必|别|禁止|do not|don't|don’t|no need to|never|without|avoid)\s*(?:再|去)?\s*(?:修改|改动|编辑|动|改|implement|modify|edit|change|touch|write|fix)\w*/gi, ' ')
+    .replace(/(?:不需要?|不用)(?:做)?(?:任何)?(?:修改|改动)/g, ' ');
+  return classifyEditKeywords(stripped);
+}
+
+/** 不含"只读边界"判定的编辑词检查，供 hasImplicitWrite 复用。 */
+function classifyEditKeywords(text: string): boolean {
+  return hasAny(text, [
+    'implement', 'fix', 'refactor', 'modify', 'change', 'add feature', 'update', 'edit',
+    '实现', '修复', '重构', '修改', '添加', '更新', '编辑', '修正', '调整', '替换', '重命名',
+  ]);
 }
 
 /**

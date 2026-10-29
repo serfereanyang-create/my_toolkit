@@ -6,10 +6,11 @@ import {
   resolveRequestRetries,
   withModelRetry,
   ModelRequestError,
+  REQUEST_RETRY_MAX_DELAY_MS,
 } from '../src/providers/retry.js';
 
-test('backoffDelayMs follows base * 2^(n-1) with ±10% jitter', () => {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+test('backoffDelayMs follows base * 2^(n-1) with ±10% jitter up to the 30s ceiling', () => {
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
     const delay = backoffDelayMs(attempt, 200);
     const expected = 200 * 2 ** Math.max(0, attempt - 1);
     assert.ok(delay >= expected * 0.9 && delay <= expected * 1.1, `attempt ${attempt}: ${delay} vs ${expected}`);
@@ -17,6 +18,60 @@ test('backoffDelayMs follows base * 2^(n-1) with ±10% jitter', () => {
   // Upstream shape: 200 → 400 → 800 → 1600.
   const first = backoffDelayMs(1, 200);
   assert.ok(first >= 180 && first <= 220);
+  // AICODE_REQUEST_RETRIES accepts up to 100, where uncapped exponential
+  // reached 2**99 ms. Probed before the cap: attempt 20 → 103_638_711 ms.
+  for (const attempt of [9, 10, 20, 100]) {
+    const delay = backoffDelayMs(attempt, 200);
+    assert.ok(delay <= REQUEST_RETRY_MAX_DELAY_MS, `attempt ${attempt}: ${delay}`);
+    assert.ok(delay >= REQUEST_RETRY_MAX_DELAY_MS * 0.9, `attempt ${attempt}: ${delay} (jitter below the cap)`);
+  }
+});
+
+test('withModelRetry waits with the injected sleep and never sleeps after the last attempt', async () => {
+  const delays: number[] = [];
+  let calls = 0;
+  const result = await withModelRetry(async () => {
+    calls += 1;
+    if (calls < 4) throw new Error('ECONNRESET');
+    return 'ok';
+  }, { baseDelayMs: 200, sleep: async (ms) => { delays.push(ms); } });
+  assert.equal(result, 'ok');
+  assert.equal(calls, 4);
+  assert.equal(delays.length, 3, 'no sleep after the successful attempt');
+  // 200, 400, 800 within jitter.
+  assert.ok(delays[0]! >= 180 && delays[0]! <= 220);
+  assert.ok(delays[1]! >= 360 && delays[1]! <= 440);
+  assert.ok(delays[2]! >= 720 && delays[2]! <= 880);
+});
+
+test('withModelRetry with the real sleep cancels during backoff immediately', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const startedAt = Date.now();
+  const pending = withModelRetry(async () => {
+    calls += 1;
+    throw new Error('ECONNRESET');
+  }, { baseDelayMs: 60_000, signal: controller.signal });
+  setTimeout(() => controller.abort(), 20);
+  await assert.rejects(pending, (error: Error) => error.name === 'AbortError');
+  assert.equal(calls, 1, 'no attempt after the cancelled backoff');
+  assert.ok(Date.now() - startedAt < 2_000, 'did not wait out the 60s backoff');
+});
+
+test('withModelRetry never retries a 429 and honours the per-error canRetry guard', async () => {
+  let calls = 0;
+  await assert.rejects(withModelRetry(async () => {
+    calls += 1;
+    throw Object.assign(new Error('Too Many Requests'), { status: 429 });
+  }, { baseDelayMs: 1, sleep: async () => undefined }));
+  assert.equal(calls, 1);
+
+  let guarded = 0;
+  await assert.rejects(withModelRetry(async () => {
+    guarded += 1;
+    throw new Error('socket hang up');
+  }, { baseDelayMs: 1, sleep: async () => undefined, canRetry: () => false }));
+  assert.equal(guarded, 1);
 });
 
 test('isRetryableModelError classifies transport faults only', () => {

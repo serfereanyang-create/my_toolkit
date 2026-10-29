@@ -393,6 +393,8 @@ The runtime exposes no-op hook lifecycle points for `beforeTool`, `afterTool`, a
 
 Local stdio MCP servers can be declared in `.aicode/mcp.json`. On startup aicode initializes each enabled server, lists tools, and registers them as `mcp_<server>_<tool>` into the same approval-gated tool registry.
 
+Server-declared tools are treated as untrusted claims: `readOnlyHint` maps to the `write` tier (never `read`, which would skip approval in every mode), `destructiveHint` additionally forces an explicit confirmation, and an unannotated tool stays at `shell`. Arguments are checked against the declared schema (object shape, required fields, property types, enums) before the call is forwarded.
+
 ```json
 {
   "servers": {

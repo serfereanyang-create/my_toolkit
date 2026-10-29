@@ -23,6 +23,7 @@ export type LoadMcpOptions = {
 
 export async function loadMcpManager(options: LoadMcpOptions): Promise<McpManager> {
   const env = options.env ?? process.env;
+  const baseExistingNames = new Set(options.existingNames ?? []);
   if (isMcpDisabled(env)) {
     return emptyManager(options);
   }
@@ -44,7 +45,6 @@ export async function loadMcpManager(options: LoadMcpOptions): Promise<McpManage
     };
   }
 
-  const baseExistingNames = new Set(options.existingNames ?? []);
   const existingNames = new Set(baseExistingNames);
   const clients: McpClient[] = [];
   const tools: ToolDefinition[] = [];
@@ -73,8 +73,12 @@ export async function loadMcpManager(options: LoadMcpOptions): Promise<McpManage
       clients.push(client);
       const bridged = bridgeMcpTools(client);
       let registered = 0;
+      // Names this server asked for but did not get. A silent drop made `/mcp`
+      // claim `tools=N` while the registry held fewer; collisions are visible.
+      const collisions: string[] = [];
       for (const tool of bridged) {
         if (existingNames.has(tool.name)) {
+          collisions.push(tool.name);
           continue;
         }
         existingNames.add(tool.name);
@@ -88,6 +92,9 @@ export async function loadMcpManager(options: LoadMcpOptions): Promise<McpManage
         connected: true,
         toolCount: registered,
         command: formatCommand(server),
+        ...(collisions.length > 0
+          ? { warning: `skipped ${collisions.length} colliding tool name(s): ${collisions.join(', ')}` }
+          : {}),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -130,7 +137,7 @@ export function formatMcpStatus(statuses: McpServerStatus[]) {
       const state = !status.enabled
         ? 'disabled'
         : status.connected
-          ? `connected tools=${status.toolCount}`
+          ? `connected tools=${status.toolCount}${status.warning ? ` (${status.warning})` : ''}`
           : `error ${status.error ?? 'unknown'}`;
       return `- ${status.name}: ${state}${status.command ? ` (${status.command})` : ''}`;
     }),

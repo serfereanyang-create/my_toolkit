@@ -7,6 +7,7 @@ import {
   limitProviderTools,
   selectScopedTools,
 } from '../src/tools/scope.js';
+import { compareToolNames } from '../src/session/modelTrajectory.js';
 import type { ToolDefinition, ToolResult } from '../src/tools/types.js';
 
 /*
@@ -93,11 +94,23 @@ test('protected tools survive even when they sort last', () => {
   assert.equal(result.tools.length, 50);
 });
 
-test('a list at or under the cap is returned as the same array, untouched', () => {
-  const tools = syntheticPair(3, 2);
+test('a list at or under the cap keeps the caller’s array when it is already canonical', () => {
+  // The no-copy path is kept on purpose, but only for an array that is already
+  // in canonical order — that is what every live caller passes (registry.list()
+  // or ToolRegistry.fromTools). An unsorted array under the cap is copied and
+  // sorted instead: returning it verbatim made the serialised payload depend on
+  // insertion order (2026-10-29 tool-surface audit; see
+  // tests/tool-surface-determinism.test.ts).
+  const tools = [...syntheticPair(3, 2)].sort((a, b) => compareToolNames(a.name, b.name));
   const result = limitProviderTools(tools, { max: 10 });
   assert.equal(result.tools, tools, 'must return the caller’s array, not a copy');
   assert.deepEqual(result.dropped, []);
+
+  const unsorted = syntheticPair(3, 2);
+  const sorted = limitProviderTools(unsorted, { max: 10 });
+  assert.notEqual(sorted.tools, unsorted, 'an unsorted under-cap list is copied');
+  assert.deepEqual(sorted.tools.map((t) => t.name), [...sorted.tools.map((t) => t.name)].sort(compareToolNames));
+  assert.deepEqual(sorted.dropped, []);
 });
 
 test('real registry over the cap: every cut is a writable tool', () => {

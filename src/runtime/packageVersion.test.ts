@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -39,6 +41,22 @@ describe('readPackageVersion', () => {
     const parent = JSON.parse(readFileSync(resolve(packageRoot, '..', 'package.json'), 'utf8')) as { version: string };
     expect(parent.version).not.toBe(manifest.version);
     await expect(readPackageVersion(distUrl)).resolves.not.toBe(parent.version);
+  });
+
+  it('ignores a non-string version instead of passing it through', async () => {
+    // package.json is hand-editable; `version: 7` used to reach the banner and
+    // the JSON events as a number. findPackageRoot needs tsconfig.json too.
+    const root = mkdtempSync(join(tmpdir(), 'aicode-pkg-version-'));
+    try {
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'x', version: 7 }));
+      writeFileSync(join(root, 'tsconfig.json'), '{}');
+      const url = pathToFileURL(join(root, 'src', 'runtime', 'x.js')).href;
+      await expect(readPackageVersion(url)).resolves.toBe('0.0.0');
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'x', version: '9.9.9-beta' }));
+      await expect(readPackageVersion(url)).resolves.toBe('9.9.9-beta');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('degrades to a placeholder instead of throwing when no manifest is found', async () => {

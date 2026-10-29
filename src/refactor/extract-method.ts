@@ -42,6 +42,13 @@ interface VariableUsage {
   readOutside: boolean;
   /** 在选中区域外写入（提取后） */
   writtenOutside: boolean;
+  /**
+   * 声明嵌套在选中区域内部的另一个被选中语句里（如 if 块内）。
+   * 这种变量提取后无法直接 return（作用域在函数内层），只能报不安全。
+   */
+  nestedDeclaration?: boolean;
+  /** 声明时是否带初始化式（`const c = ...` 为 true，`let c;` 为 false）。 */
+  declaredWithInitializer?: boolean;
   /** 变量类型 */
   type?: ts.Type;
 }
@@ -136,9 +143,19 @@ function analyzeVariableUsage(
   }
   
   // 第一遍：找出所有在选中区域内声明的变量
+  const topLevelSelections = new Set(selectedNodes);
+  function isTopLevelSelected(node: ts.Node): boolean {
+    let current: ts.Node | undefined = node;
+    while (current) {
+      if (topLevelSelections.has(current)) return current === node;
+      current = current.parent;
+    }
+    return false;
+  }
+
   function findDeclarations(node: ts.Node) {
     if (!isNodeInSelection(node)) return;
-    
+
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const name = node.name.text;
       if (!usageMap.has(name)) {
@@ -149,9 +166,12 @@ function analyzeVariableUsage(
           writtenInside: false,
           readOutside: false,
           writtenOutside: false,
+          nestedDeclaration: !isTopLevelSelected(node),
+          declaredWithInitializer: node.initializer !== undefined,
         });
       } else {
         usageMap.get(name)!.declaredInside = true;
+        if (node.initializer !== undefined) usageMap.get(name)!.declaredWithInitializer = true;
       }
     }
     
@@ -239,8 +259,12 @@ function inferSignature(
       inputs.push({ name, type: typeStr });
     }
     
-    // 输出：内部写入，外部读取
-    if (usage.writtenInside && usage.readOutside) {
+    // 输出：内部写入（含带初始化式的声明），外部读取
+    //
+    // 合并声明（如 `const c = a + 1;`）不产生赋值表达式，只靠 writtenInside
+    // 会漏掉它 —— 实测 `const c = ...; return c;` 的 outputs 为空、callSite 变成
+    // 什么都没接的 `g(a);`，外部 `c` 未定义。带初始化式的声明即视为写。
+    if ((usage.writtenInside || usage.declaredWithInitializer) && usage.readOutside) {
       let typeStr: string | undefined;
       if (typeChecker && usage.type) {
         typeStr = typeChecker.typeToString(usage.type);
@@ -399,13 +423,51 @@ function checkSafety(
   
   // 检查变量冲突
   for (const [name, usage] of usageMap) {
-    if (usage.declaredInside && usage.readOutside && !usage.writtenInside) {
-      warnings.push(`变量 '${name}' 在选中区域内声明但未赋值，外部引用会失败`);
+    // 声明嵌在 if/for 块里，提取后不在同一个语句层，无法作为返回值带出。
+    if (usage.nestedDeclaration && usage.readOutside) {
+      warnings.push(`变量 '${name}' 的声明嵌套在选中区域内部，提取后无法作为返回值带出`);
       isSafe = false;
     }
   }
-  
+
+  // 选中范围的「顶层节点」如果本身是声明（整个函数/类/import/export），
+  // 提取只是把声明搬进新函数，原位置换成一个调用 —— 实测选中整个
+  // `export function f(...)` 会生成 `function addOne(f) { export function f ... }`，
+  // 语义完全变了。这类选择直接拒绝。
+  const selectedSet = new Set(selectedNodes);
+  const isSelectedTopLevel = (node: ts.Node): boolean => {
+    let current: ts.Node | undefined = node.parent;
+    while (current) {
+      if (selectedSet.has(current)) return false;
+      current = current.parent;
+    }
+    return true;
+  };
+  for (const node of selectedNodes) {
+    if (!isSelectedTopLevel(node)) continue;
+    if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) ||
+        ts.isInterfaceDeclaration(node) || ts.isEnumDeclaration(node) ||
+        ts.isTypeAliasDeclaration(node) || ts.isImportDeclaration(node) ||
+        ts.isExportDeclaration(node) || ts.isExportAssignment(node) ||
+        ts.isModuleDeclaration(node)) {
+      warnings.push('选中范围包含完整的声明（函数/类/导入/导出），不能作为语句提取');
+      isSafe = false;
+      break;
+    }
+    if (ts.isVariableStatement(node) && hasExportModifier(node)) {
+      warnings.push('选中范围包含导出的变量声明，提取后 export 语义会丢失');
+      isSafe = false;
+      break;
+    }
+  }
+
   return { isSafe, warnings };
+}
+
+/** 节点是否带 export 修饰符。 */
+function hasExportModifier(node: ts.Node): boolean {
+  const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
+  return modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false;
 }
 
 /**
@@ -551,6 +613,75 @@ export async function extractMethod(
 }
 
 /**
+ * 计算新方法的插入位置。
+ *
+ * 旧实现把提取出的方法一律追加到**文件末尾**：从类方法里提取时，新方法
+ * 落在 class 的闭合大括号之外（实测 `forward(xs) {` 掉在顶层，预览直接是
+ * 语法错误 "';' expected"）。这里按 AST 找最近的容器：
+ *  - 选中代码在类方法里 → 插到类体末尾（class 闭合括号前，方法缩进）；
+ *  - 在函数里 → 插到该函数结束后（同一层缩进）；
+ *  - 顶层 → 文件末尾。
+ */
+function findMethodInsertion(
+  content: string,
+  filePath: string,
+  startOffset: number,
+  endOffset: number,
+  lines: string[],
+): { line: number; indent: string } {
+  const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
+
+  let enclosingClass: ts.ClassDeclaration | ts.ClassExpression | undefined;
+  let enclosingFunction: ts.FunctionLikeDeclaration | undefined;
+
+  const isClassLike = (node: ts.Node): node is ts.ClassDeclaration | ts.ClassExpression =>
+    ts.isClassDeclaration(node) || ts.isClassExpression(node);
+
+  const visit = (node: ts.Node) => {
+    const start = node.getStart(sourceFile);
+    const end = node.getEnd();
+    if (start <= startOffset && end >= endOffset) {
+      if (isClassLike(node)) {
+        if (!enclosingClass) enclosingClass = node;
+      }
+      if (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) ||
+          ts.isArrowFunction(node) || ts.isFunctionExpression(node) ||
+          ts.isConstructorDeclaration(node)) {
+        if (!enclosingFunction) enclosingFunction = node;
+      }
+      ts.forEachChild(node, visit);
+    }
+  };
+  ts.forEachChild(sourceFile, visit);
+
+  const lineOf = (pos: number) => sourceFile.getLineAndCharacterOfPosition(pos).line;
+  const indentOfLine = (index: number) => (lines[index]?.match(/^\s*/)?.[0] ?? '');
+
+  const classNode = enclosingClass;
+  const isMethodInClass = classNode !== undefined && enclosingFunction !== undefined &&
+    classNode.members.includes(enclosingFunction as unknown as ts.ClassElement);
+
+  if (classNode && isMethodInClass) {
+    const classStartLine = lineOf(classNode.getStart(sourceFile));
+    const memberIndent = classNode.members.length > 0
+      ? indentOfLine(lineOf(classNode.members[0]!.getStart(sourceFile)))
+      : `${indentOfLine(classStartLine)}  `;
+    const closingLine = lineOf(classNode.getEnd() - 1);
+    return { line: closingLine, indent: memberIndent };
+  }
+
+  if (enclosingFunction) {
+    // getEnd() 指向函数最后一个字符之后，同一行的行号就是闭括号所在行；
+    // 提取出的函数要放在闭括号「之后」，插到那一行之前等于把它嵌进原函数里
+    // （实测 const c = ... 的提取结果变成 use() 内部的嵌套函数）。
+    const indent = indentOfLine(lineOf(enclosingFunction.getStart(sourceFile)));
+    return { line: lineOf(enclosingFunction.getEnd()) + 1, indent };
+  }
+
+  return { line: lines.length, indent: '' };
+}
+
+/**
  * 预览 Extract Method（不实际修改文件）
  */
 export async function previewExtractMethod(
@@ -564,31 +695,45 @@ export async function previewExtractMethod(
 }> {
   const absolutePath = resolve(workspaceRoot, filePath);
   const original = await readFile(absolutePath, 'utf-8');
-  
+
   const result = await extractMethod(filePath, workspaceRoot, options);
-  
+
   // 生成修改后的代码
   const lines = original.split('\n');
-  
-  // 替换选中行为调用代码
-  const beforeSelection = lines.slice(0, options.startLine - 1);
-  const afterSelection = lines.slice(options.endLine);
-  
-  // 插入调用代码（保持缩进）
-  const indentation = lines[options.startLine - 1].match(/^\s*/)?.[0] || '';
+  const startIndex = options.startLine - 1;
+  const endIndexExclusive = Math.min(options.endLine, lines.length);
+
+  // 选中范围的字符偏移（与 extractMethod 同算法）。
+  const startOffset = lines.slice(0, startIndex).join('\n').length + (startIndex > 0 ? 1 : 0);
+  const endOffset = lines.slice(0, endIndexExclusive).join('\n').length;
+
+  // 插入点要在替换前算好，行的增减之后再做偏移校正。
+  const insertion = findMethodInsertion(original, filePath, startOffset, endOffset, lines);
+
+  // 替换选中行为调用代码（保持缩进）
+  const indentation = lines[startIndex]?.match(/^\s*/)?.[0] ?? '';
   const callLines = result.callSite.split('\n').map(line => indentation + line);
-  
-  // 插入提取的方法（在函数/类末尾）
-  const methodLines = result.extractedMethod.split('\n').map(line => indentation + line);
-  
-  const modified = [
-    ...beforeSelection,
+
+  // 插入提取的方法（使用容器缩进）
+  const methodLines = result.extractedMethod.split('\n').map(line => insertion.indent + line);
+
+  const replacedCount = endIndexExclusive - startIndex;
+  const updated = [
+    ...lines.slice(0, startIndex),
     ...callLines,
-    ...afterSelection,
+    ...lines.slice(endIndexExclusive),
+  ];
+  // 插入点在选中行之后时，前面的行数已经变了，需要按替换差值平移。
+  const shift = callLines.length - replacedCount;
+  const insertAt = Math.max(0, Math.min(updated.length, insertion.line + (insertion.line > startIndex ? shift : 0)));
+
+  const modified = [
+    ...updated.slice(0, insertAt),
     '',
     ...methodLines,
+    ...updated.slice(insertAt),
   ].join('\n');
-  
+
   return {
     original,
     modified,

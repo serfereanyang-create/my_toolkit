@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { extractSymbolsFromSource } from './extract.js';
 import { detectNavLanguage, isIgnoredDirName, isIndexableSourceFile } from './ignore.js';
@@ -88,12 +88,18 @@ export class NavIndexStore {
     maxFiles: number,
   ): Promise<void> {
     if (files.length >= maxFiles) return;
+    // `stat()` follows symlinks/junctions. A junction pointing at the repo root
+    // (Windows `mklink /J`, pnpm workspaces) made the walker descend forever:
+    // the real index came back with the same file repeated once per recursion
+    // level until maxFiles ran out, and every fake path was indexed. `lstat`
+    // reports the link itself, so links are skipped before they are entered.
     let info;
     try {
-      info = await stat(current);
+      info = await lstat(current);
     } catch {
       return;
     }
+    if (info.isSymbolicLink()) return;
 
     if (info.isDirectory()) {
       let entries;
@@ -104,6 +110,7 @@ export class NavIndexStore {
       }
       for (const entry of entries) {
         if (files.length >= maxFiles) return;
+        if (entry.isSymbolicLink()) continue;
         if (entry.isDirectory() && isIgnoredDirName(entry.name)) continue;
         await this.walk(join(current, entry.name), files, previous, maxFiles);
       }

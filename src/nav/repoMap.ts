@@ -1,4 +1,4 @@
-import { readdir, readFile, stat, writeFile, readFile as readCache, mkdir } from 'node:fs/promises';
+import { lstat, readdir, readFile, stat, writeFile, readFile as readCache, mkdir } from 'node:fs/promises';
 import { join, relative, extname, dirname } from 'node:path';
 import * as ts from 'typescript';
 import { isIgnoredDirName } from '../workspace/ignored.js';
@@ -75,7 +75,8 @@ async function walkFiles(current: string, root: string, files: string[], maxFile
   if (files.length >= maxFiles) return;
 
   try {
-    const info = await stat(current);
+    const info = await lstat(current);
+    if (info.isSymbolicLink()) return;
     if (info.isFile()) {
       files.push(relative(root, current).replace(/\\/g, '/'));
       return;
@@ -87,9 +88,14 @@ async function walkFiles(current: string, root: string, files: string[], maxFile
     for (const entry of entries) {
       if (files.length >= maxFiles) break;
       const name = entry.name;
-      // Skip common large/generated directories
+      // Skip common large/generated directories through the shared list. The
+      // old `name.startsWith('.')` rule below still hides dot-directories (so
+      // `.github` stays out); routing caches through the list means the
+      // `.aicode*` family is skipped here for the same reason as everywhere
+      // else, not only because it happens to start with a dot.
       if (isIgnoredDirName(name)) continue;
       if (name.startsWith('.')) continue;
+      if (entry.isSymbolicLink()) continue; // junction cycles recurse forever
 
       const fullPath = join(current, name);
       if (entry.isDirectory()) {

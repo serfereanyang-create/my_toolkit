@@ -48,6 +48,26 @@ test('classifyTurn: zero on both counters is no-cache-data, low read vs high wri
   assert.equal(classifyTurn(entry({ cacheCreationTokens: 5000 }), false), 'unstable-prefix');
 });
 
+test('classifyTurn: a compaction-only row has no prompt of its own to classify', () => {
+  // The summary request sends the packed history but is not part of the
+  // conversation's prefix chain. Calling it "unstable-prefix" (cacheRead 0 on a
+  // non-first turn) would invent a cache-killer that does not exist.
+  const compactOnly = entry({
+    inputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    autoCompact: { calls: 1, inputTokens: 9000, outputTokens: 300, outcome: 'completed' },
+  });
+  assert.equal(classifyTurn(compactOnly, false), 'no-cache-data');
+  // Once the turn also has main-loop input, the normal rules apply again.
+  const mixed = entry({
+    inputTokens: 100,
+    cacheCreationTokens: 5_000,
+    autoCompact: { calls: 1, inputTokens: 9000, outputTokens: 300, outcome: 'completed' },
+  });
+  assert.equal(classifyTurn(mixed, false), 'unstable-prefix');
+});
+
 test('analyzeCacheHealth separates a not-reporting relay from a healthy endpoint', async () => {
   const entries = [
     // Healthy relay: first turn pays the write (cold-start), later turns hit.

@@ -336,63 +336,163 @@ export async function buildDependencyGraph(
 }
 
 /**
- * 检测循环依赖（使用 DFS）
+ * 检测循环依赖（迭代式 DFS，Tarjan SCC）
+ *
+ * 旧实现有两处硬伤，都在真实输入上复现过：
+ *  1. 找到一条环就 `return true` 一路回溯，把它所在连通分量里其余环全部吞掉
+ *     —— `c -> a <-> b` 会报出 `a -> b -> c -> a` 这条根本不存在的「环」，
+ *     同时漏掉真正的 `a <-> b`；两个互不相交的环里第二个也直接消失。
+ *  2. 递归深度等于依赖链长度；20000 个模块的手拉手链条直接
+ *     `RangeError: Maximum call stack size exceeded`（实测 6.5s 后抛错）。
+ *
+ * 现在改用显式栈的 Tarjan：每个 SCC 内部按起点做一次迭代 DFS 还原基本环，
+ * 复杂度 O(V+E)，与链长无关；自环（模块 import 自己）照报。
  */
-export function detectCircularDependencies(graph: DependencyGraph): CircularDependency[] {
-  const cycles: CircularDependency[] = [];
-  const visited = new Set<string>();
-  const recursionStack = new Set<string>();
-  const pathStack: string[] = [];
-  
-  function dfs(node: string): boolean {
-    visited.add(node);
-    recursionStack.add(node);
-    pathStack.push(node);
-    
-    const neighbors = graph.adjacencyList.get(node) || new Set();
-    
-    for (const neighbor of neighbors) {
-      if (!visited.has(neighbor)) {
-        if (dfs(neighbor)) {
-          return true;
+export function detectCircularDependencies(
+  graph: DependencyGraph,
+  options: { maxCycles?: number } = {},
+): CircularDependency[] {
+  const maxCycles = Math.max(1, options.maxCycles ?? 100);
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  let counter = 0;
+  const components: string[][] = [];
+
+  for (const root of graph.nodes.keys()) {
+    if (index.has(root)) continue;
+    // 显式调用栈：[node, 子节点迭代器, 是否已展开完毕]
+    const work: Array<{ node: string; children: string[]; next: number }> = [
+      { node: root, children: [...(graph.adjacencyList.get(root) ?? [])], next: 0 },
+    ];
+    index.set(root, counter);
+    low.set(root, counter);
+    counter++;
+    stack.push(root);
+    onStack.add(root);
+
+    while (work.length > 0) {
+      const frame = work[work.length - 1]!;
+      if (frame.next < frame.children.length) {
+        const child = frame.children[frame.next++]!;
+        if (!index.has(child)) {
+          index.set(child, counter);
+          low.set(child, counter);
+          counter++;
+          stack.push(child);
+          onStack.add(child);
+          work.push({ node: child, children: [...(graph.adjacencyList.get(child) ?? [])], next: 0 });
+        } else if (onStack.has(child)) {
+          low.set(frame.node, Math.min(low.get(frame.node)!, index.get(child)!));
         }
-      } else if (recursionStack.has(neighbor)) {
-        // 找到循环
-        const cycleStartIndex = pathStack.indexOf(neighbor);
-        const cycle = pathStack.slice(cycleStartIndex);
-        cycle.push(neighbor); // 闭合循环
-        
-        cycles.push({
-          cycle,
-          // cycle 数组含闭合重复节点：两模块互相依赖时长度为 3
-          severity: cycle.length <= 3 ? 'error' : 'warning',
-          suggestions: [
-            '将共享逻辑提取到第三个模块',
-            '使用依赖注入打破循环',
-            '重新设计模块边界',
-          ],
-        });
-        
-        return true;
+        continue;
+      }
+      // 子树全部展开：出栈并回填 low-link
+      work.pop();
+      if (work.length > 0) {
+        const parent = work[work.length - 1]!.node;
+        low.set(parent, Math.min(low.get(parent)!, low.get(frame.node)!));
+      }
+      if (low.get(frame.node) === index.get(frame.node)) {
+        const component: string[] = [];
+        let popped: string | undefined;
+        do {
+          popped = stack.pop();
+          if (popped === undefined) break;
+          onStack.delete(popped);
+          component.push(popped);
+        } while (popped !== frame.node);
+        if (component.length > 1) components.push(component);
+        else if (graph.adjacencyList.get(frame.node)?.has(frame.node)) components.push(component);
       }
     }
-    
-    recursionStack.delete(node);
-    pathStack.pop();
-    return false;
   }
-  
-  for (const node of graph.nodes.keys()) {
-    if (!visited.has(node)) {
-      dfs(node);
+
+  const cycles: CircularDependency[] = [];
+  const seen = new Set<string>();
+  for (const component of components) {
+    // 找环本身也要有配额：10 个模块两两互相 import 时基本环数量是阶乘级
+    // （实测 maxCycles=5 仍耗时 20s、堆 2.8GB），旧实现会先生成全部环再截断。
+    // 这里把剩余配额传进 SCC 内搜索，凑满即停。
+    const remaining = maxCycles - cycles.length;
+    if (remaining <= 0) return cycles;
+    for (const cycle of extractElementaryCycles(graph, component, remaining + seen.size)) {
+      const key = canonicalCycleKey(cycle);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      cycles.push({
+        cycle,
+        severity: cycle.length <= 3 ? 'error' : 'warning',
+        suggestions: [
+          '将共享逻辑提取到第三个模块',
+          '使用依赖注入打破循环',
+          '重新设计模块边界',
+        ],
+      });
+      if (cycles.length >= maxCycles) return cycles;
     }
   }
-  
   return cycles;
 }
 
 /**
+ * 在单个 SCC 内从每个节点出发，迭代 DFS 找回到自身的简单环（限定组件内）。
+ *
+ * `limit` 是生成上限：稠密 SCC 的简单环数量是阶乘级，必须边找边停，
+ * 不能全部生成后再截断（否则 10 节点完全图要 20s / 2.8GB）。去重交给调用方，
+ * 因此这里按「已生成条数」而不是「已去重条数」计数，宁可多给几条。
+ */
+function extractElementaryCycles(graph: DependencyGraph, component: string[], limit: number): string[][] {
+  const inComponent = new Set(component);
+  const found: string[][] = [];
+  for (const start of component) {
+    if (found.length >= limit) break;
+    // 栈帧记录当前路径；深度 <= 组件大小，因此最多 component.length 次扩展。
+    const path: string[] = [start];
+    const onPath = new Set<string>([start]);
+    const frames: Array<{ node: string; children: string[]; next: number }> = [
+      { node: start, children: [...(graph.adjacencyList.get(start) ?? [])].filter((n) => inComponent.has(n)), next: 0 },
+    ];
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1]!;
+      if (frame.next >= frame.children.length) {
+        frames.pop();
+        path.pop();
+        onPath.delete(frame.node);
+        continue;
+      }
+      const child = frame.children[frame.next++]!;
+      if (child === start) {
+        found.push([...path, start]);
+        if (found.length >= limit) return found;
+        continue;
+      }
+      if (onPath.has(child)) continue;
+      path.push(child);
+      onPath.add(child);
+      frames.push({ node: child, children: [...(graph.adjacencyList.get(child) ?? [])].filter((n) => inComponent.has(n)), next: 0 });
+    }
+  }
+  return found;
+}
+
+/** 环的规范化 key：旋转到最小字典序起点，消除同一个环的不同起点写法。 */
+function canonicalCycleKey(cycle: string[]): string {
+  const nodes = cycle.slice(0, -1);
+  if (nodes.length === 0) return '';
+  let best = 0;
+  for (let i = 1; i < nodes.length; i++) {
+    if (nodes[i]!.localeCompare(nodes[best]!) < 0) best = i;
+  }
+  return [...nodes.slice(best), ...nodes.slice(0, best)].join('\u0000');
+}
+
+/**
  * 计算模块依赖深度
+ *
+ * 与环检测同因：递归 DFS 在长依赖链上会爆栈。改为显式栈，语义不变——
+ * 只沿未访问节点前进（同一节点不会被重复展开），返回从起点可达的最大层数。
  */
 export function calculateDependencyDepth(
   graph: DependencyGraph,
@@ -400,21 +500,20 @@ export function calculateDependencyDepth(
 ): number {
   const visited = new Set<string>();
   let maxDepth = 0;
-  
-  function dfs(node: string, depth: number) {
-    if (visited.has(node)) return;
+  const stack: Array<{ node: string; depth: number }> = [{ node: startNode, depth: 0 }];
+
+  while (stack.length > 0) {
+    const { node, depth } = stack.pop()!;
+    if (visited.has(node)) continue;
     visited.add(node);
-    maxDepth = Math.max(maxDepth, depth);
-    
-    const neighbors = graph.adjacencyList.get(node) || new Set();
-    for (const neighbor of neighbors) {
-      if (!neighbor.startsWith('external:')) {
-        dfs(neighbor, depth + 1);
+    if (depth > maxDepth) maxDepth = depth;
+
+    for (const neighbor of graph.adjacencyList.get(node) ?? []) {
+      if (!neighbor.startsWith('external:') && !visited.has(neighbor)) {
+        stack.push({ node: neighbor, depth: depth + 1 });
       }
     }
   }
-  
-  dfs(startNode, 0);
   return maxDepth;
 }
 

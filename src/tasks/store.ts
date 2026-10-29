@@ -103,32 +103,53 @@ export class TaskBoardStore {
   }
 
   async load(boardId: string): Promise<TaskBoard> {
+    let raw: string;
     try {
-      return JSON.parse(await readFile(this.filePath(boardId), 'utf8')) as TaskBoard;
+      raw = await readFile(this.filePath(boardId), 'utf8');
     } catch {
       throw new Error(`Task board not found: ${boardId}`);
     }
+    // A truncated or hand-edited file is a different failure from a missing
+    // one: reporting it as "not found" hides recoverable evidence and made
+    // `recoverInterrupted` spend a load on a file it could never read.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error(`Task board is corrupt (unparseable JSON): ${boardId}`);
+    }
+    if (!isBoardRecord(parsed)) throw new Error(`Task board is corrupt (invalid structure): ${boardId}`);
+    return parsed;
   }
 
   async list(): Promise<TaskBoardIndexEntry[]> {
     await mkdir(this.root, { recursive: true });
     try {
-      const index = JSON.parse(await readFile(this.indexPath, 'utf8')) as TaskBoardIndexEntry[];
-      return index.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    } catch {
-      const names = await readdir(this.root);
-      const entries: TaskBoardIndexEntry[] = [];
-      for (const name of names) {
-        if (!name.endsWith('.json') || name === 'index.json') continue;
-        try {
-          const board = JSON.parse(await readFile(join(this.root, name), 'utf8')) as TaskBoard;
-          entries.push({ id: board.id, title: board.title, status: board.status, updatedAt: board.updatedAt });
-        } catch {
-          // ignore corrupt board files
-        }
+      const index: unknown = JSON.parse(await readFile(this.indexPath, 'utf8'));
+      // The index is a cache, not the source of truth. Anything that is not an
+      // entry array — `null` from a half-written file, an object from a manual
+      // edit — falls through to the directory scan below instead of throwing
+      // on `sort`. A partially valid array is treated the same way: dropping
+      // the bad rows would silently hide the boards they name.
+      if (Array.isArray(index) && index.every(isIndexEntry)) {
+        return index.sort(byUpdatedAtDesc);
       }
-      return entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    } catch {
+      // fall through to the directory scan
     }
+    const names = await readdir(this.root);
+    const entries: TaskBoardIndexEntry[] = [];
+    for (const name of names) {
+      if (!name.endsWith('.json') || name === 'index.json' || name.endsWith('.lease.json')) continue;
+      try {
+        const raw = JSON.parse(await readFile(join(this.root, name), 'utf8')) as unknown;
+        if (!isBoardRecord(raw)) continue;
+        entries.push({ id: raw.id, title: raw.title, status: raw.status, updatedAt: raw.updatedAt });
+      } catch {
+        // ignore corrupt board files
+      }
+    }
+    return entries.sort(byUpdatedAtDesc);
   }
 
   /**
@@ -147,10 +168,14 @@ export class TaskBoardStore {
       } catch {
         continue; // unreadable board: leave it for the corrupt-file path
       }
+      // Liveness is checked before graph validity: a board that is currently
+      // executing must be left alone even if its graph does not pass the
+      // semantic checks (that is the live runner's problem to report, not a
+      // recovery pass's to rewrite).
+      if (await this.isLeaseLive(board.id)) continue; // a live runner owns it
       if (inspectTaskGraph(board.tasks).issues.length) continue;
       const interrupted = board.tasks.filter((task) => task.status === 'in_progress');
       if (interrupted.length === 0) continue;
-      if (await this.isLeaseLive(board.id)) continue; // a live runner owns it
       for (const task of interrupted) {
         task.status = 'blocked';
         task.error = 'Interrupted by an application restart; review the workspace and re-run this task.';
@@ -167,7 +192,8 @@ export class TaskBoardStore {
   private async upsertIndex(entry: TaskBoardIndexEntry) {
     let entries: TaskBoardIndexEntry[] = [];
     try {
-      entries = JSON.parse(await readFile(this.indexPath, 'utf8')) as TaskBoardIndexEntry[];
+      const parsed: unknown = JSON.parse(await readFile(this.indexPath, 'utf8'));
+      entries = Array.isArray(parsed) ? parsed.filter(isIndexEntry) : [];
     } catch {
       entries = [];
     }
@@ -187,4 +213,50 @@ export class TaskBoardStore {
       throw error;
     }
   }
+}
+
+const BOARD_STATUSES = new Set(['draft', 'active', 'completed', 'blocked', 'cancelled']);
+const TASK_STATUSES = new Set(['pending', 'in_progress', 'done', 'blocked', 'cancelled', 'skipped']);
+
+/**
+ * Structural check for a persisted board.
+ *
+ * Deliberately shape-only: it does not judge legal status *transitions* (a
+ * `done` task without a recorded run is the user's edit to make), because
+ * refusing to load is worse than showing the state. What it refuses is data
+ * that would crash a consumer — a missing id, a non-array task list, a task
+ * whose `status` is not a known value. `inspectTaskGraph` remains the semantic
+ * gate for the runner.
+ */
+function isBoardRecord(value: unknown): value is TaskBoard {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const board = value as Record<string, unknown>;
+  if (typeof board['id'] !== 'string' || !board['id'].trim()) return false;
+  if (typeof board['title'] !== 'string' || typeof board['goal'] !== 'string') return false;
+  if (typeof board['status'] !== 'string' || !BOARD_STATUSES.has(board['status'])) return false;
+  if (typeof board['createdAt'] !== 'string' || typeof board['updatedAt'] !== 'string') return false;
+  if (!Array.isArray(board['tasks'])) return false;
+  return board['tasks'].every((task) => {
+    if (!task || typeof task !== 'object' || Array.isArray(task)) return false;
+    const item = task as Record<string, unknown>;
+    return typeof item['id'] === 'string'
+      && typeof item['title'] === 'string'
+      && typeof item['status'] === 'string'
+      && TASK_STATUSES.has(item['status'])
+      && Array.isArray(item['dependsOn'])
+      && item['dependsOn'].every((dep) => typeof dep === 'string');
+  });
+}
+
+function isIndexEntry(value: unknown): value is TaskBoardIndexEntry {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entry = value as Record<string, unknown>;
+  return typeof entry['id'] === 'string'
+    && typeof entry['title'] === 'string'
+    && typeof entry['status'] === 'string'
+    && typeof entry['updatedAt'] === 'string';
+}
+
+function byUpdatedAtDesc(a: TaskBoardIndexEntry, b: TaskBoardIndexEntry) {
+  return b.updatedAt.localeCompare(a.updatedAt);
 }

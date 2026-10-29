@@ -190,6 +190,62 @@ export function assertSafeWorkspacePathspec(value: string): string {
 }
 
 /**
+ * Names the Win32 layer resolves to something other than a file of that name.
+ *
+ * `CON`, `NUL`, `COM1`, `con.txt` … are device names: opening them does not
+ * create a file in the directory but talks to a device. `a.` and `a ` are
+ * stripped to `a` by the Win32 path normaliser, so a restore target that ends
+ * in a dot or space silently lands somewhere else. Both matter because a
+ * repository can legally contain such paths on Linux, and rolling that commit
+ * back on Windows must fail loudly rather than write to `NUL`.
+ */
+const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+/** Characters Win32 cannot put in a file name (`<>:"|?*` plus C0 controls). */
+function hasWindowsIllegalChar(segment: string): boolean {
+  for (const char of segment) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || '<>:"|?*'.includes(char)) return true;
+  }
+  return false;
+}
+
+/**
+ * Validate a repository-relative path that is about to become a FILESYSTEM
+ * target (rollback restore, patch application). Stricter than
+ * {@link assertSafeRelativePath}: the path must also be representable as a
+ * real file on the current platform.
+ *
+ * `assertSafeRelativePath` deliberately accepts paths that are only valid in
+ * the Git index (columns, `aux.txt`, trailing dots); those are fine to *read*
+ * from a tree but must never be opened for writing on Windows.
+ */
+export function assertRestorablePath(
+  value: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  assertSafeRelativePath(value);
+  // UNC (`\\server\share`) and drive-relative (`C:foo`) forms never survive
+  // assertSafeRelativePath, but assert them again for future editors.
+  if (value.startsWith('//') || /^[A-Za-z]:/.test(value)) {
+    throw new Error('Unsafe repository-relative path');
+  }
+  if (platform === 'win32') {
+    for (const segment of value.split('/')) {
+      if (WINDOWS_DEVICE_NAME.test(segment)) {
+        throw new Error(`Path uses a Windows device name: ${value}`);
+      }
+      if (segment.endsWith('.') || segment.endsWith(' ')) {
+        throw new Error(`Path segment ends with a dot or space: ${value}`);
+      }
+      if (hasWindowsIllegalChar(segment)) {
+        throw new Error(`Path contains a character Windows cannot store: ${value}`);
+      }
+    }
+  }
+  return value;
+}
+
+/**
  * Anchor a repository-relative pathspec to the REPOSITORY ROOT.
  *
  * Git resolves a bare pathspec against the process CWD, but the workspace

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HealthCollector, computeScores } from './collector.js';
@@ -252,3 +252,108 @@ function makeSnapshot(
     },
   };
 }
+
+describe('HealthCollector 的失败必须计入报告', () => {
+  it('根目录不存在时给出警告，而不是一份满分快照', async () => {
+    const missing = join(tmpdir(), `health-missing-${Date.now()}`);
+    const snapshot = await new HealthCollector().collect(missing, {});
+    expect(snapshot.warnings?.join('\n')).toContain('工作区无法读取');
+    // 分数模型本身不变；重点是这份 100 分现在带着「什么都没看到」的说明。
+    expect(snapshot.scores.overall).toBe(100);
+  });
+
+  it('行数按代码行统计，末尾换行不再多算一行', async () => {
+    const withNewline = mkdtempSync(join(tmpdir(), 'health-lines-'));
+    const withoutNewline = mkdtempSync(join(tmpdir(), 'health-lines2-'));
+    try {
+      writeFileSync(join(withNewline, 'f.ts'), 'a\nb\n');
+      writeFileSync(join(withoutNewline, 'f.ts'), 'a\nb');
+      const a = await new HealthCollector().collect(withNewline, { skipSecurity: true, skipAnalyzers: true });
+      const b = await new HealthCollector().collect(withoutNewline, { skipSecurity: true, skipAnalyzers: true });
+      expect(a.metrics.linesOfCode).toBe(2);
+      expect(b.metrics.linesOfCode).toBe(2);
+    } finally {
+      rmSync(withNewline, { recursive: true, force: true });
+      rmSync(withoutNewline, { recursive: true, force: true });
+    }
+  });
+
+  // 安全扫描失败的情形需要注入一个会抛错的扫描器，放在 health-audit.test.ts
+  // （vi.mock）里；这里只留不依赖 mock 的采集行为。
+});
+
+describe('HealthStore 的并发与损坏恢复', () => {
+  it('并发 append 不丢快照（两个 store 实例各写 5 份）', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'health-race-'));
+    try {
+      const a = new HealthStore();
+      const b = new HealthStore();
+      const jobs = Array.from({ length: 10 }, (_, i) =>
+        (i % 2 ? b : a).append(root, makeSnapshot('r' + i, new Date(2026, 0, 1 + i).toISOString(), 50)));
+      await Promise.all(jobs);
+      const history = await a.loadHistory(root);
+      expect(history).toHaveLength(10);
+      expect(new Set(history.map((s) => s.id)).size).toBe(10);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('重复追加同一份快照是幂等的', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'health-idem-'));
+    try {
+      const store = new HealthStore();
+      const snapshot = makeSnapshot('same', '2026-01-01T00:00:00Z', 60);
+      await store.append(root, snapshot);
+      await store.append(root, snapshot);
+      expect(await store.loadHistory(root)).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('损坏的历史文件被保留而不是被覆盖', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'health-corrupt-'));
+    try {
+      const dir = join(root, '.aicode', 'health');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'history.json'), '{ not json');
+      const store = new HealthStore();
+      const read = await store.readHistory(root);
+      expect(read.status).toBe('corrupt');
+      expect(read.note).toContain('不是有效 JSON');
+      await store.append(root, makeSnapshot('after', '2026-02-01T00:00:00Z', 70));
+      const files = readdirSync(dir);
+      expect(files.some((name) => name.includes('.corrupt-'))).toBe(true);
+      expect(await store.loadHistory(root)).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('结构不对的历史同样按损坏处理', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'health-shape-'));
+    try {
+      const dir = join(root, '.aicode', 'health');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'history.json'), '{"snapshots": "nope"}');
+      expect((await new HealthStore().readHistory(root)).status).toBe('corrupt');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('buildReport 把采集警告带到摘要里', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'health-warn-'));
+    try {
+      const store = new HealthStore();
+      const snapshot = { ...makeSnapshot('w', new Date().toISOString(), 90), warnings: ['3 个源文件无法读取'] };
+      await store.append(root, snapshot);
+      const report = await store.buildReport(root);
+      expect(report.summary.join('\n')).toContain('采集不完整');
+      expect(report.summary.join('\n')).toContain('3 个源文件无法读取');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

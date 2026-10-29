@@ -104,6 +104,15 @@ export const TRAJECTORY_TAIL = 6;
  * Separator for hashing a list of names. `\u0000` cannot occur in a tool name
  * (they are identifiers), so the join is unambiguous: ["a","b"] hashes
  * differently from ["ab"].
+ *
+ * One boundary is worth recording rather than fixing: the join cannot tell
+ * `[]` from `[""]`, so both hash to sha256("") = e3b0c44298fc. In practice `""`
+ * only appears in `toolNames` — the recorder maps a tool action with no name
+ * to `''` — and never in `toolSetNames`, which comes from the registry. Making
+ * the empty list distinct would mean prefixing the join with the element count;
+ * that changes every hash (all rows recorded before the change would be
+ * re-compared under the new scheme) for a case that only means "a nameless
+ * call", so the collision is documented instead of "fixed".
  */
 const NAME_JOINER = '\u0000';
 
@@ -274,19 +283,40 @@ export function recordedToolSurface(row: TrajectoryRecord): {
    */
   orderHash: string | null;
 } {
+  /*
+   * `toolSetNames: []` is a FACT — a turn that sent no tools at all — so it
+   * stays on the sent-tools layer and hashes to sha256(""). It must NOT fall
+   * back to `toolNames`: that would label an empty sent array as "which tools
+   * the model called", i.e. invent evidence. Only an ABSENT field (legacy
+   * rows, hand-written fixtures) takes the fallback below.
+   */
   if (Array.isArray(row.toolSetNames)) {
     return {
       layer: 'sent-tools',
       raw: row.toolSetNames.map((name) => String(name)),
-      canonical: row.toolSetCanonical ?? canonicalToolNames(row.toolSetNames),
-      orderHash: row.toolSetOrderHash ?? toolNamesOrderHash(row.toolSetNames),
+      /*
+       * The cached canonical list is trusted only when it really is a list.
+       * Trajectory files are JSONL on disk and a hand-edited (or truncated and
+       * repaired) row can carry `"toolSetCanonical": "abc"`; `??` alone would
+       * return that string through a field typed `string[]`, and every reader
+       * downstream would compare a string with an array. Same for the hash:
+       * a non-string cached value is recomputed.
+       */
+      canonical: Array.isArray(row.toolSetCanonical)
+        ? row.toolSetCanonical.map((name) => String(name))
+        : canonicalToolNames(row.toolSetNames),
+      orderHash: typeof row.toolSetOrderHash === 'string'
+        ? row.toolSetOrderHash
+        : toolNamesOrderHash(row.toolSetNames),
     };
   }
   if (Array.isArray(row.toolNames)) {
     return {
       layer: 'called-tools',
       raw: row.toolNames.map((name) => String(name)),
-      canonical: row.toolNamesCanonical ?? canonicalToolNames(row.toolNames),
+      canonical: Array.isArray(row.toolNamesCanonical)
+        ? row.toolNamesCanonical.map((name) => String(name))
+        : canonicalToolNames(row.toolNames),
       orderHash: null,
     };
   }

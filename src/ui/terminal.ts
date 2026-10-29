@@ -16,6 +16,13 @@ import {
 } from './codexTheme.js';
 import { disableConsoleSoftWrap } from './consoleWrap.js';
 import { MarkdownStreamCleaner, stripMarkdownDecorations } from './markdown.js';
+import {
+  charDisplayWidth,
+  displayWidth,
+  stripAnsi,
+  takeByDisplayWidth,
+  truncateToWidth,
+} from './width.js';
 
 /**
  * Palette roles (when color is enabled):
@@ -460,6 +467,11 @@ export class TerminalUI {
    * Session header banner (history_cell/session.rs): dim `╭─╮` box, inner
    * width capped at 56, `">_ " + bold name + dim "(v…)"`, then model and
    * directory rows.
+   *
+   * Widths are display columns (width.ts), not `.length`: a CJK directory, an
+   * emoji, or a combining accent used to overflow the row and break the box
+   * edge. Rows wider than the cap are folded (middle ellipsis) instead of
+   * spilling past `│`. The box is also never wider than the terminal.
    */
   private writeSessionHeader(config: AppConfig, provider: Provider) {
     const noColor = this.options.noColor ?? false;
@@ -467,13 +479,17 @@ export class TerminalUI {
     const nameLine = `${dim('>_ ')}${this.style('aicode', 'bold')}${this.options.version ? dim(` (v${this.options.version})`) : ''}`;
     const modelRow = `${dim('model: ')}${provider.model || provider.name}`;
     const dirRow = `${dim('directory: ')}${config.workspaceRoot}`;
-    const inner = Math.min(Math.max(
+    const cap = Math.min(56, Math.max(24, terminalColumns() - 2));
+    // `inner` counts the two `│ ` + ` │` columns, so content gets `inner - 4`.
+    const inner = Math.min(cap, Math.max(
       displayWidth(stripAnsi(nameLine)),
       displayWidth(stripAnsi(modelRow)),
       displayWidth(stripAnsi(dirRow)),
-    ) + 2, 56);
+    ) + 4);
+    const contentWidth = Math.max(1, inner - 4);
+    const fold = (row: string) => foldMiddle(row, contentWidth);
     this.write(dim(`╭${'─'.repeat(inner)}╮`));
-    for (const row of [nameLine, '', modelRow, dirRow]) {
+    for (const row of [nameLine, '', fold(modelRow), fold(dirRow)]) {
       const pad = ' '.repeat(Math.max(0, inner - 2 - displayWidth(stripAnsi(row))));
       this.write(`${dim('│ ')}${row}${pad}${dim(' │')}`);
     }
@@ -590,8 +606,43 @@ function execTitle(tool: string, input?: unknown, output?: string): string {
   return tool;
 }
 
+/** Keep a trailing ANSI reset while folding the middle of a styled row. */
+const RESET = '\u001b[0m';
+
+/**
+ * Fold `value` to `max` display columns, keeping both ends:
+ * `C:\Users\…\very\deep\dir`. Styles may wrap the string (dim label, bold
+ * value); the fold is applied to the plain text and the original styling is
+ * re-applied around it, so no escape sequence is ever cut.
+ */
+function foldMiddle(value: string, max: number): string {
+  if (displayWidth(stripAnsi(value)) <= max) return value;
+  const plain = stripAnsi(value);
+  const ellipsis = '…';
+  const budget = max - displayWidth(ellipsis);
+  if (budget <= 0) return ellipsis;
+  // Prefer the tail (the file/directory name is the informative part).
+  const head = Math.max(4, Math.floor(budget * 0.35));
+  const tail = budget - head;
+  const headText = takeByDisplayWidth(plain, head);
+  let tailText = '';
+  let tailWidth = 0;
+  const tokens = Array.from(plain);
+  for (let i = tokens.length - 1; i >= 0 && tailWidth < tail; i -= 1) {
+    const char = tokens[i]!;
+    const width = charDisplayWidth(char);
+    if (tailWidth + width > tail) break;
+    tailText = char + tailText;
+    tailWidth += width;
+  }
+  // Re-wrap with the original leading/trailing SGR codes when present.
+  const leading = value.match(/^(?:\u001b\[[0-9;]*m)+/)?.[0] ?? '';
+  const folded = `${leading}${headText}${ellipsis}${tailText}${leading ? RESET : ''}`;
+  return folded;
+}
+
 function truncate(value: string, max: number) {
-  return displayWidth(value) > max ? `${takeByDisplayWidth(value, max - 3)}...` : value;
+  return truncateToWidth(value, max);
 }
 
 function terminalColumns() {
@@ -621,49 +672,9 @@ function wrapLine(line: string, width: number) {
   return wrapped;
 }
 
-function takeByDisplayWidth(value: string, max: number) {
-  let output = '';
-  let width = 0;
-  for (const char of value) {
-    const nextWidth = width + charDisplayWidth(char);
-    if (nextWidth > max) break;
-    output += char;
-    width = nextWidth;
-  }
-  return output;
-}
-
 function shortenModelLabel(model: string) {
   if (!model) return 'model';
   const bare = model.includes('/') ? model.split('/').pop()! : model;
-  return bare.length > 18 ? `${bare.slice(0, 16)}…` : bare;
+  return truncateToWidth(bare, 18, '…');
 }
 
-function displayWidth(value: string) {
-  let width = 0;
-  for (const char of value) width += charDisplayWidth(char);
-  return width;
-}
-
-function charDisplayWidth(char: string) {
-  const code = char.codePointAt(0) ?? 0;
-  if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return 0;
-  // Rough CJK / fullwidth detection
-  if (
-    (code >= 0x1100 && code <= 0x115f)
-    || (code >= 0x2e80 && code <= 0xa4cf)
-    || (code >= 0xac00 && code <= 0xd7a3)
-    || (code >= 0xf900 && code <= 0xfaff)
-    || (code >= 0xfe10 && code <= 0xfe19)
-    || (code >= 0xfe30 && code <= 0xfe6f)
-    || (code >= 0xff00 && code <= 0xff60)
-    || (code >= 0xffe0 && code <= 0xffe6)
-  ) {
-    return 2;
-  }
-  return 1;
-}
-
-function stripAnsi(value: string) {
-  return value.replace(/\u001b\[[0-9;]*m/g, '');
-}

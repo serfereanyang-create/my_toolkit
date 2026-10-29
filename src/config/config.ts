@@ -207,6 +207,7 @@ function modelFromEnv(provider: ProviderName, env: NodeJS.ProcessEnv) {
   if (provider === 'openai-responses') return env.OPENAI_RESPONSES_MODEL ?? env.OPENAI_MODEL;
   if (provider === 'openai') return env.OPENAI_MODEL;
   if (provider === 'anthropic') return env.ANTHROPIC_MODEL;
+  if (provider === 'gemini') return env.GEMINI_MODEL;
   return env.MOCK_MODEL;
 }
 
@@ -224,6 +225,7 @@ function baseUrlFromEnv(provider: ProviderName, env: NodeJS.ProcessEnv) {
   if (provider === 'openai-responses') return env.OPENAI_RESPONSES_BASE_URL ?? env.AICODE_OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
   if (provider === 'openai') return env.AICODE_OPENAI_BASE_URL ?? 'https://ai.furry.edu.gr/v1';
   if (provider === 'anthropic') return env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com/v1';
+  if (provider === 'gemini') return env.GEMINI_BASE_URL;
   return undefined;
 }
 
@@ -231,6 +233,11 @@ function apiKeyFromEnv(provider: ProviderName, env: NodeJS.ProcessEnv) {
   if (isVendorId(provider)) return firstEnv(VENDOR_PROFILES[provider].apiKeyEnvVars, env);
   if (provider === 'openai' || provider === 'openai-responses') return env.OPENAI_API_KEY;
   if (provider === 'anthropic') return env.ANTHROPIC_API_KEY;
+  // Gemini's own documented variable. It used to fall through to
+  // MOCK_API_KEY, so `--provider gemini` with GEMINI_API_KEY set failed
+  // `requireProviderAuth` ("GEMINI_API_KEY is required") and the provider
+  // itself then threw on the first call.
+  if (provider === 'gemini') return env.GEMINI_API_KEY;
   return env.MOCK_API_KEY;
 }
 
